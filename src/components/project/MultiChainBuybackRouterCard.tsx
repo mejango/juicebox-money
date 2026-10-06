@@ -25,6 +25,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import {
   clientFor,
   readAuthorityOf,
@@ -527,6 +528,8 @@ export function BuybackActionForm({
 }) {
   const action = ACTIONS[kind]
   const batch = useSafeBatch()
+  // Leaving the form ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const available = useMemo(
     () => rows.filter(row => isKindAvailable(kind, row)),
     [kind, rows],
@@ -843,6 +846,7 @@ export function BuybackActionForm({
       const result = await runAuthorityCalls({
         calls: review.calls,
         onProgress: progress => setStatus(progress.message),
+        signal: flowSignal(),
       })
       setStatus(
         safeOutcomeMessage(

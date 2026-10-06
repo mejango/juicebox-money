@@ -69,11 +69,11 @@ function ProjectWalletBalances({
   const deployments = useQuery({
     queryKey: ['walletProjectDeployments', chainId, projectId],
     staleTime: 60_000,
-    queryFn: async () => {
-      const home = await getProject(chainId, projectId)
+    queryFn: async ({ signal }) => {
+      const home = await getProject(chainId, projectId, { signal })
       if (!home) return [{ chainId, projectId }]
       const peers = home.suckerGroupId
-        ? await getSuckerGroupProjects(home.suckerGroupId, chainId)
+        ? await getSuckerGroupProjects(home.suckerGroupId, chainId, { signal })
         : []
       return resolveProjectDeployments(home, peers).map(project => ({
         chainId: project.chainId as JBChainId,

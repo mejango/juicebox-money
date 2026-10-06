@@ -121,3 +121,33 @@ describe('server-side reads keep their revalidate window', () => {
     expect(init).not.toHaveProperty('next')
   })
 })
+
+describe("the relay's indexer read ends with the browser's request", () => {
+  it('stops it when the browser leaves, does not retry it, and logs nothing', async () => {
+    const fetcher = vi.fn<typeof fetch>(
+      (_input, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        }),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const browser = new AbortController()
+
+    const relayed = POST(
+      new Request('https://juicebox.money/api/bendystraw/mainnet/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ operation, variables: { chainId: 1, projectId: 11 } }),
+        signal: browser.signal,
+      }),
+      { params: Promise.resolve({ net: 'mainnet' }) },
+    )
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    browser.abort()
+
+    expect((await relayed).status).toBe(502)
+    expect(fetcher).toHaveBeenCalledOnce()
+    expect(logged).not.toHaveBeenCalled()
+  })
+})

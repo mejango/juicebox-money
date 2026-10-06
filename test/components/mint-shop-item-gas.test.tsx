@@ -45,11 +45,16 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ),
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ onConfirm, title, error }: { onConfirm: () => void; title: string; error?: string | null }) => (
+  // Once complete, the confirm offers only Done.
+  TxConfirmDialog: ({ onConfirm, onClose, title, error, complete }: {
+    onConfirm: () => void; onClose: () => void; title: string; error?: string | null; complete?: boolean
+  }) => (
     <div>
       <p>{title}</p>
       {error ? <p>{error}</p> : null}
-      <button type="button" onClick={onConfirm}>Confirm mint</button>
+      {complete
+        ? <button type="button" onClick={onClose}>Done</button>
+        : <button type="button" onClick={onConfirm}>Confirm mint</button>}
     </div>
   ),
 }))
@@ -156,7 +161,7 @@ describe('free mint gas', () => {
     )
     // A Safe app signs the sent gas as safeTxGas.
     expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'mintFor', gas: 0n }))
-    expect(mocks.waitSafe).toHaveBeenCalledWith(1, PROPOSAL)
+    expect(mocks.waitSafe).toHaveBeenCalledWith(1, PROPOSAL, { signal: expect.any(AbortSignal) })
     expect(text()).toContain('Items minted')
   })
 
@@ -199,6 +204,36 @@ describe('free mint gas', () => {
     await mint()
     expect(text()).toContain('Mint submitted')
     expect(text()).not.toContain('Items minted')
+  })
+
+  it.each([
+    ['the Safe service cannot track the proposal', new Error("Safe’s transaction service has no record of this proposal.")],
+    ['the wait ends', new DOMException('Safe execution wait aborted', 'AbortError')],
+  ])('keeps a Safe app mint submitted, never offered again, when %s', async (_, ended) => {
+    mocks.safe = true
+    mocks.waitSafe.mockRejectedValue(ended)
+    await mint()
+    expect(text()).toContain('Mint submitted')
+    expect(text()).not.toContain(ended.message)
+    expect(mocks.receipt).not.toHaveBeenCalled()
+    const actions = renderer.root.findAllByType('button').map(button => button.children.join(''))
+    expect(actions).toContain('Done')
+    expect(actions).not.toContain('Confirm mint')
+    expect(mocks.write).toHaveBeenCalledOnce()
+  })
+
+  it("ends the wait for a Safe app mint's execution when the modal closes", async () => {
+    mocks.safe = true
+    let waiting: AbortSignal | undefined
+    mocks.waitSafe.mockImplementation((_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) => {
+      waiting = signal
+      return new Promise(() => {})
+    })
+    await mint()
+    expect(waiting?.aborted).toBe(false)
+    await act(async () => renderer.unmount())
+    expect(waiting?.aborted).toBe(true)
+    renderer = create(<p />)
   })
 
   it('stops before the wallet when the Safe connection changes after review', async () => {

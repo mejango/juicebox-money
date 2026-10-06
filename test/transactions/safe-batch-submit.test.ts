@@ -71,6 +71,9 @@ import {
 } from '@/lib/safe-batch-submit'
 import { SAFE_EXEC_ABI, safeTransactionHash } from '@bananapus/nana-sdk-core/safe-service'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
 const BOB = '0x3333333333333333333333333333333333333333' as Address
@@ -217,6 +220,7 @@ describe('Safe owner batch', () => {
     const onProposed = vi.fn()
 
     const outcome = await submitSafeBatch({
+      signal: flow,
       chainId: 1,
       authority: SAFE,
       steps,
@@ -291,6 +295,7 @@ describe('Safe owner batch', () => {
     mocks.client.getCode.mockResolvedValue('0x')
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -311,6 +316,7 @@ describe('Safe owner batch', () => {
     })
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -325,6 +331,7 @@ describe('Safe owner batch', () => {
     mocks.client.getCode.mockResolvedValue('0x')
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -342,6 +349,7 @@ describe('Safe owner batch', () => {
     const steps = presetSteps()
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: [steps[1], steps[0]],
@@ -350,6 +358,7 @@ describe('Safe owner batch', () => {
     ).rejects.toThrow(/Set the buyback hook before/)
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: [],
@@ -358,6 +367,7 @@ describe('Safe owner batch', () => {
     ).rejects.toThrow(/at least one step/)
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps,
@@ -377,6 +387,7 @@ describe('Safe app batch', () => {
     const onProposed = vi.fn()
 
     const outcome = await submitSafeBatch({
+      signal: flow,
       chainId: 1,
       authority: SAFE,
       steps,
@@ -405,10 +416,36 @@ describe('Safe app batch', () => {
       { chainId: 1, calls },
     )
     expect(onProposed).toHaveBeenCalledWith(PROPOSAL)
-    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(1, PROPOSAL)
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(1, PROPOSAL, { signal: flow })
     expect(mocks.waitForTrackedReceipt).toHaveBeenCalledWith(mocks.client, EXECUTION)
     expect(outcome).toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
+  it('ends the wait for the Safe to execute a proposed batch with its flow, the proposal reported', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    const page = new AbortController()
+    mocks.waitForSafeExecutionHash.mockImplementation((_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      }))
+    const onProposed = vi.fn()
+    const submitted = submitSafeBatch({
+      signal: page.signal,
+      chainId: 1,
+      authority: SAFE,
+      steps: presetSteps(),
+      route: { kind: 'safe-app', authorityKind: 'safe' },
+      onProposed,
+    })
+    await vi.waitFor(() => expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(1, PROPOSAL, { signal: page.signal }))
+    expect(onProposed).toHaveBeenCalledWith(PROPOSAL)
+
+    page.abort()
+    await expect(submitted).rejects.toMatchObject({ name: 'AbortError' })
+    expect(mocks.sendCalls).toHaveBeenCalledOnce()
+    expect(mocks.waitForTrackedReceipt).not.toHaveBeenCalled()
   })
 
   it('fails a batch whose Safe execution logged ExecutionFailure for this proposal', async () => {
@@ -429,6 +466,7 @@ describe('Safe app batch', () => {
     })
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -444,6 +482,7 @@ describe('Safe app batch', () => {
     })
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -460,6 +499,7 @@ describe('Safe app batch', () => {
     })
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -494,6 +534,7 @@ describe('Safe app batch', () => {
       })
     const submit = () =>
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -516,6 +557,7 @@ describe('Safe app batch', () => {
     mocks.requireReview.mockRejectedValueOnce(new Error('Review cancelled.'))
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -527,6 +569,7 @@ describe('Safe app batch', () => {
     mocks.sendCalls.mockResolvedValueOnce({ id: 'not-a-hash' })
     await expect(
       submitSafeBatch({
+        signal: flow,
         chainId: 1,
         authority: SAFE,
         steps: presetSteps(),
@@ -543,6 +586,7 @@ describe('EOA batch', () => {
     const steps = presetSteps()
     const onStep = vi.fn()
     const outcome = await submitSafeBatch({
+      signal: flow,
       chainId: 1,
       authority: ALICE,
       steps,

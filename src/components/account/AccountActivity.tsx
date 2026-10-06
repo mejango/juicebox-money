@@ -2,6 +2,7 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useEffect, useState } from 'react'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { ActorLink } from '@/components/ActorLink'
 import {
   combinedActivityParts,
@@ -39,6 +40,8 @@ export function AccountActivity({
   totalCount: number
 }) {
   const [events, setEvents] = useState(initialEvents)
+  // Older pages load while the list is shown; leaving it stops the one under way.
+  const listSignal = useUnmountSignal()
   const [total, setTotal] = useState(totalCount)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -46,6 +49,8 @@ export function AccountActivity({
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
     let stopped = false
+    // The poll's reads stop with it.
+    const polling = new AbortController()
 
     const refresh = async () => {
       if (document.visibilityState === 'hidden') return
@@ -53,6 +58,7 @@ export function AccountActivity({
         const page = await getAccountActivity(address, {
           limit: ACCOUNT_ACTIVITY_PAGE,
           offset: 0,
+          signal: polling.signal,
         })
         if (stopped) return
         setEvents(current => mergeActivityEvents(current, page.items))
@@ -69,6 +75,7 @@ export function AccountActivity({
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       stopped = true
+      polling.abort()
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
@@ -81,6 +88,7 @@ export function AccountActivity({
       const page = await getAccountActivity(address, {
         limit: ACCOUNT_ACTIVITY_PAGE,
         offset: events.length,
+        signal: listSignal(),
       })
       setEvents(previous => {
         const seen = new Set(previous.map(event => event.id))

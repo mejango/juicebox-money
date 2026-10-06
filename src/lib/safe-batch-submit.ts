@@ -15,12 +15,16 @@ import {
   readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
-import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'
+import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
   type SequenceCall,
 } from '@/lib/safe-batch-connector'
-import { isSafeConnection } from '@/lib/safe-connector'
+import {
+  isSafeConnection,
+  requireSafeProposalSuccess,
+  waitForSafeExecutionHash,
+} from '@/lib/safe-connector'
 import {
   buildBuybackHookAuthorityCall,
   buildInitializeBuybackPoolAuthorityCall,
@@ -253,11 +257,14 @@ export async function submitSafeBatch({
   onProgress,
   onStep,
   onProposed,
+  signal,
 }: {
   chainId: JBChainId
   authority: Address
   steps: readonly BatchStep[]
   route: SafeBatchRoute
+  /** The flow's: when it aborts, the wait for the Safe to execute the batch ends, and the proposal stays queued. */
+  signal: AbortSignal
   onProgress?: (message: string) => void
   /** The step whose wallet prompt is next (EOA route). */
   onStep?: (index: number) => void
@@ -283,6 +290,7 @@ export async function submitSafeBatch({
       const result = await runAuthorityCalls({
         calls: [authorityCallForStep(steps[index], authority)],
         onProgress: progress => onProgress?.(progress.message),
+        signal,
       })
       hashes.push(...result.directResults)
     }
@@ -292,17 +300,23 @@ export async function submitSafeBatch({
   const sequence = sequenceOf(steps)
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
-    const proposal = await proposeSafeBatch({
+    const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
-      onProposed,
     })
-    if (!proposal.executionHash) {
-      throw new Error('The batch was proposed but its execution was not tracked.')
-    }
-    return { kind: 'safe-app', safeTxHash: proposal.safeTxHash, executionHash: proposal.executionHash }
+    await onProposed?.(safeTxHash)
+    // Tracked to its execution, as a single Safe app authority call is.
+    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
+    const receipt = await waitForTrackedReceipt(client, executionHash)
+    const failure = 'The batch reverted after Safe execution.'
+    if (receipt.status !== 'success') throw new Error(failure)
+    await requireSafeProposalSuccess(
+      { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
+      failure,
+    )
+    return { kind: 'safe-app', safeTxHash, executionHash }
   }
 
   onProgress?.(`Simulating ${calls.length} calls from the Safe…`)
@@ -344,6 +358,7 @@ export async function submitSafeBatch({
       },
     ],
     onProgress,
+    signal,
   })
   await onProposed?.(result.safeTxHash)
   return { kind: 'safe-owner', result }

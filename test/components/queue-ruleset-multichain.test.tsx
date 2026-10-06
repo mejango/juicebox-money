@@ -35,6 +35,9 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<ty
 import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { relayrCallsScope } from '@/lib/relayr'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 type Rules = Parameters<typeof rulesForQueueDestination>[0]
 type Source = Parameters<typeof buildQueueDestinationConfig>[2]
 type Review = Parameters<typeof reviewedQueueCalls>[0]
@@ -283,13 +286,13 @@ describe('queue recovery after cancellation or partial execution', () => {
   it('keeps no saved review when its submission published nothing, and keeps it while its bundle is pending', async () => {
     mocks.loadSession.mockReturnValue(null)
     mocks.runAuthorityCalls.mockRejectedValueOnce(new Error('Signature declined'))
-    await expect(submitQueueReview(currentReview, 'current', vi.fn())).rejects.toThrow('Signature declined')
+    await expect(submitQueueReview(currentReview, 'current', vi.fn(), flow)).rejects.toThrow('Signature declined')
     expect(storage.size).toBe(0)
     mocks.runAuthorityCalls.mockImplementationOnce(async () => {
       mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })
       throw new Error('Funding chain selection cancelled. Nothing was sent.')
     })
-    await expect(submitQueueReview(currentReview, 'current', vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(submitQueueReview(currentReview, 'current', vi.fn(), flow)).rejects.toThrow(/cancelled/)
     expect(storage.size).toBe(2)
   })
   it('never offers Discard while the saved signature could still run', async () => {

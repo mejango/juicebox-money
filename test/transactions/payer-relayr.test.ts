@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, relayrPaymentDetails, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -65,11 +65,14 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 }))
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
-  payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
-import { RelayrPaymentSubmittedError, relayrPay, relayrPaymentDetails, relayrPoll } from '@/lib/relayr'
+  payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
+import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr'
 import { sentRelayrPayment } from '@/lib/relayr-payments'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
+
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
 
 let review: PayerDeploymentSession
 let projectId = 100
@@ -173,7 +176,7 @@ describe('payer deployment review and raw Relayr execution', () => {
     const testnets = [11155111, 11155420, 84532, 421614]
     review = makeReview(testnets)
     mocks.funding.mockResolvedValue(84532)
-    const result = await runPayerDeployments(review, vi.fn())
+    const result = await runPayerDeployments(review, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
@@ -196,7 +199,7 @@ describe('payer deployment review and raw Relayr execution', () => {
     mocks.post.mockImplementation(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
       payment_info: quoteFor([{ ...entries[0], chain: 1 }]).payment_info,
     }))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/network family/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/network family/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.funding).not.toHaveBeenCalled()
@@ -205,11 +208,11 @@ describe('payer deployment review and raw Relayr execution', () => {
 
   it('quotes the same raw calls again once the saved unpaid quote can no longer be paid, after Relayr confirms none ran', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
     relayrReports()
-    const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
@@ -217,25 +220,29 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
   })
 
-  it.each<[string, Record<string, unknown>]>([
-    ['reports a payment', { payment_received: true }],
-    ['does not say whether it was paid', { payment_received: null }],
-    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }],
-    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }],
-  ])('keeps an unpaid quote that can no longer be paid while Relayr %s', async (_, body) => {
+  it.each<[string, Record<string, unknown>, string, string]>([
+    ['reports a payment', { payment_received: true }, 'paid',
+      'Relayr already reports a payment for this bundle. Do not pay again.'],
+    ['does not say whether it was paid', { payment_received: null }, 'unknown',
+      'Relayr has not said whether this bundle is paid. Do not pay again yet; check it later.'],
+    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }, 'running',
+      'Relayr reports a transaction of this bundle as running or run. Do not pay again.'],
+    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }, 'unknown',
+      'Relayr has not said whether this bundle is paid. Do not pay again yet; check it later.'],
+  ])('keeps an unpaid quote that can no longer be paid while Relayr %s, saying why', async (_, body, reason, message) => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
     relayrReports(body)
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(
-      'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({
+      name: 'RelayrPaymentRetryError', reason, message })
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).not.toHaveBeenCalled()
   })
 
   it('uses each linked project ID and the explicit admin/beneficiary in raw factory calls with one chosen funding payment', async () => {
-    const result = await runPayerDeployments(review, vi.fn())
+    const result = await runPayerDeployments(review, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(result.outcomes.map(outcome => outcome.payer)).toEqual([PAYER, PAYER])
     const entries = mocks.post.mock.calls[0][0] as RelayrEntry[]
@@ -254,23 +261,23 @@ describe('payer deployment review and raw Relayr execution', () => {
 
   it('keeps the original unpaid quote and frozen settings when funding selection is canceled', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.phase).toBe('quoted')
     expect(mocks.paymentSent).not.toHaveBeenCalled()
     const edited = { ...review, calls: [{ ...review.calls[0], memo: 'changed' }, review.calls[1]] }
-    await expect(runPayerDeployments(edited, vi.fn())).rejects.toThrow(/previous payer deployment/)
-    await runPayerDeployments(saved, vi.fn())
+    await expect(runPayerDeployments(edited, vi.fn(), flow)).rejects.toThrow(/previous payer deployment/)
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
   })
 
   it('never republishes a raw factory bundle when the original quote response was lost', async () => {
     mocks.post.mockRejectedValueOnce(new Error('Quote connection lost.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/connection lost/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/connection lost/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.phase).toBe('publishing')
-    await expect(runPayerDeployments(saved, vi.fn())).rejects.toThrow(/duplicate addresses/)
+    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/duplicate addresses/)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).not.toHaveBeenCalled()
   })
@@ -282,11 +289,11 @@ describe('payer deployment review and raw Relayr execution', () => {
       args[2]?.(partial)
       throw new Error('One destination failed.')
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/destination failed/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/destination failed/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes.map(outcome => outcome.state)).toEqual(['verified', 'ready'])
     expect(saved.paymentHash).toBe(PAYMENT_HASH)
-    await runPayerDeployments(saved, vi.fn())
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('complete')
@@ -298,14 +305,14 @@ describe('payer deployment review and raw Relayr execution', () => {
       expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-sending')
       throw new Error('Wallet disconnected after send.')
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/disconnected/)
-    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/disconnected/)
+    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
   it('stops before publication if browser storage cannot preserve the frozen review', async () => {
     storage.setItem.mockImplementation(() => { throw new Error('Storage blocked.') })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/browser storage/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.paymentSent).not.toHaveBeenCalled()
   })
@@ -316,7 +323,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       quote.expectedTransactions![0].entry = { ...entries[0], target: ADMIN }
       return quote
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/changed a reviewed deployment/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/changed a reviewed deployment/)
     expect(mocks.paymentSent).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.phase).toBe('publishing')
   })
@@ -327,18 +334,18 @@ describe('payer deployment review and raw Relayr execution', () => {
       if (key.includes('journal:') && JSON.parse(value).phase === 'executing') throw new Error('Storage filled up.')
       return original(key, value)
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/browser storage/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved).toMatchObject({ phase: 'executing', paymentHash: PAYMENT_HASH })
     storage.setItem.mockImplementation(original)
-    await runPayerDeployments(saved, vi.fn())
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a saved deployment whose payment record is malformed pending', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     const key = `jb-payer-deploy-v1:journal:${review.id}`
     const saved = JSON.parse(window.localStorage.getItem(key)!)
     window.localStorage.setItem(key, JSON.stringify({ ...saved, payments: [{ hash: PAYMENT_HASH, chainId: 999 }] }))
@@ -353,11 +360,11 @@ describe('payer deployment review and raw Relayr execution', () => {
 
   it('blocks a stale quoted review after its original attempt was completed and archived', async () => {
     mocks.funding.mockRejectedValueOnce(new Error('Funding canceled.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/canceled/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/canceled/)
     const stale = loadPayerDeployment(review.scope)!
-    await runPayerDeployments(stale, vi.fn())
+    await runPayerDeployments(stale, vi.fn(), flow)
     await finishPayerDeployment(review.scope, review.id)
-    await expect(runPayerDeployments(stale, vi.fn())).rejects.toThrow(/already completed/)
+    await expect(runPayerDeployments(stale, vi.fn(), flow)).rejects.toThrow(/already completed/)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
   })
@@ -365,10 +372,10 @@ describe('payer deployment review and raw Relayr execution', () => {
   it('finds an overlapping pending deployment through its selected project alias', async () => {
     review = makeReview([1])
     mocks.send.mockRejectedValueOnce(new Error('Wallet response lost.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/response lost/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
     const overlapping = makeReview([1, 10])
     const update = vi.fn()
-    await expect(runPayerDeployments(overlapping, update)).rejects.toThrow(/previous payer deployment/)
+    await expect(runPayerDeployments(overlapping, update, flow)).rejects.toThrow(/previous payer deployment/)
     expect(loadPayerDeployment(overlapping.scope)?.id).toBe(review.id)
     expect(update).toHaveBeenCalledWith(expect.objectContaining({ id: review.id }))
     expect(mocks.send).toHaveBeenCalledTimes(1)
@@ -379,9 +386,9 @@ describe('payer deployment review and raw Relayr execution', () => {
     review = makeReview([1])
     let release!: (hash: Hex) => void
     mocks.send.mockImplementationOnce(() => new Promise<Hex>(resolve => { release = resolve }))
-    const first = runPayerDeployments(review, vi.fn())
+    const first = runPayerDeployments(review, vi.fn(), flow)
     await vi.waitFor(() => expect(mocks.send).toHaveBeenCalledTimes(1))
-    await expect(runPayerDeployments(makeReview([1, 10]), vi.fn())).rejects.toThrow(/already being processed/)
+    await expect(runPayerDeployments(makeReview([1, 10]), vi.fn(), flow)).rejects.toThrow(/already being processed/)
     release(hashFor(1))
     await first
     expect(mocks.post).not.toHaveBeenCalled()
@@ -392,11 +399,11 @@ describe('direct and Safe payer recovery', () => {
   it('preserves a legacy direct testnet review and resumes receipts without cloning a successful earlier chain again', async () => {
     review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
     mocks.waitReceipt.mockRejectedValueOnce(new Error('Receipt unavailable.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/unavailable/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/unavailable/)
     expect(mocks.send).toHaveBeenCalledTimes(1)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0]).toMatchObject({ state: 'submitted', hash: hashFor(11155111) })
-    await runPayerDeployments(saved, vi.fn())
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.send.mock.calls.map(args => args[0])).toEqual([11155111, 11155420])
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.paymentSent).not.toHaveBeenCalled()
@@ -405,10 +412,10 @@ describe('direct and Safe payer recovery', () => {
   it('keeps an ambiguous direct send pending and never advances to another chain', async () => {
     review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
     mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/response lost/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0].state).toBe('sending')
-    await expect(runPayerDeployments(saved, vi.fn())).rejects.toThrow(/without returning a hash/)
+    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/without returning a hash/)
     expect(mocks.send).toHaveBeenCalledTimes(1)
     await expect(finishPayerDeployment(review.scope, review.id)).rejects.toThrow(/Resolve the existing/)
   })
@@ -420,7 +427,7 @@ describe('direct and Safe payer recovery', () => {
       if (key.includes('journal:') && JSON.parse(value).outcomes[0].state === 'sending') throw new Error('Storage blocked.')
       original(key, value)
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/browser storage/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.outcomes[0].state).toBe('ready')
   })
@@ -437,7 +444,7 @@ describe('direct and Safe payer recovery', () => {
       failAliases = true
       return encodeAbiParameters([{ type: 'address' }], [PAYER])
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/browser storage/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.outcomes[0].state).toBe('ready')
   })
@@ -449,14 +456,14 @@ describe('direct and Safe payer recovery', () => {
     let currentHash = hashFor(1)
     mocks.getTransaction.mockImplementation(async () => ({ ...originalTransaction, hash: currentHash }))
     mocks.getReceipt.mockImplementation(async () => ({ ...receipt(1), transactionHash: currentHash, status: reverted ? 'reverted' : 'success' }))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/verified successful receipt/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/verified successful receipt/)
     const failed = loadPayerDeployment(review.scope)!
     expect(failed.outcomes[0]).toMatchObject({ state: 'failed', failedHashes: [hashFor(1)] })
     mocks.getBlock.mockResolvedValueOnce({ hash: PAYMENT_HASH })
-    await expect(runPayerDeployments(failed, vi.fn())).rejects.toThrow(/revert is no longer canonical/)
+    await expect(runPayerDeployments(failed, vi.fn(), flow)).rejects.toThrow(/revert is no longer canonical/)
     expect(mocks.send).toHaveBeenCalledTimes(1)
     mocks.send.mockImplementationOnce(async () => { reverted = false; currentHash = PAYMENT_HASH; return currentHash })
-    const result = await runPayerDeployments(failed, vi.fn())
+    const result = await runPayerDeployments(failed, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(result.outcomes[0]).toMatchObject({ hash: PAYMENT_HASH, failedHashes: [hashFor(1)] })
     expect(mocks.send).toHaveBeenCalledTimes(2)
@@ -466,14 +473,38 @@ describe('direct and Safe payer recovery', () => {
     mocks.safe = true
     review = makeReview([1, 10])
     mocks.waitSafe.mockRejectedValueOnce(new Error('Safe confirmation pending.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/Safe confirmation pending/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/Safe confirmation pending/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.transport).toBe('safe')
     expect(saved.outcomes[0]).toMatchObject({ state: 'submitted', safeProposalHash: SAFE_PROPOSAL })
     expect(mocks.waitReceipt).not.toHaveBeenCalled()
-    await runPayerDeployments(saved, vi.fn())
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.send.mock.calls.map(args => args[0])).toEqual([1, 10])
     expect(mocks.post).not.toHaveBeenCalled()
+  })
+
+  it("looks for a Safe deployment's execution for a minute with the flow's signal, and says it is still pending when the look ends", async () => {
+    mocks.safe = true
+    review = makeReview([1, 10])
+    const page = new AbortController()
+    mocks.waitSafe.mockRejectedValueOnce(new DOMException('Safe execution wait aborted', 'AbortError'))
+    await expect(runPayerDeployments(review, vi.fn(), page.signal)).rejects.toThrow(SAFE_PAYER_PENDING)
+    expect(mocks.waitSafe).toHaveBeenCalledWith(1, SAFE_PROPOSAL, { signal: page.signal, lookMs: 60_000 })
+    expect(loadPayerDeployment(review.scope)!.outcomes[0]).toMatchObject({ state: 'submitted', safeProposalHash: SAFE_PROPOSAL })
+    expect(mocks.waitReceipt).not.toHaveBeenCalled()
+  })
+
+  it('ends a Safe deployment wait with its flow, leaving the deployment submitted', async () => {
+    mocks.safe = true
+    review = makeReview([1, 10])
+    const page = new AbortController()
+    mocks.waitSafe.mockImplementationOnce(async () => {
+      page.abort()
+      throw new DOMException('Safe execution wait aborted', 'AbortError')
+    })
+    await expect(runPayerDeployments(review, vi.fn(), page.signal)).rejects.toMatchObject({ name: 'AbortError' })
+    expect(loadPayerDeployment(review.scope)!.outcomes[0]).toMatchObject({ state: 'submitted', safeProposalHash: SAFE_PROPOSAL })
+    expect(mocks.send).toHaveBeenCalledTimes(1)
   })
 
   it('rejects a Safe service mapping to an identical factory call from another Safe proposal', async () => {
@@ -484,11 +515,11 @@ describe('direct and Safe payer recovery', () => {
       wrong.logs.at(-1)!.topics[1] = PAYMENT_HASH
       return wrong
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/exact original Safe payer proposal/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/exact original Safe payer proposal/)
     expect(mocks.send).toHaveBeenCalledTimes(1)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0]).toMatchObject({ state: 'submitted', safeProposalHash: SAFE_PROPOSAL })
-    await runPayerDeployments(saved, vi.fn())
+    await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.send.mock.calls.map(args => args[0])).toEqual([1, 10])
   })
 
@@ -500,7 +531,7 @@ describe('direct and Safe payer recovery', () => {
       return SAFE_PROPOSAL
     })
     mocks.waitSafe.mockRejectedValue(new Error('Safe does not host a transaction service on this chain.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/does not host/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/does not host/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0]).toMatchObject({ state: 'submitted', safeProposalHash: SAFE_PROPOSAL, fromBlock: '100' })
     expect(mocks.waitReceipt).not.toHaveBeenCalled()
@@ -509,7 +540,7 @@ describe('direct and Safe payer recovery', () => {
       address: ALICE, data: `0x${'00'.repeat(32)}`, transactionHash: hashFor(11155420),
       topics: [keccak256(stringToHex('ExecutionSuccess(bytes32,uint256)')), SAFE_PROPOSAL],
     }])
-    const completed = await runPayerDeployments(saved, vi.fn())
+    const completed = await runPayerDeployments(saved, vi.fn(), flow)
     expect(completed.phase).toBe('complete')
     expect(completed.outcomes[0]).toMatchObject({ state: 'verified', hash: hashFor(11155420), safeProposalHash: SAFE_PROPOSAL, fromBlock: '100' })
     expect(mocks.getLogs).toHaveBeenLastCalledWith(11155420, { address: ALICE, fromBlock: 100n, toBlock: 200n })
@@ -519,7 +550,7 @@ describe('direct and Safe payer recovery', () => {
 
   it('reviews every direct deployment once with the fixed gas it sends', async () => {
     review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
-    const result = await runPayerDeployments(review, vi.fn())
+    const result = await runPayerDeployments(review, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(mocks.review).toHaveBeenCalledTimes(1)
     const reviewed = mocks.review.mock.calls[0][0]
@@ -535,9 +566,9 @@ describe('direct and Safe payer recovery', () => {
   it('reviews each deployment a resumed attempt sends, with its fixed gas', async () => {
     review = { ...makeReview([11155111, 11155420]), transport: 'direct' }
     mocks.waitReceipt.mockRejectedValueOnce(new Error('Receipt unavailable.'))
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/unavailable/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/unavailable/)
     expect(mocks.review).toHaveBeenCalledTimes(1)
-    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
     expect(mocks.review).toHaveBeenCalledTimes(2)
     expect(mocks.review.mock.calls[1][0]).toMatchObject({
       title: 'Review payer deployment',
@@ -552,7 +583,7 @@ describe('direct and Safe payer recovery', () => {
   it('proposes every Safe deployment after one review with Safe gas 0', async () => {
     mocks.safe = true
     review = makeReview([1, 10])
-    await runPayerDeployments(review, vi.fn())
+    await runPayerDeployments(review, vi.fn(), flow)
     expect(mocks.review).toHaveBeenCalledTimes(1)
     const reviewed = mocks.review.mock.calls[0][0]
     expect(reviewed).toMatchObject({ kind: 'transaction', confirmLabel: 'Agree & continue to Safe' })
@@ -566,7 +597,7 @@ describe('direct and Safe payer recovery', () => {
   })
 
   it('shows a relayed bundle’s raw calls without a gas the wallet never sends', async () => {
-    await runPayerDeployments(review, vi.fn())
+    await runPayerDeployments(review, vi.fn(), flow)
     const reviewed = mocks.review.mock.calls[0][0]
     expect(reviewed.kind).toBe('authorization')
     for (const call of reviewed.calls) {
@@ -577,7 +608,7 @@ describe('direct and Safe payer recovery', () => {
 
   it('requires the reviewed wallet to remain connected before saving or sending', async () => {
     mocks.review.mockImplementationOnce(async () => { mocks.address = ADMIN })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/wallet that reviewed/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/wallet that reviewed/)
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.send).not.toHaveBeenCalled()
   })
@@ -608,7 +639,7 @@ describe('exact payer destination proof', () => {
   })
 
   it('archives a complete attempt only after rechecking every original deployment', async () => {
-    await runPayerDeployments(review, vi.fn())
+    await runPayerDeployments(review, vi.fn(), flow)
     mocks.getBlock.mockResolvedValueOnce({ hash: PAYMENT_HASH })
     await expect(finishPayerDeployment(review.scope, review.id)).rejects.toThrow(/no longer canonical/)
     expect(loadPayerDeployment(review.scope)).not.toBeNull()
@@ -620,10 +651,10 @@ describe('exact payer destination proof', () => {
   it('does not let stale completed UI archive a newer attempt that replaced the project aliases', async () => {
     review = makeReview([1])
     const old = review
-    await runPayerDeployments(old, vi.fn())
+    await runPayerDeployments(old, vi.fn(), flow)
     await finishPayerDeployment(old.scope, old.id)
     review = makeReview([1])
-    await runPayerDeployments(review, vi.fn())
+    await runPayerDeployments(review, vi.fn(), flow)
     await expect(finishPayerDeployment(old.scope, old.id)).rejects.toThrow(/Resolve the existing/)
     expect(loadPayerDeployment(old.scope)?.id).toBe(review.id)
     expect(loadPayerDeployment(old.scope)?.archived).not.toBe(true)
@@ -649,7 +680,7 @@ describe('paying a reverted payer quote again', () => {
 
   it('pays the same quote again on the same chain, naming every payment it sent', async () => {
     mocks.pay.mockImplementationOnce(revertingPay)
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow('The Relayr funding transaction reverted onchain.')
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow('The Relayr funding transaction reverted onchain.')
     const reverted = loadPayerDeployment(review.scope)!
     expect(reverted).toMatchObject({ phase: 'payment-reverted', paymentHash: PAYMENT_HASH,
       payments: [expect.objectContaining({ hash: PAYMENT_HASH, chainId: 10, bundleUuid: BUNDLE })] })
@@ -657,7 +688,7 @@ describe('paying a reverted payer quote again', () => {
     let held: PayerDeploymentSession | null = null
     mocks.pay.mockImplementationOnce(async (options: Parameters<typeof relayrPay>[0]) => pay({ ...options,
       onSending: (details: RelayrPaymentDetails) => { options.onSending?.(details); held = loadPayerDeployment(review.scope) } }))
-    const result = await runPayerDeployments(reverted, vi.fn())
+    const result = await runPayerDeployments(reverted, vi.fn(), flow)
     expect(result.phase).toBe('complete')
     expect(held).toMatchObject({ phase: 'payment-sending', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
     expect(held!.paymentHash).toBeUndefined()
@@ -670,11 +701,11 @@ describe('paying a reverted payer quote again', () => {
 
   it('proves a quote another payment funded after its own payment reverted, and never pays it again', async () => {
     mocks.pay.mockImplementationOnce(revertingPay)
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
     // Another payment funded the bundle, and Relayr ran it.
     vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE,
       payment_received: true, transactions: records() }), { status: 200 }))
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
   })
@@ -689,7 +720,7 @@ describe('paying a reverted payer quote again', () => {
      */
     async function expired(finalizedPast = 1) {
       mocks.pay.mockImplementationOnce(revertingPay)
-      await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+      await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
       const sent = loadPayerDeployment(review.scope)!.payments![0]
       const transaction = mocks.getTransaction.getMockImplementation()!
       const receipt = mocks.getReceipt.getMockImplementation()!
@@ -710,7 +741,7 @@ describe('paying a reverted payer quote again', () => {
 
     it('quotes the same raw calls again once nothing can fund the reverted quote', async () => {
       await expired()
-      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
       expect(mocks.post).toHaveBeenCalledTimes(2)
       expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
       expect(mocks.funding).toHaveBeenCalledTimes(2)
@@ -719,7 +750,7 @@ describe('paying a reverted payer quote again', () => {
 
     it('keeps the quote while its deadline is not past the finalized block', async () => {
       await expired(0)
-      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(WAITING)
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(WAITING)
       expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'payment-reverted',
         payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
       expect(mocks.post).toHaveBeenCalledTimes(1)
@@ -729,12 +760,12 @@ describe('paying a reverted payer quote again', () => {
 
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     mocks.pay.mockImplementationOnce(revertingPay)
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
     mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending }: Parameters<typeof relayrPay>[0]) => {
       onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
       throw Object.assign(new Error('User rejected'), { code: 4001 })
     })
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow('User rejected')
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow('User rejected')
     expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'payment-reverted',
       payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
     expect(mocks.funding).toHaveBeenCalledTimes(1)
@@ -747,7 +778,7 @@ describe('paying a reverted payer quote again', () => {
       onSent?.([sentRelayrPayment(details, PAYMENT_HASH)])
       throw new RelayrPaymentSubmittedError(PAYMENT_HASH, payment.chain)
     })
-    await expect(runPayerDeployments(review, vi.fn())).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
     expect(loadPayerDeployment(review.scope)?.phase).toBe('executing')
     // The funding chain holds the reviewed payment, reverted.
     const sent = loadPayerDeployment(review.scope)!.payments![0]
@@ -759,7 +790,7 @@ describe('paying a reverted payer quote again', () => {
     mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
       ? { transactionHash: PAYMENT_HASH, to: sent.target, blockHash: BLOCK, blockNumber: 100n, status: 'reverted' }
       : receipt(chain, args))
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
     expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-reverted')
     expect(mocks.poll).not.toHaveBeenCalled()
     mocks.pay.mockImplementationOnce(async ({ payment: option, bundleUuid, destinationChainIds, sent: previous = [], onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
@@ -769,7 +800,7 @@ describe('paying a reverted payer quote again', () => {
       onSent?.(payments)
       return { hash: SECOND_PAYMENT, payments }
     })
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
     expect(mocks.pay.mock.calls[1][0].sent).toEqual([expect.objectContaining({ hash: PAYMENT_HASH })])
   })
 })

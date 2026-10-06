@@ -127,3 +127,12 @@ Review: published core 2.19.0 has identical distributed SDK code to the preview.
 - [x] Prove an unknown advisory still fails: unit cases, and the live audit on the old lockfile, which names only source-map-js.
 
 Review: Para's own JavaScript is identical in jbm and revnet, so one audit covers both. The new gate failed live on the old lockfile and named only source-map-js, then passed on 1.2.2. `npm run check` passed with Node 26.7.0 / npm 12.0.1: dependency, dead-code, audit, container, lint, typecheck, source, protocol (fixture mode), schema (38 documents), transaction inventory, coverage (179 files, 1,995 tests), browser build, client budgets and browser checks (57 passed, inside the shared gate lock).
+
+# SDK 2.21.0 adoption (2026-10-06)
+- [x] Take @bananapus/nana-sdk-core 2.21.0 exactly; the lockfile changes only the SDK.
+- [x] Delete jbm's copies the SDK now holds: the Center lag retry, the pre-review account check, the strict Relayr payment wrappers, the Safe wait's not-found wrapper, the server's 429 rewrite and the Relayr bundle guard.
+- [x] Give every Safe execution wait its flow's signal (required by type; components read useUnmountSignal), with an abort leaving the proposal submitted.
+- [x] Find a batch queued through MultiSendCallOnly 1.4.1, show the count a reserved distribution sent, say View as's refusal without a dash.
+- [x] Hand every page's Bendystraw read its signal, and the relay the browser request's.
+
+Review: refactors first, behavior changes tests first. Budgets measured on the same toolchain: main 434.4/502.1/2507.0 KiB (home/create/all), SDK 2.21.0 alone 435.1/503.0/2508.2, this branch 435.3/503.3/2509.0; caps 436/504/2510. Gate: lint, types, knip, audit, container, source, protocol, schema, transaction inventory, 2,461 unit tests with coverage, 57 browser tests in the shared gate lock, production build last.

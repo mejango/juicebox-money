@@ -53,6 +53,8 @@ export function AccountSafeProjects({
 
   useEffect(() => {
     let stopped = false
+    // Leaving the account stops its indexed read.
+    const left = new AbortController()
     ;(async () => {
       try {
         // Chains without Safe's transaction service contribute nothing.
@@ -66,7 +68,7 @@ export function AccountSafeProjects({
           if (!stopped) setRows([])
           return
         }
-        const projects = await getProjectsOwnedBy(safes)
+        const projects = await getProjectsOwnedBy(safes, { signal: left.signal })
         const deduped = dedupeSafeProjects(projects, safes, ownedKeys)
         const withThresholds = await Promise.all(
           deduped.map(async ({ project, safe }) => {
@@ -91,6 +93,7 @@ export function AccountSafeProjects({
     })()
     return () => {
       stopped = true
+      left.abort()
     }
     // ownedKeys is derived server-side per address; address identifies it.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -4,6 +4,7 @@ import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { formatUnits, isAddressEqual, parseUnits, zeroAddress, type Address } from 'viem'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
@@ -17,9 +18,14 @@ import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch
 type Draft = { token: string; currency: string; amount: string }
 const emptyDraft: Draft = { token: '', currency: '', amount: '' }
 
-function distributionReviewRows(distributions: readonly Distribution[]): TxConfirmRow[] {
+/**
+ * The rows of a review. Once a reserved distribution is confirmed, its rows
+ * show the count its receipt distributed (`distributed`, by chain), which can
+ * exceed the reviewed one: reserves accrue until the distribution runs.
+ */
+function distributionReviewRows(distributions: readonly Distribution[], distributed: Readonly<Record<number, bigint>> = {}): TxConfirmRow[] {
   return distributions.flatMap(item => {
-    const amount = item.kind === 'payouts' ? item.quote : item.pending
+    const amount = item.kind === 'payouts' ? item.quote : distributed[item.chainId] ?? item.pending
     const decimals = item.kind === 'payouts' ? item.context.decimals : 18
     const recipientTotal = item.splits.reduce((sum, split) => sum + split.percent, 0)
     const allocated = item.splits.reduce((sum, split) => sum + amount * BigInt(split.percent) / 1_000_000_000n, 0n)
@@ -53,6 +59,8 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   kind: 'payouts' | 'reserved'; chainId: JBChainId; projectId: number; chains: readonly (readonly [number, number])[]; homeToken?: Address; onDone?: () => void
 }) {
   const { address, isConnected, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const action = kind === 'payouts' ? 'distribute-payouts' : 'distribute-reserved'
   const scope = projectBatchScope(action, chainId, projectId)
@@ -70,6 +78,8 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [complete, setComplete] = useState(false)
+  // What each confirmed reserved distribution sent, by chain.
+  const [distributed, setDistributed] = useState<Record<number, bigint>>({})
   // Discard abandons the saved batch, so the distributions are reviewed again from live state (ruling R114 (f)).
   const discard = useRelayrDiscard(() => setError(null), () => { setBatch(null); setReview(null); setReviewAccount(null); setStatus(null) })
   useEffect(() => {
@@ -80,6 +90,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
     setSelected(new Set([chainId]))
     setDrafts({})
     setComplete(false)
+    setDistributed({})
     setOpen(saved?.status === 'pending')
   }, [scope, chainId])
 
@@ -107,7 +118,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
     if (!isConnected || !address) { openSignIn(); return }
     const saved = loadProjectBatch(scope)
     if (saved?.status === 'pending') setBatch(saved)
-    setOpen(true); setComplete(false); setError(null)
+    setOpen(true); setComplete(false); setDistributed({}); setError(null)
   }
   const handleReview = async () => {
     if (!address || busy) return
@@ -145,14 +156,20 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
     setBusy(true); setError(null); discard.capture(null)
     // The batch's last line says why it is still pending, such as a scan still reading.
     const reported = { line: null as string | null }
+    const sent: Record<number, bigint> = {}
     try {
       const result = await runProjectBatch({ scope, action, account: address,
         ...(batch ? { calls: batch.calls, expectedBatchId: batch.id } : { calls: distributionBatchCalls(review!), title: kind === 'payouts' ? 'Distribute payouts' : 'Distribute reserved tokens' }),
         reverify: call => reverifyDistribution(call.context as Distribution, address),
-        verifyCompletion: async (call, receipt) => verifyDistributionCompletion(call.context as Distribution, receipt),
+        verifyCompletion: async (call, receipt) => {
+          const count = verifyDistributionCompletion(call.context as Distribution, receipt)
+          if (count !== null) sent[call.chainId] = count
+        },
+        signal: flowSignal(),
         onProgress: progress => { reported.line = progress.message; setStatus(progress.message) },
       })
       setBatch(result)
+      setDistributed(previous => ({ ...previous, ...sent }))
       if (result.status === 'complete') { setComplete(true); setStatus('All selected distributions are confirmed.'); void queryClient.invalidateQueries({ queryKey: ['readContract'] }); onDone?.() }
       else setStatus(reported.line ?? 'Some distributions are still pending. Resume this saved review to check them.')
     } catch (err) {
@@ -194,6 +211,6 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       <TxError error={error} />
       <div className="flex gap-3"><button className="btn-primary min-h-[40px] px-4 text-sm" disabled={busy || options.isLoading} onClick={() => void handleReview()}>{busy ? 'Reviewing…' : 'Review selected distributions'}</button><button className="text-sm underline" disabled={busy} onClick={() => setOpen(false)}>Cancel</button></div>
     </div> : null}
-    {open && reviewed ? <TxConfirmDialog open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed)} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} actionDisabled={discard.active} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }}>{discard.element}</TxConfirmDialog> : null}
+    {open && reviewed ? <TxConfirmDialog open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed, complete ? distributed : {})} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} actionDisabled={discard.active} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }}>{discard.element}</TxConfirmDialog> : null}
   </div>
 }

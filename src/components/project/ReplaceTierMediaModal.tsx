@@ -9,6 +9,7 @@ import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor } from '@/lib/authority'
 import { shortError } from '@/lib/errors'
@@ -33,6 +34,8 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
 }) {
   const queryClient = useQueryClient()
   const { isConnected, address, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<string | null>(null)
   const [selected, setSelected] = useState<number[]>([chainId])
@@ -132,7 +135,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
         scope = projectBatchScope('shop-replace-media', calls[0].chainId, calls[0].projectId)
       }
       setPhase('writing')
-      const result = await runProjectBatch({ scope: scope!, action: 'shop-replace-media', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Replace item media', reverify: call => reverifyShopCall(call, address), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
+      const result = await runProjectBatch({ scope: scope!, action: 'shop-replace-media', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Replace item media', reverify: call => reverifyShopCall(call, address), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
       setBatch(result)
       await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
       setPhase(result.status === 'complete' ? 'done' : 'form')

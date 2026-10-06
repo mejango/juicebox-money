@@ -42,6 +42,7 @@ import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDia
 import { TxError } from "@/components/ui/TxError";
 import { RelayrDiscard } from "@/components/RelayrDiscard";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
+import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
@@ -711,8 +712,10 @@ function clearQueueJournal(journal: QueueRecoveryJournal): void {
  * Send reviewed rules under their destinations' locks. Rules for several
  * chains are saved before any signature can be published, so they can be
  * resumed, and cleared once they complete or when they published nothing.
+ * `signal` is the flow's: when it aborts, a Safe app proposal's wait for its
+ * execution ends.
  */
-export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void): Promise<AuthorityResult> {
+export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void, signal: AbortSignal): Promise<AuthorityResult> {
   const calls = reviewedQueueCalls(review, action);
   const journal = { scope: relayrCallsScope(calls), review, action };
   return withQueueDestinationLocks(review.destinations, async () => {
@@ -722,7 +725,7 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
     // Freeze every destination before any signature can be published.
     if (calls.length > 1) saveQueueJournal(journal);
     try {
-      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message) });
+      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message), signal });
       clearQueueJournal(journal);
       return result;
     } catch (error) {
@@ -741,6 +744,8 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
  */
 export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet();
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
@@ -752,7 +757,7 @@ export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: Que
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
       // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-      await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
+      await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
       clearQueueJournal(journal);
       onComplete();
     } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
@@ -1048,6 +1053,8 @@ function RulesetEditorForm({
   onPending: () => void;
 }) {
   const { isConnected, address, openSignIn } = useWallet();
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal();
 
   const { access } = source;
   const r = source.entry.ruleset;
@@ -1308,7 +1315,7 @@ function RulesetEditorForm({
     const recoveryKey = queueRecoveryKey(chainId, projectId);
     try {
       if (pendingQueueScope(recoveryKey)) { onPending(); return; }
-      const result = await submitQueueReview(review, action, setStatus);
+      const result = await submitQueueReview(review, action, setStatus, flowSignal());
       setTxHash(result.directResults[0] ?? null);
       setStatus(safeOutcomeMessage(result, queueSuccessCopy(action, review.configs[0].mustStartAtOrAfter)));
       setSuccess(true);

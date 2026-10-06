@@ -155,9 +155,11 @@ export function distributionCall(snapshot: Distribution): AuthorityCall {
 /**
  * A successful receipt can still hide a recipient or hook that failed or took
  * less than its share: the SDK proves every reviewed split received exactly
- * its share, in the reviewed ruleset, from the reviewed sender.
+ * its share, in the reviewed ruleset, from the reviewed sender. Returns the
+ * token count a reserved distribution's receipt distributed, or null for
+ * payouts.
  */
-export function verifyDistributionCompletion(snapshot: Distribution, receipt: TransactionReceipt): void {
+export function verifyDistributionCompletion(snapshot: Distribution, receipt: TransactionReceipt): bigint | null {
   const reviewed = {
     projectId: snapshot.projectId,
     rulesetId: snapshot.current.ruleset.id,
@@ -176,14 +178,20 @@ export function verifyDistributionCompletion(snapshot: Distribution, receipt: Tr
         // A split's hook the terminal pays without its fee must receive its gross.
         splits: snapshot.splits.map(split => ({ ...split, feeless: snapshot.hookFeeless[split.hook.toLowerCase()] === true })),
       })
+      return null
     } else {
-      verifyReservedDistributionReceipt(receipt, {
+      // Reserves accrue until the distribution runs, and a Safe can execute it
+      // days after the review, so the receipt may distribute more than was
+      // reviewed: any count at or above the reviewed one confirms (jango,
+      // 2026-10-05), each split's share checked against the count distributed.
+      // A smaller count (another distribution ran first) is refused.
+      return verifyReservedDistributionReceipt(receipt, {
         ...reviewed,
         controller: snapshot.controller,
         tokens: jbContractAddress['6'][JBCoreContracts.JBTokens][snapshot.chainId],
         tokenCount: snapshot.pending,
         splits: snapshot.splits,
-      })
+      }).tokenCount
     }
   } catch (error) {
     throw new Error(`${chainName(snapshot.chainId)}: ${error instanceof Error ? error.message : String(error)}`)

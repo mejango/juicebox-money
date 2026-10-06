@@ -69,6 +69,8 @@ export async function bendystraw<T>(
     network?: BendystrawNetwork
     /** `'no-store'` bypasses Next's fetch cache, which keeps a disk file for every distinct request. */
     policy?: BendystrawCachePolicy | 'no-store'
+    /** The caller's: when it aborts, the request under way stops and is not retried, and none is sent after. */
+    signal?: AbortSignal
   } = {},
 ): Promise<T> {
   const contract = compileBendystrawOperation(query)
@@ -83,6 +85,7 @@ export async function bendystraw<T>(
       contract,
       network,
       query,
+      signal: opts.signal,
       variables,
     })
   }
@@ -110,6 +113,7 @@ export async function bendystraw<T>(
     {
       fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
       operationName: contract.operationName,
+      signal: opts.signal,
       validateData: (value): value is T => contract.validateData(value),
       validateVariables: contract.validateVariables,
     },
@@ -175,7 +179,7 @@ const PARTICIPANTS_BY_FILTER_QUERY = `query ParticipantsByFilter(
 export async function getProject(
   chainId: number,
   projectId: number,
-  options: { policy?: 'no-store' } = {},
+  options: { policy?: 'no-store'; signal?: AbortSignal } = {},
 ): Promise<BsProject | null> {
   const data = await bendystraw<{ project: BsProject | null }>(
     `query($chainId: Float!, $projectId: Float!) {
@@ -495,6 +499,7 @@ export async function getProjectActivity(
   limit = 20,
   chainId?: number,
   offset = 0,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
@@ -544,6 +549,7 @@ export async function getProjectActivity(
       max: limit,
       startOffset: offset,
       policy: 'live',
+      signal,
     },
   )
   return page
@@ -554,6 +560,7 @@ export async function getProjectActivityByProject(
   projectId: number,
   limit = 20,
   offset = 0,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
@@ -604,6 +611,7 @@ export async function getProjectActivityByProject(
       max: limit,
       startOffset: offset,
       policy: 'live',
+      signal,
     },
   )
   return page
@@ -678,6 +686,7 @@ const MAX_INDEXED_REVNET_OPERATOR_CANDIDATES = 50
 export async function getRevnetOperatorCandidates(
   chainId: number,
   projectId: number,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<string[]> {
   {
     const account = (
@@ -705,6 +714,7 @@ export async function getRevnetOperatorCandidates(
       {
         pageSize: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
         max: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
+        signal,
       },
     )
     // An incomplete page is not an authoritative candidate set. Let callers
@@ -733,8 +743,9 @@ export async function getRevnetOperatorCandidates(
 export async function getRevnetOperator(
   chainId: number,
   projectId: number,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<string | null> {
-  return (await getRevnetOperatorCandidates(chainId, projectId))[0] ?? null
+  return (await getRevnetOperatorCandidates(chainId, projectId, { signal }))[0] ?? null
 }
 
 export type BsParticipant = {
@@ -836,6 +847,7 @@ export async function getProjectTickersByRefs(
  * filtered after every bounded Bendystraw query. */
 export async function getProjectPayers(
   deployments: readonly [number, number][],
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsProjectPayer[]> {
   const refs = deployments.map(([chainId, projectId]) => ({
     chainId,
@@ -855,6 +867,7 @@ export async function getProjectPayers(
           max: Number.POSITIVE_INFINITY,
           network: bendystrawNetworkHint(refs[0]?.chainId),
           policy: 'live',
+          signal,
         },
       ),
     ),
@@ -1211,7 +1224,7 @@ export async function getOwnedShopItems(
 export async function getSuckerGroupProjects(
   suckerGroupId: string,
   chainId?: number,
-  options: { policy?: 'no-store' } = {},
+  options: { policy?: 'no-store'; signal?: AbortSignal } = {},
 ): Promise<BsProject[]> {
   // A sucker group spans one row per chain per version, so 10 truncated real groups — and the
   // members that fell off vanished from project-page siblings, the wallet's cross-chain
@@ -1319,24 +1332,26 @@ export async function getAddToBalanceInflows(): Promise<BsAddToBalance[]> {
 
 export async function getSuckerGroupAddToBalance(
   suckerGroupId: string,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsAddToBalance[]> {
   const page = await getPagedItems<BsAddToBalance>(
     GROUP_ADD_TO_BALANCE_QUERY,
     'addToBalanceEvents',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+    { max: Number.POSITIVE_INFINITY, policy: 'stable', signal },
   )
   return page.items
 }
 
 export async function getSuckerGroupMoments(
   suckerGroupId: string,
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsPriceMoment[]> {
   const page = await getPagedItems<BsPriceMoment>(
     MOMENTS_QUERY,
     'suckerGroupMoments',
     { suckerGroupId },
-    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+    { max: Number.POSITIVE_INFINITY, policy: 'stable', signal },
   )
   return page.items
 }
@@ -1408,6 +1423,7 @@ export async function getPagedItems<T>(
     startOffset = 0,
     network,
     policy = 'standard',
+    signal,
   }: {
     pageSize?: number
     max?: number
@@ -1419,6 +1435,8 @@ export async function getPagedItems<T>(
     startOffset?: number
     network?: BendystrawNetwork
     policy?: BendystrawCachePolicy
+    /** The caller's, for every page's request. */
+    signal?: AbortSignal
   } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
@@ -1431,7 +1449,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: startOffset + items.length },
-      { network, policy },
+      { network, policy, signal },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount
@@ -1687,6 +1705,7 @@ export type BsPermissionHolder = {
 async function getPermissionHolders(
   chainId: number,
   projectId: number,
+  signal?: AbortSignal,
 ): Promise<BsPermissionHolder[]> {
   const page = await getPagedItems<BsPermissionHolder>(
     `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
@@ -1701,7 +1720,7 @@ async function getPermissionHolders(
       }`,
     'permissionHolders',
     { chainId, projectId },
-    { pageSize: 200, max: Number.POSITIVE_INFINITY },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY, signal },
   )
   return page.items.filter(row => (row.permissions?.length ?? 0) > 0)
 }
@@ -1842,7 +1861,7 @@ type BsBeneficiaryEventRow = {
  */
 export async function getAccountActivity(
   address: string,
-  { limit = 25, offset = 0 }: { limit?: number; offset?: number } = {},
+  { limit = 25, offset = 0, signal }: { limit?: number; offset?: number; signal?: AbortSignal } = {},
 ): Promise<{ items: BsAccountActivityEvent[]; totalCount: number }> {
   const addressLower = address.toLowerCase()
   const targetCount = offset + limit
@@ -1862,7 +1881,7 @@ export async function getAccountActivity(
     >(
       ACCOUNT_ACTIVITY_QUERY,
       { address: addressLower, limit: pageLimit, offset: pageOffset },
-      { policy: 'standard' },
+      { policy: 'standard', signal },
     )
     for (const name of listNames) {
       const root = data[name]
@@ -1938,6 +1957,7 @@ export async function getAccountActivity(
  */
 export async function getProjectsOwnedBy(
   owners: string[],
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsProject[]> {
   if (!owners.length) return []
   const page = await getPagedItems<BsProject>(
@@ -1952,7 +1972,7 @@ export async function getProjectsOwnedBy(
     }`,
     'projects',
     { owners: owners.map(owner => owner.toLowerCase()) },
-    { pageSize: 200, max: Number.POSITIVE_INFINITY },
+    { pageSize: 200, max: Number.POSITIVE_INFINITY, signal },
   )
   return page.items
 }
@@ -2120,6 +2140,7 @@ export async function getAccountNfts(
 
 export async function getPermissionHoldersAcrossDeployments(
   deployments: { chainId: number; projectId: number; authority?: string | null }[],
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsPermissionHolder[]> {
   const unique = new Map(
     deployments.map(deployment => [
@@ -2129,12 +2150,12 @@ export async function getPermissionHoldersAcrossDeployments(
   )
   const rows = await Promise.all(
     [...unique.values()].flatMap(deployment => [
-      getPermissionHolders(deployment.chainId, deployment.projectId),
+      getPermissionHolders(deployment.chainId, deployment.projectId, signal),
       // Wildcard grants from this project's own authority. Without a resolved
       // authority there is no grantor to scope to, so skip rather than pull
       // every account's wildcards on the chain.
       deployment.authority
-        ? getWildcardPermissionHolders(deployment.chainId, deployment.authority)
+        ? getWildcardPermissionHolders(deployment.chainId, deployment.authority, signal)
         : Promise.resolve([]),
     ]),
   )
@@ -2149,6 +2170,7 @@ export async function getPermissionHoldersAcrossDeployments(
 async function getWildcardPermissionHolders(
   chainId: number,
   account: string,
+  signal?: AbortSignal,
 ): Promise<BsPermissionHolder[]> {
   const page = await getPagedItems<BsPermissionHolder>(
     `query($chainId: Int!, $account: String!, $limit: Int!, $offset: Int!) {
@@ -2163,8 +2185,12 @@ async function getWildcardPermissionHolders(
       }`,
     'permissionHolders',
     { chainId, account },
-    { pageSize: 200, max: Number.POSITIVE_INFINITY },
-  ).catch(() => ({ items: [] as BsPermissionHolder[], totalCount: 0 }))
+    { pageSize: 200, max: Number.POSITIVE_INFINITY, signal },
+  ).catch((error: unknown) => {
+    // A caller that left gets its abort, never an empty answer.
+    if (signal?.aborted) throw error
+    return { items: [] as BsPermissionHolder[], totalCount: 0 }
+  })
   return page.items
     .filter(row => (row.permissions?.length ?? 0) > 0)
     .map(row => ({ ...row, wildcard: true }))

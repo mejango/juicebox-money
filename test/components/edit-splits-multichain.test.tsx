@@ -55,6 +55,9 @@ import {
 import type { RawSplit } from '@/lib/splits-types'
 import { relayrCallsScope } from '@/lib/relayr'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 const ACCOUNT = mocks.wallet.address as Address
 const RECIPIENT = '0x2222222222222222222222222222222222222222' as Address
 const PEER_RECIPIENT = '0x3333333333333333333333333333333333333333' as Address
@@ -403,7 +406,7 @@ describe('submitting a reviewed split update', () => {
   it('keeps no saved review when its submission published nothing', async () => {
     mocks.loadSession.mockReturnValue(null)
     mocks.runAuthorityCalls.mockRejectedValueOnce(new Error('Signature declined'))
-    await expect(submitSplitReview(review, vi.fn())).rejects.toThrow('Signature declined')
+    await expect(submitSplitReview(review, vi.fn(), flow)).rejects.toThrow('Signature declined')
     expect(storage.size).toBe(0)
   })
 
@@ -413,7 +416,7 @@ describe('submitting a reviewed split update', () => {
       mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [] })
       throw new Error('Funding chain selection cancelled. Nothing was sent.')
     })
-    await expect(submitSplitReview(review, vi.fn())).rejects.toThrow(/cancelled/)
+    await expect(submitSplitReview(review, vi.fn(), flow)).rejects.toThrow(/cancelled/)
     expect(readSplitJournal(journalKey(1, 101))?.review).toEqual(review)
     expect(storage.size).toBe(2)
   })

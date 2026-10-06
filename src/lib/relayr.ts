@@ -38,13 +38,15 @@ import {
   relayrBundleRequest,
   relayrDestinationHash,
   relayrForwardRequest,
+  quoteExpired,
   relayrPaymentChains,
-  relayrPaymentDetails as authenticateRelayrPayment,
-  relayrPaymentOptions as authenticatedRelayrPaymentOptions,
+  relayrPaymentDetails,
+  relayrPaymentOptions,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsSuccess,
   relayrSupportsChain,
+  requireRelayrBundleUnpaid,
   requireRelayrPaymentRetry,
   requireRelayrPaymentRuntime,
   simulateRelayrPayment,
@@ -1013,37 +1015,9 @@ export async function relayrPostBundle(
   return bindRelayrQuote(response, request)
 }
 
-/**
- * The SDK's authentication of one of a quote's payment options. It also
- * refuses a target or token whose mixed-case spelling fails its checksum,
- * which the SDK accepts.
- */
-export function relayrPaymentDetails(
-  payment: RelayrPayment,
-  options: { bundleUuid: string; destinationChainIds: readonly number[]; nowSeconds?: number },
-): RelayrPaymentDetails {
-  if (typeof payment?.target === 'string' && !isAddress(payment.target)) {
-    throw new Error('Relayr returned an unrecognized payment contract.')
-  }
-  if (typeof payment?.token === 'string' && !isAddress(payment.token)) {
-    throw new Error('Relayr returned an unsupported payment token.')
-  }
-  return authenticateRelayrPayment(payment, options)
-}
-
 export function relayrPaymentLabel(payment: RelayrPayment): string {
   const chain = SUPPORTED_CHAINS.find(item => item.id === Number(payment.chain))
   return fundingChainLabel(chain?.name ?? `Chain ${payment.chain}`, BigInt(payment.amount))
-}
-
-/** The SDK's payment options for a quote, each of which passes relayrPaymentDetails. */
-export function relayrPaymentOptions(
-  quote: Pick<RelayrQuote, 'bundle_uuid' | 'payment_info'>,
-  destinationChainIds: readonly number[],
-  nowSeconds?: number,
-): RelayrPayment[] {
-  return authenticatedRelayrPaymentOptions(quote, destinationChainIds, nowSeconds)
-    .filter(option => isAddress(option.target) && isAddress(option.token ?? ''))
 }
 
 /**
@@ -1419,24 +1393,6 @@ function relayrBundleFunded(read: RelayrBundleRead): boolean {
   return read.paymentReceived === true || read.records.some(record => !relayrRecordPending(record))
 }
 
-/** Relayr reports the bundle unpaid, with every call pending and no destination hash. */
-function relayrBundleUnrun(read: RelayrBundleRead): boolean {
-  return read.paymentReceived === false && read.records.length > 0 && read.records.every(relayrRecordPending)
-}
-
-/**
- * One uncached, echo-checked read of the bundle must report a released quote
- * unpaid with every call pending and no destination hash before a payer
- * deployment quotes its raw calls again (ruling R104). Its raw calls carry no
- * forwarder nonce or deadline, so no chain read can show they cannot run.
- */
-export async function requireRelayrBundleUnrun(bundleUuid: string): Promise<void> {
-  const bundle = await readRelayrBundleIfNamed(bundleUuid)
-  if (!bundle || !relayrBundleUnrun(bundle)) {
-    throw new Error('Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
-  }
-}
-
 /**
  * Ruling R114 for a saved session: the requests it published, each at a
  * canonical finalized block on its chain, with the nonces it saved. Null
@@ -1525,13 +1481,13 @@ async function holdUnprovenSession(scope: string, saved: RelayrPendingSession, e
 
 /**
  * Whether the quote a session paid can still be paid by the clock: its
- * latest payment's deadline is more than 15 seconds away, as the SDK's retry
- * rule requires.
+ * latest payment's deadline is more than 15 seconds away (the SDK's
+ * quoteExpired), as the SDK's retry rule requires.
  */
 export function relayrPaidQuoteOpen(payments: readonly RelayrSentPayment[] | undefined, nowMs = Date.now()): boolean {
   const latest = payments?.at(-1)
   try {
-    return !!latest && BigInt(latest.deadline) > BigInt(Math.floor(nowMs / 1_000)) + 15n
+    return !!latest && !quoteExpired(BigInt(latest.deadline), nowMs / 1_000)
   } catch {
     return false
   }
@@ -1610,7 +1566,9 @@ export async function revertedRelayrQuote(quote: {
   const records = bundle?.records ?? null
   if (bundle && relayrBundleFunded(bundle)) return { state: 'funded', records }
   if (relayrPaidQuoteOpen(quote.payments)) return { state: 'payable', records }
-  if (bundle && relayrBundleUnrun(bundle) && await relayrQuoteUnfundable(quote)) return { state: 'released', records }
+  // The SDK's guard reads the bundle once more, right before the release.
+  if (bundle && await relayrQuoteUnfundable(quote) &&
+      await requireRelayrBundleUnpaid(quote.bundleUuid).then(() => true, () => false)) return { state: 'released', records }
   throw new Error('This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.')
 }
 

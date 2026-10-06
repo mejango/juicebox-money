@@ -175,20 +175,14 @@ export async function readLiveProjectAuthorityContext({
 
 /**
  * Safe's transaction service as the page server reads it: one attempt within
- * 4 seconds, and a 429 refused rather than waited out, so a service the server
- * cannot reach leaves a Safe's creation unproven instead of holding the page.
+ * 4 seconds, and a 429 handed back rather than waited out, so a service the
+ * server cannot reach leaves a Safe's creation unproven instead of holding
+ * the page.
  */
 const serverSafeService: SafeServiceOptions = {
-  fetch: async (input, init) => {
-    const response = await fetch(input, {
-      ...init,
-      cache: 'no-store',
-      signal: AbortSignal.timeout(4_000),
-    })
-    if (response.status !== 429) return response
-    await response.body?.cancel()
-    return new Response(null, { status: 503 })
-  },
+  fetch: (input, init) =>
+    fetch(input, { ...init, cache: 'no-store', signal: AbortSignal.timeout(4_000) }),
+  retryRateLimited: false,
 }
 
 /**

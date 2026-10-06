@@ -82,6 +82,9 @@ import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib
 import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
 import { buildQueueRulesetsAuthorityCall } from '@/lib/transaction-builders'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x3333333333333333333333333333333333333333' as Address
 const SAFE = '0x4444444444444444444444444444444444444444' as Address
@@ -229,7 +232,7 @@ describe('relayed ruleset queue', () => {
       }),
     )
 
-    const result = await runAuthorityCalls({ calls })
+    const result = await runAuthorityCalls({ signal: flow, calls })
 
     expect(result.relayrGroups).toBe(1)
     // Each chain's signed request queues its own project's rules on its own controller.
@@ -256,7 +259,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     [1, 11155111],
     [1, 1],
   ] as const)('rejects direct batches on chains %s and %s before sending their first call', async (first, second) => {
-    await expect(runAuthorityCalls({ calls: [
+    await expect(runAuthorityCalls({ signal: flow, calls: [
       { chainId: first, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: second, authority: ALICE, target: TARGET, data: '0x5678' },
     ] })).rejects.toThrow(/Select one chain and one action at a time/)
@@ -267,7 +270,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
   it('rejects an untrusted-forwarder batch before any direct write can be replayed', async () => {
     mocks.client.request.mockResolvedValue('0x')
-    await expect(runAuthorityCalls({ calls: [
+    await expect(runAuthorityCalls({ signal: flow, calls: [
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
     ] })).rejects.toThrow(/Select one chain and one action at a time/)
@@ -277,7 +280,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
   it('preserves a single direct testnet call from the real authority', async () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
-    const result = await runAuthorityCalls({ calls: [
+    const result = await runAuthorityCalls({ signal: flow, calls: [
       { chainId: 11155111, authority: ALICE, target: TARGET, data: '0x1234' },
     ] })
     expect(result.directResults).toEqual([HASH])
@@ -296,7 +299,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       paymentChainId: 1, paymentStatus: 'submitted', chainIds: [1, 10], expectedCount: 2,
       records: [], itemCount: 2, account: ALICE, createdAt: Date.now() })
     try {
-      await expect(runAuthorityCalls({ calls })).rejects.toThrow(/lacks exact destination proof/)
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow(/lacks exact destination proof/)
       expect(reverifyAuthority).not.toHaveBeenCalled()
       expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     } finally { clearRelayrPendingSession(scope) }
@@ -313,7 +316,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       records: [], itemCount: 2, account: ALICE, createdAt: Date.now() })
     mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'contract' })
     try {
-      await expect(runAuthorityCalls({ calls })).rejects.toThrow(/unsupported contract/)
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow(/unsupported contract/)
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     } finally { clearRelayrPendingSession(scope) }
   })
@@ -331,11 +334,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
     mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
     try {
-      await expect(runAuthorityCalls({ calls })).rejects.toThrow('Selection canceled')
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Selection canceled')
       mocks.requireReview.mockImplementation(async review => {
         if (review.title === 'Review Relayr payment') changed = true
       })
-      await expect(runAuthorityCalls({ calls })).rejects.toThrow('The original queue changed during review')
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('The original queue changed during review')
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     } finally { clearRelayrPendingSession(scope) }
@@ -354,7 +357,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
     mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
     try {
-      await expect(runAuthorityCalls({ calls })).rejects.toThrow('Selection canceled')
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Selection canceled')
       // Anyone holding the signed requests ran them at the forwarder, so the queue changed.
       ran = true
       reverifyAuthority.mockClear()
@@ -363,7 +366,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
         : input.functionName === 'verify' ? false : read(input))
       mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
         ? { number: 200n, hash: HASH, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: HASH })
-      await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
       expect(reverifyAuthority).not.toHaveBeenCalled()
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
@@ -383,6 +386,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     })
 
     const result = await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -416,6 +420,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [
           {
             chainId: 1,
@@ -452,6 +457,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [
           {
             chainId: 1,
@@ -495,6 +501,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     })
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -540,6 +547,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [{ chainId: 1, detectionChainId: 10, authority: SAFE, target: TARGET, data: '0x1234' }],
       }),
     ).rejects.toThrow("Can't verify this Safe is the same on Ethereum.")
@@ -576,6 +584,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [
           {
             chainId: 1,
@@ -622,6 +631,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
 
     const result = await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -637,11 +647,46 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ account: SAFE, to: TARGET, data: '0x1234' }),
     )
+    // The run's signal ends the wait for the Safe's execution.
     expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledWith(
       1,
       HASH,
+      { signal: flow },
     )
     expect(result.directResults).toEqual([DESTINATION_HASH])
+  })
+
+  it("ends a Safe app proposal's wait with its flow, the proposal saved as submitted and nothing more sent", async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({
+      source: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      destination: { kind: 'safe', threshold: 2, owners: [ALICE], hasModules: false, modules: [] },
+      matches: true,
+    })
+    mocks.connectedWallet.mockResolvedValue({ wallet: mocks.wallet, account: SAFE })
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    const page = new AbortController()
+    mocks.waitForSafeExecutionHash.mockImplementation((_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      }))
+    const onSubmitted = vi.fn()
+
+    const run = runAuthorityCalls({
+      signal: page.signal,
+      calls: [{ chainId: 1, detectionChainId: 10, authority: SAFE, target: TARGET, data: '0x1234', onSubmitted }],
+    })
+    await vi.waitFor(() => expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledOnce())
+    page.abort()
+
+    await expect(run).rejects.toMatchObject({ name: 'AbortError' })
+    // The proposal was saved as submitted before the wait, and nothing reads
+    // or sends after it.
+    expect(onSubmitted).toHaveBeenCalledExactlyOnceWith(HASH, 'safe-connector')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+    expect(mocks.client.waitForTransactionReceipt).not.toHaveBeenCalled()
   })
 
   it('fails a Safe app proposal whose execution logged ExecutionFailure', async () => {
@@ -675,6 +720,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [
           {
             chainId: 1,
@@ -703,6 +749,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234', label: 'Set the terminal' }],
       }),
     ).rejects.toThrow(
@@ -739,6 +786,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     }))
 
     const sent = runAuthorityCalls({
+      signal: flow,
       calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234', label: 'Set the terminal' }],
     })
 
@@ -774,6 +822,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.listPendingSafeTransactions.mockResolvedValue([pending])
 
     const result = await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -806,6 +855,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 
     await expect(
       runAuthorityCalls({
+        signal: flow,
         calls: [
           {
             chainId: 1,
@@ -835,7 +885,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
     ]
-    const result = await runAuthorityCalls({ calls })
+    const result = await runAuthorityCalls({ signal: flow, calls })
 
     expect(result.relayrGroups).toBe(1)
     expect(mocks.client.request).toHaveBeenCalledWith({
@@ -871,7 +921,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
         gas: 1_000_000n,
       },
     ]
-    await runAuthorityCalls({ calls })
+    await runAuthorityCalls({ signal: flow, calls })
 
     expect(mocks.client.request).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -891,6 +941,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(120_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [{ chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', gas: 1_000_000n }],
     })
 
@@ -910,6 +961,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234' }],
     })
 
@@ -931,7 +983,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       return { wallet: mocks.wallet, account: ALICE }
     })
 
-    await runAuthorityCalls({ calls: [
+    await runAuthorityCalls({ signal: flow, calls: [
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
     ] })
@@ -945,6 +997,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(900_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -965,6 +1018,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockRejectedValue(new Error('cannot estimate'))
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [
         {
           chainId: 1,
@@ -991,7 +1045,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
     ]
-    await runAuthorityCalls({ calls })
+    await runAuthorityCalls({ signal: flow, calls })
 
     const signedGas = mocks.wallet.signTypedData.mock.calls.map(
       ([{ message }]) => message.gas,
@@ -1005,6 +1059,7 @@ describe('Authority calls a parent review already covered', () => {
     mocks.client.estimateGas.mockResolvedValue(120_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [{ chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', gas: 1_000_000n }],
       reviewedInParent: true,
     })
@@ -1023,6 +1078,7 @@ describe('Authority calls a parent review already covered', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234' }],
       reviewedInParent: true,
     })
@@ -1037,6 +1093,7 @@ describe('Authority calls a parent review already covered', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
 
     await runAuthorityCalls({
+      signal: flow,
       calls: [
         { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
         { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
@@ -1063,6 +1120,7 @@ describe('One safety-check review per project batch', () => {
     data, gas: 1_000_000n, relayr: false, ...extra,
   })
   const run = (calls?: ProjectBatchCall[], account: Address = ALICE) => runProjectBatch({
+    signal: flow,
     scope: projectBatchScope('review-once', 1, 7), action: 'review-once', account, calls,
   })
   // Each receipt belongs to the exact call the wallet last sent.

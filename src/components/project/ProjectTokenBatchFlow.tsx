@@ -8,6 +8,7 @@ import { ChainPicker } from '@/components/ui/ChainPicker'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { chainName } from '@/lib/urn'
@@ -59,6 +60,8 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
   onDone?: () => void
 }) {
   const { address, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const scope = projectBatchScope(action, chains[0]?.[0] ?? 0, chains[0]?.[1] ?? 0)
   const [initial] = useState(() => {
@@ -131,6 +134,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
         scope, action, account, title, calls: review,
         expectedBatchId: saved?.id ?? reviewBatchId,
         reverify: isClaim ? reverifyClaimCall : reverifyAutoIssueCall,
+        signal: flowSignal(),
         onProgress: progress => {
           reported.line = progress.message
           setStatus(progress.message)

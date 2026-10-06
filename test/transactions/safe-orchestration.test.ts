@@ -82,6 +82,11 @@ import {
 } from '@/lib/safe'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import {
+  encodeMultiSend,
+  MULTI_SEND_CALL_ONLY,
+  MULTI_SEND_CALL_ONLY_DEPLOYMENTS,
+} from '@bananapus/nana-sdk-core/safe'
+import {
   canonicalSafeTxHash,
   SAFE_EXEC_ABI,
   safeProposalFor,
@@ -89,6 +94,9 @@ import {
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
+
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const ALICE = '0x2222222222222222222222222222222222222222' as Address
@@ -234,7 +242,7 @@ describe('Safe execution boundary', () => {
   it('rejects an owner-shaped spoof contract before Safe review or writes', async () => {
     mocks.readAuthorityIdentity.mockResolvedValueOnce({ kind: 'contract' })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /Could not verify this Safe onchain/,
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
@@ -247,7 +255,7 @@ describe('Safe execution boundary', () => {
       hasModules: true,
       modules: [BOB],
     })
-    await expect(executeSafeTx(1, SAFE, queued())).resolves.toBeDefined()
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).resolves.toBeDefined()
 
     let reads = 0
     mocks.readAuthorityIdentity.mockImplementation(async () => ({
@@ -267,7 +275,7 @@ describe('Safe execution boundary', () => {
       modules: null,
     })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /Could not verify this Safe onchain/,
     )
     expect(mocks.requireReview).not.toHaveBeenCalled()
@@ -293,7 +301,7 @@ describe('Safe execution boundary', () => {
       args: [CANONICAL_SINGLETON, '0x1234' as Hex, 7n] as const,
     }
     const deploy = (reverifyAuthority = vi.fn().mockResolvedValue(undefined)) =>
-      deploySafeSameAddress(1, creation, SAFE, { sourceChainId: 10, reverifyAuthority })
+      deploySafeSameAddress(1, creation, SAFE, { sourceChainId: 10, reverifyAuthority, signal: flow })
 
     beforeEach(() => {
       mocks.prepareDeployment.mockResolvedValue({ valid: true, call, source: safeIdentity() })
@@ -360,6 +368,7 @@ describe('Safe execution boundary', () => {
         deploySafeSameAddress(1, eip155, SAFE, {
           sourceChainId: 10,
           reverifyAuthority: vi.fn().mockResolvedValue(undefined),
+          signal: flow,
         }),
       ).resolves.toBe(HASH)
       expect(mocks.prepareDeployment).toHaveBeenCalledWith(
@@ -398,9 +407,9 @@ describe('Safe execution boundary', () => {
     setViewAs(BOB)
     try {
       await expect(
-        runSafeCalls({ calls: [], signer: ALICE }),
+        runSafeCalls({ signal: flow, calls: [], signer: ALICE }),
       ).rejects.toThrow(VIEW_AS_WRITE_BLOCKED)
-      await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+      await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
         VIEW_AS_WRITE_BLOCKED,
       )
       expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
@@ -411,7 +420,7 @@ describe('Safe execution boundary', () => {
 
 
   it('reviews the inner context, simulates, rechecks the account, and confirms', async () => {
-    await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).resolves.toEqual({
       hash: HASH,
       status: 'confirmed',
     })
@@ -452,7 +461,7 @@ describe('Safe execution boundary', () => {
   it('measures the gas before the review and sends exactly the reviewed gas', async () => {
     mocks.client.estimateGas.mockResolvedValue(150_000n)
 
-    await executeSafeTx(1, SAFE, queued())
+    await executeSafeTx(1, SAFE, queued(), { signal: flow })
 
     expect(mocks.client.estimateGas).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ account: ALICE, to: SAFE, gas: SAFE_EXECUTION_WRITE_GAS }),
@@ -504,7 +513,7 @@ describe('Safe execution boundary', () => {
     executedAtOnce()
     connectedSafeRan()
 
-    await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({ hash: HASH, status: 'confirmed' })
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).resolves.toEqual({ hash: HASH, status: 'confirmed' })
 
     const review = mocks.requireReview.mock.calls[0][0]
     expect(review.confirmLabel).toBe('Agree & continue to Safe')
@@ -513,7 +522,7 @@ describe('Safe execution boundary', () => {
     expect(review.calls[0]).not.toHaveProperty('gas')
     expect(mocks.client.estimateGas).not.toHaveBeenCalled()
     expect(mocks.wallet.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 0n }))
-    expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH)
+    expect(mocks.waitSafe).toHaveBeenCalledWith(1, HASH, { signal: flow })
   })
 
   it('does not confirm a proposal Safe{Wallet} executed at once when the execution ran another call', async () => {
@@ -522,7 +531,7 @@ describe('Safe execution boundary', () => {
     executedAtOnce()
     connectedSafeRan('0xdeadbeef')
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
     )
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
@@ -547,6 +556,7 @@ describe('Safe execution boundary', () => {
 
     await expect(
       runSafeCalls({
+        signal: flow,
         signer: ALICE,
         calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
       }),
@@ -554,7 +564,7 @@ describe('Safe execution boundary', () => {
     expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ functionName: 'approveHash', gas: 0n }),
     )
-    expect(mocks.waitSafe).toHaveBeenCalledWith(999, proposal)
+    expect(mocks.waitSafe).toHaveBeenCalledWith(999, proposal, { signal: flow })
   })
 
   it.each([
@@ -584,6 +594,7 @@ describe('Safe execution boundary', () => {
 
     await expect(
       runSafeCalls({
+        signal: flow,
         signer: ALICE,
         calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
       }),
@@ -596,7 +607,7 @@ describe('Safe execution boundary', () => {
   it("refuses to sign, simulate or execute a transaction that pays a gas refund", async () => {
     const refund = { ...queued(), gasPrice: '1' }
     for (const run of [
-      () => executeSafeTx(1, SAFE, refund),
+      () => executeSafeTx(1, SAFE, refund, { signal: flow }),
       () => simulateSafeExecution(1, SAFE, refund),
       () => confirmSafeTx(1, SAFE, refund, ALICE),
     ]) {
@@ -620,7 +631,7 @@ describe('Safe execution boundary', () => {
       logs: logs(canonicalSafeTxHash(1, SAFE, queued())),
     })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /inner call did not execute successfully/i,
     )
   })
@@ -628,7 +639,7 @@ describe('Safe execution boundary', () => {
   it('does not send when the connection changed after the review', async () => {
     mocks.requireReview.mockImplementationOnce(async () => { mocks.safe = true })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(/Connected wallet changed/)
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(/Connected wallet changed/)
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
 
@@ -638,7 +649,7 @@ describe('Safe execution boundary', () => {
       logs: [],
     })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /inner call did not execute successfully/i,
     )
   })
@@ -648,7 +659,7 @@ describe('Safe execution boundary', () => {
       `0x${'0'.repeat(64)}` as Hex,
     )
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /simulation reported.*fail/i,
     )
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
@@ -656,7 +667,7 @@ describe('Safe execution boundary', () => {
 
   it('rejects a service hash that does not match the exact queued fields', async () => {
     await expect(
-      executeSafeTx(1, SAFE, { ...queued(), safeTxHash: HASH }),
+      executeSafeTx(1, SAFE, { ...queued(), safeTxHash: HASH }, { signal: flow }),
     ).rejects.toThrow(/does not match its fields/i)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
@@ -668,7 +679,7 @@ describe('Safe execution boundary', () => {
       .mockResolvedValueOnce(safeIdentity())
       .mockResolvedValueOnce({ kind: 'contract' })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /Could not verify this Safe onchain/,
     )
     expect(mocks.simulateStateChangingTransaction).toHaveBeenCalled()
@@ -680,7 +691,7 @@ describe('Safe execution boundary', () => {
       new Error('RPC unavailable'),
     )
 
-    await expect(executeSafeTx(1, SAFE, queued())).resolves.toEqual({
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).resolves.toEqual({
       hash: HASH,
       status: 'submitted',
     })
@@ -691,7 +702,7 @@ describe('Safe execution boundary', () => {
       status: 'reverted',
     })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       new RegExp(`reverted onchain.*${HASH}`, 'i'),
     )
   })
@@ -702,7 +713,7 @@ describe('Safe execution boundary', () => {
       return TRUE_RESULT
     })
 
-    await expect(executeSafeTx(1, SAFE, queued())).rejects.toThrow(
+    await expect(executeSafeTx(1, SAFE, queued(), { signal: flow })).rejects.toThrow(
       /account changed/i,
     )
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
@@ -716,7 +727,7 @@ describe('Safe execution boundary', () => {
     })
 
     await expect(
-      executeSafeTx(1, SAFE, queued(), reverifyAuthority),
+      executeSafeTx(1, SAFE, queued(), { reverifyAuthority, signal: flow }),
     ).rejects.toThrow(/account changed/i)
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
@@ -733,7 +744,7 @@ describe('Safe execution boundary', () => {
     })
 
     await expect(
-      executeSafeTx(1, SAFE, queued(), reverifyAuthority),
+      executeSafeTx(1, SAFE, queued(), { reverifyAuthority, signal: flow }),
     ).rejects.toThrow(/Could not verify this Safe onchain/i)
     expect(mocks.simulateStateChangingTransaction).toHaveBeenCalled()
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
@@ -820,6 +831,7 @@ describe('Safe retry and terminal-state orchestration', () => {
 
     await expect(
       runSafeCalls({
+        signal: flow,
         signer: ALICE,
         calls: [
           {
@@ -858,6 +870,7 @@ describe('Safe retry and terminal-state orchestration', () => {
 
     await expect(
       runSafeCalls({
+        signal: flow,
         signer: ALICE,
         calls: [{ chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' }],
       }),
@@ -879,6 +892,7 @@ describe('Safe retry and terminal-state orchestration', () => {
 
     await expect(
       runSafeCalls({
+        signal: flow,
         signer: ALICE,
         calls: [
           {
@@ -894,6 +908,28 @@ describe('Safe retry and terminal-state orchestration', () => {
     ])
     expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
   })
+  it('proposes a batch only through MultiSendCallOnly 1.3.0, the release it builds batches for', async () => {
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeApprovedHash.mockImplementation(
+      async (_client, _safe, owner) => (owner === ALICE ? 1n : 0n),
+    )
+    const data = encodeMultiSend([{ to: TARGET, data: '0x1234', value: 0n }])
+    const batch = (target: Address) => runSafeCalls({
+      signal: flow,
+      signer: ALICE,
+      calls: [{ chainId: 999 as never, safe: SAFE, target, data, operation: 1 }],
+    })
+
+    for (const other of MULTI_SEND_CALL_ONLY_DEPLOYMENTS.filter(address => address !== MULTI_SEND_CALL_ONLY)) {
+      await expect(batch(other)).rejects.toThrow('A Safe DELEGATECALL must be a MultiSendCallOnly 1.3.0 batch.')
+    }
+    await expect(batch(MULTI_SEND_CALL_ONLY)).resolves.toEqual([
+      expect.objectContaining({ status: 'waiting', mode: 'onchain' }),
+    ])
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
   it('gives each call in a batch its own nonce on the no-service path', async () => {
     // The onchain nonce only advances at EXECUTION, so approving two calls
     // against the same nonce would waste one of them.
@@ -904,6 +940,7 @@ describe('Safe retry and terminal-state orchestration', () => {
     )
 
     const results = await runSafeCalls({
+      signal: flow,
       signer: ALICE,
       calls: [
         { chainId: 999 as never, safe: SAFE, target: TARGET, data: '0x1234' },

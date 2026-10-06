@@ -26,6 +26,7 @@ import {
 } from 'wagmi/actions'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import {
@@ -77,6 +78,8 @@ export function MintShopItemModal({
   const { switchChainAsync } = useSwitchChain()
   const { writeContractAsync } = useWriteContract()
   const { isConnected, address, openSignIn } = useWallet()
+  // Closing the modal ends its wait for a Safe to execute the mint.
+  const modalSignal = useUnmountSignal()
   const [beneficiary, setBeneficiary] = useState(address ?? '')
   const [quantity, setQuantity] = useState('1')
   const [review, setReview] = useState<MintReview | null>(null)
@@ -241,7 +244,14 @@ export function MintShopItemModal({
       setPhase('confirming')
       const proposal = viaSafe ? submitted : null
       if (proposal) {
-        submitted = await waitForSafeExecutionHash(chainId, proposal)
+        try {
+          submitted = await waitForSafeExecutionHash(chainId, proposal, { signal: modalSignal() })
+        } catch {
+          // The Safe may still execute it: the mint stays submitted, never
+          // offered again from this form.
+          setPhase('uncertain')
+          return
+        }
         setHash(submitted)
       }
       const receipt = await waitForTrackedReceipt(client, submitted)

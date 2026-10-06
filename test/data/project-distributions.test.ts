@@ -167,7 +167,7 @@ describe('selected destination distributions', () => {
 
   it('proves a payout from its receipt, and refuses one missing a split’s event', async () => {
     const { review, split, total } = await payoutReceipt()
-    expect(() => verifyDistributionCompletion(review, receipt([split, total]))).not.toThrow()
+    expect(verifyDistributionCompletion(review, receipt([split, total]))).toBeNull()
     expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow("Base: Project 303's payouts")
     expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow('the receipt pays 0 splits, not the reviewed 1')
     expect(() => verifyDistributionCompletion(review, receipt([]))).toThrow('0 SendPayouts events')
@@ -199,5 +199,20 @@ describe('selected destination distributions', () => {
     expect(() => verifyDistributionCompletion(review, receipt([split, total, failed]))).toThrow('a recipient failed (ReservedDistributionReverted)')
     const burned = eventLog(jbTokensAbi, 'Burn', jbContractAddress['6'][JBCoreContracts.JBTokens][8453], { holder: review.controller, projectId: 303n, count: 1n, creditBalance: 0n, tokenBalance: 0n, caller: review.controller })
     expect(() => verifyDistributionCompletion(review, receipt([burned, split, total]))).toThrow('a hook did not take its share')
+  })
+
+  it('confirms reserved tokens distributed above the reviewed count, each share taken from the count distributed, and refuses fewer', async () => {
+    const { review } = await reservedReceipt()
+    const distributed = (tokenCount: bigint, share = tokenCount / 2n) => receipt([
+      eventLog(jbControllerAbi, 'SendReservedTokensToSplit', review.controller, { projectId: 303n, rulesetId: 79n, groupId: RESERVED_TOKEN_SPLIT_GROUP_ID, split: review.splits[0], tokenCount: share, caller: ACCOUNT }),
+      eventLog(jbControllerAbi, 'SendReservedTokensToSplits', review.controller, { rulesetId: 79n, rulesetCycleNumber: 6n, projectId: 303n, owner: ACCOUNT, tokenCount, leftoverAmount: tokenCount - share, caller: ACCOUNT }),
+    ])
+    const more = review.pending + 10n ** 18n
+    // What went out is the count the receipt distributed.
+    expect(verifyDistributionCompletion(review, distributed(more))).toBe(more)
+    expect(verifyDistributionCompletion(review, distributed(review.pending))).toBe(review.pending)
+    // The split's share is half of what was distributed, not of what was reviewed.
+    expect(() => verifyDistributionCompletion(review, distributed(more, review.pending / 2n))).toThrow('was sent')
+    expect(() => verifyDistributionCompletion(review, distributed(review.pending - 2n))).toThrow('fewer than the reviewed')
   })
 })

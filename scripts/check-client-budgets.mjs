@@ -24,7 +24,12 @@ const budgets = {
     // launch code, and webpack keeps one copy of it with every export any chunk uses, so
     // the authority reads, creation proof and same-address deployment land there too:
     // home measures 434.3 KiB against 429.5 KiB on main with the same toolchain.
-    '/page': 435 * KIB,
+    // SDK 2.21.0 (the Center provider's node-lag retry with the read's signal, the
+    // Safe service's Retry-After reading and signal, MultiSend 1.4.1, Relayr's typed
+    // refusals and bundle guard) brings home from 434.4 to 435.1 KiB on the same
+    // toolchain; taking it in place of jbm's copies, with the Safe wait and Bendystraw
+    // read signals, measures 435.3. Round up to the next KiB.
+    '/page': 436 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -43,7 +48,10 @@ const budgets = {
     // Holding a Safe proposal's action whatever its send-time stamp, ending one that can
     // no longer run, the at-once probe and the receipt hour measure 502.8 KiB; binding an
     // execution on the transaction already read, 502.9.
-    '/create/page': 503 * KIB,
+    // SDK 2.21.0 brings create from 502.1 to 503.0 KiB on the same toolchain (the same
+    // SDK modules as home); taking it in place of jbm's copies, with the launch's Safe
+    // wait signals, measures 503.3. Round up to the next KiB.
+    '/create/page': 504 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -123,7 +131,13 @@ const budgets = {
   // importing the SDK's Relayr family check on create instead would load the
   // whole Relayr module there (+6.2 KiB on create's first load). Round up to the
   // next KiB.
-  allScripts: 2508 * KIB,
+  // SDK 2.21.0 measures 2508.2 KiB against 2507.0 on main with the same toolchain
+  // (+1.2): the Center provider's lag retry and limiter hooks, the Safe service's
+  // Retry-After reading and signal, MultiSend 1.4.1, Relayr's typed refusals and
+  // bundle guard. Deleting jbm's copies of those, and every Safe wait and Bendystraw
+  // read taking its flow's signal (a hook in each waiting component, the signal
+  // through each reader), measures 2509.0. Round up to the next KiB.
+  allScripts: 2510 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

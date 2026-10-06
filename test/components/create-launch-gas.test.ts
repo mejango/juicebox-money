@@ -18,3 +18,19 @@ describe('direct launch gas', () => {
     expect(source).not.toMatch(/return \{ \.\.\.simulated, gas: gasWithHeadroom\(estimate\) \}/)
   })
 })
+
+/**
+ * Leaving the create page ends a direct launch's waits for a Safe to execute
+ * what it proposed: the Safe setup's, and the launch's own, both resumed and
+ * new. The saved launch keeps each proposal.
+ */
+describe("direct launch Safe waits", () => {
+  it("take the page's signal", () => {
+    expect(source).toContain('const pageSignal = useUnmountSignal();')
+    expect(source).toContain('const signal = pageSignal();')
+    expect(source.match(/waitForSafeExecutionHash\(/g)).toHaveLength(2)
+    expect(source).toMatch(/waitForSafeExecutionHash\(\s*chainId,\s*priorSafeProposalHash,\s*\{ signal \},\s*\)/)
+    expect(source).toContain('hash = await waitForSafeExecutionHash(chainId, hash, { signal });')
+    expect(source).toMatch(/prepareLaunchMultisigs\(\{[\s\S]*?\n\s+signal,\n\s+\}\);/)
+  })
+})

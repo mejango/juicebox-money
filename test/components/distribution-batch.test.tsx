@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() },
-  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), options: [] as unknown[], invalidate: vi.fn(), discard: vi.fn(),
+  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), verify: vi.fn(), options: [] as unknown[], invalidate: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: mocks.options, isLoading: false }), useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, runProjectBatch: mocks.run, projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}` }))
-vi.mock('@/lib/project-distributions', async original => ({ ...await original<typeof import('@/lib/project-distributions')>(), reviewPayout: mocks.payout, reviewReserved: mocks.reserved, reverifyDistribution: mocks.reverify }))
+vi.mock('@/lib/project-distributions', async original => ({ ...await original<typeof import('@/lib/project-distributions')>(), reviewPayout: mocks.payout, reviewReserved: mocks.reserved, reverifyDistribution: mocks.reverify, verifyDistributionCompletion: mocks.verify }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; status?: string | null; error: string | null; actionDisabled?: boolean; children?: React.ReactNode; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.status}{props.error}{props.children}<button disabled={props.actionDisabled} onClick={props.onConfirm}>Confirm test distributions</button></div> }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 
@@ -124,6 +124,25 @@ describe('distribution batch reviews and recovery', () => {
     expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({ calls, expectedBatchId: 'original-review' }))
     expect(mocks.reserved).not.toHaveBeenCalled()
     expect(text(renderer)).toContain('Distributions confirmed')
+  })
+
+  it('shows what a reserved distribution sent once its receipt confirms it, and each share of that count', async () => {
+    const calls = distributionBatchCalls([reserved(1)])
+    mocks.load.mockReturnValue({ id: 'saved-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] })
+    // Reserves accrued between the review and the execution: 150 went out where 100 were reviewed.
+    mocks.verify.mockReturnValue(150n * 10n ** 18n)
+    mocks.run.mockImplementation(async ({ verifyCompletion }) => {
+      await verifyCompletion(calls[0], { status: 'success', logs: [] })
+      return { status: 'complete', calls, completedIds: [calls[0].id] }
+    })
+    const renderer = await mount('reserved')
+    expect(text(renderer)).toContain('Project #17 · 100 AAA')
+    await click(renderer, 'Confirm test distributions')
+    expect(mocks.verify).toHaveBeenCalledWith(calls[0].context, { status: 'success', logs: [] })
+    expect(text(renderer)).toContain('Distributions confirmed')
+    expect(text(renderer)).toContain('Project #17 · 150 AAA')
+    expect(text(renderer)).toContain('75 AAA (50%)')
+    expect(text(renderer)).not.toContain('Project #17 · 100 AAA')
   })
 
   it('restores original context for unpaid revalidation and keeps the review when its source has drifted', async () => {

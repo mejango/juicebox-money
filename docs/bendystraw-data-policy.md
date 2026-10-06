@@ -18,6 +18,11 @@ Every indexed read follows one production pattern:
 5. Use only the SDK cache policies: `live` (15 seconds) for balances, activity,
    permissions, and mutable state; `standard` (30 seconds) for lists, search,
    and aggregates; `stable` (60 seconds) for metadata and historical records.
+6. Give every browser read its page's signal: react-query's, or one the page
+   aborts when it is left. The request under way then stops, is not retried,
+   and none is sent after; the relay hands its own indexer request the browser
+   request's signal, so that stops too. `test/components/bendystraw-page-signals.test.ts`
+   checks every use of a reader in `src/components` and `src/hooks`.
 
 The Bendystraw transport does not cache. Writes invalidate or bypass affected
 reads. An indexed read may fall back to an authoritative RPC read only when the

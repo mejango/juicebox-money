@@ -63,6 +63,7 @@ function options() {
   return {
     chainId: CHAIN, salt: SALT, plan, account: ACCOUNT, switchChain: vi.fn().mockResolvedValue(undefined),
     writeContract: vi.fn().mockResolvedValue(HASH), onProgress: vi.fn(), onSetup: vi.fn(),
+    signal: new AbortController().signal,
   }
 }
 function simulation(success = true, address = safe.address) {
@@ -317,7 +318,7 @@ describe('direct launch Safe setup', () => {
     args.writeContract.mockImplementation(async () => { expect(setup()).toEqual({ phase: 'signing', safe: true }); return HASH })
     mocks.safeHash.mockImplementation(async () => { expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH }); return EXECUTION })
     await prepareLaunchMultisigs(args)
-    expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH)
+    expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH, { signal: args.signal })
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: EXECUTION })
     expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
   })
@@ -338,7 +339,7 @@ describe('direct launch Safe setup', () => {
     seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup: { phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH } } } })
     const args = options()
     await prepareLaunchMultisigs(args)
-    expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH)
+    expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH, { signal: args.signal })
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: EXECUTION })
     expect(args.writeContract).not.toHaveBeenCalled()
   })
@@ -347,6 +348,30 @@ describe('direct launch Safe setup', () => {
     mocks.safe.mockReturnValue(true)
     mocks.safeHash.mockRejectedValue(new Error('Service unavailable'))
     await expect(prepareLaunchMultisigs(options())).rejects.toThrow('Service unavailable')
+    expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
+    expect(mocks.receipt).not.toHaveBeenCalled()
+  })
+
+  it("lets the launch lock go when the page's signal ends the wait for the Safe, keeping the proposal", async () => {
+    let held = false
+    const request = vi.fn(async (_name, _options, action) => {
+      held = true
+      try { return await action({ name: 'jbm-launch' }) } finally { held = false }
+    })
+    vi.stubGlobal('navigator', { locks: { request } })
+    mocks.safe.mockReturnValue(true)
+    const page = new AbortController()
+    mocks.safeHash.mockImplementation((_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      }))
+    const preparing = prepareLaunchMultisigs({ ...options(), signal: page.signal })
+    await vi.waitFor(() => expect(mocks.safeHash).toHaveBeenCalledOnce())
+    expect(held).toBe(true)
+
+    page.abort()
+    await expect(preparing).rejects.toMatchObject({ name: 'AbortError' })
+    expect(held).toBe(false)
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
     expect(mocks.receipt).not.toHaveBeenCalled()
   })

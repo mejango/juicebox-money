@@ -12,9 +12,9 @@ import { requireFundingChainSelection, requireTransactionReview, type Transactio
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
-import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPaymentOptions, relayrPoll, relayrPostBundle, relayrRetryOption, requireRelayrBundleUnrun, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
+import { proveSavedRelayrPayment, relayrPay, relayrPaymentAttemptOutcome, relayrPaymentLabel, relayrPoll, relayrPostBundle, relayrRetryOption, revertedRelayrQuote, withRelayrScopeLock } from '@/lib/relayr'
 import { relayrSentPaymentsSnapshot, type RelayrSentPayment } from '@/lib/relayr-payments'
-import { relayrDestinationHash, relayrRecordChain, relayrSupportsChains, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrDestinationHash, relayrPaymentOptions, relayrRecordChain, relayrSupportsChains, requireRelayrBundleUnpaid, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -372,8 +372,15 @@ async function findSafePayerExecution(call: PayerDeploymentCall, outcome: PayerD
   return null
 }
 
-/** Resolve existing outcomes only; never submit replacement clones when a send is uncertain. */
-export async function runPayerDeployments(review: PayerDeploymentSession, onUpdate: (session: PayerDeploymentSession) => void): Promise<PayerDeploymentSession> {
+/** What a look at a Safe payer proposal says when it ends before the Safe executes the proposal. */
+export const SAFE_PAYER_PENDING = 'The Safe proposal is still pending. Execute it in Safe, then check the deployment status.'
+
+/**
+ * Resolve existing outcomes only; never submit replacement clones when a send
+ * is uncertain. `signal` is the flow's: when it aborts, a wait for a Safe to
+ * execute a deployment ends, and the deployment stays submitted.
+ */
+export async function runPayerDeployments(review: PayerDeploymentSession, onUpdate: (session: PayerDeploymentSession) => void, signal: AbortSignal): Promise<PayerDeploymentSession> {
   const startChainId = getAccount(wagmiConfig).chainId
   return locked(aliases(review), async () => {
     if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('This browser cannot coordinate payer deployments across tabs. Use a browser with Web Locks support.')
@@ -449,8 +456,10 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           !relayrPaymentOptions(session.quote, chains).length) {
         // No option of the unpaid quote passes relayrPaymentDetails any more,
         // so nothing here can fund it. Once Relayr confirms it unpaid with
-        // every call pending, the same raw calls are quoted again.
-        await requireRelayrBundleUnrun(session.quote.bundle_uuid)
+        // every call pending (ruling R104; its raw calls carry no forwarder
+        // nonce or deadline for a chain read to show they cannot run), the
+        // same raw calls are quoted again.
+        await requireRelayrBundleUnpaid(session.quote.bundle_uuid)
         await requestQuote()
       }
       const quote = session.quote
@@ -611,7 +620,11 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       }
       if (!outcome.hash && outcome.safeProposalHash) {
         const onchainHash = await findSafePayerExecution(call, outcome, session.account).catch(() => null)
-        const hash = onchainHash ?? await waitForSafeExecutionHash(call.chainId, outcome.safeProposalHash, { signal: AbortSignal.timeout(60_000) })
+        // One look of up to a minute: when it ends first, the deployment stays submitted.
+        const hash = onchainHash ?? await waitForSafeExecutionHash(call.chainId, outcome.safeProposalHash, { signal, lookMs: 60_000 })
+          .catch((error: unknown) => {
+            throw !signal.aborted && (error as { name?: unknown } | null)?.name === 'AbortError' ? new Error(SAFE_PAYER_PENDING) : error
+          })
         outcome = session.outcomes[index] = { ...outcome, hash }
         persist()
       }

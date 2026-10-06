@@ -37,6 +37,7 @@ import {
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
 import { buildStep, powerStepValues, type BatchStep } from '@/lib/safe-batch'
@@ -253,6 +254,8 @@ export function PowerActionForm({
 }) {
   const { address } = useWallet()
   const batch = useSafeBatch()
+  // Leaving the form ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const enabledRows = useMemo(
     () => rows.filter(row => flagState(row, power.flag) && !row.error),
     [power.flag, rows],
@@ -512,6 +515,7 @@ export function PowerActionForm({
       const result = await runAuthorityCalls({
         calls: review.calls,
         onProgress: progress => setStatus(progress.message),
+        signal: flowSignal(),
       })
       setStatus(
         safeOutcomeMessage(

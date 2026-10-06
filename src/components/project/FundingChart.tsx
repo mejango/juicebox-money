@@ -142,14 +142,17 @@ export function FundingChart({
   useEffect(() => {
     if (!suckerGroupId) return
     let stopped = false
-    getSuckerGroupMoments(suckerGroupId)
+    // Leaving the chart stops its indexed reads.
+    const left = new AbortController()
+    const { signal } = left
+    getSuckerGroupMoments(suckerGroupId, { signal })
       .then(items => {
         if (!stopped) setMoments(items)
       })
       .catch(() => {
         if (!stopped) setMoments([])
       })
-    getSuckerGroupAddToBalance(suckerGroupId)
+    getSuckerGroupAddToBalance(suckerGroupId, { signal })
       .then(items => {
         if (!stopped) setAdds(items)
       })
@@ -159,6 +162,7 @@ export function FundingChart({
       })
     return () => {
       stopped = true
+      left.abort()
     }
   }, [suckerGroupId])
 

@@ -109,7 +109,9 @@ and the check fails on a missing marker.
   state drifts. Successful receipts must also prove the intended distribution;
   recipient fallback failures, partial hook pulls and reserved hook burns
   remain unresolved in `data/project-distributions.test.ts` and
-  `components/distribution-batch.test.tsx`.
+  `components/distribution-batch.test.tsx`. A reserved distribution of at
+  least the reviewed count confirms, each share checked against the count
+  distributed, and the confirmed dialog shows that count; fewer is refused.
 - Holder claims preserve local ERC-20 availability, controller, full credit
   amount and holder beneficiary. Aggregate auto-issuance keeps all unlocked
   stage/beneficiary allocations and revalidates them before funding. Individual
@@ -143,8 +145,24 @@ and the check fails on a missing marker.
   same way; a wallet whose name merely contains "safe" sends as itself.
   Screens re-render once the peer is read, the newest read wins, and a re-read
   keeps the previous answer. The execution wait also reads the chain, so an
-  execution hash Safe{Wallet} returns directly is taken as the execution
+  execution hash Safe{Wallet} returns directly is taken as the execution, a
+  batch run at once through any MultiSendCallOnly the SDK recognizes (1.3.0,
+  its EIP-155 deployment, 1.4.1) is bound to the reviewed calls, and only a
+  real not-found counts toward giving up on a chain without a service
   (`safe-connector.test.ts`).
+- Every wait for a Safe's execution takes its flow's signal, which TypeScript
+  requires: a component's comes from `useUnmountSignal`, and every component
+  that starts such a flow reads one (`components/safe-wait-signals.test.tsx`).
+  An abort leaves the proposal submitted: the launch lock is let go with the
+  Safe setup still confirming (`transactions/launch-multisig-direct.test.ts`),
+  a Safe app authority call stops before its receipt
+  (`transactions/authority-gas.test.ts`), the batch tray's proposal stays
+  queued (`transactions/safe-batch-submit.test.ts`), a project batch's
+  15-second look and a payer deployment's one-minute look end with the flow
+  and leave it pending (`transactions/project-batch.test.ts`,
+  `transactions/payer-relayr.test.ts`), and the free mint reads "Mint
+  submitted", never the review again, when its wait ends without an
+  execution (`components/mint-shop-item-gas.test.tsx`).
 - Reviewed gas is sent gas: direct authority calls review the gas limit they
   send and Safe-app calls review the `safeTxGas` it becomes
   (`transactions/authority-gas.test.ts`); Safe signatures review the exact
@@ -247,9 +265,10 @@ and the check fails on a missing marker.
   `components/project-token-batches.test.tsx`,
   `components/shop-batch-journeys.test.tsx`,
   `components/account-view.test.tsx`). A payer deployment's raw calls carry no
-  nonce, so it quotes them again only once an uncached bundle read reports the
-  old quote unpaid and unrun, after the R104 proof when its payment reverted
-  (`transactions/payer-relayr.test.ts`). A session refuses to save
+  nonce, so it quotes them again only once the SDK's requireRelayrBundleUnpaid
+  reads the old quote unpaid with every call pending, after the R104 proof
+  when its payment reverted, and its refusal says why (paid, running or
+  unknown) (`transactions/payer-relayr.test.ts`). A session refuses to save
   payments or payment options it cannot keep exactly, and saves every option
   it can authenticate, several on one chain included; a quote offering more
   than it can keep is never paid, and is quoted again with its same signed

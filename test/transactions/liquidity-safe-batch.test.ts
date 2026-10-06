@@ -47,7 +47,7 @@ beforeEach(() => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW * 1000)
   mocks.isSafeConnection.mockReturnValue(true)
-  mocks.proposeSafeBatch.mockResolvedValue({ safeTxHash: PROPOSAL, executionHash: null })
+  mocks.proposeSafeBatch.mockResolvedValue(PROPOSAL)
 })
 
 describe('liquidity as one Safe batch', () => {
@@ -75,11 +75,11 @@ describe('liquidity as one Safe batch', () => {
     expect(hash).toBe(PROPOSAL)
     expect(mocks.proposeSafeBatch).toHaveBeenCalledOnce()
     const request = mocks.proposeSafeBatch.mock.calls[0][0]
-    expect(request).toMatchObject({
+    expect(request).toEqual({
       chainId: 8453,
       safe: SAFE,
       title: 'Add liquidity',
-      awaitExecution: false,
+      calls: expect.any(Array),
     })
     const calls = request.calls
     expect(calls).toHaveLength(3)

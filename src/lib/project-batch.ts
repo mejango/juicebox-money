@@ -271,11 +271,16 @@ async function safeExecution(
 }
 
 export async function runProjectBatch({
-  scope, action, account, calls, expectedBatchId, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress,
+  scope, action, account, calls, expectedBatchId, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress, signal,
 }: {
   scope: string
   action: string
   account: Address
+  /**
+   * The flow's: when it aborts, a wait for a Safe to execute a call ends, and
+   * the call stays submitted in the journal.
+   */
+  signal: AbortSignal
   calls?: ProjectBatchCall[]
   /** Bind an open recovery review to its original journal, even if another tab completes it. */
   expectedBatchId?: string
@@ -455,7 +460,7 @@ export async function runProjectBatch({
           } else {
             const scanned = await safeExecution(call, saved, recordScan)
             execution = scanned === 'unfinished' ? null : scanned
-            try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal: AbortSignal.timeout(15_000) }) }
+            try { execution ??= await waitForSafeExecutionHash(call.chainId, saved.hash, { signal, lookMs: 15_000 }) }
             catch (error) {
               // Safe's service says it ran and failed: its own receipt decides.
               // Anything else may still execute.
@@ -509,7 +514,7 @@ export async function runProjectBatch({
           },
           }], onProgress: progress => report(progress.message, round),
           // A resumed batch, or a connection that changed since, reviews each send again.
-          reviewedInParent: reviewedViaSafe === isSafeConnection(wagmiConfig) })
+          reviewedInParent: reviewedViaSafe === isSafeConnection(wagmiConfig), signal })
         } catch (error) {
           const submission = journal.submissions[call.id]
           const receipt = acceptRevertedTransactions && submission?.kind === 'direct' && submission.hash

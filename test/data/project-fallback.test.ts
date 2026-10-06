@@ -322,6 +322,8 @@ describe('handle authority on the server', () => {
     ['the Safe service fails', 8453, () => answer({}, 503)],
     ['the request to the Safe service fails', 8453, () => { throw new TypeError('fetch failed') }],
     ['the Safe service is rate limited', 8453, () => answer({}, 429, { 'retry-after': '60' })],
+    ['the Safe service asks for a second', 8453, () => answer({}, 429, { 'retry-after': '1' })],
+    ['the Safe service is rate limited without saying for how long', 8453, () => answer({}, 429)],
   ] as const)('returns unproven, never trusted, when %s', async (_, chainId, service) => {
     const fetchMock = serve(service)
 
@@ -331,6 +333,9 @@ describe('handle authority on the server', () => {
     // The Safe was read on both chains: the creation proof alone refused it.
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith(`/v1/rpc/${chainId}`))).toBe(true)
     expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/v1/rpc/1'))).toBe(true)
+    // A page render asks the service once and never waits for it.
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).includes('/creation/')).length)
+      .toBeLessThanOrEqual(1)
   })
 
   it("asks Safe's service once across renders for a record that proves the Safe, and again after a minute for a missing one", async () => {

@@ -133,12 +133,10 @@ export async function proposeLiquidityBatch({
   value: bigint
   title: string
 }): Promise<Hex> {
-  const { safeTxHash } = await proposeSafeBatch({
+  return proposeSafeBatch({
     chainId,
     safe: account,
     calls: liquidityBatchCalls({ chainId, positionManager, steps, unlockData, value }),
     title,
-    awaitExecution: false,
   })
-  return safeTxHash
 }

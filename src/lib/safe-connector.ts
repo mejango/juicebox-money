@@ -428,11 +428,6 @@ export async function reportedSafeExecution(
   return typeof hash === 'string' && /^0x[0-9a-fA-F]{64}$/u.test(hash) ? (hash as Hex) : null
 }
 
-/** How often a look at the chain asks again when the node can't answer. */
-const CHAIN_RETRY_MS = 5_000
-/** How long one look asks a node that can't answer before the failure reaches the SDK. */
-const CHAIN_RETRY_LIMIT_MS = 5 * 60_000
-
 function abortable(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const aborted = () => {
@@ -448,34 +443,17 @@ function abortable(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-/**
- * The chain as the SDK's wait reads it. The SDK takes any failed lookup as
- * "no such transaction" and, on a chain without a Safe service, gives the
- * proposal up after 12 of those in a row. Only viem's TransactionNotFoundError
- * says that here: any other failure says nothing about the transaction, so the
- * look asks again every 5 seconds, for up to 5 minutes, before it reaches the
- * SDK, and stops with the wait. (The SDK is learning to read a not-found this
- * way itself; once jbm takes that version this wrapper goes.)
- */
-function notFoundOnly(
-  client: { getTransaction: (args: { hash: Hex }) => Promise<unknown> },
-  signal?: AbortSignal,
-): { getTransaction: (args: { hash: Hex }) => Promise<unknown> } {
-  return {
-    async getTransaction(args) {
-      const started = Date.now()
-      for (;;) {
-        try {
-          return await client.getTransaction(args)
-        } catch (error) {
-          if (error instanceof TransactionNotFoundError || Date.now() - started >= CHAIN_RETRY_LIMIT_MS) {
-            throw error
-          }
-          await abortable(CHAIN_RETRY_MS, signal)
-        }
-      }
-    },
-  }
+type SafeExecutionWait = Omit<NonNullable<Parameters<typeof waitForExecution>[2]>, 'signal'> & {
+  /**
+   * The flow's: the page or dialog that waits. When it aborts, the wait ends
+   * at once with an AbortError and the proposal stays submitted, its
+   * execution unknown. The SDK's wait has no end of its own while Safe's
+   * service lists the proposal unexecuted, or while a node can't say whether
+   * the chain knows it.
+   */
+  signal: AbortSignal
+  /** Ends the wait after this long too, for a flow that looks once and says the proposal is still pending. */
+  lookMs?: number
 }
 
 /**
@@ -483,15 +461,24 @@ function notFoundOnly(
  * replies with the execution's own hash when the owner executes at once. An
  * explicit `client` wins.
  */
-export function waitForSafeExecutionHash(
+export async function waitForSafeExecutionHash(
   chainId: number,
   safeTxHash: Hex,
-  options: NonNullable<Parameters<typeof waitForExecution>[2]> = {},
+  { signal, lookMs, ...options }: SafeExecutionWait,
 ): Promise<Hex> {
   const config = getWatchedConfig()
   const client = options.client ?? (config && getPublicClient(config, { chainId }))
-  return waitForExecution(chainId, safeTxHash, {
-    ...options,
-    client: client ? notFoundOnly(client, options.signal) : undefined,
-  })
+  if (lookMs === undefined) return waitForExecution(chainId, safeTxHash, { ...options, client, signal })
+  // The look ends with the flow, or after lookMs, whichever is first.
+  const look = new AbortController()
+  const end = () => look.abort()
+  const timer = setTimeout(end, lookMs)
+  signal.addEventListener('abort', end, { once: true })
+  if (signal.aborted) end()
+  try {
+    return await waitForExecution(chainId, safeTxHash, { ...options, client, signal: look.signal })
+  } finally {
+    clearTimeout(timer)
+    signal.removeEventListener('abort', end)
+  }
 }

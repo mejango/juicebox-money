@@ -10,7 +10,7 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY_DEPLOYMENTS } from '@bananapus/nana-sdk-core/safe'
 import {
   canonicalSafeTxHash,
   SAFE_EXEC_ABI,
@@ -171,12 +171,12 @@ describe('Safe execution wait', () => {
       client: expect.objectContaining({ getTransaction: expect.any(Function) }),
       signal,
     })
-    // The SDK reads the chain's own client.
+    // The SDK reads the chain's own client: it tells a not-found from a node
+    // that can't answer itself.
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
-    await options.client.getTransaction({ hash: HASH })
-    expect(chainClient.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+    expect(options.client).toBe(chainClient)
 
-    await waitForSafeExecutionHash(1, HASH)
+    await waitForSafeExecutionHash(1, HASH, { signal })
     expect(runtime.getPublicClient).toHaveBeenLastCalledWith(config, { chainId: 1 })
   })
 
@@ -184,47 +184,90 @@ describe('Safe execution wait', () => {
     const client = { getTransaction: vi.fn(async () => ({ hash: HASH })) }
     runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
 
-    await waitForSafeExecutionHash(10, HASH, { client })
+    await waitForSafeExecutionHash(10, HASH, { client, signal: new AbortController().signal })
     const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
-    await expect(options.client.getTransaction({ hash: HASH })).resolves.toEqual({ hash: HASH })
-    expect(client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
+    expect(options.client).toBe(client)
     expect(runtime.getPublicClient).not.toHaveBeenCalled()
   })
 
-  it("hands the SDK only a real not-found: a node that can't answer is asked again", async () => {
-    vi.useFakeTimers()
-    const client = {
-      getTransaction: vi
-        .fn()
-        .mockRejectedValueOnce(new Error('fetch failed'))
-        .mockRejectedValueOnce(new Error('HTTP 503'))
-        .mockResolvedValueOnce({ hash: HASH })
-        .mockRejectedValue(new TransactionNotFoundError({ hash: HASH })),
-    }
-    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
-    await waitForSafeExecutionHash(11155420, HASH, { client })
-    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+  describe('a look of a set length', () => {
+    /** The SDK's wait as far as these cases need it: it ends when its signal aborts. */
+    const untilAborted = (_chainId: number, _hash: Hex, { signal }: { signal: AbortSignal }) =>
+      new Promise<Hex>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
+      })
 
-    const look = options.client.getTransaction({ hash: HASH })
-    await vi.advanceTimersByTimeAsync(10_000)
-    await expect(look).resolves.toEqual({ hash: HASH })
-    expect(client.getTransaction).toHaveBeenCalledTimes(3)
-    // A real not-found reaches the SDK at once.
-    await expect(options.client.getTransaction({ hash: HASH })).rejects.toBeInstanceOf(TransactionNotFoundError)
+    it('ends after lookMs while its flow goes on', async () => {
+      vi.useFakeTimers()
+      runtime.waitForSafeExecutionHash.mockImplementation(untilAborted)
+      const flow = new AbortController()
+      const look = waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 15_000 })
+      const ended = expect(look).rejects.toMatchObject({ name: 'AbortError' })
+      await vi.advanceTimersByTimeAsync(14_999)
+      const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+      expect(options.signal.aborted).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await ended
+      expect(flow.signal.aborted).toBe(false)
+    })
+
+    it('ends at once when its flow does', async () => {
+      vi.useFakeTimers()
+      runtime.waitForSafeExecutionHash.mockImplementation(untilAborted)
+      const flow = new AbortController()
+      const look = waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 60_000 })
+      const ended = expect(look).rejects.toMatchObject({ name: 'AbortError' })
+      flow.abort()
+      await ended
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    it('hands back what the SDK found before either', async () => {
+      runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
+      const flow = new AbortController()
+      await expect(
+        waitForSafeExecutionHash(10, HASH, { client: { getTransaction: vi.fn() }, signal: flow.signal, lookMs: 15_000 }),
+      ).resolves.toBe(HASH)
+      const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+      expect(options).not.toHaveProperty('lookMs')
+      expect(options.signal).not.toBe(flow.signal)
+    })
   })
 
-  it('stops asking when its wait is aborted', async () => {
-    vi.useFakeTimers()
-    const client = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) }
-    const controller = new AbortController()
-    runtime.waitForSafeExecutionHash.mockResolvedValue(HASH)
-    await waitForSafeExecutionHash(11155420, HASH, { client, signal: controller.signal })
-    const [, , options] = runtime.waitForSafeExecutionHash.mock.lastCall!
+  describe("on a chain without Safe's service, with the SDK's wait", () => {
+    beforeEach(async () => {
+      vi.useFakeTimers()
+      const sdk = await vi.importActual<typeof import('@bananapus/nana-sdk-core/safe-service')>(
+        '@bananapus/nana-sdk-core/safe-service',
+      )
+      runtime.waitForSafeExecutionHash.mockImplementation(sdk.waitForSafeExecutionHash)
+    })
 
-    const look = options.client.getTransaction({ hash: HASH })
-    const settled = expect(look).rejects.toThrow(/aborted/i)
-    controller.abort()
-    await settled
+    it("keeps looking while the node can't answer, and ends when its signal aborts", async () => {
+      const client = { getTransaction: vi.fn().mockRejectedValue(new Error('fetch failed')) }
+      const flow = new AbortController()
+      const wait = waitForSafeExecutionHash(11155420, HASH, { client, signal: flow.signal })
+      const settled = vi.fn()
+      wait.then(settled, settled)
+
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(settled).not.toHaveBeenCalled()
+      expect(client.getTransaction.mock.calls.length).toBeGreaterThan(12)
+
+      flow.abort()
+      await expect(wait).rejects.toMatchObject({ name: 'AbortError' })
+    })
+
+    it('gives up after twelve answers that the chain has no such transaction', async () => {
+      const client = {
+        getTransaction: vi.fn().mockRejectedValue(new TransactionNotFoundError({ hash: HASH })),
+      }
+      const wait = waitForSafeExecutionHash(11155420, HASH, { client, signal: new AbortController().signal })
+      const failed = expect(wait).rejects.toThrow(/does not host a transaction service/)
+      await vi.advanceTimersByTimeAsync(120_000)
+      await failed
+      expect(client.getTransaction).toHaveBeenCalledTimes(12)
+    })
   })
 })
 
@@ -285,13 +328,23 @@ describe('Safe app execution', () => {
     await expect(atOnce(client as unknown as ReturnType<typeof chain>)).resolves.toMatchObject({ status: 'unproven' })
   })
 
-  it('binds a batch to MultiSendCallOnly running exactly the reviewed calls, in order', async () => {
-    const batch = (calls: (typeof CALL)[], value = 0n) =>
-      chain(execTransaction(MULTI_SEND_CALL_ONLY, value, encodeMultiSend(calls), 1))
-    await expect(atOnce(batch([CALL, SECOND]), [CALL, SECOND])).resolves.toMatchObject({ status: 'success' })
-    await expect(atOnce(batch([SECOND, CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
-    await expect(atOnce(batch([CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
-    await expect(atOnce(batch([CALL, SECOND], 1n), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+  // Safe{Wallet} batches a 1.4.1 Safe through MultiSendCallOnly 1.4.1, and a
+  // 1.3.0 Safe through 1.3.0's canonical or EIP-155 deployment.
+  it.each(MULTI_SEND_CALL_ONLY_DEPLOYMENTS)(
+    'binds a batch to MultiSendCallOnly %s running exactly the reviewed calls, in order',
+    async multiSend => {
+      const batch = (calls: (typeof CALL)[], value = 0n) =>
+        chain(execTransaction(multiSend, value, encodeMultiSend(calls), 1))
+      await expect(atOnce(batch([CALL, SECOND]), [CALL, SECOND])).resolves.toMatchObject({ status: 'success' })
+      await expect(atOnce(batch([SECOND, CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+      await expect(atOnce(batch([CALL]), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+      await expect(atOnce(batch([CALL, SECOND], 1n), [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
+    },
+  )
+
+  it('leaves a batch DELEGATECALLed into any other contract unproven', async () => {
+    const client = chain(execTransaction(OTHER, 0n, encodeMultiSend([CALL, SECOND]), 1))
+    await expect(atOnce(client, [CALL, SECOND])).resolves.toMatchObject({ status: 'unproven' })
   })
 
   it("reads a proposal executed later from the Safe's event for it, without the transaction", async () => {

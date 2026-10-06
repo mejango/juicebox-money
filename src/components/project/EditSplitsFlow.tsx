@@ -38,6 +38,7 @@ import {
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -260,9 +261,12 @@ export type SplitReview = {
 
 type SplitJournal = { scope: string; review: SplitReview }
 
-/** Resolve this project's current group and permission from its own chain. */
-export async function readSplitDestination({ chainId, projectId, groupId, account, rulesetId }: {
-  chainId: JBChainId; projectId: number; groupId: bigint; account: Address; rulesetId?: bigint
+/**
+ * Resolve this project's current group and permission from its own chain.
+ * `signal` stops the indexed revnet operator read, the one Bendystraw read.
+ */
+export async function readSplitDestination({ chainId, projectId, groupId, account, rulesetId, signal }: {
+  chainId: JBChainId; projectId: number; groupId: bigint; account: Address; rulesetId?: bigint; signal?: AbortSignal
 }): Promise<SplitSnapshot> {
   const client = clientFor(chainId)
   const addresses = jbContractAddress['6']
@@ -291,7 +295,7 @@ export async function readSplitDestination({ chainId, projectId, groupId, accoun
     // candidate: live Safe membership and the owner's permission must agree.
     const revOwner = addresses[RevnetCoreContracts.REVOwner][chainId]
     if (revOwner && owner.toLowerCase() === revOwner.toLowerCase()) {
-      const operator = await getRevnetOperator(chainId, projectId)
+      const operator = await getRevnetOperator(chainId, projectId, { signal })
       if (operator && isAddress(operator)) {
         const identity = await readAuthorityIdentity(client, operator)
         if (identity?.kind === 'safe' && identity.owners.some(signer => signer.toLowerCase() === account.toLowerCase()) && await permitted(operator)) authority = operator
@@ -412,8 +416,10 @@ async function withSplitLocks<T>(destinations: SplitReview['destinations'], run:
  * Send a reviewed split update under its destinations' locks. A multichain
  * update is saved before any signature can be published, so it can be
  * resumed, and cleared once it completes or when it published nothing.
+ * `signal` is the flow's: when it aborts, a Safe app proposal's wait for its
+ * execution ends.
  */
-export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void): Promise<AuthorityResult> {
+export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void, signal: AbortSignal): Promise<AuthorityResult> {
   const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
   return withSplitLocks(plan.destinations, async () => {
     for (const destination of plan.destinations) {
@@ -421,7 +427,7 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
     }
     if (plan.destinations.length > 1) saveSplitJournal(journal)
     try {
-      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message) })
+      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message), signal })
       clearSplitJournal(journal)
       return result
     } catch (error) {
@@ -440,6 +446,8 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
  */
 export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet()
+  // Leaving ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
@@ -456,7 +464,7 @@ export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: Spl
           if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
         }
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message) })
+        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal() })
         clearSplitJournal(journal)
       })
       onComplete()
@@ -544,7 +552,7 @@ export function EditSplitsFlow({
     queryKey: ['editSplitsRevnetOperator', chainId, projectId],
     enabled: mounted && isRevnet,
     staleTime: 30_000,
-    queryFn: () => getRevnetOperator(chainId, projectId),
+    queryFn: ({ signal }) => getRevnetOperator(chainId, projectId, { signal }),
   })
   const projectAuthority = (isRevnet ? revnetOperator : owner) as
     | Address
@@ -683,6 +691,8 @@ function EditSplitsModal({
   const initialFallback = useRef<string | null>(null)
   const [lockSnapshotAt, setLockSnapshotAt] = useState<number | null>(null)
   const { address } = useWallet()
+  // Closing the editor ends a Safe app proposal's wait for its execution.
+  const flowSignal = useUnmountSignal()
   const [selectedChains, setSelectedChains] = useState<Set<number>>(() => new Set([chainId]))
   const projectScope = useMemo(() => {
     const destinations = new Map<number, readonly [JBChainId, number]>([[chainId, [chainId, projectId]]])
@@ -705,9 +715,9 @@ function EditSplitsModal({
     queryKey: ['editSplitsDestinations', projectChains.map(([id, pid]) => `${id}:${pid}`).join('|'), rulesetId.toString(), groupId.toString(), address],
     enabled: open && isReserved && !!address && projectChains.length > 1,
     staleTime: 0,
-    queryFn: () => Promise.all(projectChains.map(async ([id, pid]) => {
+    queryFn: ({ signal }) => Promise.all(projectChains.map(async ([id, pid]) => {
       try {
-        const snapshot = await readSplitDestination({ chainId: id, projectId: pid, groupId, account: address!, ...(id === chainId ? { rulesetId } : {}) })
+        const snapshot = await readSplitDestination({ chainId: id, projectId: pid, groupId, account: address!, signal, ...(id === chainId ? { rulesetId } : {}) })
         return { chainId: id, snapshot, error: null }
       } catch (err) {
         return { chainId: id, snapshot: null, error: err instanceof Error ? err.message : 'Could not verify this chain.' }
@@ -842,7 +852,7 @@ function EditSplitsModal({
           throw new Error(`Resume the pending split update on ${chainName(id)} first.`)
         }
       }
-      const snapshots = await Promise.all(chosen.map(([id, pid]) => readSplitDestination({ chainId: id, projectId: pid, groupId, account: address, ...(id === chainId ? { rulesetId } : {}) })))
+      const snapshots = await Promise.all(chosen.map(([id, pid]) => readSplitDestination({ chainId: id, projectId: pid, groupId, account: address, signal: flowSignal(), ...(id === chainId ? { rulesetId } : {}) })))
       const home = snapshots.find(snapshot => snapshot.chainId === chainId)!
       if (!home || fingerprint(home.currentSplits) !== baseline || home.controller.toLowerCase() !== controller.toLowerCase() || home.authority.toLowerCase() !== authority.toLowerCase() || (initialFallback.current !== null && fingerprint(home.fallbackSplits) !== initialFallback.current)) {
         throw new Error('The authority, current ruleset, or splits changed while you were editing. Reopen to review the current recipients.')
@@ -886,7 +896,7 @@ function EditSplitsModal({
     }
     setFlowError(null); setBusy(true); setStatus('Rechecking the split recipients…')
     try {
-      const result = await submitSplitReview(plan, setStatus)
+      const result = await submitSplitReview(plan, setStatus, flowSignal())
       setStatus(safeOutcomeMessage(result, `${title} updated. This page picks it up in about a minute.`))
       setSuccess(true)
     } catch (err) {

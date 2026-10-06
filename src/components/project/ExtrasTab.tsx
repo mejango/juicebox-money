@@ -11,6 +11,7 @@ import { AddressLink } from '@/components/ui/AddressLink'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
 import { draftFileName } from '@/lib/draft'
@@ -174,6 +175,8 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   chains: [number, number][]
 }) {
   const { isConnected, address, openSignIn } = useWallet()
+  // Leaving ends a wait for a Safe to execute a deployment; it stays submitted.
+  const flowSignal = useUnmountSignal()
   const { data: ownToken } = useProjectTokenSymbol(chainId, projectId)
   const beneficiaryLabel = `${ownToken?.symbol || 'Token'} beneficiary`
   const projects = useMemo(() => [
@@ -196,7 +199,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   const { data: payerRows = [], isLoading: payersLoading, isError: payersError,
     isFetching: payersFetching, refetch: refetchPayers } = useQuery({
     queryKey: ['projectPayers', ...projects.flat()],
-    queryFn: () => getProjectPayers(projects), enabled: projects.length > 0, staleTime: 30_000, retry: 1,
+    queryFn: ({ signal }) => getProjectPayers(projects, { signal }), enabled: projects.length > 0, staleTime: 30_000, retry: 1,
   })
 
   useEffect(() => {
@@ -233,7 +236,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
     setBusy(true)
     setFlowError(null)
     try {
-      const result = await runPayerDeployments(frozen, update => { setSession(update); setReview(null) })
+      const result = await runPayerDeployments(frozen, update => { setSession(update); setReview(null) }, flowSignal())
       setSession(result)
       setReview(null)
       await refetchPayers()

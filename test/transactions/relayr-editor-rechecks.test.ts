@@ -72,6 +72,9 @@ import { metadataReviewCalls, type MetadataReview } from '@/components/project/A
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 
+/** A flow that never ends, for runs whose signal is not under test. */
+const flow = new AbortController().signal
+
 const ALICE = mocks.account as Address
 const OTHER = '0x3333333333333333333333333333333333333333' as Address
 const HOOK = '0x2222222222222222222222222222222222222222' as Address
@@ -221,7 +224,7 @@ describe('the split editor\'s recheck', () => {
     const calls = reviewedSplitCalls(review())
     const scope = saveUnpaidSession(calls)
     current[8453] = [split(ALICE)]
-    await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed',
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed',
       message: 'The project changed since this review.' })
     expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', discardable: 'changed' })
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
@@ -232,7 +235,7 @@ describe('the split editor\'s recheck', () => {
     const scope = saveUnpaidSession(calls)
     nonces = { 1: 5n, 8453: 5n }
     current = { 1: [split(HOOK)], 8453: [split(HOOK)] }
-    await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
     expect(splitReads()).toEqual([])
     expect(loadRelayrPendingSession(scope)).toMatchObject({ discardable: 'ran' })
   })
@@ -240,7 +243,7 @@ describe('the split editor\'s recheck', () => {
   it('signs again at the saved nonces once every request expired unused and the recipients still match', async () => {
     const calls = reviewedSplitCalls(review())
     saveUnpaidSession(calls)
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow('Relayr quote unavailable')
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Relayr quote unavailable')
     expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
       .toEqual([[1, 4n], [8453, 4n]])
   })
@@ -249,7 +252,7 @@ describe('the split editor\'s recheck', () => {
     const calls = reviewedSplitCalls(review())
     savePaidSession(calls)
     // Its requests expired unused, whatever Relayr reports, so the recheck runs before new signatures (amended ruling R114).
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow('Relayr quote unavailable')
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Relayr quote unavailable')
     expect(splitReads().length).toBeGreaterThan(0)
     expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
       .toEqual([[1, 4n], [8453, 4n]])
@@ -264,7 +267,7 @@ describe('the split editor\'s recheck', () => {
     }
     vi.mocked(Date.now).mockReturnValue((DEADLINE - 600) * 1_000)
     // Its requests can still run, so it says until when (ruling R114).
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
     expect(splitReads()).toEqual([])
     expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'confirmed' })
     expect(loadRelayrPendingSession(scope)?.discardable).toBeUndefined()
@@ -329,7 +332,7 @@ describe('the ruleset-queue editor\'s recheck', () => {
     const calls = reviewedQueueCalls(review(), 'current')
     const scope = saveUnpaidSession(calls)
     reserved[8453] = [{ ...split, beneficiary: ALICE }]
-    await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed' })
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed' })
     expect(loadRelayrPendingSession(scope)).toMatchObject({ discardable: 'changed' })
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })
@@ -337,7 +340,7 @@ describe('the ruleset-queue editor\'s recheck', () => {
   it('signs again at the saved nonces once every request expired unused and the queue still matches', async () => {
     const calls = reviewedQueueCalls(review(), 'current')
     saveUnpaidSession(calls)
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow('Relayr quote unavailable')
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Relayr quote unavailable')
     expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => [Number(request.domain.chainId), request.message.nonce]))
       .toEqual([[1, 4n], [8453, 4n]])
   })
@@ -372,7 +375,7 @@ describe('the metadata editor\'s recheck', () => {
     const calls = metadataReviewCalls(review())
     const scope = saveUnpaidSession(calls)
     uris[8453] = 'ipfs://QmElsewhere'
-    await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed' })
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'changed' })
     expect(loadRelayrPendingSession(scope)).toMatchObject({ discardable: 'changed' })
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })
@@ -386,7 +389,7 @@ describe('the metadata editor\'s recheck', () => {
     }
     vi.mocked(Date.now).mockReturnValue((DEADLINE - 600) * 1_000)
     uris[8453] = 'ipfs://QmElsewhere'
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
+    await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
     expect(loadRelayrPendingSession(scope)?.discardable).toBeUndefined()
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })

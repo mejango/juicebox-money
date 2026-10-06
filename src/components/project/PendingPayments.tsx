@@ -6,6 +6,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatUnits, isAddressEqual, type Address } from 'viem'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
@@ -24,6 +25,8 @@ export function PendingPayments({ chainId, projectId, chains }: {
   chainId: JBChainId; projectId: number; chains: readonly (readonly [number, number])[]
 }) {
   const { address, isConnected, openSignIn } = useWallet()
+  // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
+  const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated)
   const scope = projectBatchScope(ACTION, chainId, projectId)
@@ -47,13 +50,13 @@ export function PendingPayments({ chainId, projectId, chains }: {
     queryKey: ['pendingPayments', chainId, projectId, chains],
     enabled: hydrated,
     staleTime: 15_000, refetchInterval: 30_000, retry: 1,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const deployments = new Map<number, number>([[chainId, projectId]])
       for (const [chain, project] of chains) {
         if (deployments.has(chain) && deployments.get(chain) !== project) throw new Error('Conflicting project deployments. Reload the project.')
         deployments.set(chain, project)
       }
-      const payments = (await Promise.all([...deployments].map(([chain, project]) => fetchPendingPayments(chain as JBChainId, project)))).flat()
+      const payments = (await Promise.all([...deployments].map(([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal })))).flat()
       const reviewed = await Promise.all(payments.map(async payment => {
         try { return { payment, review: await reviewPendingPayment(payment), error: null } }
         catch (failure) { return { payment, review: null, error: failure instanceof Error ? failure.message : 'Could not verify this payment.' } }
@@ -82,7 +85,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     setBusy(true); setError(null); discard.capture(null)
     try {
       const result = await runProjectBatch({ scope, action: ACTION, account: address, calls, expectedBatchId: saved?.id,
-        title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true,
+        title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
           if (outcome) setOutcomes(previous => ({ ...previous, [call.id]: outcome }))
