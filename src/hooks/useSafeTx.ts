@@ -514,10 +514,12 @@ export function useSafeTx(chainId: number) {
           // is shown as it is and never proposed again.
           const key = proposalKey(request.chainId, account, sentCall)
           const held = proposals.get(key)
-          const queued =
-            !holdsCall(held) && hasSafeService(request.chainId)
-              ? await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
-              : null
+          let queued: Awaited<ReturnType<typeof findPendingSafeAppProposal>> = null
+          if (!holdsCall(held) && hasSafeService(request.chainId)) {
+            // Reading Safe's queue takes a moment: the flow shows it checking.
+            setPhase('simulating')
+            queued = await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
+          }
           if (holdsCall(held) || queued) {
             if (queued) {
               const { proposalHash, call } = queued

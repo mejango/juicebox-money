@@ -677,3 +677,23 @@ describe('an executed Safe proposal', () => {
     expect(flow.tx).toMatchObject({ phase: 'success', hash: EXECUTION, notice: null })
   })
 })
+
+describe("a send that asks Safe's queue first", () => {
+  it('shows the flow checking while the queue is read', async () => {
+    let answer!: (queued: null) => void
+    mocks.findPendingSafeAppProposal.mockImplementationOnce(() => new Promise(resolve => (answer = resolve)))
+    const flow = await mount()
+    let sent!: Promise<unknown>
+    await act(async () => {
+      sent = flow.tx.send(request, reviewedBySafe)
+    })
+    expect(flow.tx).toMatchObject({ phase: 'simulating', busy: true })
+    expect(mocks.requestReview).not.toHaveBeenCalled()
+    await act(async () => {
+      answer(null)
+      await sent
+    })
+    expect(mocks.requestReview).toHaveBeenCalledOnce()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+})
