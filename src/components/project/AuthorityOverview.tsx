@@ -26,6 +26,7 @@ import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
 import { ErrorNote } from "@/components/ui/TxError";
+import { useRelayrDiscard } from "@/components/RelayrDiscard";
 import { replaceTabHash } from "@/components/project/Tabs";
 import {
   clientFor,
@@ -565,7 +566,7 @@ function DeploySafeButtons({
   );
 }
 
-function TransferAuthorityFlow({
+export function TransferAuthorityFlow({
   rows,
   authority,
   isRevnet,
@@ -589,6 +590,8 @@ function TransferAuthorityFlow({
   } | null>(null);
   const [step, setStep] = useState(-1);
   const [done, setDone] = useState(false);
+  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
 
   const title = isRevnet ? "Transfer revnet operator" : "Transfer project ownership";
 
@@ -655,6 +658,7 @@ function TransferAuthorityFlow({
     if (!plan || busy) return;
     setBusy(true);
     setError(null);
+    discard.capture(null);
     setStep(0);
     try {
       const result = await runAuthorityCalls({
@@ -681,6 +685,7 @@ function TransferAuthorityFlow({
           ? submitError.message
           : "Could not transfer.",
       );
+      discard.capture(submitError);
     } finally {
       setBusy(false);
     }
@@ -693,6 +698,7 @@ function TransferAuthorityFlow({
     setStep(-1);
     setDone(false);
     setError(null);
+    discard.reset();
     if (finished) onDone();
   };
 
@@ -726,13 +732,16 @@ function TransferAuthorityFlow({
       }))}
       activeIndex={step}
       status={status}
-      error={error}
+      error={discard.active ? null : error}
       busy={busy}
       complete={done}
       action={error ? "Retry" : `Confirm & ${isRevnet ? "set operator" : "transfer"}`}
+      actionDisabled={discard.active}
       onConfirm={() => void submit()}
       onClose={closeReview}
-    />
+    >
+      {discard.element}
+    </TxConfirmDialog>
   ) : null;
 
   if (!open) {
@@ -1073,7 +1082,7 @@ function PermissionsAcrossChains({
   );
 }
 
-function PermissionEditor({
+export function PermissionEditor({
   grant,
   presetIds,
   deployments,
@@ -1129,6 +1138,8 @@ function PermissionEditor({
   } | null>(null);
   const [step, setStep] = useState(-1);
   const [done, setDone] = useState(false);
+  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
 
   /** Re-read each chain's current bitmap and freeze the exact calls. */
   const review = async () => {
@@ -1205,6 +1216,7 @@ function PermissionEditor({
     if (!plan || busy) return;
     setBusy(true);
     setError(null);
+    discard.capture(null);
     setStep(0);
     try {
       const result = await runAuthorityCalls({
@@ -1231,6 +1243,7 @@ function PermissionEditor({
           ? submitError.message
           : "Could not update permissions.",
       );
+      discard.capture(submitError);
     } finally {
       setBusy(false);
     }
@@ -1243,6 +1256,7 @@ function PermissionEditor({
     setStep(-1);
     setDone(false);
     setError(null);
+    discard.reset();
     if (finished) onDone();
   };
 
@@ -1284,13 +1298,16 @@ function PermissionEditor({
       }))}
       activeIndex={step}
       status={!plan ? "Reading the current permissions…" : status}
-      error={error}
+      error={discard.active ? null : error}
       busy={checking || busy}
       complete={done}
       action={error ? "Retry" : grant ? "Confirm & update" : "Confirm & add"}
+      actionDisabled={discard.active}
       onConfirm={() => void submit()}
       onClose={closeReview}
-    />
+    >
+      {discard.element}
+    </TxConfirmDialog>
   ) : null;
 
   return (

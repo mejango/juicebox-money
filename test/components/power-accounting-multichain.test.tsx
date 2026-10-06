@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData } from 'viem'
 import { jbMultiTerminalAbi } from '@bananapus/nana-sdk-core'
 
-const mocks = vi.hoisted(() => ({ runAuthorityCalls: vi.fn() }))
+const mocks = vi.hoisted(() => ({ runAuthorityCalls: vi.fn(), discard: vi.fn() }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: '0x1111111111111111111111111111111111111111' }) }))
 vi.mock('@/lib/authority', () => ({
   clientFor: vi.fn(), readAuthorityOf: vi.fn(),
@@ -18,12 +18,15 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
   TxConfirmDialog: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('@/components/ui/TxError', () => ({ ErrorNote: ({ message }: { message: string }) => message }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 
 import { PowerActionForm } from '@/components/project/AuthorityPowersCard'
 import { POWERS } from '@/lib/projectPowers'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { RelayrDiscardError } from '@/lib/relayr'
 
 const authority = '0x1111111111111111111111111111111111111111' as const
 const controller = '0x2222222222222222222222222222222222222222' as const
@@ -88,6 +91,25 @@ describe('multichain accounting-token review', () => {
       expect(decoded.functionName).toBe('addAccountingContextsFor')
       expect(decoded.args).toEqual([expected.projectId, [{ token: expected.token, decimals: expected.decimals, currency: Number(BigInt(expected.token) & 0xffffffffn) }]])
     }
+  })
+
+  it('shows the line and Discard, in place of the error, when its saved Relayr session can only be discarded', async () => {
+    mocks.runAuthorityCalls.mockRejectedValue(new RelayrDiscardError('authority:0xabc', 'changed'))
+    await renderForm()
+    await decimals('Ethereum', '6')
+    await decimals('Optimism', '18')
+    await review()
+    await submit()
+    const dialog = renderer!.root.findByType(TxConfirmDialog)
+    expect(dialog.props.error).toBeNull()
+    expect(dialog.props.actionDisabled).toBe(true)
+    expect(renderer!.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'authority:0xabc', reason: 'changed' })
+    mocks.discard.mockResolvedValue(undefined)
+    await act(async () => { await renderer!.root.findAllByType('button').find(button => button.props.children === 'Discard')!.props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith('authority:0xabc')
+    expect(renderer!.root.findAllByType(RelayrDiscard)).toHaveLength(0)
+    // The powers have no recheck of their own, so Discard closes the review: a fresh one sends again (ruling R114 (f)).
+    expect(renderer!.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
   })
 
   it('blocks a destination without valid decimals before review or submission', async () => {

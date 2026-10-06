@@ -7,6 +7,7 @@ import type { AuthorityDeployment } from '@/components/project/AuthorityOverview
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { ErrorNote } from '@/components/ui/TxError'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import {
   clientFor,
@@ -266,6 +267,7 @@ export function ProjectHandleCard({
   const [sequenceRunning, setSequenceRunning] = useState(false)
   const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const discard = useRelayrDiscard(() => setError(null))
   const [pendingSafe, setPendingSafe] = useState<Address | null>(null)
   const siteOrigin = DEFAULT_SITE_ORIGIN
   const normalized = useMemo(() => normalizeProjectHandle(input), [input])
@@ -408,6 +410,7 @@ export function ProjectHandleCard({
     }
     setBusy('ens')
     setError(null)
+    discard.capture(null)
     setProgress('Checking the ENS resolver…')
     try {
       const client = clientFor(PROJECT_HANDLES_CHAIN_ID)
@@ -529,6 +532,7 @@ export function ProjectHandleCard({
         return true
       }
       setError(errorMessage(reason))
+      discard.capture(reason)
       return false
     } finally {
       setBusy(null)
@@ -546,6 +550,7 @@ export function ProjectHandleCard({
     }
     setBusy('claim')
     setError(null)
+    discard.capture(null)
     setProgress('Rechecking the ENS record and project authority…')
     try {
       const [live, textRecord] = await Promise.all([
@@ -727,6 +732,7 @@ export function ProjectHandleCard({
         return true
       }
       setError(errorMessage(reason))
+      discard.capture(reason)
       return false
     } finally {
       setBusy(null)
@@ -1226,11 +1232,11 @@ export function ProjectHandleCard({
               stepsIntro="Two independently authorized onchain steps publish this handle. A verified step is skipped when you resume."
               activeIndex={setupStepIndex}
               status={progress}
-              error={error}
+              error={discard.active ? null : error}
               busy={dialogLocked}
               complete={alreadyVerified}
               cancelLabel={pendingSafeUrl ? 'Close' : 'Cancel'}
-              actionDisabled={setupDisabled}
+              actionDisabled={setupDisabled || discard.active}
               action={
                 error
                   ? 'Retry'
@@ -1242,9 +1248,11 @@ export function ProjectHandleCard({
               onClose={() => {
                 if (dialogLocked) return
                 setConfirming(false)
+                discard.reset()
                 if (alreadyVerified) setEditing(false)
               }}
             >
+              {discard.element}
               {pendingSafeUrl ? (
                 <a
                   href={pendingSafeUrl}

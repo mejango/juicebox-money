@@ -6,10 +6,10 @@ import { useConfig, useSignTypedData, useSwitchChain } from 'wagmi'
 import {
   permit2TypedData,
   type Permit2SignatureAuthorization,
-} from '@/lib/permit2-swap'
+} from '@bananapus/nana-sdk-core/v6/permit2'
 import { assertReviewedAccountConnected } from '@/lib/contract-write'
 import { requireTransactionReview } from '@/lib/transaction-review'
-import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
+import { assertNoViewAs } from '@/lib/viewAs'
 import type { Address } from 'viem'
 
 export function useReviewedPermit2Signature(options?: {
@@ -27,7 +27,7 @@ export function useReviewedPermit2Signature(options?: {
       authorization: Permit2SignatureAuthorization
       expectedAccount: Address
     }) => {
-      if (getViewAs()) throw new Error(VIEW_AS_WRITE_BLOCKED)
+      assertNoViewAs()
       assertReviewedAccountConnected(expectedAccount, getAccount(config).address)
       const typedData = permit2TypedData(authorization)
       if (!options?.reviewedInParent) {
@@ -38,6 +38,9 @@ export function useReviewedPermit2Signature(options?: {
           authorization: typedData,
         })
       }
+      // View-as can start while the review, the chain switch or the wallet
+      // prompt is open, so each of them is followed by its own check.
+      assertNoViewAs()
       let current = getAccount(config)
       assertReviewedAccountConnected(expectedAccount, current.address)
       if (current.chainId !== authorization.chainId) {
@@ -51,10 +54,12 @@ export function useReviewedPermit2Signature(options?: {
       ) {
         throw new Error('Wallet account or network changed. Review the payment again.')
       }
+      assertNoViewAs()
       const signature = await signTypedDataAsync({
         account: expectedAccount,
         ...typedData,
       })
+      assertNoViewAs()
       const after = getAccount(config)
       if (
         !after.address ||

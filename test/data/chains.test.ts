@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { relayrPaymentChains, relayrSupportsChain, relayrSupportsChains } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   PRODUCTION_CHAINS,
   SUPPORTED_CHAINS,
@@ -24,5 +25,17 @@ describe('dual-environment chain configuration', () => {
     expect(environmentForChainIds([8453, 10])).toBe('production')
     expect(environmentForChainIds([84532, 11155111])).toBe('testnet')
     expect(environmentForChainIds([])).toBe('production')
+  })
+
+  it('makes each environment exactly one of Relayr\'s network families', () => {
+    // The create form picks Relayr for a selection within one environment
+    // without loading the SDK's Relayr module; the launch checks it again.
+    for (const environment of ['production', 'testnet'] as const) {
+      const ids = chainsForEnvironment(environment).map(chain => chain.id)
+      expect(relayrSupportsChains(ids)).toBe(true)
+      expect(relayrPaymentChains(ids)).toEqual(ids)
+    }
+    expect(SUPPORTED_CHAINS.every(chain => relayrSupportsChain(chain.id))).toBe(true)
+    expect(relayrSupportsChains([PRODUCTION_CHAINS[0].id, TESTNET_CHAINS[0].id])).toBe(false)
   })
 })

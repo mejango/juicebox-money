@@ -36,27 +36,29 @@ import { useWallet } from "@/hooks/useWallet";
 import {
   clearRelayrPendingSession,
   loadRelayrPendingSession,
-  relayrDestinationHash,
   relayrPay,
   relayrPaymentLabel,
   relayrPaymentOptions,
   relayrPoll,
   relayrPostBundle,
+  saveRelayrPendingSession,
+  saveRelayrPendingSessionDurably,
+  withRelayrScopeLock,
+  type RelayrPendingSession,
+  type RelayrSafeExecutionProof,
+} from "@/lib/relayr";
+import {
+  relayrDestinationHash,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
-  saveRelayrPendingSession,
-  saveRelayrPendingSessionDurably,
-  withRelayrScopeLock,
+  relayrSupportsChains,
   type RelayrEntry,
   type RelayrPayment,
-  type RelayrPendingSession,
   type RelayrQuote,
-  type RelayrSafeExecutionProof,
   type RelayrTransactionRecord,
-} from "@/lib/relayr";
-import { relayrSupportsChains } from "@/lib/relayr-chains";
+} from "@bananapus/nana-sdk-core/review/relayr";
 import {
   confirmSafeTx,
   executeSafeTx,
@@ -1499,34 +1501,14 @@ export function SafeQueueCard({
           safeTxHash: row.snapshot.safeTxHash,
           txUuid: expectedTransactions[index].txUuid,
         }));
-      const paymentHash = await relayrPay(
+      const { hash: paymentHash } = await relayrPay({
         payment,
-        address,
-        quote.bundle_uuid,
-        batchReview.entries.map((entry) => entry.chain),
-        (hash) => {
-          submittedSession = saveRelayrPendingSession(pendingScope, {
-            bundleUuid: quote.bundle_uuid,
-            paymentHash: hash,
-            paymentChainId: payment.chain,
-            paymentStatus: "submitted",
-            chainIds: batchReview.rows.map((row) => row.chain.chainId),
-            expectedCount: batchReview.rows.length,
-            records: quote.transactions ?? [],
-            itemCount: batchReview.rows.length,
-            account: address,
-            createdAt: Date.now(),
-            expectedEntries,
-            expectedSafeExecutions,
-          });
-          paidSession = submittedSession;
-          setPendingSession(submittedSession);
-          setNotice(
-            `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
-          );
-        },
-        reverifyBatch,
-        () => {
+        account: address,
+        bundleUuid: quote.bundle_uuid,
+        destinationChainIds: batchReview.entries.map((entry) => entry.chain),
+        reverify: reverifyBatch,
+        reverifyBeforeSendOnly: true,
+        onSending: () => {
           const existingSession = loadRelayrPendingSession(pendingScope);
           if (existingSession) {
             setPendingSession(existingSession);
@@ -1555,8 +1537,30 @@ export function SafeQueueCard({
           paidSession = submittedSession;
           setPendingSession(submittedSession);
         },
-        true,
-      );
+        onSent: (payments) => {
+          const hash = payments[payments.length - 1].hash;
+          submittedSession = saveRelayrPendingSession(pendingScope, {
+            bundleUuid: quote.bundle_uuid,
+            paymentHash: hash,
+            paymentChainId: payment.chain,
+            paymentStatus: "submitted",
+            chainIds: batchReview.rows.map((row) => row.chain.chainId),
+            expectedCount: batchReview.rows.length,
+            records: quote.transactions ?? [],
+            itemCount: batchReview.rows.length,
+            account: address,
+            createdAt: Date.now(),
+            expectedEntries,
+            expectedSafeExecutions,
+            payments,
+          });
+          paidSession = submittedSession;
+          setPendingSession(submittedSession);
+          setNotice(
+            `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
+          );
+        },
+      });
       const initialSession = saveRelayrPendingSession(pendingScope, {
         ...(submittedSession ?? {
           bundleUuid: quote.bundle_uuid,

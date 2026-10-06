@@ -29,7 +29,7 @@ and the check fails on a missing marker.
 | Deploy a project payer address | Raw `JBProjectPayerDeployer.deployProjectPayer` calls with explicit admin/beneficiary, linked project IDs, chosen funding chain and exact clone verification | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/payer-relayr.test.ts`, `components/extras-payer.test.tsx`, `components/write-flows.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx` |
 | Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
-| Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts` |
+| Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts`, `transactions/reviewed-permit2-signature.test.ts` |
 | Swap project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx`, `components/reviewed-account-holder.test.tsx` |
@@ -73,7 +73,7 @@ and the check fails on a missing marker.
 | Submit a reviewed direct write | reviewed-account check → review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |
 | Propose/confirm/execute a Safe tx | EIP-712 + `execTransaction` | **P/E** | `transactions/safe.test.ts`, `transactions/safe-orchestration.test.ts` |
-| Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts` |
+| Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts`, `transactions/relayr-editor-rechecks.test.ts` |
 | Launch across mainnets with one payment | Per-chain launch authorizations + one chosen-chain Relayr funding transaction | **P/E** | `transactions/launch-relayr.test.ts`, `transactions/launch-session.test.ts`, `contracts/launch.test.ts` |
 
 | Resume a reviewed project batch | Frozen destination calls, serialized rounds, original hashes/proposals, and durable completion before clearing Relayr recovery | **P/E** | `transactions/project-batch.test.ts` |
@@ -173,7 +173,94 @@ and the check fails on a missing marker.
 - Relayr deterministic scopes, paid-but-unknown outcomes, progress accounting,
   sanitized resumable snapshots, payment validation, polling terminal states,
   and no-repay resume behavior: covered in `transactions/relayr.test.ts` and
-  `transactions/relayr-orchestration.test.ts`.
+  `transactions/relayr-orchestration.test.ts`. A payment proven reverted
+  onchain leaves its quote to be paid once more, with exactly the option it
+  used, and only when the SDK's retry rule clears every payment the session
+  sent for it: each reverted, the quote still open, and Relayr's uncached
+  bundle unpaid with every call pending. A declined retry stays on that rule,
+  and no payment hash is saved while the wallet holds a retry. One read of the
+  bundle comes first: a bundle another payment funded is proven, never paid
+  again. Once the quote expired it is released (ruling R104) only when every
+  payment is proven reverted, every deadline is past a canonical finalized
+  block and Relayr reports it unpaid with every call pending; each of those
+  failing keeps it. Covered for authority actions, payer deployments and
+  launches in
+  `transactions/relayr-orchestration.test.ts`,
+  `transactions/payer-relayr.test.ts` and `transactions/launch-relayr.test.ts`;
+  the editors route such a bundle, and a paid one, back to its original calls
+  (`components/metadata-editor.test.tsx`,
+  `components/edit-splits-multichain.test.tsx`,
+  `components/queue-ruleset-multichain.test.tsx`). A saved session or launch
+  reserves the wallet's forwarder nonces exactly while one of its requests is
+  live by the classification below, never by the clock or a quote's expiry
+  (ruling R117): each relayed action classifies every session that would
+  reserve its chains before it signs (`transactions/forwarder-authorization.test.ts`,
+  `transactions/relayr-orchestration.test.ts`, for unpaid, paid and
+  wallet-held sessions). An unpaid quote that nothing can fund reads as
+  expired in the account view, which offers the check that classifies it. A saved session whose
+  bundle will not run as signed, a paid one whose calls reverted or cannot be
+  proven included, is classified before its action's recheck (ruling R114):
+  each published request at one canonical finalized block on its chain, dead
+  once its nonce moved past the saved one or its deadline is strictly earlier
+  than the block's timestamp, and live while anything is unknown. A paid
+  bundle is proven from its destinations first, so one that ran completes.
+  While a request is live the action signs nothing new and offers no Discard:
+  it quotes or pays again with its published requests while every one
+  verifies and the recheck passes, and otherwise says until when its last
+  live request can run, as a paid or wallet-held bundle whose calls are not
+  proven does, and a reverted quote whose release is unproven. Once all are
+  dead, Relayr's report (paid, reverted or unreadable) no longer matters:
+  none moved and the recheck passing signs again at the saved nonces and gas,
+  for a new quote, whose payment review says why a paid bundle's payment
+  can't be reused; none moved and the recheck failing offers Discard after
+  "The project changed since this review.", unless the recheck could not
+  reach the chain; a moved nonce or no saved nonces offers Discard after the
+  "may already have run" line; and the account view, which cannot recheck,
+  offers Discard after "This action's earlier signatures expired without
+  running." (ruling R114 (e)) while the action still signs them again. A
+  marked session that ran still completes when its action runs again. Covered for two-chain
+  sessions, sessions saved without nonces, a deadline equal to the block's
+  timestamp, paid bundles whose calls reverted, quotes whose release is
+  unproven or that another payment funded, and the account view in
+  `transactions/relayr-orchestration.test.ts`; through the real authority
+  router, before the review pass's recheck, in
+  `transactions/authority-gas.test.ts`; with the split, ruleset-queue and
+  metadata editors' own recheck callbacks, paid sessions included, in
+  `transactions/relayr-editor-rechecks.test.ts`; and for launches, which
+  refresh at the saved nonces while none moved, in
+  `transactions/launch-relayr.test.ts`, a launch whose finalized nonce fell
+  below a saved one included. Discard removes the session: the editors keep
+  their saved review, to review again with new signatures or set aside, with
+  their resume action beside Discard (`components/queue-ruleset-multichain.test.tsx`,
+  `components/edit-splits-multichain.test.tsx`,
+  `components/metadata-editor.test.tsx`); after a "may already have run"
+  Discard a batch abandons its saved journal (`transactions/project-batch.test.ts`),
+  the payout recheck refuses a payout whose limit was used since the review
+  (`data/project-distributions.test.ts`), and an action with no recheck of
+  its own closes its review (ruling R114 (f)); and every flow that can show a
+  discard line shows Discard in place of its error
+  (`components/relayr-discard-flows.test.tsx`,
+  `components/power-accounting-multichain.test.tsx`,
+  `components/project-handle-card.test.tsx`,
+  `components/distribution-batch.test.tsx`,
+  `components/pending-payments.test.tsx`,
+  `components/project-token-batches.test.tsx`,
+  `components/shop-batch-journeys.test.tsx`,
+  `components/account-view.test.tsx`). A payer deployment's raw calls carry no
+  nonce, so it quotes them again only once an uncached bundle read reports the
+  old quote unpaid and unrun, after the R104 proof when its payment reverted
+  (`transactions/payer-relayr.test.ts`). A session refuses to save
+  payments or payment options it cannot keep exactly, and saves every option
+  it can authenticate, several on one chain included; a quote offering more
+  than it can keep is never paid, and is quoted again with its same signed
+  requests.
+  Quotes bind each posted call to
+  the quoted ID whose record carries its exact request, with records exactly
+  the quoted IDs and the bundle read echoing its ID
+  (`transactions/relayr-quote-binding.test.ts`). A payment is proven from the
+  chain under the hash it was mined: sender, payment contract, calldata, value,
+  chain and canonical block, and the session saves it as relayrPaymentDetails
+  authenticated it.
 - Funding-chain selection is quote-bound and confirmed by the person. It
   preselects the wallet's chain from before any switch when quoted, else a
   lone quote, else nothing. Published authorizations

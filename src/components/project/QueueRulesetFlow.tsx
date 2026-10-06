@@ -40,13 +40,14 @@ import { usePublicClient, useReadContract } from "wagmi";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import { TxError } from "@/components/ui/TxError";
+import { RelayrDiscard } from "@/components/RelayrDiscard";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
-import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall } from "@/lib/authority";
+import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
-import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession } from "@/lib/relayr";
-import { relayrSupportsChain, relayrSupportsChains } from "@/lib/relayr-chains";
+import { loadRelayrPendingSession, relayrCallsScope } from "@/lib/relayr";
+import { relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
   etherscanTxUrl,
@@ -428,7 +429,7 @@ export function QueueRulesetFlow({
     queryKey: ["queueRulesetRecovery", chainId, projectId, open],
     enabled: !isRevnet && !!address,
     staleTime: 0,
-    queryFn: () => pendingQueueScope(recoveryKey),
+    queryFn: () => readQueueJournal(recoveryKey),
   });
   const [recovered, setRecovered] = useState(false);
 
@@ -439,7 +440,7 @@ export function QueueRulesetFlow({
     body = <QueueRecovery journal={pendingScope} onComplete={() => {
       setRecovered(true);
       void refreshRecovery();
-    }} />;
+    }} onDiscard={() => void refreshRecovery()} />;
   } else if (recovered) {
     body = <p className="text-sm text-smoke-700">The saved ruleset update is confirmed on every destination. Reload the project to see the new queue.</p>;
   } else if (!knownController) {
@@ -706,31 +707,78 @@ function clearQueueJournal(journal: QueueRecoveryJournal): void {
   }
 }
 
-export function QueueRecovery({ journal, onComplete }: { journal: QueueRecoveryJournal; onComplete: () => void }) {
+/**
+ * Send reviewed rules under their destinations' locks. Rules for several
+ * chains are saved before any signature can be published, so they can be
+ * resumed, and cleared once they complete or when they published nothing.
+ */
+export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void): Promise<AuthorityResult> {
+  const calls = reviewedQueueCalls(review, action);
+  const journal = { scope: relayrCallsScope(calls), review, action };
+  return withQueueDestinationLocks(review.destinations, async () => {
+    for (const destination of review.destinations) {
+      if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
+    }
+    // Freeze every destination before any signature can be published.
+    if (calls.length > 1) saveQueueJournal(journal);
+    try {
+      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message) });
+      clearQueueJournal(journal);
+      return result;
+    } catch (error) {
+      // A submission that published nothing leaves no saved review: the editor still holds it.
+      if (!loadRelayrPendingSession(journal.scope)) clearQueueJournal(journal);
+      throw error;
+    }
+  });
+}
+
+/**
+ * A saved ruleset update: its pending bundle, or the saved review alone once
+ * the bundle is gone (Discard ends only the session). That review is the
+ * editor's draft: reviewed again it signs afresh, and the recheck refuses it
+ * if the queue changed.
+ */
+export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
   const { address } = useWallet();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState("A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules.");
+  const [status, setStatus] = useState<string | null>(null);
+  const [, setDiscards] = useState(0);
+  const session = loadRelayrPendingSession(journal.scope);
+  const resume = async () => {
+    if (!address) return;
+    setBusy(true); setError(null);
+    try {
+      if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
+      // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
+      await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
+      clearQueueJournal(journal);
+      onComplete();
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
+    finally { setBusy(false); }
+  };
+  if (session?.discardable) {
+    // Resuming stays beside Discard: a paid bundle that ran completes, and the recheck refuses calls that ran.
+    return <div className="space-y-3">
+      <RelayrDiscard scope={journal.scope} reason={session.discardable} onDiscarded={() => { setDiscards(count => count + 1); onDiscard(); }} />
+      {status ? <p className="text-sm text-smoke-700">{status}</p> : null}
+      <TxError error={error} />
+      <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>
+        {busy ? "Checking saved update…" : "Resume ruleset update"}
+      </button>
+    </div>;
+  }
   return <div className="space-y-3">
-    <p className="text-sm text-smoke-700">{status}</p>
+    <p className="text-sm text-smoke-700">{status ?? (session ? "A ruleset update is awaiting confirmation. Resume its saved bundle before queueing more rules." : "A ruleset update is saved.")}</p>
     <TxError error={error} />
-    <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={async () => {
-      if (!address) return;
-      setBusy(true); setError(null);
-      try {
-        if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
-        const saved = loadRelayrPendingSession(journal.scope);
-        if (saved?.paymentStatus === "unpaid") {
-          await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message) });
-        } else await resumeRelayrSession({ scope: journal.scope, account: address, onProgress: progress => {
-          if (progress.phase === "executing") setStatus(`Relayr reports ${progress.done}/${progress.total} complete. Verifying the original transactions…`);
-          else setStatus("Checking the saved payment and destination transactions…");
-        } });
-        clearQueueJournal(journal);
-        onComplete();
-      } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
-      finally { setBusy(false); }
-    }}>{busy ? "Checking saved update…" : "Resume ruleset update"}</button>
+    <div className="flex flex-wrap gap-2">
+      <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>
+        {busy ? "Checking saved update…" : session ? "Resume ruleset update" : "Review again"}
+      </button>
+      {session ? null : <button className="btn-secondary min-h-[44px] px-5 text-sm" disabled={busy}
+        onClick={() => { clearQueueJournal(journal); onDiscard(); }}>Edit rules</button>}
+    </div>
   </div>;
 }
 
@@ -1260,19 +1308,7 @@ function RulesetEditorForm({
     const recoveryKey = queueRecoveryKey(chainId, projectId);
     try {
       if (pendingQueueScope(recoveryKey)) { onPending(); return; }
-      const calls = reviewedQueueCalls(review, action);
-      const result = await withQueueDestinationLocks(review.destinations, async () => {
-        for (const destination of review.destinations) {
-          if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
-        }
-        if (calls.length > 1) {
-          // Freeze every destination before any signature can be published.
-          saveQueueJournal({ scope: relayrCallsScope(calls), review, action });
-        }
-        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) });
-        clearQueueJournal({ scope: relayrCallsScope(calls), review, action });
-        return result;
-      });
+      const result = await submitQueueReview(review, action, setStatus);
       setTxHash(result.directResults[0] ?? null);
       setStatus(safeOutcomeMessage(result, queueSuccessCopy(action, review.configs[0].mustStartAtOrAfter)));
       setSuccess(true);

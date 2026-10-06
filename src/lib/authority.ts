@@ -28,16 +28,19 @@ import {
   simulateStateChangingTransaction,
   waitForTrackedReceipt,
 } from '@bananapus/nana-sdk-core/review'
-import { relayrSupportsChains } from '@/lib/relayr-chains'
+import {
+  relayrRecordChain,
+  relayrSupportsChains,
+  type RelayrTransactionRecord,
+} from '@bananapus/nana-sdk-core/review/relayr'
 import {
   loadRelayrPendingSession,
   relayrCallsScope,
-  relayrRecordChain,
+  relayrSessionAwaitsPayment,
   relayrTargetSupportsForwarder,
   runRelayrCalls,
   type RelayrCall,
   type RelayrProgress,
-  type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import {
   hasSafeService,
@@ -312,12 +315,15 @@ export async function runAuthorityCalls({
   for (const group of groups.values()) {
     const savedScope = relayrCallsScope(toRelayrCalls(group))
     const saved = loadRelayrPendingSession(savedScope)
-    if (saved && saved.paymentStatus !== 'unpaid') {
+    if (saved && !relayrSessionAwaitsPayment(saved)) {
       reviewedGroups.push({ calls: group, mode: 'relayr', pendingScope: savedScope })
       continue
     }
     const authority = group[0].authority
-    await Promise.all(group.map(call => call.reverifyAuthority?.()))
+    // A saved session's action rechecks only after the requests it published
+    // are classified (ruling R114), in runRelayrCalls: a request that ran
+    // would make the recheck refuse first.
+    if (!saved) await Promise.all(group.map(call => call.reverifyAuthority?.()))
     onProgress?.({
       kind: 'checking',
       message: `Checking authority on ${group.length} chain${
@@ -550,13 +556,10 @@ export async function runAuthorityCalls({
   // case a fresh simulation may now revert and must not lead to a duplicate
   // quote or payment.
   for (const reviewed of reviewedGroups) {
-    if (
-      reviewed.mode !== 'relayr' ||
-      !reviewed.pendingScope ||
-      !loadRelayrPendingSession(reviewed.pendingScope)
-    ) {
-      continue
-    }
+    const pending = reviewed.mode === 'relayr' && reviewed.pendingScope
+      ? loadRelayrPendingSession(reviewed.pendingScope)
+      : null
+    if (!pending) continue
     const recovered = await runRelayrCalls({
       calls: toRelayrCalls(reviewed.calls),
       account: connected,
@@ -564,9 +567,9 @@ export async function runAuthorityCalls({
       onProgress: reportRelayrProgress,
       paymentChainId,
       preferredPaymentChainId: startChainId,
-      reverify: loadRelayrPendingSession(reviewed.pendingScope)?.paymentStatus === 'unpaid'
-        ? () => reverifyRelayrGroup(reviewed.calls)
-        : undefined,
+      // A paid bundle is proven first; its calls are rechecked only once every
+      // request expired unused, before they are signed again (ruling R114).
+      reverify: () => reverifyRelayrGroup(reviewed.calls),
     })
     relayrResults.push({
       bundleUuid: recovered.quote.bundle_uuid,

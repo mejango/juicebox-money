@@ -13,7 +13,7 @@ import {
 } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
-import type { RelayrEntry } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
 import {
   gasWithinCap,

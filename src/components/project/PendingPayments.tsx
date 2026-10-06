@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { formatUnits, isAddressEqual, type Address } from 'viem'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
@@ -33,6 +34,8 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [account, setAccount] = useState<Address | null>(null)
   const [saved, setSaved] = useState<ProjectBatch | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // Discard abandons the saved batch, so the payments are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setOpen(false); setCalls(null); setSaved(null) })
   const [status, setStatus] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, string>>({})
   useEffect(() => {
@@ -76,7 +79,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const submit = async () => {
     if (!address || !calls?.length || busy) return
     if (!account || !isAddressEqual(account, address)) { setError('Reconnect the wallet that reviewed these payments.'); return }
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); discard.capture(null)
     try {
       const result = await runProjectBatch({ scope, action: ACTION, account: address, calls, expectedBatchId: saved?.id,
         title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true,
@@ -105,6 +108,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
       setStatus(result.status === 'complete' ? 'The reviewed batch is finished. Each payment’s outcome is shown below.' : 'The original action is saved. Resume it to check its execution before trying again.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the reviewed payments.')
+      discard.capture(failure)
       setSaved(loadProjectBatch(scope))
     } finally {
       setBusy(false)
@@ -157,8 +161,8 @@ export function PendingPayments({ chainId, projectId, chains }: {
     <TxConfirmDialog open={open} title={complete ? 'Payment batch finished' : 'Review pending payments'} rows={reviewedRows}
       steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
       stepsIntro="Each payment is a separate transaction or Safe proposal. The batch saves progress across chains; it does not make them atomic."
-      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={error}
-      action={saved ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={!calls?.length}
-      onConfirm={() => void submit()} onClose={() => { if (!busy) setOpen(false) }} />
+      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
+      action={saved ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={!calls?.length || discard.active}
+      onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>
   </section>
 }

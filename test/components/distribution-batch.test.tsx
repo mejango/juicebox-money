@@ -5,15 +5,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() },
-  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), options: [] as unknown[], invalidate: vi.fn(),
+  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), options: [] as unknown[], invalidate: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: mocks.options, isLoading: false }), useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, runProjectBatch: mocks.run, projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}` }))
 vi.mock('@/lib/project-distributions', async original => ({ ...await original<typeof import('@/lib/project-distributions')>(), reviewPayout: mocks.payout, reviewReserved: mocks.reserved, reverifyDistribution: mocks.reverify }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; status?: string | null; error: string | null; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.status}{props.error}<button onClick={props.onConfirm}>Confirm test distributions</button></div> }))
+vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; status?: string | null; error: string | null; actionDisabled?: boolean; children?: React.ReactNode; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.status}{props.error}{props.children}<button disabled={props.actionDisabled} onClick={props.onConfirm}>Confirm test distributions</button></div> }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 
 import { DistributionBatchFlow, distributionBatchCalls } from '@/components/project/DistributionBatchFlow'
+import { RelayrDiscardError } from '@/lib/relayr'
 import type { Distribution, PayoutDistribution, ReservedDistribution } from '@/lib/project-distributions'
 
 const ACCOUNT = mocks.wallet.address as Address
@@ -151,6 +153,26 @@ describe('distribution batch reviews and recovery', () => {
     await click(renderer, 'Confirm test distributions')
     expect(text(renderer)).toContain(line)
     expect(text(renderer)).not.toContain('Some distributions are still pending')
+  })
+
+  it('shows the line and Discard, in place of the error, when its Relayr round can only be discarded, and then returns to a fresh review', async () => {
+    const calls = distributionBatchCalls([reserved(1), reserved(8453)])
+    const saved = { id: 'saved-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    mocks.load.mockReturnValue(saved)
+    mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved-review:0', 'ran'))
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    expect(text(renderer).match(/may already have run/g)).toHaveLength(1)
+    const confirm = renderer.root.findAllByType('button').find(item => item.children.join('') === 'Confirm test distributions')!
+    expect(confirm.props.disabled).toBe(true)
+    // Discard abandons the saved batch, so its calls go out again only after a fresh review (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.load.mockReturnValue(null) })
+    await click(renderer, 'Discard')
+    expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved-review:0')
+    expect(text(renderer)).not.toContain('may already have run')
+    expect(text(renderer)).not.toContain('Confirm test distributions')
+    expect(text(renderer)).not.toContain('Resume saved distributions')
+    expect(mocks.run).toHaveBeenCalledOnce()
   })
 
   it('returns to a fresh review if the runner abandons an unsubmitted stale recovery', async () => {

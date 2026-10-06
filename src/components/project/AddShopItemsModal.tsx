@@ -7,6 +7,7 @@ import type { Address } from 'viem'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
 import { useWallet } from '@/hooks/useWallet'
 import { shortError } from '@/lib/errors'
@@ -36,6 +37,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
   const [batch, setBatch] = useState<ProjectBatch | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'review' | 'pinning' | 'writing' | 'failed' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
+  // Discard abandons the saved batch, so the items are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setMessage(null), () => { setBatch(null); setReview(null); setPhase('form') })
   const pinnedRef = useRef<PinnedStoreItemDraft[] | null>(null)
   const busy = phase === 'checking' || phase === 'pinning' || phase === 'writing'
   const hasSubmittedTransactions = !!batch
@@ -80,6 +83,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       const frozenItems = items.map(cloneDraftItem)
       // Validate exact per-chain prices, supplies and recipient mappings before uploading.
       buildShopAddCalls(snapshots, address, frozenItems.map(draft => ({ draft, encodedIpfsUri: `0x${'1'.repeat(64)}` })))
+      // A fresh review never sends an earlier review's uploads.
+      pinnedRef.current = null
       setReview({ account: address, items: frozenItems, categories: categories.map(category => ({ ...category })), chainIds: chosen.map(target => target.chainId), snapshots })
       setPhase('review')
     } catch (error) { setMessage(shortError(error, 'Could not review the items.')); setPhase('form') }
@@ -90,6 +95,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
     if (expectedAccount.toLowerCase() !== address.toLowerCase()) { setMessage('Reconnect the wallet that reviewed this shop update.'); return }
     let scope = batch?.scope
     setMessage(null)
+    discard.capture(null)
     try {
       let calls
       if (!batch) {
@@ -112,6 +118,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       try { if (scope) setBatch(loadProjectBatch(scope)) }
       catch (recoveryError) { detail = shortError(recoveryError, detail) }
       setMessage(detail); setPhase('failed')
+      discard.capture(error)
     }
   }
   const backToForm = () => {
@@ -280,7 +287,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                 ? undefined
                 : message
           }
-          error={phase === 'failed' ? message : undefined}
+          error={phase === 'failed' && !discard.active ? message : undefined}
+          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
@@ -301,7 +309,9 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
           onClose={
             phase === 'done' || hasSubmittedTransactions ? close : backToForm
           }
-        />
+        >
+          {discard.element}
+        </TxConfirmDialog>
       ) : null}
     </ModalShell>
   )

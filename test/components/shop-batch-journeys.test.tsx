@@ -5,7 +5,7 @@ import type { Address, Hex } from 'viem'
 import type { ProjectBatch, ProjectBatchCall } from '@/lib/project-batch'
 import type { ShopAction, ShopSnapshot, ShopWriteTarget } from '@/lib/shop-batch'
 
-const mocks = vi.hoisted(() => ({ wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() }, saved: null as ProjectBatch | null, run: vi.fn(), snapshot: vi.fn(), reverify: vi.fn(), pinItems: vi.fn(), pinImage: vi.fn(), pinJson: vi.fn(), metadata: vi.fn(), tier: vi.fn(), invalidate: vi.fn() }))
+const mocks = vi.hoisted(() => ({ wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() }, saved: null as ProjectBatch | null, run: vi.fn(), snapshot: vi.fn(), reverify: vi.fn(), pinItems: vi.fn(), pinImage: vi.fn(), pinJson: vi.fn(), metadata: vi.fn(), tier: vi.fn(), invalidate: vi.fn(), discard: vi.fn() }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/lib/authority', () => ({ clientFor: () => ({}) }))
@@ -15,7 +15,8 @@ vi.mock('@/lib/jbcenter-ipfs', () => ({ JBCENTER_MAX_IMAGE_BYTES: 1_000_000, JBC
 vi.mock('@/lib/shop-batch', async original => ({ ...await original(), pendingShopBatch: () => mocks.saved, readShopSnapshot: mocks.snapshot, reverifyShopCall: mocks.reverify, readOriginalShopMetadata: mocks.metadata, readShopTier: mocks.tier }))
 vi.mock('@/components/create/StoreEditor', async original => ({ ...await original(), StoreEditor: () => null }))
 vi.mock('@/components/ui/ModalShell', () => ({ ModalShell: ({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) => <section>{children}{footer}</section> }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: () => null }))
+vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: ({ children }: { children?: React.ReactNode }) => <div>{children}</div> }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/components/ui/ChainPillButton', () => ({ ChainPillButton: () => null }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 
@@ -24,6 +25,8 @@ import { ReplaceTierMediaModal } from '@/components/project/ReplaceTierMediaModa
 import { StoreEditor, newDraftItem } from '@/components/create/StoreEditor'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { buildShopAddCalls, buildShopMediaCalls } from '@/lib/shop-batch'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { RelayrDiscardError } from '@/lib/relayr'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const HOOK = '0x2222222222222222222222222222222222222222' as Address
@@ -148,6 +151,28 @@ describe('shop batch component journeys', () => {
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ calls: mocks.saved.calls, scope: mocks.saved.scope, expectedBatchId: mocks.saved.id })
     expect(mocks.pinImage).not.toHaveBeenCalled(); expect(mocks.pinJson).not.toHaveBeenCalled()
     expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    await act(async () => renderer.unmount())
+  })
+
+  it.each(['add', 'media'] as const)('shows the line and Discard in place of the error when a saved %s round can only be discarded', async kind => {
+    const calls = kind === 'add'
+      ? buildShopAddCalls(targets.map(target => snapshot(target, 'shop-add-items')), ACCOUNT, [{ draft: { ...newDraftItem(), name: 'Original', price: '1' }, encodedIpfsUri: URI }])
+      : buildShopMediaCalls(targets.map(target => snapshot(target, 'shop-replace-media')), ACCOUNT, URI, 'saved.png', 'Saved item')
+    mocks.saved = journal(kind === 'add' ? 'shop-add-items' : 'shop-replace-media', calls)
+    mocks.run.mockRejectedValueOnce(new RelayrDiscardError('project-batch:saved:0', 'ran'))
+    const renderer = kind === 'add' ? await addModal() : await mediaModal()
+    await confirm(renderer)
+    const dialog = renderer.root.findByType(TxConfirmDialog)
+    expect(dialog.props.error).toBeFalsy()
+    expect(dialog.props.actionDisabled).toBe(true)
+    expect(renderer.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'ran' })
+    // Discard abandons the saved batch and closes its review: a fresh one sends again (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.saved = null })
+    await act(async () => { await renderer.root.findAllByType('button').find(item => item.props.children === 'Discard')!.props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved:0')
+    expect(renderer.root.findAllByType(RelayrDiscard)).toHaveLength(0)
+    expect(renderer.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+    expect(mocks.run).toHaveBeenCalledOnce()
     await act(async () => renderer.unmount())
   })
 

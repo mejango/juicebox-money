@@ -12,7 +12,7 @@ import {
 } from '@bananapus/nana-sdk-core/safe'
 import { encodePacked, getAddress, isAddressEqual, keccak256, type Address, type Hex, type PublicClient } from 'viem'
 import type { LaunchPlan } from '@/lib/launch'
-import type { RelayrEntry } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 
 function authorityPolicy(owners: string[], threshold: number) {
   if (!Array.isArray(owners) || owners.length < 2 || owners.length > 20) {

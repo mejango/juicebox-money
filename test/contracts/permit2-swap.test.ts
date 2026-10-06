@@ -1,10 +1,10 @@
 import { buildUniswapV4ExactInputSwapTx } from "@bananapus/nana-sdk-core/v6";
 import { zeroAddress, type Address, type Hex } from "viem";
 import { describe, expect, it } from "vitest";
+import { permit2TypedData } from "@bananapus/nana-sdk-core/v6/permit2";
 import {
   addPermit2SignatureToSwap,
   permit2SignatureNeedsOnchainFallback,
-  permit2TypedData,
   shouldUsePermit2Signature,
   type Permit2SignatureAuthorization,
 } from "@/lib/permit2-swap";

@@ -10,16 +10,18 @@ vi.mock('@/providers/Providers', () => ({
 }))
 
 import {
-  RelayrExecutionError,
-  RelayrPaymentSubmittedError,
-  relayrCallsScope,
   relayrDestinationHash,
-  relayrErrorIsUncertain,
-  relayrPaymentLabel,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
+} from '@bananapus/nana-sdk-core/review/relayr'
+import {
+  RelayrExecutionError,
+  RelayrPaymentSubmittedError,
+  relayrCallsScope,
+  relayrErrorIsUncertain,
+  relayrPaymentLabel,
   saveRelayrPendingSession,
   type RelayrCall,
   type RelayrPendingSession,
@@ -169,5 +171,10 @@ describe('Relayr pending-session snapshots', () => {
       }),
     ).toBe(DESTINATION_HASH)
     expect(relayrDestinationHash({})).toBeNull()
+  })
+
+  it('reads no destination hash from a value that is not a transaction hash', () => {
+    expect(relayrDestinationHash({ status: { data: { hash: '' as Hex } } })).toBeNull()
+    expect(relayrDestinationHash({ status: { data: { hash: '0x1234' } } })).toBeNull()
   })
 })

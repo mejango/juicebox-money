@@ -2,19 +2,24 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { ChainIcon } from '@/components/ChainIcon'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import {
-  fetchRelayrBundlesByAccount,
-  relayrSessionExpired,
-  relayrSessionExpiresAt,
   relayrDestinationHash,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
+  type RelayrTransactionRecord,
+} from '@bananapus/nana-sdk-core/review/relayr'
+import {
+  fetchRelayrBundlesByAccount,
+  relayrPaidQuoteOpen,
+  relayrQuoteReleased,
+  relayrSessionExpired,
+  relayrSessionExpiresAt,
   resumeRelayrSession,
   type RelayrPendingSession,
-  type RelayrTransactionRecord,
 } from '@/lib/relayr'
 import { chainName } from '@/lib/urn'
 import { etherscanTxUrl, formatDate } from '@/lib/format'
@@ -110,15 +115,49 @@ export function AccountPendingRelayr({ address }: { address: string }) {
   return (
     <div className="mb-4 space-y-3">
       {bundles.map(({ scope, session }) => {
-        const progress = relayrProgress(session.records, session.expectedCount)
         const projectSafeProof = requiresProjectSafeProof(scope, session)
+        // A check classifies the session (ruling R114): a paid bundle that ran
+        // completes, and one whose requests are all dead can be discarded.
+        const check = projectSafeProof ? null : (
+          <button
+            onClick={() => resume(scope)}
+            disabled={busyScope !== null}
+            className="btn-secondary min-h-[36px] px-4 text-sm"
+          >
+            {busyScope === scope ? 'Checking…' : 'Check original bundle'}
+          </button>
+        )
+        const notice = notices[scope] ? (
+          <p className="mt-2 text-xs text-smoke-600">{notices[scope]}</p>
+        ) : null
+        if (session.discardable) {
+          return (
+            <div key={scope} className="card space-y-2 p-4">
+              <RelayrDiscard scope={scope} reason={session.discardable} onDiscarded={refresh} />
+              {check}
+              {notice}
+            </div>
+          )
+        }
+        if (relayrQuoteReleased(session)) {
+          return (
+            <div key={scope} className="card space-y-2 p-4">
+              <p className="text-sm text-smoke-700">
+                This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.
+              </p>
+              {check}
+              {notice}
+            </div>
+          )
+        }
+        const progress = relayrProgress(session.records, session.expectedCount)
         return (
           <div key={scope} className="card border-bluebs-500/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="text-sm font-medium text-ink">
                 Cross-chain action in flight
                 <span className="ml-2 text-xs font-normal text-smoke-500">
-                  {formatDate(Math.floor(session.createdAt / 1000))} —{' '}
+                  {formatDate(Math.floor(session.createdAt / 1000))},{' '}
                   {`${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`}
                 </span>
               </div>
@@ -128,16 +167,17 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     ? 'Resume this bundle from the original project action to verify and save every completed call.'
                     : <>Verify this paid bundle from the relevant project&apos;s Owner/Operator tab.</>}
                 </span>
-              ) : (
-                <button
-                  onClick={() => resume(scope)}
-                  disabled={busyScope !== null}
-                  className="btn-secondary min-h-[36px] px-4 text-sm"
-                >
-                  {busyScope === scope ? 'Checking…' : 'Check original bundle'}
-                </button>
-              )}
+              ) : check}
             </div>
+            {session.paymentStatus === 'reverted' ? (
+              <p className="mt-2 text-xs text-smoke-600">
+                {relayrPaidQuoteOpen(session.payments)
+                  ? 'The payment reverted onchain. Pay again from the original action.'
+                  : projectSafeProof
+                    ? 'The payment reverted and its quote expired. Resume it from the original project action to release it.'
+                    : 'The payment reverted and its quote expired. Check the original bundle to release it.'}
+              </p>
+            ) : null}
             {relayrSessionExpired(session) && !projectSafeProof ? (
               <p className="mt-2 text-xs text-smoke-600">
                 Authorization deadline passed{' '}
@@ -159,7 +199,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${LEG_STYLE[state]}`}
                   >
                     <ChainIcon chainId={chainId} size={14} />
-                    {chainName(chainId)} —{' '}
+                    {chainName(chainId)}:{' '}
                     {reportedState === 'confirmed'
                       ? 'Relayr-reported; verification pending'
                       : state}
@@ -180,9 +220,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 )
               })}
             </div>
-            {notices[scope] ? (
-              <p className="mt-2 text-xs text-smoke-600">{notices[scope]}</p>
-            ) : null}
+            {notice}
           </div>
         )
       })}

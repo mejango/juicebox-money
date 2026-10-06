@@ -6,8 +6,9 @@ import type { Address } from 'viem'
 const mocks = vi.hoisted(() => ({
   account: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address,
   saved: null as null | { id: string; status: string; account: Address; calls: unknown[] },
-  claim: vi.fn(), auto: vi.fn(), allocation: vi.fn(), run: vi.fn(), reverifyClaim: vi.fn(), reverifyAuto: vi.fn(), invalidate: vi.fn(),
+  claim: vi.fn(), auto: vi.fn(), allocation: vi.fn(), run: vi.fn(), reverifyClaim: vi.fn(), reverifyAuto: vi.fn(), invalidate: vi.fn(), discard: vi.fn(),
 }))
+vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.account, openSignIn: vi.fn() }) }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
@@ -23,6 +24,7 @@ vi.mock('@/lib/project-token-batch', () => ({
 }))
 
 import { AutoIssueAcrossChains, AutoIssueAllocation, ClaimCreditsAcrossChains } from '@/components/project/ProjectTokenBatchFlow'
+import { RelayrDiscardError } from '@/lib/relayr'
 
 const ACCOUNT = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address
 const BENEFICIARY = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as Address
@@ -186,6 +188,23 @@ describe('aggregate token action reviews', () => {
     await click(renderer, 'Confirm claims')
     expect(mocks.run.mock.calls[1][0].calls).toEqual([call(1, 42, 8)])
     expect(mocks.run.mock.calls[1][0].expectedBatchId).toBeUndefined()
+  })
+
+  it('shows the line and Discard in place of the error when its Relayr round can only be discarded, and then returns to a fresh review', async () => {
+    mocks.saved = { id: 'batch-1', status: 'pending', account: ACCOUNT, calls: [call(1, 42), call(10, 84, 2)] }
+    mocks.run.mockRejectedValueOnce(new RelayrDiscardError('project-batch:batch-1:0', 'ran'))
+    const renderer = await render()
+    await click(renderer, 'Resume original batch')
+    expect(text(renderer.root).match(/may already have run/g)).toHaveLength(1)
+    expect(button(renderer, 'Resume original batch').props.disabled).toBe(true)
+    // Discard abandons the saved batch, so its calls go out again only after a fresh review (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.saved = null })
+    await act(async () => { await button(renderer, 'Discard').props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith('project-batch:batch-1:0')
+    expect(text(renderer.root)).not.toContain('may already have run')
+    expect(button(renderer, 'Resume original batch')).toBeUndefined()
+    expect(text(renderer.root)).toContain('Review selected chains')
+    expect(mocks.run).toHaveBeenCalledOnce()
   })
 
   it('refuses recovery with a wallet different from the original batch account', async () => {

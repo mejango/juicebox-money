@@ -86,6 +86,7 @@ import { MetadataEditor } from '@/components/project/AuthorityEditsCard'
 import type { AuthorityCall } from '@/lib/authority'
 import {
   clearRelayrPendingSession,
+  loadRelayrPendingSession,
   relayrCallsScope,
   saveRelayrPendingSession,
   type RelayrPendingSession,
@@ -575,10 +576,12 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
-  it('recovers a paid bundle after remount without fetching or pinning a replacement profile', async () => {
+  it('recovers a paid bundle after remount through its original calls, without fetching or pinning a replacement profile', async () => {
     let scope = ''
+    let original: { chainId: number; target: string; data: string }[] = []
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
       scope = saveSession(calls, 'confirmed')
+      original = calls.map(({ chainId, target, data }) => ({ chainId, target, data }))
       throw new Error('Destination confirmation unavailable')
     })
     const first = await renderEditor([...ROWS, PEER])
@@ -604,10 +607,14 @@ describe('metadata editor per-chain review and recovery', () => {
     const renderer = await renderEditor([{ ...PEER, uri: 'ipfs://QmAlreadyExecuted' }], onDone)
     expect(renderedText(renderer.root)).toContain('Confirm project metadata')
     const resume = buttonWith(renderer, 'Retry') ?? buttonWith(renderer, 'Confirm & save')
+    mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
     await act(async () => resume.props.onClick())
 
-    expect(mocks.resumeRelayrSession).toHaveBeenCalledWith(expect.objectContaining({ scope, account: ALICE }))
-    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // The router resumes a paid bundle before any live read; its action can sign the
+    // calls again once every request expired unused (amended ruling R114).
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(submittedCalls().map(({ chainId, target, data }) => ({ chainId, target, data }))).toEqual(original)
+    expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
     expect(mocks.fetchProjectMetadataJson).not.toHaveBeenCalled()
     expect(mocks.pinJson).not.toHaveBeenCalled()
     expect(mocks.clientFor).not.toHaveBeenCalled()
@@ -646,6 +653,81 @@ describe('metadata editor per-chain review and recovery', () => {
     expect(onDone).not.toHaveBeenCalled()
     expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
     expect(storage.has('jb-metadata-review-v1:8453:303')).toBe(true)
+    clearRelayrPendingSession(scope)
+    await act(async () => renderer.unmount())
+  })
+
+  it('pays a review whose payment reverted again through its original calls, not the saved-bundle check', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'reverted')
+      throw new Error('The Relayr funding transaction reverted onchain.')
+    })
+    const first = await renderEditor([...ROWS, PEER])
+    await saveAndReadPin(first)
+    const originalData = submittedCalls().map(call => call.data)
+    await act(async () => first.unmount())
+
+    const renderer = await renderEditor([PEER])
+    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    expect(submittedCalls().map(call => call.data)).toEqual(originalData)
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
+    expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
+    clearRelayrPendingSession(scope)
+    await act(async () => renderer.unmount())
+  })
+
+  it('offers Discard beside a retry once the earlier signature may already have run, then keeps the review to confirm afresh', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: 'ran' })
+      throw new Error('This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    const originalData = submittedCalls().map(call => call.data)
+    const text = renderedText(renderer.root)
+    expect(text.match(/may already have run/g)).toHaveLength(1)
+    // Its retry stays beside Discard: the editor's recheck refuses calls that already ran, and a paid bundle that ran completes.
+    expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBeFalsy()
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(loadRelayrPendingSession(scope)).toBeNull()
+    // The saved review is the draft: confirmed again, it signs afresh.
+    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
+    expect(renderedText(renderer.root)).not.toContain('may already have run')
+    expect(buttonWith(renderer, 'Confirm & save').props.disabled).toBeFalsy()
+    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
+    expect(submittedCalls().map(call => call.data)).toEqual(originalData)
+    await act(async () => renderer.unmount())
+  })
+
+  it('shows the changed line with Discard once every earlier signature is dead and the project changed', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      saveRelayrPendingSession(scope, { ...loadRelayrPendingSession(scope)!, discardable: 'changed' })
+      throw new Error('The project changed since this review.')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    expect(renderedText(renderer.root).match(/The project changed since this review\./g)).toHaveLength(1)
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(loadRelayrPendingSession(scope)).toBeNull()
+    expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
+    await act(async () => renderer.unmount())
+  })
+
+  it('never offers Discard for a saved review whose signature could still run', async () => {
+    let scope = ''
+    mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
+      scope = saveSession(calls, 'unpaid')
+      throw new Error('Payment canceled')
+    })
+    const renderer = await renderEditor()
+    await saveAndReadPin(renderer)
+    expect(buttonWith(renderer, 'Discard')).toBeUndefined()
     clearRelayrPendingSession(scope)
     await act(async () => renderer.unmount())
   })

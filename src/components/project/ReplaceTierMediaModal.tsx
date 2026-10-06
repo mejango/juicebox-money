@@ -8,6 +8,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor } from '@/lib/authority'
 import { shortError } from '@/lib/errors'
@@ -40,6 +41,8 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
   const [freshPlan, setPlan] = useState<MediaPlan | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'pinning' | 'writing' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
+  // Discard abandons the saved batch, so the media update is reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setMessage(null), () => { setBatch(null); setPlan(null); setPhase('form') })
   const pinnedRef = useRef<Hex | null>(null)
   const busy = ['checking', 'pinning', 'writing'].includes(phase)
   const chainTargets = useMemo(() => (targets ?? []).filter(target => target.hook && !target.error), [targets])
@@ -112,6 +115,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
     if ((batch?.account ?? freshPlan!.account).toLowerCase() !== address.toLowerCase()) { setMessage('Reconnect the wallet that reviewed this media update.'); return }
     let scope = batch?.scope
     setMessage(null)
+    discard.capture(null)
     try {
       let calls
       if (!batch) {
@@ -138,6 +142,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
       try { if (scope) setBatch(loadProjectBatch(scope)) }
       catch (recoveryError) { detail = shortError(recoveryError, detail) }
       setMessage(detail); setPhase('form')
+      discard.capture(error)
     }
   }
 
@@ -289,7 +294,8 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
                   ? `${itemName} now points at the new media. Already-minted items update too. Indexers can take a few minutes to catch up.`
                   : phase === 'writing' ? message : undefined
           }
-          error={busy ? undefined : message}
+          error={busy || discard.active ? undefined : message}
+          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={started ? 'Close' : 'Cancel'}
@@ -306,7 +312,9 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
           }
           onConfirm={() => void handleSubmit()}
           onClose={batch || phase === 'done' ? onClose : () => setPlan(null)}
-        />
+        >
+          {discard.element}
+        </TxConfirmDialog>
       ) : null}
     </ModalShell>
   )

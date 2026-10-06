@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   getProjectsOwnedBy: vi.fn(),
   fetchRelayrBundlesByAccount: vi.fn(),
   resumeRelayrSession: vi.fn(),
+  discardRelayrSession: vi.fn(),
   safeService: vi.fn(),
   fetchSafeInfo: vi.fn(),
 }))
@@ -51,45 +52,11 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
     getProjectsOwnedBy: mocks.getProjectsOwnedBy,
   }
 })
-vi.mock('@/lib/relayr', () => ({
+vi.mock('@/lib/relayr', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/relayr')>()),
   fetchRelayrBundlesByAccount: mocks.fetchRelayrBundlesByAccount,
   resumeRelayrSession: mocks.resumeRelayrSession,
-  // Expiry does not establish whether a destination already executed.
-  relayrSessionExpired: (session: { createdAt: number }, nowMs = Date.now()) =>
-    nowMs >= session.createdAt + 47 * 60 * 60 * 1000,
-  relayrSessionExpiresAt: (session: { createdAt: number }) =>
-    session.createdAt + 47 * 60 * 60 * 1000,
-  relayrDestinationHash: (record: {
-    status?: { data?: { hash?: string } }
-  }) => record.status?.data?.hash ?? null,
-  relayrRecordChain: (record: {
-    chain?: number
-    request?: { chain?: number }
-  }) => record.request?.chain ?? record.chain ?? null,
-  relayrStateIsSuccess: (state?: string) =>
-    ['success', 'completed'].includes((state ?? '').trim().toLowerCase()),
-  relayrStateIsFailed: (state?: string) =>
-    (state ?? '').trim().toLowerCase() === 'failed',
-  relayrProgress: (
-    records: { status?: { state?: string } }[],
-    expected = records.length,
-  ) => {
-    const confirmed = records.filter(record =>
-      ['success', 'completed'].includes(
-        (record.status?.state ?? '').trim().toLowerCase(),
-      ),
-    ).length
-    const failed = records.filter(
-      record => (record.status?.state ?? '').trim().toLowerCase() === 'failed',
-    ).length
-    const total = Math.max(expected, records.length)
-    return {
-      confirmed,
-      failed,
-      pending: Math.max(total - confirmed - failed, 0),
-      total,
-    }
-  },
+  discardRelayrSession: mocks.discardRelayrSession,
 }))
 vi.mock('@/lib/safe', () => ({
   fetchSafeInfo: mocks.fetchSafeInfo,
@@ -404,6 +371,169 @@ describe('AccountPendingRelayr', () => {
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({ scope: 'authority:0xaaa', account: ALICE })
   })
 
+  it('reads an unpaid quote nothing can fund any more as expired, and offers the check that can discard it', async () => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) - 60
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      bundleUuid, paymentStatus: 'unpaid', paymentChainId: null, records: [],
+      paymentOptions: [{ chain: 1, amount: '100', target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d',
+        token: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', payment_deadline: deadline,
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    expect(text).not.toContain('in flight')
+    // Its old request may still run, so only a check classifies it (ruling R114 (e)).
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+  })
+
+  it.each<[string, number, string]>([
+    ['still open', 3_600, 'The payment reverted onchain. Pay again from the original action.'],
+    ['expired', -60, 'The payment reverted and its quote expired. Check the original bundle to release it.'],
+  ])('points a reverted payment whose quote is %s to the place that can continue it', async (_, offset, line) => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) + offset
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      bundleUuid, paymentStatus: 'reverted', records: [],
+      payments: [{ chainId: 1, target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d', amount: '100', deadline: String(deadline),
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}`,
+        bundleUuid, hash: `0x${'ab'.repeat(32)}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain(line)
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+  })
+
+  it('points a reverted project batch whose quote expired to its original project action', async () => {
+    mocks.connectedAddress = ALICE
+    const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
+    const deadline = Math.floor(Date.now() / 1_000) - 60
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'project-batch:batch-1:0', session: pendingSession({
+      bundleUuid, paymentStatus: 'reverted', records: [],
+      payments: [{ chainId: 1, target: '0x1c05f7841379d4393574c0ffa17908ec40ffd97d', amount: '100', deadline: String(deadline),
+        calldata: `0x103903a7${bundleUuid.replaceAll('-', '').padEnd(64, '0')}${deadline.toString(16).padStart(64, '0')}`,
+        bundleUuid, hash: `0x${'ab'.repeat(32)}` }],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('The payment reverted and its quote expired. Resume it from the original project action to release it.')
+    expect(text).not.toContain('Check the original bundle')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+  })
+
+  it('ends a session whose earlier signature may already have run with one line and Discard', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'unpaid', discardable: 'ran', records: [],
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain(
+      'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
+    // A paid bundle that ran completes when checked again, so the check stays beside Discard.
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+    expect(renderedText(renderer.root)).not.toContain('earlier signature')
+  })
+
+  it('shows the changed line with Discard when the project changed since the review', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'unpaid', discardable: 'changed', records: [],
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('The project changed since this review.')
+    expect(text).not.toContain('may already have run')
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+  })
+
+  it.each<[string, Partial<RelayrPendingSession>]>([
+    ['an in-flight paid bundle', {}],
+    ['an unpaid quote that expired', { paymentStatus: 'unpaid', paymentOptions: [] }],
+    ['a reverted payment', { paymentStatus: 'reverted' }],
+    ['a released reverted quote', { paymentStatus: 'reverted', released: true }],
+  ])('never offers Discard for %s', async (_, overrides) => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession(overrides) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(buttonWith(renderer, 'Discard')).toBeUndefined()
+  })
+
+  it('reads a released quote whose payment reverted as expired, and offers the check that can discard it', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'reverted', released: true, records: [],
+    }) }])
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    const text = renderedText(renderer.root)
+    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    // Its old request may still run, so only a check classifies it and offers Discard once every request is dead (ruling R114 (e)).
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+  })
+
+  it('offers Discard after the expired line once every request expired unused, beside the check', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'confirmed', discardable: 'expired',
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain('This action\'s earlier signatures expired without running.')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
+  })
+
   it('shows the account its in-flight legs and resumes by session', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
@@ -425,8 +555,8 @@ describe('AccountPendingRelayr', () => {
     const text = renderedText(renderer.root)
     expect(text).toContain('Cross-chain action in flight')
     expect(text).toContain('1/2 Relayr-reported; onchain proof pending')
-    expect(text).toContain('Ethereum — Relayr-reported; verification pending')
-    expect(text).toContain('Optimism — pending')
+    expect(text).toContain('Ethereum: Relayr-reported; verification pending')
+    expect(text).toContain('Optimism: pending')
 
     await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({
@@ -462,7 +592,7 @@ describe('AccountPendingRelayr', () => {
     const text = renderedText(renderer.root)
     expect(text).toContain('Relayr-reported; onchain proof pending')
     expect(text).toContain('Owner/Operator tab')
-    expect(text).not.toContain('Ethereum — confirmed')
+    expect(text).not.toContain('Ethereum: confirmed')
     expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
   })
 

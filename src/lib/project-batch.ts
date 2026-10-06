@@ -22,12 +22,11 @@ import {
 import {
   loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
-  relayrDestinationHash, relayrRecordChain,
 } from '@/lib/relayr'
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { relayrPaymentChains, relayrSupportsChain } from '@/lib/relayr-chains'
+import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type ProjectBatchCall = AuthorityCall & {
   id: string
@@ -61,6 +60,8 @@ export type ProjectBatch = {
   submissions: Record<string, CallSubmission>
   relayrRounds: number[]
   relayrCallIds?: Record<string, string[]>
+  /** Rounds whose Relayr session was published: its signed requests left this browser. */
+  relayrPublished?: number[]
   /** Freeze chain eligibility; older journals retain their original mainnet-only routing. */
   relayrChainIds?: number[]
   abandoned?: boolean
@@ -98,6 +99,8 @@ function readBatch(scope: string): ProjectBatch | null {
       new Set(batch.calls.map(call => call.id)).size !== batch.calls.length ||
       !Array.isArray(batch.completedIds) || batch.completedIds.some(id => !batch.calls.some(call => call.id === id)) ||
       !Array.isArray(batch.rounds) || encode(batch.rounds) !== encode(projectBatchRounds(batch.calls)) ||
+      (batch.relayrPublished !== undefined && (!Array.isArray(batch.relayrPublished) ||
+        batch.relayrPublished.some(round => !Number.isSafeInteger(round) || round < 0 || round >= batch.rounds.length))) ||
       (batch.relayrChainIds !== undefined && (!Array.isArray(batch.relayrChainIds) ||
         new Set(batch.relayrChainIds).size !== batch.relayrChainIds.length ||
         batch.relayrChainIds.some(chainId => !relayrSupportsChain(chainId) ||
@@ -108,9 +111,29 @@ function readBatch(scope: string): ProjectBatch | null {
   return batch
 }
 
-/** Completed journals remain as tombstones; the next reviewed action can replace their aliases. */
+const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
+
+/**
+ * A round whose published Relayr session is gone before its calls completed
+ * was discarded, and its calls may already have run.
+ */
+function discardedRound(batch: ProjectBatch): boolean {
+  return (batch.relayrPublished ?? []).some(round => !loadRelayrPendingSession(relayrScopeOf(batch, round)) &&
+    (batch.relayrCallIds?.[String(round)] ?? []).some(id => !batch.completedIds.includes(id)))
+}
+
+/**
+ * Completed journals remain as tombstones; the next reviewed action can
+ * replace their aliases. A journal one of whose rounds was discarded is
+ * abandoned (ruling R114 (f)): nothing sends its reviewed calls again, and
+ * the next review reads live state.
+ */
 export function loadProjectBatch(scope: string): ProjectBatch | null {
   const batch = readBatch(scope)
+  if (batch?.status === 'pending' && !batch.abandoned && discardedRound(batch)) {
+    batch.abandoned = true
+    persist(batch)
+  }
   return batch?.status === 'pending' && !batch.abandoned ? batch : null
 }
 
@@ -351,7 +374,7 @@ export async function runProjectBatch({
         .map(id => journal.calls.find(call => call.id === id)!)
       if (!pending.length) continue
       checkAccount()
-      const relayrScope = `project-batch:${journal.id}:${round}`
+      const relayrScope = relayrScopeOf(journal, round)
       const boundRelayIds = journal.relayrCallIds?.[String(round)]
       let relayCalls = boundRelayIds ? pending.filter(call => boundRelayIds.includes(call.id)) : []
       const savedRelay = loadRelayrPendingSession(relayrScope)
@@ -381,21 +404,33 @@ export async function runProjectBatch({
         ;(journal.relayrCallIds ??= {})[String(round)] = relayCalls.map(call => call.id)
         persist(journal)
         report('Preparing cross-chain transactions…', round)
-        await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
-          reverify: async () => { checkAccount(); for (const call of relayCalls) await reverify?.(call) },
-          onProgress: progress => report(progress.phase === 'executing'
-            ? `Relayr reports ${progress.done}/${progress.total} destinations complete; verifying their transactions…`
-            : `Round ${round + 1}/${journal.rounds.length}: ${progress.phase.replaceAll('-', ' ')}…`, round),
-          onComplete: async records => {
-            if (verifyCompletion) for (const call of relayCalls) {
-              const matching = records.filter(record => relayrRecordChain(record) === call.chainId)
-              const hash = matching.length === 1 ? relayrDestinationHash(matching[0]) : null
-              if (!hash) throw new Error('The original bundle has not identified an exact receipt for every project action.')
-              await verifyCompletion(call, await clientFor(call.chainId).getTransactionReceipt({ hash }))
-            }
-            complete(relayCalls.map(call => call.id))
-          },
-        })
+        // Once its signed requests leave this browser, a session that later goes
+        // without completing these calls was discarded (see loadProjectBatch).
+        const notePublished = () => {
+          if (!loadRelayrPendingSession(relayrScope) || journal.relayrPublished?.includes(round)) return
+          ;(journal.relayrPublished ??= []).push(round)
+          persist(journal)
+        }
+        notePublished()
+        try {
+          await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
+            reverify: async () => { checkAccount(); for (const call of relayCalls) await reverify?.(call) },
+            onProgress: progress => report(progress.phase === 'executing'
+              ? `Relayr reports ${progress.done}/${progress.total} destinations complete; verifying their transactions…`
+              : `Round ${round + 1}/${journal.rounds.length}: ${progress.phase.replaceAll('-', ' ')}…`, round),
+            onComplete: async records => {
+              if (verifyCompletion) for (const call of relayCalls) {
+                const matching = records.filter(record => relayrRecordChain(record) === call.chainId)
+                const hash = matching.length === 1 ? relayrDestinationHash(matching[0]) : null
+                if (!hash) throw new Error('The original bundle has not identified an exact receipt for every project action.')
+                await verifyCompletion(call, await clientFor(call.chainId).getTransactionReceipt({ hash }))
+              }
+              complete(relayCalls.map(call => call.id))
+            },
+          })
+        } finally {
+          notePublished()
+        }
         pending = pending.filter(call => !journal.completedIds.includes(call.id))
       }
       for (const call of pending) {
@@ -511,7 +546,7 @@ export async function runProjectBatch({
         // A cancelled review or failed preflight exposes no executable request.
         // Published signatures, unknown sends, and completed calls remain recoverable.
         const exposed = batch.completedIds.length > 0 || Object.keys(batch.submissions).length > 0 ||
-          batch.rounds.some((_round, index) => loadRelayrPendingSession(`project-batch:${batch!.id}:${index}`))
+          batch.rounds.some((_round, index) => loadRelayrPendingSession(relayrScopeOf(batch!, index)))
         if (!exposed) { batch.abandoned = true; persist(batch) }
       }
       throw error

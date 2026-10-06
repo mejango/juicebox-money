@@ -160,7 +160,7 @@ export function loadLaunchSession({ strict = false }: { strict?: boolean } = {})
       if (typeof journal !== 'object' || !Array.isArray(journal.signed) ||
           (journal.superseded !== undefined && !Array.isArray(journal.superseded)) ||
           !Array.isArray(journal.records) || typeof journal.account !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(journal.account) ||
-          !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing'].includes(journal.phase) ||
+          !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase) ||
           (journal.phase !== 'signing' && journal.published !== true) ||
           (journal.published !== undefined && journal.published !== true) ||
           (journal.abandonable !== undefined && journal.abandonable !== true) ||

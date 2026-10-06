@@ -38,7 +38,7 @@ import {
   verifyCreatedLaunchMultisigs,
   verifyLaunchMultisigSimulation,
 } from '@/lib/launch-multisig'
-import type { RelayrEntry } from '@/lib/relayr'
+import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 
 const OWNERS: Address[] = [
   '0x0000000000000000000000000000000000000002',

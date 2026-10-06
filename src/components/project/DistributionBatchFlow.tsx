@@ -7,6 +7,7 @@ import { formatUnits, isAddressEqual, parseUnits, zeroAddress, type Address } fr
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
+import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { chainName } from '@/lib/urn'
 import { formatTokenAmount } from '@/lib/format'
 import { isStickyHook, stickyRecipientLabel } from '@/lib/sticky'
@@ -69,6 +70,8 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<string | null>(null)
   const [complete, setComplete] = useState(false)
+  // Discard abandons the saved batch, so the distributions are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setBatch(null); setReview(null); setReviewAccount(null); setStatus(null) })
   useEffect(() => {
     const saved = loadProjectBatch(scope)
     setBatch(saved?.status === 'pending' ? saved : null)
@@ -139,7 +142,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
     if (!batch && (!reviewAccount || !isAddressEqual(address, reviewAccount))) {
       setReview(null); setError('The connected wallet changed. Review the distributions again.'); return
     }
-    setBusy(true); setError(null)
+    setBusy(true); setError(null); discard.capture(null)
     // The batch's last line says why it is still pending, such as a scan still reading.
     const reported = { line: null as string | null }
     try {
@@ -157,6 +160,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       setBatch(saved?.status === 'pending' ? saved : null)
       if (!saved) { setReview(null); setReviewAccount(null); setStatus(null) }
       setError(err instanceof Error ? err.message : 'Could not complete the distributions.')
+      discard.capture(err)
     } finally { setBusy(false) }
   }
 
@@ -190,6 +194,6 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       <TxError error={error} />
       <div className="flex gap-3"><button className="btn-primary min-h-[40px] px-4 text-sm" disabled={busy || options.isLoading} onClick={() => void handleReview()}>{busy ? 'Reviewing…' : 'Review selected distributions'}</button><button className="text-sm underline" disabled={busy} onClick={() => setOpen(false)}>Cancel</button></div>
     </div> : null}
-    {open && reviewed ? <TxConfirmDialog open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed)} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }} /> : null}
+    {open && reviewed ? <TxConfirmDialog open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed)} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} actionDisabled={discard.active} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }}>{discard.element}</TxConfirmDialog> : null}
   </div>
 }

@@ -19,6 +19,12 @@ const mocks = vi.hoisted(() => ({
   readBoundedProjectHandleParts: vi.fn(),
   simulateStateChangingTransaction: vi.fn(),
   readCrossChainHandleAuthority: vi.fn(),
+  discard: vi.fn(),
+}))
+
+vi.mock('@/lib/relayr', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/relayr')>()),
+  discardRelayrSession: mocks.discard,
 }))
 
 vi.mock('@/hooks/useWallet', () => ({
@@ -59,6 +65,7 @@ vi.mock('@/lib/safe', () => ({
 }))
 
 import { ProjectHandleCard } from '@/components/project/ProjectHandleCard'
+import { RelayrDiscardError } from '@/lib/relayr'
 
 function textOf(node: ReactTestInstance): string {
   return node.children
@@ -415,6 +422,41 @@ describe('ProjectHandleCard', () => {
         .find(button => textOf(button) === 'Confirm & publish handle'),
     ).toBeDefined()
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['ENS record', null, 'Set verified handle', 'Confirm & set handle'],
+    ['handle claim', '1:42', 'Resume: publish handle', 'Confirm & publish handle'],
+  ] as const)('shows the line and Discard in its review when the %s step\'s Relayr session can only be discarded', async (_, record, open, action) => {
+    liveTextRecord = record
+    mocks.runAuthorityCalls.mockRejectedValue(new RelayrDiscardError('authority:0xabc', 'ran'))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(QueryClientProvider, { client: queryClient },
+        createElement(ProjectHandleCard, { deployment: { chainId: 1, projectId: 42, indexedAuthority: OWNER }, isRevnet: false })))
+    })
+    await flushQueries()
+    clickButton(renderer, 'Set handle')
+    act(() => renderer.root.findByProps({ placeholder: 'banny.eth' }).props.onChange({ target: { value: 'banny.eth' } }))
+    let start: ReactTestInstance | undefined
+    for (let attempt = 0; attempt < 20 && !start; attempt += 1) {
+      await flushQueries()
+      start = renderer.root.findAllByType('button').find(button => textOf(button) === open)
+    }
+    act(() => start!.props.onClick())
+    clickButton(renderer, action)
+    for (let attempt = 0; attempt < 20 && !textOf(confirmDialog(renderer)).includes('may already have run'); attempt += 1) {
+      await flushQueries()
+    }
+    expect(textOf(confirmDialog(renderer)).match(/may already have run/g)).toHaveLength(1)
+    const confirm = renderer.root.findAllByType('button').find(button => textOf(button) === 'Retry' || textOf(button) === action)
+    expect(confirm?.props.disabled).toBe(true)
+    mocks.discard.mockResolvedValue(undefined)
+    await act(async () => { await renderer.root.findAllByType('button').find(button => textOf(button) === 'Discard')!.props.onClick() })
+    expect(mocks.discard).toHaveBeenCalledWith('authority:0xabc')
+    expect(textOf(confirmDialog(renderer))).not.toContain('may already have run')
+    await act(async () => renderer.unmount())
   })
 
   it('locks every modal close path while a setup step is running', async () => {

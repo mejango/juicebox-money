@@ -1,5 +1,6 @@
 import { FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
 import { resolvedAddress } from "@/lib/ens";
+import { formatDateTime } from "@/lib/format";
 import { splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
 
 /**
@@ -287,7 +288,7 @@ export function stageRoutesEverything(
 function startLabel(stage: DraftStage, index: number): string {
   if (stage.startMode === "date") {
     return stage.startDate
-      ? `Starts ${new Date(stage.startDate).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })}, snapped to Ruleset #${index}'s cycle`
+      ? `Starts ${formatDateTime(Math.floor(new Date(stage.startDate).getTime() / 1000))}, snapped to Ruleset #${index}'s cycle`
       : "Starts on a date";
   }
   const n = Number(stage.startCycles) || 1;

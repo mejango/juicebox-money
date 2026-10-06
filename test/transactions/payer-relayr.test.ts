@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
 import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
-import type { RelayrEntry, RelayrQuote } from '@/lib/relayr'
-import { relayrPaymentChains } from '@/lib/relayr-chains'
+import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const ADMIN = '0x2222222222222222222222222222222222222222' as Address
@@ -67,7 +66,8 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
   payerDeploymentScope, runPayerDeployments, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
-import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, relayrPay, relayrPoll } from '@/lib/relayr'
+import { RelayrPaymentSubmittedError, relayrPay, relayrPaymentDetails, relayrPoll } from '@/lib/relayr'
+import { sentRelayrPayment } from '@/lib/relayr-payments'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 
@@ -89,6 +89,8 @@ function quoteFor(entries: RelayrEntry[]): RelayrQuote {
   return { bundle_uuid: BUNDLE, payment_info: relayrPaymentChains(entries.map(entry => entry.chain)).map(chain => ({ chain, amount: '1000',
     target: RELAYR_PAYMENT_ADDRESS, token: RELAYR_NATIVE_TOKEN, payment_deadline: deadline,
     calldata: `${RELAYR_PAYMENT_SELECTOR}${BUNDLE.replaceAll('-', '')}${'0'.repeat(32)}${deadline.toString(16).padStart(64, '0')}` as Hex })),
+    transactions: entries.map((entry, index) => ({ request: entry,
+      tx_uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}` })),
     expectedTransactions: entries.map((entry, index) => ({ chain: entry.chain, entry,
       txUuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}` })),
   }
@@ -151,12 +153,14 @@ beforeEach(() => {
   mocks.funding.mockReset().mockResolvedValue(10)
   mocks.send.mockReset().mockImplementation(async (chain: number) => mocks.safe ? SAFE_PROPOSAL : hashFor(chain))
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quoteFor(entries))
-  mocks.pay.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPay>) => {
-    await args[5]?.()
-    args[6]?.()
+  mocks.pay.mockReset().mockImplementation(async ({ payment, bundleUuid, reverify, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+    const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds: review.calls.map(call => call.chainId) })
+    await reverify?.()
+    onSending?.(details)
     mocks.paymentSent()
-    args[4]?.(PAYMENT_HASH)
-    return PAYMENT_HASH
+    const payments = [sentRelayrPayment(details, PAYMENT_HASH)]
+    onSent?.(payments)
+    return { hash: PAYMENT_HASH, payments }
   })
   mocks.poll.mockReset().mockImplementation(async (...args: Parameters<typeof relayrPoll>) => {
     args[2]?.(records())
@@ -174,23 +178,60 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
     expect(mocks.funding.mock.calls[0][0].map((option: { chainId: number }) => option.chainId)).toEqual(testnets)
-    expect(mocks.pay.mock.calls[0][0].chain).toBe(84532)
-    expect(mocks.pay.mock.calls[0][3]).toEqual(testnets)
+    expect(mocks.pay.mock.calls[0][0].payment.chain).toBe(84532)
+    expect(mocks.pay.mock.calls[0][0].destinationChainIds).toEqual(testnets)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
-  it('retains the original raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
+  /** Relayr reports the bundle as `body` says, by default unpaid with every call pending. */
+  function relayrReports(body: Record<string, unknown> = {}) {
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
+      transactions: records().map(({ status: _, ...record }) => ({ ...record, status: { state: 'Pending' } })), ...body }), { status: 200 }))
+  }
+
+  it('asks once more, then keeps the raw bundle without opening funding when testnet quotes offer only mainnet payments', async () => {
     review = makeReview([11155111, 11155420])
-    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
+    relayrReports()
+    mocks.post.mockImplementation(async (entries: RelayrEntry[]) => ({ ...quoteFor(entries),
       payment_info: quoteFor([{ ...entries[0], chain: 1 }]).payment_info,
     }))
     await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/network family/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    expect(mocks.post).toHaveBeenCalledTimes(2)
     expect(mocks.funding).not.toHaveBeenCalled()
     expect(mocks.pay).not.toHaveBeenCalled()
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(/network family/)
+  })
+
+  it('quotes the same raw calls again once the saved unpaid quote can no longer be paid, after Relayr confirms none ran', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    relayrReports()
+    const result = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())
+    expect(result.phase).toBe('complete')
+    expect(mocks.post).toHaveBeenCalledTimes(2)
+    expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
+    expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
+  })
+
+  it.each<[string, Record<string, unknown>]>([
+    ['reports a payment', { payment_received: true }],
+    ['does not say whether it was paid', { payment_received: null }],
+    ['reports a call running', { transactions: [{ tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'Included' } }] }],
+    ['names another bundle', { bundle_uuid: '00000000-0000-0000-0000-000000000009' }],
+  ])('keeps an unpaid quote that can no longer be paid while Relayr %s', async (_, body) => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_000)
+    relayrReports(body)
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(
+      'Relayr has not confirmed that this quote is unpaid and that none of its calls ran. Keep it pending; try again later.')
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('quoted')
     expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.paymentSent).not.toHaveBeenCalled()
   })
 
   it('uses each linked project ID and the explicit admin/beneficiary in raw factory calls with one chosen funding payment', async () => {
@@ -205,7 +246,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       expect(decoded.args).toEqual([BigInt(projectId + index), BENEFICIARY, 'Treasury support', '0x', false, ADMIN])
     })
     expect(mocks.funding).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ chainId: 1 }), expect.objectContaining({ chainId: 10 })]), 1)
-    expect(mocks.pay.mock.calls[0][0].chain).toBe(10)
+    expect(mocks.pay.mock.calls[0][0].payment.chain).toBe(10)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.phase).toBe('complete')
@@ -252,8 +293,8 @@ describe('payer deployment review and raw Relayr execution', () => {
   })
 
   it('persists the payment send window and never repays an ambiguous no-hash send', async () => {
-    mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
-      args[6]?.()
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, onSending }: Parameters<typeof relayrPay>[0]) => {
+      onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds: review.calls.map(call => call.chainId) }))
       expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-sending')
       throw new Error('Wallet disconnected after send.')
     })
@@ -293,6 +334,15 @@ describe('payer deployment review and raw Relayr execution', () => {
     await runPayerDeployments(saved, vi.fn())
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps a saved deployment whose payment record is malformed pending', async () => {
+    mocks.funding.mockRejectedValueOnce(new Error('Funding selection cancelled.'))
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/cancelled/)
+    const key = `jb-payer-deploy-v1:journal:${review.id}`
+    const saved = JSON.parse(window.localStorage.getItem(key)!)
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, payments: [{ hash: PAYMENT_HASH, chainId: 999 }] }))
+    expect(() => loadPayerDeployment(review.scope)).toThrow('The saved payer payments are malformed. Keep it pending.')
   })
 
   it('uses a stable project action scope regardless of selection or input changes', () => {
@@ -582,5 +632,144 @@ describe('exact payer destination proof', () => {
   it('rebuilds the exact deployment request from the frozen settings', () => {
     expect(payerDeploymentRequest(review.calls[1])).toMatchObject({ address: JB_PROJECT_PAYER_DEPLOYER,
       chainId: 10, args: [BigInt(projectId + 1), BENEFICIARY, 'Treasury support', '0x', false, ADMIN] })
+  })
+})
+
+describe('paying a reverted payer quote again', () => {
+  const SECOND_PAYMENT = `0x${'5c'.repeat(32)}` as Hex
+
+  /** relayrPay that sends the payment and reports it reverted onchain. */
+  const revertingPay = async ({ payment, bundleUuid, destinationChainIds, sent = [], onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+    const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+    onSending?.(details)
+    mocks.paymentSent()
+    onSent?.([...sent, sentRelayrPayment(details, PAYMENT_HASH)])
+    throw new RelayrPaymentRevertedError('The Relayr funding transaction reverted onchain.', PAYMENT_HASH, payment.chain)
+  }
+
+  it('pays the same quote again on the same chain, naming every payment it sent', async () => {
+    mocks.pay.mockImplementationOnce(revertingPay)
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow('The Relayr funding transaction reverted onchain.')
+    const reverted = loadPayerDeployment(review.scope)!
+    expect(reverted).toMatchObject({ phase: 'payment-reverted', paymentHash: PAYMENT_HASH,
+      payments: [expect.objectContaining({ hash: PAYMENT_HASH, chainId: 10, bundleUuid: BUNDLE })] })
+    const pay = mocks.pay.getMockImplementation()!
+    let held: PayerDeploymentSession | null = null
+    mocks.pay.mockImplementationOnce(async (options: Parameters<typeof relayrPay>[0]) => pay({ ...options,
+      onSending: (details: RelayrPaymentDetails) => { options.onSending?.(details); held = loadPayerDeployment(review.scope) } }))
+    const result = await runPayerDeployments(reverted, vi.fn())
+    expect(result.phase).toBe('complete')
+    expect(held).toMatchObject({ phase: 'payment-sending', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+    expect(held!.paymentHash).toBeUndefined()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.funding).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).toHaveBeenCalledTimes(2)
+    expect(mocks.pay.mock.calls[1][0]).toMatchObject({ payment: { chain: 10 }, bundleUuid: BUNDLE,
+      sent: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+  })
+
+  it('proves a quote another payment funded after its own payment reverted, and never pays it again', async () => {
+    mocks.pay.mockImplementationOnce(revertingPay)
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+    // Another payment funded the bundle, and Relayr ran it.
+    vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE,
+      payment_received: true, transactions: records() }), { status: 200 }))
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledWith(`https://api.relayr.ba5ed.com/v1/bundle/${BUNDLE}`, expect.objectContaining({ cache: 'no-store' }))
+  })
+
+  describe('once its quote expired (ruling R104)', () => {
+    const WAITING = 'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.'
+
+    /**
+     * The payment reverts, and its quote's deadline passes on the clock and,
+     * `finalizedPast` seconds later, at the finalized block. Relayr reports
+     * the bundle unpaid with every call pending.
+     */
+    async function expired(finalizedPast = 1) {
+      mocks.pay.mockImplementationOnce(revertingPay)
+      await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+      const sent = loadPayerDeployment(review.scope)!.payments![0]
+      const transaction = mocks.getTransaction.getMockImplementation()!
+      const receipt = mocks.getReceipt.getMockImplementation()!
+      mocks.getTransaction.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
+        ? { hash: PAYMENT_HASH, chainId: 10, from: ALICE, to: sent.target, input: sent.calldata, value: BigInt(sent.amount),
+          blockHash: BLOCK, blockNumber: 100n }
+        : transaction(chain, args))
+      mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
+        ? { transactionHash: PAYMENT_HASH, to: sent.target, blockHash: BLOCK, blockNumber: 100n, status: 'reverted' }
+        : receipt(chain, args))
+      vi.spyOn(Date, 'now').mockReturnValue((Number(sent.deadline) + 1) * 1_000)
+      mocks.getBlock.mockImplementation(async (_chain: number, args?: { blockTag?: string }) => args?.blockTag === 'finalized'
+        ? { number: 100n, hash: BLOCK, timestamp: BigInt(Number(sent.deadline) + finalizedPast) }
+        : { hash: BLOCK })
+      vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
+        transactions: records().map(({ status: _, ...record }) => ({ ...record, status: { state: 'Pending' } })) }), { status: 200 }))
+    }
+
+    it('quotes the same raw calls again once nothing can fund the reverted quote', async () => {
+      await expired()
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+      expect(mocks.post).toHaveBeenCalledTimes(2)
+      expect(mocks.post.mock.calls[1][0]).toEqual(mocks.post.mock.calls[0][0])
+      expect(mocks.funding).toHaveBeenCalledTimes(2)
+      expect(mocks.pay.mock.calls[1][0].sent).toEqual([])
+    })
+
+    it('keeps the quote while its deadline is not past the finalized block', async () => {
+      await expired(0)
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow(WAITING)
+      expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'payment-reverted',
+        payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+      expect(mocks.post).toHaveBeenCalledTimes(1)
+      expect(mocks.pay).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
+    mocks.pay.mockImplementationOnce(revertingPay)
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toThrow(/reverted onchain/)
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending }: Parameters<typeof relayrPay>[0]) => {
+      onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
+      throw Object.assign(new Error('User rejected'), { code: 4001 })
+    })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toThrow('User rejected')
+    expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'payment-reverted',
+      payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
+    expect(mocks.funding).toHaveBeenCalledTimes(1)
+  })
+
+  it('finds a payment that reverted while the app was away, and pays again only on the retry rule', async () => {
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+      onSending?.(details)
+      onSent?.([sentRelayrPayment(details, PAYMENT_HASH)])
+      throw new RelayrPaymentSubmittedError(PAYMENT_HASH, payment.chain)
+    })
+    await expect(runPayerDeployments(review, vi.fn())).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('executing')
+    // The funding chain holds the reviewed payment, reverted.
+    const sent = loadPayerDeployment(review.scope)!.payments![0]
+    const transaction = mocks.getTransaction.getMockImplementation()!
+    const receipt = mocks.getReceipt.getMockImplementation()!
+    const payment = { hash: PAYMENT_HASH, chainId: 10, from: ALICE, to: sent.target, input: sent.calldata, value: BigInt(sent.amount),
+      blockHash: BLOCK, blockNumber: 100n }
+    mocks.getTransaction.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH ? payment : transaction(chain, args))
+    mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
+      ? { transactionHash: PAYMENT_HASH, to: sent.target, blockHash: BLOCK, blockNumber: 100n, status: 'reverted' }
+      : receipt(chain, args))
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
+    expect(loadPayerDeployment(review.scope)?.phase).toBe('payment-reverted')
+    expect(mocks.poll).not.toHaveBeenCalled()
+    mocks.pay.mockImplementationOnce(async ({ payment: option, bundleUuid, destinationChainIds, sent: previous = [], onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(option, { bundleUuid, destinationChainIds })
+      onSending?.(details)
+      const payments = [...previous, sentRelayrPayment(details, SECOND_PAYMENT)]
+      onSent?.(payments)
+      return { hash: SECOND_PAYMENT, payments }
+    })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn())).resolves.toMatchObject({ phase: 'complete' })
+    expect(mocks.pay.mock.calls[1][0].sent).toEqual([expect.objectContaining({ hash: PAYMENT_HASH })])
   })
 })

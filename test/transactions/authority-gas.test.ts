@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     getTransactionReceipt: vi.fn(),
     getBlock: vi.fn(),
     getBlockNumber: vi.fn(),
+    getCode: vi.fn(),
   },
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
@@ -88,6 +89,7 @@ const CONTROLLER = '0x5555555555555555555555555555555555555555' as Address
 const OTHER_CONTROLLER = '0x6666666666666666666666666666666666666666' as Address
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const DESTINATION_HASH = `0x${'cd'.repeat(32)}` as Hex
+const SECOND_DESTINATION_HASH = `0x${'ef'.repeat(32)}` as Hex
 const BUNDLE_UUID = '01234567-89ab-cdef-0123-456789abcdef'
 const TX_UUIDS = [
   'fedcba98-7654-3210-fedc-ba9876543210',
@@ -166,11 +168,17 @@ beforeEach(() => {
   mocks.wallet.signTypedData.mockResolvedValue(`0x${'11'.repeat(65)}`)
   mocks.wallet.sendTransaction.mockResolvedValue(HASH)
   let entries: { chain: number; target: Address; data: Hex; value: string }[] = []
-  mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
-    const entry = entries[hash === DESTINATION_HASH ? 0 : 1]
-    return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH }
-  })
-  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
+  // A destination hash holds its signed call; any other hash, the transaction the wallet last sent.
+  const transactionOf = (hash: Hex) => {
+    const entry = entries[[DESTINATION_HASH, SECOND_DESTINATION_HASH].indexOf(hash)]
+    if (entry) return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n }
+    const [sent] = mocks.wallet.sendTransaction.mock.calls.at(-1) ?? []
+    return { hash, chainId: 1, from: sent?.account, to: sent?.to, input: sent?.data, value: sent?.value, blockHash: HASH, blockNumber: 1n }
+  }
+  mocks.client.getCode.mockResolvedValue(PAYMENT_RUNTIME)
+  mocks.client.getTransaction.mockImplementation(async ({ hash }) => transactionOf(hash))
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
+    to: transactionOf(hash).to, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
   mocks.client.getBlock.mockResolvedValue({ hash: HASH })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
@@ -194,9 +202,10 @@ beforeEach(() => {
     }
     if (url.endsWith(`/v1/bundle/${BUNDLE_UUID}`)) {
       return response({
+        bundle_uuid: BUNDLE_UUID,
         transactions: [
           { chain: 1, tx_uuid: TX_UUIDS[0], status: { state: 'success', data: { hash: DESTINATION_HASH } } },
-          { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: HASH } } },
+          { chain: 10, tx_uuid: TX_UUIDS[1], status: { state: 'success', data: { hash: SECOND_DESTINATION_HASH } } },
         ],
       })
     }
@@ -293,6 +302,22 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     } finally { clearRelayrPendingSession(scope) }
   })
 
+  it('rechecks the authority of a saved action whose payment reverted before paying it again', async () => {
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
+    ]
+    const scope = relayrCallsScope(calls)
+    saveRelayrPendingSession(scope, { bundleUuid: BUNDLE_UUID, paymentHash: HASH,
+      paymentChainId: 1, paymentStatus: 'reverted', chainIds: [1, 10], expectedCount: 2,
+      records: [], itemCount: 2, account: ALICE, createdAt: Date.now() })
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'contract' })
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow(/unsupported contract/)
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
   it('rechecks an unpaid saved action after funding review before sending its payment', async () => {
     let changed = false
     const reverifyAuthority = vi.fn(async () => {
@@ -311,6 +336,35 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
         if (review.title === 'Review Relayr payment') changed = true
       })
       await expect(runAuthorityCalls({ calls })).rejects.toThrow('The original queue changed during review')
+      expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    } finally { clearRelayrPendingSession(scope) }
+  })
+
+  it('classifies a saved session before its action\'s own recheck, so one whose requests ran ends with Discard', async () => {
+    let ran = false
+    const reverifyAuthority = vi.fn(async () => {
+      if (ran) throw new Error('The authority, queue, or rules changed on Ethereum. Reload and review before sending.')
+    })
+    const calls: AuthorityCall[] = [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', reverifyAuthority },
+      { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678', reverifyAuthority },
+    ]
+    const scope = relayrCallsScope(calls)
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
+    try {
+      await expect(runAuthorityCalls({ calls })).rejects.toThrow('Selection canceled')
+      // Anyone holding the signed requests ran them at the forwarder, so the queue changed.
+      ran = true
+      reverifyAuthority.mockClear()
+      const read = mocks.client.readContract.getMockImplementation()!
+      mocks.client.readContract.mockImplementation(async input => input.functionName === 'nonces' ? 5n
+        : input.functionName === 'verify' ? false : read(input))
+      mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
+        ? { number: 200n, hash: HASH, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: HASH })
+      await expect(runAuthorityCalls({ calls })).rejects.toMatchObject({ name: 'RelayrDiscardError', scope, reason: 'ran' })
+      expect(reverifyAuthority).not.toHaveBeenCalled()
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     } finally { clearRelayrPendingSession(scope) }

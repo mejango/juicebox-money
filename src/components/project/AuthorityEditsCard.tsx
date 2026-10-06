@@ -47,7 +47,8 @@ import {
   preservedMetadataKeys,
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
-import { loadRelayrPendingSession, relayrCallsScope, resumeRelayrSession, withRelayrScopeLock } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope, withRelayrScopeLock } from '@/lib/relayr'
+import { RelayrDiscard, useRelayrDiscard } from '@/components/RelayrDiscard'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -472,7 +473,7 @@ type MetadataDestination = {
   nextUri: string
 }
 
-type MetadataReview = {
+export type MetadataReview = {
   account: Address
   isRevnet: boolean
   scope: string
@@ -533,7 +534,7 @@ async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: b
   return { owner, authority, controller, uri }
 }
 
-function metadataReviewCalls(review: MetadataReview, requireSaved = true): AuthorityCall[] {
+export function metadataReviewCalls(review: MetadataReview, requireSaved = true): AuthorityCall[] {
   return review.destinations.map(destination => ({
     chainId: destination.chainId,
     authority: destination.authority,
@@ -699,6 +700,14 @@ export function MetadataEditor({
   )
 
   const locked = !!frozen && !!loadRelayrPendingSession(frozen.scope)
+  // Every earlier signature is dead: only Discard ends the session. The saved
+  // review stays as the draft, and confirming it again signs afresh.
+  const discardable = frozen ? loadRelayrPendingSession(frozen.scope)?.discardable : undefined
+  const discarded = () => {
+    setDone(false)
+    setStatus(null)
+    setError(null)
+  }
 
   const invalidate = async () => {
     if (locked) return
@@ -854,18 +863,11 @@ export function MetadataEditor({
       await withMetadataReviewLocks(frozen.destinations, async () => {
         const account = getAccount(wagmiConfig).address
         if (!account || !isAddressEqual(account, frozen.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
-        const pending = loadRelayrPendingSession(frozen.scope)
-        if (pending && pending.paymentStatus !== 'unpaid') {
-          await resumeRelayrSession({ scope: frozen.scope, account, onProgress: progress => {
-            if (progress.phase === 'executing') setStatus(`Relayr reports ${progress.done}/${progress.total} complete; checking the original receipts…`)
-          } })
-          setStatus(`Project metadata updated on ${frozen.destinations.length} chains.`)
-        } else {
-          saveMetadataReview(frozen)
-          const calls = metadataReviewCalls(frozen)
-          const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
-          setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
-        }
+        // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
+        saveMetadataReview(frozen)
+        const calls = metadataReviewCalls(frozen)
+        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message) })
+        setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         removeMetadataReview(frozen)
         setDone(true)
         onDone()
@@ -1089,13 +1091,16 @@ export function MetadataEditor({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discardable ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
           onConfirm={() => void submit()}
           onClose={closeReview}
-        />
+        >
+          {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
+          {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} onDiscarded={discarded} /> : null}
+        </TxConfirmDialog>
       ) : null}
     </div>
   )
@@ -1124,7 +1129,7 @@ export function tokenDeploySalt(
   )
 }
 
-function TokenEditor({
+export function TokenEditor({
   rows,
   fallbackName,
   onCancel,
@@ -1148,11 +1153,14 @@ function TokenEditor({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The token calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => setReview(null))
 
   const invalidate = () => {
     setReview(null)
     setDone(false)
     setError(null)
+    discard.reset()
   }
 
   const buildReview = () => {
@@ -1212,6 +1220,7 @@ function TokenEditor({
     if (!review || busy) return
     setBusy(true)
     setError(null)
+    discard.capture(null)
     try {
       const result = await runAuthorityCalls({
         calls: review,
@@ -1233,6 +1242,7 @@ function TokenEditor({
           ? submitError.message
           : 'Could not update token metadata.',
       )
+      discard.capture(submitError)
     } finally {
       setBusy(false)
     }
@@ -1339,13 +1349,15 @@ function TokenEditor({
           }))}
           activeIndex={busy ? 0 : -1}
           status={status}
-          error={error}
+          error={discard.active ? null : error}
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
+          actionDisabled={discard.active}
           onConfirm={() => void submit()}
           onClose={invalidate}
         >
+          {discard.element}
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
             {review.some(call => call.functionName === 'deployERC20For')
