@@ -63,15 +63,14 @@ import {
   RELAYR_PAYMENT_CODE_HASH,
   RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_SELECTOR,
-  relayrPaymentDetails as sdkRelayrPaymentDetails,
+  relayrPaymentDetails,
+  relayrPaymentOptions,
   type RelayrEntry,
   type RelayrPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   buildForwardedTx,
   relayrPay,
-  relayrPaymentDetails,
-  relayrPaymentOptions,
   relayrPoll,
   relayrPostBundle,
   runRelayrCalls,
@@ -586,13 +585,20 @@ describe('Relayr quote and payment boundaries', () => {
   it.each<[string, Partial<RelayrPayment>, RegExp]>([
     ['target', { target: '0x1C05f7841379d4393574c0ffa17908ec40ffd97D' as Address }, /unrecognized payment contract/],
     ['token', { token: '0xEEeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeE' as Address }, /unsupported payment token/],
-  ])('refuses a payment %s whose mixed case fails its checksum, as the SDK does', async (_, change, message) => {
+  ])('refuses a payment %s whose mixed case fails its checksum', async (_, change, message) => {
     const bound = { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] }
-    expect(() => sdkRelayrPaymentDetails({ ...payment, ...change }, bound)).toThrow(message)
     expect(() => relayrPaymentDetails({ ...payment, ...change }, bound)).toThrow(message)
     expect(relayrPaymentOptions({ bundle_uuid: BUNDLE_UUID, payment_info: [{ ...payment, ...change }] }, [1])).toEqual([])
     await expect(pay({ ...payment, ...change }, [1])).rejects.toThrow(message)
     expect(mocks.requireReview).not.toHaveBeenCalled()
+  })
+
+  it("offers no option on a chain where any of Relayr's options fails its checksum, whichever comes first", () => {
+    const corrupted = { ...payment, target: '0x1C05f7841379d4393574c0ffa17908ec40ffd97D' as Address }
+    const quote = (options: RelayrPayment[]) => ({ bundle_uuid: BUNDLE_UUID, payment_info: options })
+    expect(relayrPaymentOptions(quote([payment]), [1])).toEqual([payment])
+    expect(relayrPaymentOptions(quote([corrupted, payment]), [1])).toEqual([])
+    expect(relayrPaymentOptions(quote([payment, corrupted]), [1])).toEqual([])
   })
 
   it('does not pay if the account changes after bounded simulation', async () => {

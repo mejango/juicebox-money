@@ -38,9 +38,10 @@ import {
   relayrBundleRequest,
   relayrDestinationHash,
   relayrForwardRequest,
+  quoteExpired,
   relayrPaymentChains,
-  relayrPaymentDetails as authenticateRelayrPayment,
-  relayrPaymentOptions as authenticatedRelayrPaymentOptions,
+  relayrPaymentDetails,
+  relayrPaymentOptions,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsSuccess,
@@ -1013,37 +1014,9 @@ export async function relayrPostBundle(
   return bindRelayrQuote(response, request)
 }
 
-/**
- * The SDK's authentication of one of a quote's payment options. It also
- * refuses a target or token whose mixed-case spelling fails its checksum,
- * which the SDK accepts.
- */
-export function relayrPaymentDetails(
-  payment: RelayrPayment,
-  options: { bundleUuid: string; destinationChainIds: readonly number[]; nowSeconds?: number },
-): RelayrPaymentDetails {
-  if (typeof payment?.target === 'string' && !isAddress(payment.target)) {
-    throw new Error('Relayr returned an unrecognized payment contract.')
-  }
-  if (typeof payment?.token === 'string' && !isAddress(payment.token)) {
-    throw new Error('Relayr returned an unsupported payment token.')
-  }
-  return authenticateRelayrPayment(payment, options)
-}
-
 export function relayrPaymentLabel(payment: RelayrPayment): string {
   const chain = SUPPORTED_CHAINS.find(item => item.id === Number(payment.chain))
   return fundingChainLabel(chain?.name ?? `Chain ${payment.chain}`, BigInt(payment.amount))
-}
-
-/** The SDK's payment options for a quote, each of which passes relayrPaymentDetails. */
-export function relayrPaymentOptions(
-  quote: Pick<RelayrQuote, 'bundle_uuid' | 'payment_info'>,
-  destinationChainIds: readonly number[],
-  nowSeconds?: number,
-): RelayrPayment[] {
-  return authenticatedRelayrPaymentOptions(quote, destinationChainIds, nowSeconds)
-    .filter(option => isAddress(option.target) && isAddress(option.token ?? ''))
 }
 
 /**
@@ -1525,13 +1498,13 @@ async function holdUnprovenSession(scope: string, saved: RelayrPendingSession, e
 
 /**
  * Whether the quote a session paid can still be paid by the clock: its
- * latest payment's deadline is more than 15 seconds away, as the SDK's retry
- * rule requires.
+ * latest payment's deadline is more than 15 seconds away (the SDK's
+ * quoteExpired), as the SDK's retry rule requires.
  */
 export function relayrPaidQuoteOpen(payments: readonly RelayrSentPayment[] | undefined, nowMs = Date.now()): boolean {
   const latest = payments?.at(-1)
   try {
-    return !!latest && BigInt(latest.deadline) > BigInt(Math.floor(nowMs / 1_000)) + 15n
+    return !!latest && !quoteExpired(BigInt(latest.deadline), nowMs / 1_000)
   } catch {
     return false
   }

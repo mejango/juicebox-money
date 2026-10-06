@@ -91,11 +91,11 @@ import {
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_SELECTOR,
+  relayrPaymentDetails,
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   RelayrPaymentSendingError,
   relayrPay,
-  relayrPaymentDetails,
   relayrPaymentLabel,
 } from '@/lib/relayr'
 import { sentRelayrPayment } from '@/lib/relayr-payments'

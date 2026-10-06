@@ -38,7 +38,6 @@ import {
   loadRelayrPendingSession,
   relayrPay,
   relayrPaymentLabel,
-  relayrPaymentOptions,
   relayrPoll,
   relayrPostBundle,
   saveRelayrPendingSession,
@@ -49,6 +48,7 @@ import {
 } from "@/lib/relayr";
 import {
   relayrDestinationHash,
+  relayrPaymentOptions,
   relayrProgress,
   relayrRecordChain,
   relayrStateIsFailed,
