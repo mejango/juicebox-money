@@ -4,7 +4,7 @@ import { zeroAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
-import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
+import type { RelayrEntry, RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import type { RelayrPendingSession } from '@/lib/relayr'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -29,6 +29,7 @@ const mocks = vi.hoisted(() => ({
   session: null as RelayrPendingSession | null,
   refetch: vi.fn(),
   simulate: vi.fn(),
+  simulateFrozen: vi.fn(),
   execute: vi.fn(),
   post: vi.fn(),
   pay: vi.fn(),
@@ -38,12 +39,17 @@ const mocks = vi.hoisted(() => ({
   review: vi.fn(),
   viaSafeApp: false,
   chainId: undefined as number | undefined,
+  address: '0x2222222222222222222222222222222222222222' as Address | undefined,
+  bundle: null as { bundle_uuid: string; payment_received: boolean; transactions: RelayrTransactionRecord[] } | null,
+  getBlock: vi.fn(),
+  getTransaction: vi.fn(),
+  getTransactionReceipt: vi.fn(),
 }))
 
-vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OWNER }) }))
+vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address }) }))
 vi.mock('@wagmi/core', async importOriginal => ({
   ...(await importOriginal<typeof import('@wagmi/core')>()),
-  getAccount: () => ({ address: OWNER, chainId: mocks.chainId }),
+  getAccount: () => ({ address: mocks.address, chainId: mocks.chainId }),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQuery: () => ({ data: mocks.rows, refetch: mocks.refetch }),
@@ -64,6 +70,7 @@ vi.mock('@/lib/safe', async importOriginal => ({
     return { nonce: row?.currentNonce ?? 0, pending: row?.transactions ?? [] }
   },
   simulateSafeExecution: mocks.simulate,
+  simulateFrozenSafeExecution: mocks.simulateFrozen,
   executeSafeTx: mocks.execute,
 }))
 vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
@@ -83,6 +90,11 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   relayrPostBundle: mocks.post,
   relayrPay: mocks.pay,
   relayrPoll: mocks.poll,
+  relayrChainClient: () => ({
+    getBlock: mocks.getBlock,
+    getTransaction: mocks.getTransaction,
+    getTransactionReceipt: mocks.getTransactionReceipt,
+  }),
 }))
 
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
@@ -133,6 +145,12 @@ function chain(chainId: JBChainId, nonces: number[]) {
 
 function quote(entries: RelayrEntry[], seconds = 3_600, fundingChains = [1, 10]) {
   const deadline = Math.floor(Date.now() / 1_000) + seconds
+  const transactions = entries.map((entry, index) => ({
+    chain: entry.chain,
+    request: entry,
+    tx_uuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
+    status: { state: 'pending' },
+  }))
   return {
     bundle_uuid: BUNDLE,
     payment_info: fundingChains.map(chain => ({
@@ -148,6 +166,8 @@ function quote(entries: RelayrEntry[], seconds = 3_600, fundingChains = [1, 10])
       chain: entry.chain,
       txUuid: `00000000-0000-0000-0000-${String(index + 1).padStart(12, '0')}`,
     })),
+    transactions,
+    tx_uuids: transactions.map(transaction => transaction.tx_uuid),
   }
 }
 
@@ -183,9 +203,25 @@ async function selectPayment(index: number) {
   })
 }
 
+async function closeBatch() {
+  await act(async () => {
+    renderer.root.findAllByType('button').find(node => node.props['aria-label'] === 'Close')!.props.onClick()
+  })
+}
+
+async function updateQueue() {
+  await act(async () => {
+    renderer.update(createElement(SafeQueueCard, {
+      safe: SAFE, chains: mocks.rows, authorityLabel: 'Project owner',
+    }))
+  })
+}
+
 beforeEach(() => {
   mocks.viaSafeApp = false
   mocks.chainId = undefined
+  mocks.address = OWNER
+  mocks.bundle = null
   mocks.rows = [chain(1, [5, 6]), chain(10, [5, 6])]
   mocks.session = null
   mocks.simulate.mockReset().mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTransaction) => ({
@@ -194,15 +230,30 @@ beforeEach(() => {
     policyFingerprint: 'unchanged',
     owners: [OWNER],
   }))
+  mocks.simulateFrozen.mockReset().mockResolvedValue('unchanged')
+  mocks.getBlock.mockReset().mockImplementation(async () => ({ number: 10n, hash: HASH, timestamp: BigInt(Math.floor(Date.now() / 1_000)) }))
+  mocks.getTransaction.mockReset().mockRejectedValue(new Error('Payment has not been mined.'))
+  mocks.getTransactionReceipt.mockReset().mockRejectedValue(new Error('Payment has not been mined.'))
   mocks.execute.mockReset().mockResolvedValue({ status: 'confirmed', hash: HASH })
   mocks.post.mockReset().mockImplementation(async (entries: RelayrEntry[]) => quote(entries))
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) => {
+    if (init?.method === 'POST') {
+      const entries = (JSON.parse(String(init.body)) as { transactions: RelayrEntry[] }).transactions
+      const quoted = await mocks.post(entries)
+      mocks.bundle = { bundle_uuid: quoted.bundle_uuid, payment_received: false, transactions: quoted.transactions }
+      return Response.json(quoted)
+    }
+    if (!mocks.bundle) throw new Error('No saved Relayr bundle.')
+    return Response.json(mocks.bundle)
+  }))
   mocks.save.mockReset().mockImplementation((_scope: string, session: RelayrPendingSession) => {
     mocks.session = session
     return session
   })
   mocks.clear.mockReset().mockImplementation(() => { mocks.session = null })
-  mocks.pay.mockReset().mockImplementation(async ({ payment, bundleUuid, destinationChainIds, onSending }: Parameters<typeof relayrPay>[0]) => {
-    onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
+  mocks.pay.mockReset().mockImplementation(async ({ payment, bundleUuid, destinationChainIds, reverify, onSending }: Parameters<typeof relayrPay>[0]) => {
+    await reverify?.()
+    await onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
     throw new RelayrPaymentSendingError()
   })
   mocks.poll.mockReset().mockRejectedValue(new Error('Bundle outcomes remain unresolved.'))
@@ -219,10 +270,10 @@ describe('Safe queue Relayr execution', () => {
     const checkPhase = async (run: () => Promise<void>) => {
       const started: number[] = []
       const releases = new Map<number, () => void>()
-      mocks.simulate.mockImplementation(async (chainId: JBChainId, safe: Address, tx: SafeQueuedTransaction) => {
+      mocks.simulateFrozen.mockImplementation(async (chainId: JBChainId) => {
         started.push(chainId)
         await new Promise<void>(resolve => releases.set(chainId, resolve))
-        return { tx, safeTxHash: canonicalSafeTxHash(chainId, safe, tx), policyFingerprint: 'unchanged', owners: [OWNER] }
+        return 'unchanged'
       })
       await act(async () => {
         const pending = run()
@@ -240,16 +291,20 @@ describe('Safe queue Relayr execution', () => {
       throw new Error('Stopped before wallet payment')
     })
     await checkPhase(() => button(/Pay once and execute 2/).props.onClick())
-    expect(mocks.simulate).toHaveBeenCalledTimes(4)
-    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.simulateFrozen).toHaveBeenCalledTimes(4)
+    expect(mocks.session?.paymentStatus).toBe('unpaid')
   })
 
   it('does not quote a batch if any concurrent chain check fails', async () => {
-    mocks.simulate.mockRejectedValueOnce(new Error('Safe policy changed'))
+    mocks.simulateFrozen.mockRejectedValueOnce(new Error('Safe policy changed'))
     await renderQueue()
     await click(/Execute 2 ready/)
-    expect(mocks.simulate).toHaveBeenCalledTimes(2)
+    expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2)
     expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    await click(/Retry checks/)
+    expect(mocks.simulateFrozen).toHaveBeenCalledTimes(4)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).not.toHaveBeenCalled()
   })
 
@@ -257,7 +312,7 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 2 ready/)
     await selectPayment(0)
-    mocks.simulate.mockRejectedValueOnce(new Error('Safe policy changed'))
+    mocks.simulateFrozen.mockRejectedValueOnce(new Error('Safe policy changed'))
     const submit = vi.fn()
     mocks.pay.mockImplementationOnce(async (...args: Parameters<typeof relayrPay>) => {
       await args[0].reverify?.()
@@ -265,9 +320,9 @@ describe('Safe queue Relayr execution', () => {
       return HASH
     })
     await click(/Pay once and execute 2/)
-    expect(mocks.simulate).toHaveBeenCalledTimes(4)
+    expect(mocks.simulateFrozen).toHaveBeenCalledTimes(4)
     expect(submit).not.toHaveBeenCalled()
-    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.session?.paymentStatus).toBe('unpaid')
   })
 
   it('relays only the executable nonce on each testnet and offers no mainnet payment', async () => {
@@ -277,14 +332,14 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 4 ready/)
     expect(mocks.post.mock.calls[0][0].map((entry: RelayrEntry) => entry.chain)).toEqual(testnets)
-    expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5, 5, 5])
+    expect(mocks.simulateFrozen.mock.calls.map(args => args[2])).toEqual([5, 5, 5, 5])
     expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(2)
     await selectPayment(1)
     await click(/Pay once and execute 4/)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 84532 }),
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [...testnets], reverifyBeforeSendOnly: true }))
     // Check 1 ran at review; check 2 belongs to relayrPay right before sending.
-    expect(mocks.simulate).toHaveBeenCalledTimes(4)
+    expect(mocks.simulateFrozen).toHaveBeenCalledTimes(8)
     expect(mocks.review).toHaveBeenCalledTimes(1)
     expect(mocks.review.mock.calls[0][0].calls).toEqual(testnets.map(chainId => expect.objectContaining({
       chainId, to: SAFE, functionName: 'execTransaction',
@@ -299,7 +354,7 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 2 ready/)
     expect(mocks.post.mock.calls[0][0]).toHaveLength(2)
-    expect(mocks.simulate.mock.calls.map(args => args[2].nonce)).toEqual([5, 5])
+    expect(mocks.simulateFrozen.mock.calls.map(args => args[2])).toEqual([5, 5])
     expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
     const select = renderer.root.findByType('select')
     expect(select.props.value).toBe(-1)
@@ -321,7 +376,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.clear).not.toHaveBeenCalled()
     // A saved receipt replaces the pay button, so no second payment can start.
     expect(() => button(/Pay once and execute 2/)).toThrow()
-    await click(/Check status/)
+    await click(/Check existing bundle/)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
   })
@@ -336,20 +391,37 @@ describe('Safe queue Relayr execution', () => {
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [1, 10], reverifyBeforeSendOnly: true }))
   })
 
-  it('asks for another pay click when the ISO deadline refreshes the quote, preselecting a lone offer', async () => {
-    mocks.post
-      .mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 30))
-      .mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 3_600, [1]))
+  it('retains the original quote after a definite wallet rejection before any payment hash', async () => {
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, reverify, onSending }: Parameters<typeof relayrPay>[0]) => {
+      await reverify?.()
+      await onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
+      throw Object.assign(new Error('User rejected request.'), { code: 4001 })
+    })
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    await selectPayment(0)
+    await click(/Pay once and execute 2/)
+    expect(mocks.session).toMatchObject({ bundleUuid: BUNDLE, paymentStatus: 'unpaid', paymentHash: null })
+    expect(mocks.session?.safeLifecycle?.paymentStatus).toBe('unfunded')
+    expect(button(/Pay once and execute 2/).props.disabled).toBe(false)
+    expect(mocks.clear).not.toHaveBeenCalled()
+    await closeBatch()
+    await click(/Execute 2 ready/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: 'Use saved quote' }))
+  })
+
+  it('keeps the original payable quote when its deadline is near on the device clock', async () => {
+    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => quote(entries, 30))
     await renderQueue()
     await click(/Execute 2 ready/)
     await selectPayment(1)
     await click(/Pay once and execute 2/)
-    expect(mocks.post).toHaveBeenCalledTimes(2)
-    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.review).toHaveBeenCalledTimes(1)
-    expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(1)
-    expect(renderer.root.findByType('select').props.value).toBe(0)
-    expect(button(/Pay once and execute 2/).props.disabled).toBe(false)
+    expect(mocks.session).toMatchObject({ bundleUuid: BUNDLE, paymentStatus: 'sending' })
   })
 
   it('executes mixed network families directly and preserves dependent nonce order', async () => {
@@ -383,27 +455,34 @@ describe('Safe queue Relayr execution', () => {
       expectedCount: 2, chainIds: [1, 10], records: [], itemCount: 2,
       account: OWNER, createdAt: Date.now(),
     }
+    const savedBeforePayment = mocks.save.mock.calls.length
     await click(/Pay once and execute 2/)
-    expect(mocks.save).not.toHaveBeenCalled()
+    expect(mocks.save).toHaveBeenCalledTimes(savedBeforePayment)
+    expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.clear).not.toHaveBeenCalled()
     expect(mocks.session.bundleUuid).toBe('aaaaaaaa-1234-1234-1234-123456789abc')
-    expect(textOf(renderer.root)).toMatch(/already has an unresolved Relayr bundle/)
+    expect(textOf(renderer.root)).toMatch(/another account|unavailable|immutable execution proof/)
   })
 
   it('keeps a confirmed payment and every chain outcome when Relayr reports a partial failure', async () => {
-    mocks.pay.mockImplementation(async ({ payment, bundleUuid, destinationChainIds, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+    mocks.pay.mockImplementation(async ({ payment, bundleUuid, destinationChainIds, reverify, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
       const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
-      onSending?.(details)
+      await reverify?.()
+      await onSending?.(details)
       const payments = [sentRelayrPayment(details, HASH)]
-      onSent?.(payments)
-      return { hash: HASH, payments }
-    })
-    mocks.poll.mockImplementation(async (_bundle, _count, onUpdate) => {
-      onUpdate([
+      await onSent?.(payments)
+      mocks.getTransaction.mockResolvedValue({
+        hash: HASH, chainId: payment.chain, from: OWNER, to: details.target,
+        input: details.calldata, value: details.amount, blockHash: HASH, blockNumber: 10n,
+      })
+      mocks.getTransactionReceipt.mockResolvedValue({
+        transactionHash: HASH, to: details.target, blockHash: HASH, blockNumber: 10n, status: 'success',
+      })
+      mocks.bundle = { bundle_uuid: BUNDLE, payment_received: true, transactions: [
         { chain: 1, tx_uuid: '00000000-0000-0000-0000-000000000001', status: { state: 'success', data: { hash: HASH } } },
         { chain: 10, tx_uuid: '00000000-0000-0000-0000-000000000002', status: { state: 'failed' } },
-      ])
-      throw new Error('One destination failed.')
+      ] }
+      return { hash: HASH, payments }
     })
     await renderQueue()
     await click(/Execute 2 ready/)
@@ -414,10 +493,163 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.clear).not.toHaveBeenCalled()
     expect(textOf(renderer.root)).toMatch(/Landed \| verifying/)
     expect(textOf(renderer.root)).toMatch(/Failed/)
-    await click(/Check status/)
+    await click(/Check existing bundle/)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
+  })
+
+  it('does not publish or pay after closing during the checks', async () => {
+    let release!: () => void
+    const checks = new Promise<void>(resolve => { release = resolve })
+    mocks.simulateFrozen.mockImplementation(async () => { await checks; return 'unchanged' })
+    await renderQueue()
+    let preparing!: Promise<void>
+    await act(async () => {
+      preparing = button(/Execute 2 ready/).props.onClick()
+      await vi.waitFor(() => expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2))
+    })
+    await closeBatch()
+    await act(async () => { release(); await preparing })
+    expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
+    expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it('retains a quote returned after closing and resumes it without publishing again', async () => {
+    let release!: () => void
+    const quoted = new Promise<void>(resolve => { release = resolve })
+    mocks.post.mockImplementationOnce(async (entries: RelayrEntry[]) => { await quoted; return quote(entries) })
+    await renderQueue()
+    let preparing!: Promise<void>
+    await act(async () => {
+      preparing = button(/Execute 2 ready/).props.onClick()
+      await vi.waitFor(() => expect(mocks.post).toHaveBeenCalledTimes(1))
+    })
+    await closeBatch()
+    await act(async () => { release(); await preparing })
+    expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
+    expect(mocks.session?.safeLifecycle).toMatchObject({ state: 'active', bundleUuid: BUNDLE, paymentStatus: 'unfunded' })
+    expect(mocks.pay).not.toHaveBeenCalled()
+    await click(/Execute 2 ready/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: 'Use saved quote' }))
+    expect(renderer.root.findAllByType('select')).toHaveLength(1)
+  })
+
+  it('invalidates checking when the connected account changes', async () => {
+    let release!: () => void
+    const checks = new Promise<void>(resolve => { release = resolve })
+    mocks.simulateFrozen.mockImplementation(async () => { await checks; return 'unchanged' })
+    await renderQueue()
+    let preparing!: Promise<void>
+    await act(async () => {
+      preparing = button(/Execute 2 ready/).props.onClick()
+      await vi.waitFor(() => expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2))
+    })
+    mocks.address = TARGET
+    await updateQueue()
+    await act(async () => { release(); await preparing })
+    expect(renderer.root.findAllByType('dialog')).toHaveLength(0)
+    expect(mocks.review).not.toHaveBeenCalled()
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(button(/Execute 2 ready/).props.disabled).toBe(false)
+  })
+
+  it('does not publish after unmounting during the checks', async () => {
+    let release!: () => void
+    const checks = new Promise<void>(resolve => { release = resolve })
+    mocks.simulateFrozen.mockImplementation(async () => { await checks; return 'unchanged' })
+    await renderQueue()
+    let preparing!: Promise<void>
+    await act(async () => {
+      preparing = button(/Execute 2 ready/).props.onClick()
+      await vi.waitFor(() => expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2))
+    })
+    await act(async () => renderer.unmount())
+    await act(async () => { release(); await preparing })
+    expect(mocks.post).not.toHaveBeenCalled()
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it('ignores an old check failure after closing and starting another review', async () => {
+    let reject!: (reason: Error) => void
+    const checks = new Promise<string>((_resolve, rejectPromise) => { reject = rejectPromise })
+    mocks.simulateFrozen.mockImplementationOnce(() => checks)
+    await renderQueue()
+    let preparing!: Promise<void>
+    await act(async () => {
+      preparing = button(/Execute 2 ready/).props.onClick()
+      await vi.waitFor(() => expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2))
+    })
+    await closeBatch()
+    // The first run still owns the shared lock until its checks drain.
+    await click(/Execute 2 ready/)
+    expect(textOf(renderer.root)).toMatch(/already being processed/)
+    await act(async () => { reject(new Error('Old run failed')); await preparing })
+    expect(textOf(renderer.root)).toMatch(/already being processed/)
+    expect(textOf(renderer.root)).not.toMatch(/Old run failed/)
+    await click(/Retry checks/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+  })
+
+  it('resumes and rechecks the original execution bytes when another owner adds a signature', async () => {
+    const extraOwner = '0x4444444444444444444444444444444444444444' as Address
+    mocks.rows = mocks.rows.map(row => ({ ...row, info: { ...row.info, owners: [OWNER, extraOwner] } }))
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const originalEntries = mocks.post.mock.calls[0][0] as RelayrEntry[]
+    await closeBatch()
+    mocks.rows = mocks.rows.map(row => ({ ...row, transactions: row.transactions.map(tx => ({
+      ...tx, confirmations: [...(tx.confirmations ?? []), { owner: extraOwner, signature: null }],
+    })) }))
+    await updateQueue()
+    await click(/Execute 2 ready/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.review).toHaveBeenLastCalledWith(expect.objectContaining({ confirmLabel: 'Use saved quote' }))
+    expect(mocks.simulateFrozen.mock.calls.slice(-2).map(args => args[3])).toEqual(originalEntries.map(entry => entry.data))
+    await selectPayment(0)
+    await click(/Pay once and execute 2/)
+    expect(mocks.simulateFrozen.mock.calls.slice(-2).map(args => args[3])).toEqual(originalEntries.map(entry => entry.data))
+    expect(mocks.session?.expectedTransactions?.map(binding => binding.entry)).toEqual(originalEntries)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an older paid bundle read-only when no canonical destination proof is available', async () => {
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const saved = mocks.session!
+    mocks.session = { ...saved, safeLifecycle: undefined, paymentStatus: 'confirmed', paymentHash: HASH }
+    await act(async () => renderer.unmount())
+    await renderQueue()
+    await click(/View existing bundle/)
+    await click(/Check existing bundle/)
+    expect(mocks.session?.bundleUuid).toBe(BUNDLE)
+    expect(mocks.session?.paymentStatus).toBe('confirmed')
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(mocks.clear).not.toHaveBeenCalled()
+    expect(() => button(/Pay once and execute 2/)).toThrow()
+  })
+
+  it('retains the existing receipt when a different nonce selection shares its Safe journal', async () => {
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    const saved = structuredClone(mocks.session)
+    await closeBatch()
+    mocks.rows = [chain(1, [6]), chain(10, [6])]
+    await updateQueue()
+    await click(/Execute 2 ready/)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.session).toEqual(saved)
+    expect(mocks.pay).not.toHaveBeenCalled()
+    expect(button(/Check existing bundle/).props.disabled).toBe(false)
   })
 
   it('refuses a queued transaction that pays a gas refund, in one line', async () => {

@@ -268,6 +268,32 @@ export type SafeExecutionSnapshot = {
   owners: Address[]
 }
 
+/** Re-prove the original quoted signatures, even if the service added more confirmations. */
+export async function simulateFrozenSafeExecution(
+  chainId: JBChainId,
+  safe: Address,
+  nonce: number,
+  data: Hex,
+  expectedPolicy?: string,
+): Promise<string> {
+  const before = await readLiveSafeState(chainId, safe)
+  const policy = safePolicyFingerprint(before.identity)
+  if (before.nonce !== nonce || (expectedPolicy && expectedPolicy !== policy)) {
+    throw new Error('The Safe policy or nonce changed. Review the transaction again.')
+  }
+  const result = await simulateStateChangingTransaction(publicClient(chainId), {
+    from: zeroAddress,
+    to: safe,
+    data,
+    gas: SAFE_EXECUTION_WRITE_GAS,
+  })
+  if (decodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', data: result }) !== true) {
+    throw new Error(`Safe transaction #${nonce} would not execute successfully.`)
+  }
+  assertSafeStateUnchanged(before, await readLiveSafeState(chainId, safe))
+  return policy
+}
+
 /** Throws SAFE_REFUND_REFUSAL for a transaction that pays its executor a gas refund. */
 function refuseRefund(tx: SafeQueuedTransaction): void {
   if (safeTransactionHasRefund(tx)) throw new Error(SAFE_REFUND_REFUSAL)

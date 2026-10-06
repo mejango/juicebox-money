@@ -59,7 +59,7 @@ import {
   buildSetEnsProjectRecordCall,
   buildSetProjectHandleCall,
 } from '@/lib/project-handles'
-import type { SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
+import { canonicalSafeTxHash, type SafeQueuedTransaction } from '@bananapus/nana-sdk-core/safe-service'
 import { safeExecRelayrEntry } from '@/lib/safe'
 
 const SAFE = '0x1111111111111111111111111111111111111111' as Address
@@ -68,7 +68,7 @@ const RESOLVER = '0x3333333333333333333333333333333333333333' as Address
 const CHAIN_ID = 1 as JBChainId
 const DESTINATION_HASH = `0x${'ab'.repeat(32)}` as Hex
 const BLOCK_HASH = `0x${'ef'.repeat(32)}` as Hex
-const SAFE_TX_HASH = `0x${'cd'.repeat(32)}` as Hex
+const SAFE_TX_HASH = canonicalSafeTxHash(CHAIN_ID, SAFE, queued(OTHER, '0x1234'))
 const TX_UUID = 'fedcba98-7654-3210-fedc-ba9876543210'
 const EXECUTION_SUCCESS_TOPIC = keccak256(
   stringToHex('ExecutionSuccess(bytes32,uint256)'),
@@ -111,6 +111,7 @@ beforeEach(() => {
   mocks.getTransactionReceipt.mockResolvedValue({
     status: 'success',
     transactionHash: DESTINATION_HASH,
+    to: SAFE,
     blockHash: BLOCK_HASH,
     blockNumber: 100n,
     logs: [
@@ -405,18 +406,23 @@ describe('Relayr Safe destination proof', () => {
     })
     await expect(
       verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
-    ).rejects.toThrow(/exact Safe execution/i)
+    ).rejects.toThrow(/does not prove the signed Relayr call/i)
 
+    mocks.getTransaction.mockResolvedValueOnce({
+      hash: DESTINATION_HASH, chainId: CHAIN_ID, blockHash: BLOCK_HASH,
+      blockNumber: 100n, to: SAFE, value: 0n, input: entry.data,
+    })
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      to: SAFE,
       blockHash: BLOCK_HASH,
       blockNumber: 100n,
       logs: [],
     })
     await expect(
       verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
-    ).rejects.toThrow(/exact Safe execution/i)
+    ).rejects.toThrow(/no ExecutionSuccess or ExecutionFailure/i)
   })
 
   it('retains a receipt that no longer belongs to the canonical block', async () => {
@@ -454,7 +460,7 @@ describe('Relayr Safe destination proof', () => {
     })
     await expect(
       verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
-    ).rejects.toThrow(/exact Safe execution/i)
+    ).rejects.toThrow(/Keep the original bundle pending/i)
     expect(mocks.getBlock).not.toHaveBeenCalled()
   })
 
@@ -471,6 +477,7 @@ describe('Relayr Safe destination proof', () => {
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      to: SAFE,
       blockHash: BLOCK_HASH,
       blockNumber: 100n,
       logs: [
@@ -499,6 +506,7 @@ describe('Relayr Safe destination proof', () => {
     mocks.getTransactionReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: DESTINATION_HASH,
+      to: SAFE,
       blockHash: BLOCK_HASH,
       blockNumber: 100n,
       logs: [
@@ -511,7 +519,7 @@ describe('Relayr Safe destination proof', () => {
     })
     await expect(
       verifyRelayrSafeBatchLanding(SAFE, [record], [entry], [proof]),
-    ).rejects.toThrow(/exact Safe execution/i)
+    ).rejects.toThrow(/reimbursed its executor/i)
   })
 
   it('requires the executed resolver to return the exact ENS record', async () => {
@@ -527,6 +535,13 @@ describe('Relayr Safe destination proof', () => {
       queued(call.target, call.data),
       [],
     )
+    const resolverHash = canonicalSafeTxHash(CHAIN_ID, SAFE, queued(call.target, call.data))
+    const resolverProof = { ...proof, safeTxHash: resolverHash }
+    mocks.getTransactionReceipt.mockResolvedValue({
+      status: 'success', transactionHash: DESTINATION_HASH, to: SAFE,
+      blockHash: BLOCK_HASH, blockNumber: 100n,
+      logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS_TOPIC, resolverHash], data: `0x${'00'.repeat(32)}` }],
+    })
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,
       chainId: CHAIN_ID,
@@ -545,7 +560,7 @@ describe('Relayr Safe destination proof', () => {
         SAFE,
         [recordFor(resolverEntry)],
         [resolverEntry],
-        [proof],
+        [resolverProof],
       ),
     ).resolves.toBeUndefined()
 
@@ -558,7 +573,7 @@ describe('Relayr Safe destination proof', () => {
         SAFE,
         [recordFor(resolverEntry)],
         [resolverEntry],
-        [proof],
+        [resolverProof],
       ),
     ).rejects.toThrow(/does not return juicebox=10:42/i)
   })
@@ -575,6 +590,13 @@ describe('Relayr Safe destination proof', () => {
       queued(call.target, call.data),
       [],
     )
+    const handleHash = canonicalSafeTxHash(CHAIN_ID, SAFE, queued(call.target, call.data))
+    const handleProof = { ...proof, safeTxHash: handleHash }
+    mocks.getTransactionReceipt.mockResolvedValue({
+      status: 'success', transactionHash: DESTINATION_HASH, to: SAFE,
+      blockHash: BLOCK_HASH, blockNumber: 100n,
+      logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS_TOPIC, handleHash], data: `0x${'00'.repeat(32)}` }],
+    })
     mocks.getTransaction.mockResolvedValue({
       hash: DESTINATION_HASH,
       chainId: CHAIN_ID,
@@ -591,7 +613,7 @@ describe('Relayr Safe destination proof', () => {
         SAFE,
         [recordFor(handleEntry)],
         [handleEntry],
-        [proof],
+        [handleProof],
       ),
     ).resolves.toBeUndefined()
     expect(mocks.readBoundedProjectHandle).toHaveBeenCalledWith(

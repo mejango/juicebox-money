@@ -77,6 +77,7 @@ import {
 } from '@bananapus/nana-sdk-core/review/relayr'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { formatDateTime } from '@/lib/format'
+import type { SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import {
   connectedWallet as connectedWalletCore,
   publicClient,
@@ -182,6 +183,8 @@ export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
 }
 
 export type RelayrPendingSession = {
+  /** Shared Safe lifecycle journal; legacy receipt fields remain readable. */
+  safeLifecycle?: SafeRelayrSession
   bundleUuid: string
   paymentHash: Hex | null
   paymentChainId: number | null
@@ -537,6 +540,7 @@ export function saveRelayrPendingSession(
     throw new Error('The payment options of this Relayr quote cannot be saved exactly. Keep it pending; do not pay again.')
   }
   const safeSession: RelayrPendingSession = {
+    ...(session.safeLifecycle ? { safeLifecycle: structuredClone(session.safeLifecycle) } : {}),
     bundleUuid: session.bundleUuid,
     paymentHash: session.paymentHash,
     paymentChainId: session.paymentChainId,
@@ -585,17 +589,19 @@ export function saveRelayrPendingSession(
 }
 
 /** Require a durable journal before publishing signatures or opening the payment wallet. */
-export function saveRelayrPendingSessionDurably(scope: string, session: RelayrPendingSession): RelayrPendingSession {
+export function saveRelayrPendingSessionDurably(scope: string, session: RelayrPendingSession, preserveOnFailure = false): RelayrPendingSession {
   const previous = loadRelayrPendingSession(scope)
   const saved = saveRelayrPendingSession(scope, session)
   if (typeof window !== 'undefined') {
     try {
       if (window.localStorage.getItem(`${RELAYR_PENDING_PREFIX}${scope}`) !== JSON.stringify(saved)) throw new Error()
     } catch {
-      // No external action has happened yet. Preserve the prior recoverable state
-      // instead of stranding a fake payment attempt when storage is unavailable.
-      if (previous) saveRelayrPendingSession(scope, previous)
-      else clearRelayrPendingSession(scope)
+      // Before a write, restore the previous journal. After publication or a
+      // returned wallet hash, keep the latest evidence available in memory.
+      if (!preserveOnFailure) {
+        if (previous) saveRelayrPendingSession(scope, previous)
+        else clearRelayrPendingSession(scope)
+      }
       throw new Error('Enable browser storage before publishing relay authorizations or sending their payment.')
     }
   }
@@ -644,6 +650,7 @@ export function loadRelayrPendingSession(
       return relayrPendingMemory.get(scope) ?? null
     }
     const restored: RelayrPendingSession = {
+      ...(value.safeLifecycle ? { safeLifecycle: value.safeLifecycle } : {}),
       bundleUuid: value.bundleUuid,
       paymentHash:
         typeof value.paymentHash === 'string' && /^0x[0-9a-fA-F]+$/.test(value.paymentHash)
@@ -1098,9 +1105,9 @@ export async function relayrPay({
   /** Run `reverify` only right before sending, for callers that already checked when the quote was made. */
   reverifyBeforeSendOnly?: boolean
   /** Save the payment attempt before the wallet opens. */
-  onSending?: (details: RelayrPaymentDetails) => void
+  onSending?: (details: RelayrPaymentDetails) => void | Promise<void>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
-  onSent?: (payments: RelayrSentPayment[]) => void
+  onSent?: (payments: RelayrSentPayment[]) => void | Promise<void>
 }): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
@@ -1160,7 +1167,7 @@ export async function relayrPay({
   const details = readReviewed()
   await reverify?.()
   if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: account, bundleUuid: details.bundleUuid })
-  onSending?.(details)
+  await onSending?.(details)
   let hash: Hex
   try {
     hash = await wallet.sendTransaction({
@@ -1178,7 +1185,7 @@ export async function relayrPay({
   // uncertain submitted outcome, never permission to quote and pay again.
   let payments = [...sent, sentRelayrPayment(details, hash)]
   try {
-    onSent?.(payments)
+    await onSent?.(payments)
   } catch {
     throw new RelayrPaymentSubmittedError(hash, chainId)
   }
@@ -1195,7 +1202,7 @@ export async function relayrPay({
   if (mined.toLowerCase() !== hash.toLowerCase()) {
     payments = [...sent, sentRelayrPayment(details, mined)]
     try {
-      onSent?.(payments)
+      await onSent?.(payments)
     } catch {
       throw new RelayrPaymentSubmittedError(mined, chainId)
     }

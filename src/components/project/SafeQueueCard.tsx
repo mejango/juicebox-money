@@ -3,8 +3,8 @@
 import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 
-import { mapConcurrentChecks } from '@/lib/concurrent-checks'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { createProjectSafeRelayr, legacySafeRelayrBindings, safeRelayrSession } from '@/lib/safe-relayr'
+import { SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
@@ -16,7 +16,7 @@ import {
 } from "@bananapus/nana-sdk-core";
 import { useQuery } from "@tanstack/react-query";
 import { getAccount } from "@wagmi/core";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   decodeFunctionData,
   encodeFunctionData,
@@ -32,29 +32,19 @@ import { TxError } from "@/components/ui/TxError";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import {
-  clearRelayrPendingSession,
   loadRelayrPendingSession,
-  relayrPay,
   relayrPaymentLabel,
-  relayrPoll,
-  relayrPostBundle,
-  saveRelayrPendingSession,
-  saveRelayrPendingSessionDurably,
-  withRelayrScopeLock,
   type RelayrPendingSession,
   type RelayrSafeExecutionProof,
 } from "@/lib/relayr";
 import {
   relayrDestinationHash,
-  relayrPaymentOptions,
-  relayrProgress,
   relayrRecordChain,
   relayrStateIsFailed,
   relayrStateIsSuccess,
   relayrSupportsChains,
   type RelayrEntry,
   type RelayrPayment,
-  type RelayrQuote,
   type RelayrTransactionRecord,
 } from "@bananapus/nana-sdk-core/review/relayr";
 import {
@@ -64,17 +54,15 @@ import {
   getSafeNextNonce,
   readSafeQueue,
   safeExecRelayrEntry,
-  simulateSafeExecution,
+  simulateFrozenSafeExecution,
   SAFE_REFUND_REFUSAL,
   SAFE_SERVICE,
   type SafeInfo,
-  type SafeExecutionSnapshot,
 } from "@/lib/safe";
 import {
   canonicalSafeTxHash,
   hasSafeService,
   SAFE_EXEC_ABI,
-  safeExecutionResult,
   safeQueueUrl,
   safeTransactionHasRefund,
   safeTransactionMatchesCall,
@@ -105,7 +93,7 @@ import {
   readDirectEnsText,
 } from '@/lib/project-handles'
 import { readMatchingAuthorityIdentities, UnprovenSafeError } from '@/lib/cross-chain-authority'
-import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
+import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 
 export type SafeQueueChain = {
@@ -133,15 +121,19 @@ type ReadyTx = {
   tx: SafeQueuedTransaction;
 };
 
-type VerifiedReadyTx = ReadyTx & {
-  snapshot: SafeExecutionSnapshot;
+type BatchReview = {
+  session: SafeRelayrSession;
+  payments: RelayrPayment[];
 };
 
-type BatchReview = {
-  quote: RelayrQuote;
-  rows: VerifiedReadyTx[];
-  entries: RelayrEntry[];
-  payments: RelayrPayment[];
+type SafeReviewContext = {
+  chain: SafeQueueChain;
+  tx: SafeQueuedTransaction;
+  policyFingerprint?: string;
+};
+
+const CHECK_STATUS_LABELS: Record<string, string> = {
+  checking: "Checking…", rechecking: "Re-checking…", ready: "Ready", failed: "Check failed",
 };
 
 /** Signers by ENS name when they have one, with the connected wallet marked. */
@@ -176,6 +168,17 @@ function batchDialogRow(row: ReadyTx): BatchDialogRow {
   };
 }
 
+function savedBatchDialogRow(execution: SafeRelayrExecution): BatchDialogRow {
+  const message = requireSafeRelayrExecution(execution);
+  const tx = { ...message, nonce: execution.nonce };
+  return {
+    chainId: execution.entry.chain,
+    nonce: execution.nonce,
+    label: transactionLabel(execution.entry.chain as JBChainId, tx),
+    calls: batchCallLabels(execution.entry.chain as JBChainId, tx),
+  };
+}
+
 const ENS_SET_TEXT_SELECTOR = encodeFunctionData({
   abi: ensTextResolverAbi,
   functionName: "setText",
@@ -190,143 +193,32 @@ const SET_PROJECT_HANDLE_SELECTOR = encodeFunctionData({
   functionName: "setEnsNamePartsFor",
   args: [1n, 1n, ["fixture"]],
 }).slice(0, 10);
-/**
- * Whether the receipt proves `safe` ran exactly `safeTxHash` and its call
- * succeeded, paying no gas refund out of the Safe.
- */
-function executedWithoutRefund(
-  receipt: Parameters<typeof safeExecutionResult>[0],
-  safe: Address,
-  safeTxHash: Hex,
-): boolean {
-  const result = safeExecutionResult(receipt, safe, safeTxHash);
-  return result.status === "success" && result.payment === 0n;
-}
-
-/**
- * Relayr's status API is progress-only. Before a paid Safe batch is forgotten,
- * independently prove that every returned destination hash is the exact outer
- * execTransaction we paid for and that the Safe reported its inner call as a
- * success while consuming the expected nonce.
- */
+/** Legacy receipts paired UUIDs by position; normalize them before the shared proof. */
 export async function verifyRelayrSafeBatchLanding(
   safe: Address,
   records: readonly RelayrTransactionRecord[],
   entries: readonly RelayrEntry[],
   proofs: readonly RelayrSafeExecutionProof[],
 ): Promise<void> {
-  if (
-    entries.length < 1 ||
-    records.length !== entries.length ||
-    proofs.length !== entries.length
-  ) {
-    throw new Error(
-      "The paid Relayr bundle lacks its exact Safe execution proof. Keep it pending and verify it manually.",
-    );
+  if (!entries.length || entries.length !== proofs.length || records.length !== entries.length) {
+    throw new Error("The paid Relayr bundle lacks its exact Safe execution proof. Keep it pending and verify it manually.");
   }
+  const executions = entries.map(entry => {
+    const proof = proofs.find(item => item.chainId === entry.chain);
+    if (!proof || !isAddressEqual(proof.safe, safe)) throw new Error("The paid Relayr bundle lacks its exact Safe execution proof.");
+    return { entry, safe, nonce: proof.nonce, safeTxHash: proof.safeTxHash };
+  });
+  const bindings = legacySafeRelayrBindings(entries, proofs, records);
+  await verifySafeRelayrLanding(chainId => clientFor(chainId as JBChainId), { executions, bindings, records });
+  await Promise.all(executions.map(assertProjectSafePostconditions));
+}
 
-  // Records are matched by chain and exact request; the ID only has to be one
-  // this bundle quoted, since sessions saved before quotes bound IDs by
-  // request carry position-paired IDs.
-  const quotedIds = new Set(proofs.map((proof) => String(proof.txUuid).toLowerCase()));
-  const seenChains = new Set<number>();
-  const seenHashes = new Set<string>();
-  const seenTxUuids = new Set<string>();
-  for (const entry of entries) {
-    if (seenChains.has(entry.chain)) {
-      throw new Error("The paid Relayr Safe bundle contains duplicate chains.");
-    }
-    seenChains.add(entry.chain);
-    if (!isAddressEqual(entry.target, safe)) {
-      throw new Error("The paid Relayr entry targets another Safe.");
-    }
-    const matchingRecords = records.filter(
-      (record) => relayrRecordChain(record) === entry.chain,
-    );
-    const matchingProofs = proofs.filter((proof) => proof.chainId === entry.chain);
-    if (matchingRecords.length !== 1 || matchingProofs.length !== 1) {
-      throw new Error("Relayr did not return one exact result for every Safe chain.");
-    }
-    const record = matchingRecords[0];
-    const proof = matchingProofs[0];
-    const hash = relayrDestinationHash(record);
-    const request = record.request;
-    let expectedValue: bigint | null = null;
-    let requestValue: bigint | null = null;
-    try {
-      expectedValue = BigInt(entry.value);
-      requestValue = request ? BigInt(request.value) : null;
-    } catch {
-      requestValue = null;
-    }
-    const txUuid = String(record.tx_uuid ?? "").toLowerCase();
-    if (
-      !relayrStateIsSuccess(record.status?.state) ||
-      !hash ||
-      !/^0x[0-9a-fA-F]{64}$/u.test(hash) ||
-      seenHashes.has(hash.toLowerCase()) ||
-      !isAddressEqual(proof.safe, safe) ||
-      !Number.isSafeInteger(proof.nonce) ||
-      proof.nonce < 0 ||
-      !/^0x[0-9a-fA-F]{64}$/u.test(proof.safeTxHash) ||
-      typeof proof.txUuid !== "string" ||
-      !quotedIds.has(txUuid) ||
-      seenTxUuids.has(txUuid) ||
-      !request ||
-      request.chain !== entry.chain ||
-      !isAddressEqual(request.target, entry.target) ||
-      request.data.toLowerCase() !== entry.data.toLowerCase() ||
-      expectedValue === null ||
-      requestValue === null ||
-      requestValue !== expectedValue ||
-      request.virtual_nonce !== (entry.virtual_nonce ?? 0)
-    ) {
-      throw new Error("Relayr returned an invalid Safe execution result.");
-    }
-    seenHashes.add(hash.toLowerCase());
-    seenTxUuids.add(txUuid);
-
-    const client = clientFor(entry.chain as JBChainId);
-    const [transaction, receipt, nonceRaw] = await Promise.all([
-      client.getTransaction({ hash }),
-      client.getTransactionReceipt({ hash }),
-      readBoundedSafeNonce(client, safe),
-    ]);
-    const transactionInput = (transaction as { input?: Hex; data?: Hex }).input ??
-      (transaction as { data?: Hex }).data;
-    if (
-      receipt.status !== "success" ||
-      receipt.transactionHash.toLowerCase() !== hash.toLowerCase() ||
-      transaction.hash?.toLowerCase() !== hash.toLowerCase() ||
-      transaction.chainId !== entry.chain ||
-      !receipt.blockHash ||
-      typeof receipt.blockNumber !== "bigint" ||
-      transaction.blockHash?.toLowerCase() !== receipt.blockHash.toLowerCase() ||
-      transaction.blockNumber !== receipt.blockNumber ||
-      !transaction.to ||
-      !isAddressEqual(transaction.to, entry.target) ||
-      transaction.value !== expectedValue ||
-      transactionInput?.toLowerCase() !== entry.data.toLowerCase() ||
-      nonceRaw === null ||
-      nonceRaw <= BigInt(proof.nonce) ||
-      !executedWithoutRefund(receipt, safe, proof.safeTxHash)
-    ) {
-      throw new Error(
-        `Could not prove the exact Safe execution landed successfully on chain ${entry.chain}. Keep the paid bundle pending.`,
-      );
-    }
-    const canonicalBlock = await client.getBlock({ blockNumber: receipt.blockNumber });
-    if (canonicalBlock.hash?.toLowerCase() !== receipt.blockHash.toLowerCase()) {
-      throw new Error(
-        `The Safe execution receipt on chain ${entry.chain} is no longer canonical. Keep the paid bundle pending.`,
-      );
-    }
-    await assertRelayrProjectHandlePostcondition(
-      entry.chain as JBChainId,
-      safe,
-      entry,
-    );
+async function assertProjectSafePostconditions(execution: SafeRelayrExecution): Promise<void> {
+  const nonce = await readBoundedSafeNonce(clientFor(execution.entry.chain as JBChainId), execution.safe);
+  if (nonce === null || nonce <= BigInt(execution.nonce)) {
+    throw new Error("Could not prove the exact Safe execution consumed its nonce. Keep the paid bundle pending.");
   }
+  await assertRelayrProjectHandlePostcondition(execution.entry.chain as JBChainId, execution.safe, execution.entry);
 }
 
 function exactPlainSafeCall(tx: SafeQueuedTransaction): void {
@@ -922,7 +814,23 @@ export function SafeQueueCard({
   const [batchRows, setBatchRows] = useState<BatchDialogRow[]>([]);
   const [batchStatus, setBatchStatus] = useState<Record<number, string>>({});
   const [batchDone, setBatchDone] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
+  const batchRun = useRef<AbortController | null>(null);
+  const activeAccount = useRef(address);
+  activeAccount.current = address;
+  const [recovery, setRecovery] = useState<SafeRelayrSession | null>(null);
+  useEffect(() => {
+    batchRun.current?.abort();
+    setBusy(null);
+    setBatchReview(null);
+    setBatchOpen(false);
+    setBatchRows([]);
+    setBatchStatus({});
+    setBatchDone(false);
+    setNotice(null);
+    setError(null);
+    setRecovery(null);
+    return () => batchRun.current?.abort();
+  }, [address, safe]);
   // The queue loads once the card is on screen, then refreshes on focus and
   // after actions rather than on a timer.
   const sectionRef = useRef<HTMLElement>(null);
@@ -1083,124 +991,122 @@ export function SafeQueueCard({
     : ready.length;
   const refetchQueues = query.refetch;
 
-  const verifyReadyTx = async (row: ReadyTx): Promise<VerifiedReadyTx> => {
-    const fresh = await freshCanonicalQueuedTx(row.chain, safe, row.tx);
-    // simulateSafeExecution reverifies before and after simulating; the
-    // "before" call would repeat the check just above, so it is skipped.
-    let checked = true;
-    const reverifyAuthority = async () => {
-      if (checked) {
-        checked = false;
-        return;
+  const makeController = (signal?: AbortSignal) => createProjectSafeRelayr({
+    scope: pendingScope,
+    onSaved: session => {
+      if (!signal?.aborted && activeAccount.current === address) setPendingSession(session);
+    },
+    revalidate: async execution => {
+      let context = execution.context as SafeReviewContext | undefined;
+      if (!context?.chain || !context.tx) {
+        const chain = chains.find(item => item.chainId === execution.entry.chain);
+        if (!chain) throw new Error("This saved Safe execution is outside this project's chains.");
+        const { pending } = await readSafeQueue(chain.chainId, execution.safe);
+        const tx = pending.find(item => canonicalSafeTxHash(chain.chainId, execution.safe, item).toLowerCase() === execution.safeTxHash.toLowerCase());
+        if (!tx) throw new Error("The saved Safe transaction is no longer in the queue.");
+        context = { chain, tx };
+        execution.context = context;
       }
-      await freshCanonicalQueuedTx(row.chain, safe, fresh);
-    };
-    const snapshot = await simulateSafeExecution(
-      row.chain.chainId,
-      safe,
-      fresh,
-      reverifyAuthority,
-    );
-    return { chain: row.chain, tx: snapshot.tx, snapshot };
+      if (canonicalSafeTxHash(execution.entry.chain, execution.safe, context.tx).toLowerCase() !== execution.safeTxHash.toLowerCase()) {
+        throw new Error("The saved Safe review no longer matches its exact execution.");
+      }
+      await freshCanonicalQueuedTx(context.chain, execution.safe, context.tx);
+      context.policyFingerprint = await simulateFrozenSafeExecution(
+        execution.entry.chain as JBChainId, execution.safe, execution.nonce,
+        execution.entry.data, context.policyFingerprint,
+      );
+      await freshCanonicalQueuedTx(context.chain, execution.safe, context.tx);
+    },
+    afterVerified: assertProjectSafePostconditions,
+  });
+
+  const markBatchExecuted = (chainIds: readonly number[]) => {
+    setBatchStatus(Object.fromEntries(chainIds.map(chainId => [chainId, "Executed"])));
+    setBatchDone(true);
   };
 
-  const assertFrozenBatchRow = (
-    frozen: VerifiedReadyTx,
-    current: VerifiedReadyTx,
-    entry: RelayrEntry,
-  ) => {
-    const nextEntry = safeExecRelayrEntry(
-      current.chain.chainId,
-      safe,
-      current.snapshot.tx,
-      current.snapshot.owners,
-    );
-    if (
-      frozen.snapshot.safeTxHash.toLowerCase() !==
-        current.snapshot.safeTxHash.toLowerCase() ||
-      frozen.snapshot.policyFingerprint !== current.snapshot.policyFingerprint ||
-      entry.chain !== nextEntry.chain ||
-      entry.target.toLowerCase() !== nextEntry.target.toLowerCase() ||
-      entry.value !== nextEntry.value ||
-      entry.data.toLowerCase() !== nextEntry.data.toLowerCase()
-    ) {
-      throw new Error(
-        `Safe transaction #${frozen.tx.nonce} or its live policy changed. Review the batch again.`,
-      );
+  const applyResult = async (result: SafeRelayrResult) => {
+    if (result.state === "complete") {
+      setPendingSession(null);
+      setRecovery(null);
+      markBatchExecuted(result.session.executions.map(item => item.entry.chain));
+      setNotice(`Executed ${result.session.executions.length} Safe transactions.`);
+      await refetchQueues();
+    } else if (result.state === "ready") {
+      setRecovery(null);
+      setBatchReview({ session: result.session, payments: result.payments });
+      setPaymentIndex(initialPaymentIndex(result.payments));
+      setNotice(null);
+    } else if (result.state === "released") {
+      setPendingSession(null);
+      setRecovery(null);
+      setBatchReview(null);
+      setNotice("The previous quote expired without funding. Review the current Safe transactions again.");
+    } else {
+      setRecovery(result.session);
+      setNotice("The existing bundle is still pending. Check its status before submitting another payment.");
     }
   };
 
-  const markBatchExecuted = useCallback((chainIds: readonly number[]) => {
-    setBatchStatus(Object.fromEntries(chainIds.map((chainId) => [chainId, "Executed"])));
-    setBatchDone(true);
-  }, []);
-
-  const recoverPaidBundle = useCallback(
-    async (session: RelayrPendingSession) => {
-      setBusy("recover-bundle");
-      setError(null);
-      setNotice(
-        "Checking the existing Relayr bundle and its execution outcomes.",
-      );
-      try {
-        const records = await relayrPoll(
-          session.bundleUuid,
-          session.expectedCount,
-          (nextRecords) => {
-            const updated = saveRelayrPendingSession(pendingScope, {
-              ...session,
-              records: nextRecords,
-            });
-            setPendingSession(updated);
-            const progress = relayrProgress(nextRecords, session.expectedCount);
-            setNotice(
-              `Checking the paid bundle… ${progress.confirmed}/${progress.total} landed`,
-            );
-          },
-          2_500,
-          5 * 60_000,
-        );
-        if (!session.expectedEntries || !session.expectedSafeExecutions) {
-          throw new Error(
-            "This older paid bundle has no immutable execution proof. Keep it pending and verify each destination transaction manually.",
-          );
+  const watchExistingBundle = (session: SafeRelayrSession, run: AbortController) => {
+    if (!address) return;
+    void makeController(run.signal).watch({
+      account: address, sessionId: session.id, signal: run.signal,
+      onUpdate: async result => {
+        if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
+        if (result.state === "ready") {
+          // A background status check does not replace explicit review of the
+          // saved calls. The recovery action opens that review when requested.
+          setRecovery(result.session);
+          setNotice("The existing quote can be resumed. Review its saved calls to continue.");
+        } else {
+          await applyResult(result);
         }
-        await verifyRelayrSafeBatchLanding(
-          safe,
-          records,
-          session.expectedEntries,
-          session.expectedSafeExecutions,
-        );
-        clearRelayrPendingSession(pendingScope);
-        setPendingSession(null);
-        markBatchExecuted(session.chainIds);
-        setNotice(
-          `Executed ${session.itemCount} Safe transaction${session.itemCount === 1 ? "" : "s"}.`,
-        );
-        await refetchQueues();
-      } catch (recoveryError) {
-        // Keep the paid bundle and its per-chain terminal states visible.
-        // A failed/partial destination is not permission to forget the payment
-        // or invite a duplicate execution attempt.
-        setError(
-          recoveryError instanceof Error
-            ? recoveryError.message
-            : "Could not check the paid Relayr bundle.",
-        );
-      } finally {
-        setBusy(null);
+      },
+    }).catch((watchError: unknown) => {
+      if (!run.signal.aborted && batchRun.current === run) {
+        setError(watchError instanceof Error ? watchError.message : "Could not check the existing bundle.");
       }
-    },
-    [markBatchExecuted, pendingScope, refetchQueues, safe],
-  );
+    });
+  };
+
+  const recoverPaidBundle = async () => {
+    if (!address) return;
+    const run = new AbortController();
+    batchRun.current?.abort();
+    batchRun.current = run;
+    setBusy("recover-bundle");
+    setError(null);
+    try {
+      const session = recovery ?? safeRelayrSession(pendingScope);
+      if (!session) return;
+      const controller = makeController(run.signal);
+      let result = await controller.check({ account: address, sessionId: session.id });
+      if (result.state === "ready" && !run.signal.aborted) {
+        setBatchRows(result.session.executions.map(savedBatchDialogRow));
+        result = await controller.prepare({ account: address, executions: result.session.executions, signal: run.signal });
+      }
+      if (!run.signal.aborted && activeAccount.current === address) {
+        await applyResult(result);
+        if (result.state === "pending") watchExistingBundle(result.session, run);
+      }
+    } catch (checkError) {
+      if (!run.signal.aborted) setError(checkError instanceof Error ? checkError.message : "Could not check the existing bundle.");
+    } finally {
+      if (!run.signal.aborted) setBusy(null);
+    }
+  };
 
   useEffect(() => {
     if (resumedScopeRef.current === pendingScope) return;
     resumedScopeRef.current = pendingScope;
-    const session = loadRelayrPendingSession(pendingScope);
-    setPendingSession(session);
-    if (session) void recoverPaidBundle(session);
-  }, [pendingScope, recoverPaidBundle]);
+    const saved = loadRelayrPendingSession(pendingScope);
+    if (saved?.safeLifecycle?.state === "complete" || saved?.safeLifecycle?.state === "released") {
+      setPendingSession(null);
+      return;
+    }
+    setPendingSession(saved);
+  }, [pendingScope]);
 
   const sign = async (chain: ChainQueue, tx: SafeQueuedTransaction) => {
     if (!address) return;
@@ -1272,15 +1178,9 @@ export function SafeQueueCard({
 
   const reviewExecuteAll = async () => {
     if (!address || readyBatchCount < 2) return;
-    // The pending session is keyed by Safe address alone, so a second batch's
-    // payment would overwrite the stuck bundle's uuid and payment hash — the
-    // only record of money already spent. Resolve it first.
-    if (pendingSession) {
-      setError(
-        "A Relayr bundle from this Safe is still unresolved. Check its status above before starting another batch.",
-      );
-      return;
-    }
+    const run = new AbortController();
+    batchRun.current?.abort();
+    batchRun.current = run;
     setBusy("quote-all");
     setError(null);
     setNotice(null);
@@ -1322,249 +1222,65 @@ export function SafeQueueCard({
         return;
       }
 
-      // Check 1 of 2: every chain's current transaction is re-fetched and
-      // simulated before quoting. Later nonces need a new review after these
-      // land. Independent checks overlap while the shared RPC transport
-      // paces request starts to the rate-limited JB Center host.
       setBatchRows(relayrRows.map(batchDialogRow));
       setBatchStatus({});
       setBatchDone(false);
       setBatchReview(null);
+      setRecovery(null);
       setBatchOpen(true);
-      const verifiedRows = await mapConcurrentChecks(relayrRows, async (row) => {
-        setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Checking…" }));
-        try {
-          const verified = await verifyReadyTx(row);
-          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
-          return verified;
-        } catch (checkError) {
-          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Check failed" }));
-          throw checkError;
-        }
+      const executions: SafeRelayrExecution[] = relayrRows.map(row => ({
+        entry: safeExecRelayrEntry(row.chain.chainId, safe, row.tx, row.chain.info?.owners ?? []),
+        safe, safeTxHash: canonicalSafeTxHash(row.chain.chainId, safe, row.tx), nonce: row.tx.nonce,
+        context: { chain: row.chain, tx: row.tx } satisfies SafeReviewContext,
+      }));
+      const result = await makeController(run.signal).prepare({
+        account: address, executions, signal: run.signal,
+        onStatus: (index, status) => {
+          if (!run.signal.aborted) setBatchStatus(current => ({ ...current, [executions[index].entry.chain]: CHECK_STATUS_LABELS[status] }));
+        },
       });
-      setNotice("Getting one Relayr quote for every chain…");
-      const entries = verifiedRows.map((row) =>
-        safeExecRelayrEntry(row.chain.chainId, safe, row.snapshot.tx, row.snapshot.owners),
-      );
-      await requireTransactionReview({
-        title: `Review ${entries.length} Safe executions`,
-        confirmLabel: 'Agree & request Relayr quote',
-        calls: entries.map((entry, index) => ({
-          chainId: entry.chain, to: entry.target, data: entry.data, value: BigInt(entry.value),
-          abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
-          args: decodeFunctionData({ abi: SAFE_EXEC_ABI, data: entry.data }).args,
-          contractName: 'Safe',
-          calls: [queuedSafeReviewCall(verifiedRows[index].chain.chainId, verifiedRows[index].snapshot.tx)],
-        })),
-      });
-      const quote = await relayrPostBundle(entries);
-      const payments = relayrPaymentOptions(quote, entries.map((entry) => entry.chain));
-      setPaymentIndex(initialPaymentIndex(payments));
-      setBatchReview({ quote, rows: verifiedRows, entries, payments });
-      setNotice(null);
+      if (!run.signal.aborted && activeAccount.current === address) await applyResult(result);
     } catch (batchError) {
-      setError(
-        batchError instanceof Error
-          ? batchError.message
-          : "Could not review the Safe transactions.",
-      );
+      if (run.signal.aborted || batchRun.current !== run) return;
+      if (batchError instanceof SafeRelayrRecoveryError) setRecovery(batchError.session);
+      setError(batchError instanceof Error ? batchError.message : "Could not review the Safe transactions.");
     } finally {
-      setBusy(null);
+      if (!run.signal.aborted && batchRun.current === run) setBusy(null);
     }
   };
 
-  const confirmExecuteAll = () => withRelayrScopeLock(pendingScope, async () => {
-    if (!address || !batchReview || pendingSession) return;
+  const confirmExecuteAll = async () => {
+    if (!address || !batchReview) return;
     const payment = batchReview.payments[paymentIndex];
     if (!payment) return;
-    const quote = batchReview.quote;
-    let paidSession: RelayrPendingSession | null = null;
+    const run = new AbortController();
+    batchRun.current = run;
     setBusy("execute-all");
     setError(null);
     setNotice(null);
     try {
-      // Check 2 of 2, run by relayrPay right before the payment is sent.
-      const reverifyBatch = async () => {
-        await mapConcurrentChecks(batchReview.rows, async (row, index) => {
-          const entry = batchReview.entries[index];
-          if (!entry) throw new Error("The reviewed Relayr bundle changed.");
-          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Re-checking…" }));
-          try {
-            assertFrozenBatchRow(row, await verifyReadyTx(row), entry);
-          } catch (checkError) {
-            setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Changed" }));
-            throw checkError;
-          }
-          setBatchStatus((current) => ({ ...current, [row.chain.chainId]: "Ready" }));
-        });
-      };
-      // A quote about to expire would be rejected at payment time anyway —
-      // refresh it here so the flow re-reviews a live payment instead of
-      // failing after the confirmations above.
-      const numericPaymentDeadline = /^\d+$/u.test(String(payment.payment_deadline))
-        ? Number(payment.payment_deadline)
-        : Math.floor(Date.parse(String(payment.payment_deadline)) / 1_000);
-      const deadlineSoon =
-        Number.isSafeInteger(numericPaymentDeadline) &&
-        numericPaymentDeadline <= Math.floor(Date.now() / 1000) + 60;
-      if (deadlineSoon) {
-        setNotice("The Relayr quote is about to expire — requesting a fresh one…");
-        const refreshedQuote = await relayrPostBundle(batchReview.entries);
-        const payments = relayrPaymentOptions(refreshedQuote, batchReview.entries.map((entry) => entry.chain));
-        setBatchReview({ ...batchReview, quote: refreshedQuote, payments });
-        setPaymentIndex(initialPaymentIndex(payments));
-        setNotice("The quote was refreshed. Choose where to pay and review the new payment.");
-        return;
-      }
-      // The dialog lists every chain's exact call; relayrPay's own review
-      // covers the payment the wallet signs.
-      let submittedSession: RelayrPendingSession | null = null;
-      const expectedTransactions = quote.expectedTransactions;
-      if (
-        !expectedTransactions ||
-        expectedTransactions.length !== batchReview.rows.length
-      ) {
-        throw new Error("Relayr did not bind every reviewed Safe transaction.");
-      }
-      const expectedEntries = expectedTransactions.map(
-        (transaction) => transaction.entry,
-      );
-      const expectedSafeExecutions: RelayrSafeExecutionProof[] =
-        batchReview.rows.map((row, index) => ({
-          chainId: row.chain.chainId,
-          safe,
-          nonce: row.snapshot.tx.nonce,
-          safeTxHash: row.snapshot.safeTxHash,
-          txUuid: expectedTransactions[index].txUuid,
-        }));
-      const { hash: paymentHash } = await relayrPay({
-        payment,
-        account: address,
-        bundleUuid: quote.bundle_uuid,
-        destinationChainIds: batchReview.entries.map((entry) => entry.chain),
-        reverify: reverifyBatch,
-        reverifyBeforeSendOnly: true,
-        onSending: () => {
-          const existingSession = loadRelayrPendingSession(pendingScope);
-          if (existingSession) {
-            setPendingSession(existingSession);
-            throw new Error("This Safe already has an unresolved Relayr bundle. Check its status before paying again.");
-          }
-          submittedSession = saveRelayrPendingSessionDurably(pendingScope, {
-            bundleUuid: quote.bundle_uuid,
-            paymentHash: null,
-            paymentChainId: payment.chain,
-            paymentStatus: "sending",
-            chainIds: batchReview.rows.map((row) => row.chain.chainId),
-            expectedCount: batchReview.rows.length,
-            records: quote.transactions ?? [],
-            itemCount: batchReview.rows.length,
-            account: address,
-            createdAt: Date.now(),
-            expectedEntries,
-            expectedSafeExecutions,
-          });
-          if (
-            submittedSession.expectedEntries?.length !== batchReview.rows.length ||
-            submittedSession.expectedSafeExecutions?.length !== batchReview.rows.length
-          ) {
-            throw new Error("Could not save every exact Safe execution proof. No payment was sent.");
-          }
-          paidSession = submittedSession;
-          setPendingSession(submittedSession);
-        },
-        onSent: (payments) => {
-          const hash = payments[payments.length - 1].hash;
-          submittedSession = saveRelayrPendingSession(pendingScope, {
-            bundleUuid: quote.bundle_uuid,
-            paymentHash: hash,
-            paymentChainId: payment.chain,
-            paymentStatus: "submitted",
-            chainIds: batchReview.rows.map((row) => row.chain.chainId),
-            expectedCount: batchReview.rows.length,
-            records: quote.transactions ?? [],
-            itemCount: batchReview.rows.length,
-            account: address,
-            createdAt: Date.now(),
-            expectedEntries,
-            expectedSafeExecutions,
-            payments,
-          });
-          paidSession = submittedSession;
-          setPendingSession(submittedSession);
-          setNotice(
-            `Relayr payment submitted (${hash.slice(0, 10)}…). Waiting for confirmation; do not pay again.`,
-          );
+      const result = await makeController(run.signal).fund({
+        account: address, sessionId: batchReview.session.id, paymentChainId: payment.chain, signal: run.signal,
+        onStatus: (index, status) => {
+          if (!run.signal.aborted) setBatchStatus(current => ({ ...current, [batchReview.session.executions[index].entry.chain]: CHECK_STATUS_LABELS[status] }));
         },
       });
-      const initialSession = saveRelayrPendingSession(pendingScope, {
-        ...(submittedSession ?? {
-          bundleUuid: quote.bundle_uuid,
-          paymentHash,
-          paymentChainId: payment.chain,
-          chainIds: batchReview.rows.map((row) => row.chain.chainId),
-          expectedCount: batchReview.rows.length,
-          records: quote.transactions ?? [],
-          itemCount: batchReview.rows.length,
-          account: address,
-          createdAt: Date.now(),
-          expectedEntries,
-          expectedSafeExecutions,
-        }),
-        paymentStatus: "confirmed",
-      });
-      paidSession = initialSession;
-      setPendingSession(initialSession);
-      const records = await relayrPoll(
-        quote.bundle_uuid,
-        batchReview.rows.length,
-        (nextRecords) => {
-          const updated = saveRelayrPendingSession(pendingScope, {
-            ...initialSession,
-            records: nextRecords,
-          });
-          setPendingSession(updated);
-          const progress = relayrProgress(nextRecords, batchReview.rows.length);
-          setNotice(
-            `Executing through Relayr… ${progress.confirmed}/${progress.total} landed`,
-          );
-        },
-        2_500,
-        5 * 60_000,
-      );
-      await verifyRelayrSafeBatchLanding(
-        safe,
-        records,
-        initialSession.expectedEntries ?? [],
-        initialSession.expectedSafeExecutions ?? [],
-      );
-      clearRelayrPendingSession(pendingScope);
-      setPendingSession(null);
-      markBatchExecuted(batchReview.rows.map((row) => row.chain.chainId));
-      setNotice(`Executed ${batchReview.rows.length} Safe transactions.`);
-      await refetchQueues();
+      if (!run.signal.aborted && activeAccount.current === address) {
+        await applyResult(result);
+        if (result.state === "pending") watchExistingBundle(result.session, run);
+      }
     } catch (batchError) {
-      // Only an explicit wallet rejection before a hash was returned proves
-      // the payment was never submitted. Keep ambiguous and partial outcomes.
-      if (
-        paidSession?.paymentStatus === "sending" &&
-        paidSession &&
-        isDefiniteWalletRejection(batchError)
-      ) {
-        clearRelayrPendingSession(pendingScope);
-        setPendingSession(null);
+      if (run.signal.aborted) return;
+      if (batchError instanceof SafeRelayrRecoveryError) setRecovery(batchError.session);
+      else {
+        const saved = safeRelayrSession(pendingScope);
+        if (saved && saved.paymentStatus !== "unfunded") setRecovery(saved);
       }
-      setError(
-        batchError instanceof Error
-          ? batchError.message
-          : "Could not execute the Safe transactions.",
-      );
+      setError(batchError instanceof Error ? batchError.message : "Could not execute the Safe transactions.");
     } finally {
-      setBusy(null);
+      if (!run.signal.aborted) setBusy(null);
     }
-  }).catch((lockError: unknown) => {
-    setError(lockError instanceof Error ? lockError.message : "This Safe has another Relayr payment in progress.");
-  });
+  };
 
   const openPaidBundle = () => {
     if (!pendingSession) return;
@@ -1581,28 +1297,26 @@ export function SafeQueueCard({
         }),
       );
     }
-    setConfirmClear(false);
+    try {
+      const session = safeRelayrSession(pendingScope);
+      setRecovery(session);
+      if (session?.executions.length) setBatchRows(session.executions.map(savedBatchDialogRow));
+    } catch (savedError) {
+      setError(savedError instanceof Error ? savedError.message : "Could not read the saved bundle.");
+    }
     setBatchOpen(true);
   };
 
   const closeExecuteAll = () => {
+    batchRun.current?.abort();
+    setBusy(null);
     setBatchOpen(false);
-    setConfirmClear(false);
-    if (pendingSession) return;
     setBatchReview(null);
     setBatchRows([]);
     setBatchStatus({});
     setBatchDone(false);
     setNotice(null);
     setError(null);
-  };
-
-  const clearPaidReceipt = () => {
-    clearRelayrPendingSession(pendingScope);
-    setPendingSession(null);
-    setConfirmClear(false);
-    closeExecuteAll();
-    void refetchQueues();
   };
 
   // A paid bundle's rows follow Relayr's per-chain records, matched by chain
@@ -1623,7 +1337,7 @@ export function SafeQueueCard({
   };
 
   const rowStatus = (chainId: number): string => {
-    if (!pendingSession || batchDone) return batchStatus[chainId] ?? "Waiting";
+    if (!pendingSession || batchDone || (pendingSession.safeLifecycle?.paymentStatus === "unfunded" && !recovery)) return batchStatus[chainId] ?? "Waiting";
     const state = paidRecord(chainId)?.status?.state;
     if (relayrStateIsSuccess(state)) return "Landed | verifying";
     if (relayrStateIsFailed(state)) return "Failed";
@@ -1646,44 +1360,18 @@ export function SafeQueueCard({
               Done
             </button>
           </div>
-        ) : pendingSession ? (
-          confirmClear ? (
-            <div className="space-y-3">
-              <p className="text-xs leading-relaxed text-smoke-700">
-                Clear only after checking every chain yourself. Clearing forgets
-                this receipt; it never refunds, and paying again can pay twice.
-              </p>
-              <div className="flex flex-wrap justify-end gap-2">
-                <button type="button" onClick={() => setConfirmClear(false)} className="btn-secondary min-h-[42px] px-4 text-sm">
-                  Keep receipt
-                </button>
-                <button type="button" onClick={clearPaidReceipt} className="btn-primary min-h-[42px] px-4 text-sm">
-                  Clear saved receipt
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmClear(true)}
-                disabled={busy !== null}
-                className="text-xs font-medium text-smoke-700 hover:text-ink disabled:opacity-50"
-              >
-                Clear saved receipt
-              </button>
-              <button
-                type="button"
-                onClick={() => void recoverPaidBundle(pendingSession)}
-                disabled={busy !== null}
-                className="btn-primary min-h-[42px] px-5 text-sm"
-              >
-                {busy === "recover-bundle" || busy === "execute-all"
-                  ? "Checking…"
-                  : "Check status"}
-              </button>
-            </div>
-          )
+        ) : recovery ? (
+          <div className="flex justify-end">
+            <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null} className="btn-primary min-h-[42px] px-5 text-sm">
+              {busy ? "Checking…" : "Check existing bundle"}
+            </button>
+          </div>
+        ) : error && !batchReview && !busy ? (
+          <div className="flex justify-end">
+            <button type="button" onClick={reviewExecuteAll} className="btn-primary min-h-[42px] px-5 text-sm">
+              Retry checks
+            </button>
+          </div>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative min-w-0 flex-1">
@@ -1810,13 +1498,13 @@ export function SafeQueueCard({
             </p>
           ) : null}
         </div>
-        {pendingSession ? (
+        {pendingSession && pendingSession.safeLifecycle?.paymentStatus !== "unfunded" ? (
           <button
             type="button"
             onClick={openPaidBundle}
             className="btn-secondary min-h-[40px] px-4 text-sm"
           >
-            {busy === "recover-bundle" ? "Checking paid bundle…" : "View paid bundle"}
+            {busy === "recover-bundle" ? "Checking existing bundle…" : "View existing bundle"}
           </button>
         ) : readyBatchCount >= 2 && !viaSafeApp ? (
           <button

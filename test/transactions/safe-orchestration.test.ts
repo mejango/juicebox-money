@@ -77,7 +77,9 @@ import {
   getSafeNextNonce,
   readSafeQueue,
   runSafeCalls,
+  safeExecRelayrEntry,
   simulateSafeExecution,
+  simulateFrozenSafeExecution,
   SAFE_EXECUTION_WRITE_GAS,
 } from '@/lib/safe'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -803,6 +805,82 @@ describe('Safe execution boundary', () => {
     ).rejects.toThrow(/approval.*no longer active onchain/i)
     expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
   })
+})
+
+describe('Frozen Safe execution simulation', () => {
+  const frozen = safeExecRelayrEntry(1, SAFE, queued(), [ALICE])
+
+  it('simulates the original quoted bytes from the zero address without invoking a wallet', async () => {
+    // A newly available signer does not replace the original signature bytes.
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+
+    const policy = await simulateFrozenSafeExecution(1, SAFE, 7, frozen.data)
+
+    expect(policy).toEqual(expect.any(String))
+    expect(mocks.simulateStateChangingTransaction).toHaveBeenCalledExactlyOnceWith(
+      mocks.client,
+      { from: zeroAddress, to: SAFE, data: frozen.data, gas: SAFE_EXECUTION_WRITE_GAS },
+    )
+    expect(mocks.readSafeNonce).toHaveBeenCalledTimes(2)
+    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('rejects an outer simulation whose Safe execution returns false', async () => {
+    mocks.simulateStateChangingTransaction.mockResolvedValueOnce(`0x${'0'.repeat(64)}` as Hex)
+
+    await expect(simulateFrozenSafeExecution(1, SAFE, 7, frozen.data)).rejects.toThrow(
+      'Safe transaction #7 would not execute successfully.',
+    )
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('rejects a previously saved policy when the current owners or threshold differ', async () => {
+    const savedPolicy = await simulateFrozenSafeExecution(1, SAFE, 7, frozen.data)
+    mocks.simulateStateChangingTransaction.mockClear()
+    mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+    mocks.readSafeThreshold.mockResolvedValue(2n)
+
+    await expect(simulateFrozenSafeExecution(1, SAFE, 7, frozen.data, savedPolicy)).rejects.toThrow(
+      /policy or nonce changed/i,
+    )
+    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('rejects a stale frozen nonce before simulating its signatures', async () => {
+    mocks.readSafeNonce.mockResolvedValue(8n)
+
+    await expect(simulateFrozenSafeExecution(1, SAFE, 7, frozen.data)).rejects.toThrow(
+      /policy or nonce changed/i,
+    )
+    expect(mocks.simulateStateChangingTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each(['owners', 'threshold', 'modules', 'nonce'] as const)(
+    'rejects %s changing while the exact execution is being simulated',
+    async field => {
+      if (field === 'threshold') mocks.readSafeOwners.mockResolvedValue([ALICE, BOB])
+      mocks.simulateStateChangingTransaction.mockImplementationOnce(async () => {
+        if (field === 'nonce') mocks.readSafeNonce.mockResolvedValue(8n)
+        else {
+          const changed = field === 'owners' ? safeIdentity([BOB])
+            : field === 'threshold' ? safeIdentity([ALICE, BOB], 2)
+              : { ...safeIdentity(), hasModules: true, modules: [BOB] }
+          mocks.readAuthorityIdentity.mockResolvedValue(changed)
+        }
+        return TRUE_RESULT
+      })
+
+      await expect(simulateFrozenSafeExecution(1, SAFE, 7, frozen.data)).rejects.toThrow(
+        /policy or nonce changed/i,
+      )
+      expect(mocks.simulateStateChangingTransaction).toHaveBeenCalledOnce()
+      expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+      expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('Safe retry and terminal-state orchestration', () => {

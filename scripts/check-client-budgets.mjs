@@ -152,7 +152,11 @@ const budgets = {
   // note, its mark and the account view's one line): 2510.02 KiB against 2509.7 on main
   // with the same toolchain, with home (435.3), the project route (168.5) and create
   // (503.3) unchanged. Round up to the next KiB.
-  allScripts: 2511 * KIB,
+  // The shared SDK Safe Relayr lifecycle, durable unpaid quotes, original-call
+  // recovery and legacy receipt adapter measure 2517.6 KiB against 2513.4 on
+  // unchanged main with the same toolchain. Round up to the next KiB; route,
+  // largest-chunk, style and lazy-loading limits stay fixed.
+  allScripts: 2518 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

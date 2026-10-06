@@ -37,6 +37,23 @@ if (read("src/app/globals.css").includes("tailwind.config.ts")) {
   failures.push("src/app/globals.css: Tailwind must load the warning-free ESM config");
 }
 
+const safeQueue = read("src/components/project/SafeQueueCard.tsx");
+const safeRelayr = read("src/lib/safe-relayr.ts");
+for (const method of ["prepare", "fund", "check"]) {
+  if (!safeQueue.includes(`.${method}({`)) {
+    failures.push(`SafeQueueCard must delegate ${method} to the shared Safe Relayr controller`);
+  }
+}
+if (!safeRelayr.includes("createSafeRelayrController({") ||
+    !safeRelayr.includes("@bananapus/nana-sdk-core/review/safe-relayr")) {
+  failures.push("Safe Relayr lifecycle decisions must use nana-sdk-core's shared controller");
+}
+for (const forbidden of ["relayrPostBundle", "relayrPay(", "relayrPoll(", "deadlineSoon", "assertFrozenBatchRow"]) {
+  if (safeQueue.includes(forbidden)) {
+    failures.push(`SafeQueueCard must not own ${forbidden}; use the shared Safe Relayr lifecycle`);
+  }
+}
+
 if (failures.length > 0) {
   console.error(failures.map((failure) => `- ${failure}`).join("\n"));
   process.exit(1);
