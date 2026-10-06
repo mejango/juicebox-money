@@ -70,14 +70,19 @@ async function render(element: React.ReactElement) {
   await act(async () => { renderer = create(element) })
 }
 
-/** The action's review shows the line once and Discard, with its confirm disabled, until Discard ends the session. */
+/**
+ * The action's review shows the line once and Discard, with its confirm
+ * disabled. Discard ends the session and closes the review: these actions
+ * have no recheck of their own, so their calls go out again only after a
+ * fresh review (ruling R114 (f)).
+ */
 async function discardsInPlaceOfTheError() {
   expect(text(renderer!.root).split(LINE)).toHaveLength(2)
   expect(button('Confirm dialog')!.props.disabled).toBe(true)
   await click('Discard')
   expect(mocks.discard).toHaveBeenCalledWith(SCOPE)
   expect(text(renderer!.root)).not.toContain(LINE)
-  expect(button('Confirm dialog')!.props.disabled).toBeFalsy()
+  expect(button('Confirm dialog')).toBeUndefined()
 }
 
 beforeEach(() => {

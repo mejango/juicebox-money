@@ -1095,10 +1095,10 @@ export function MetadataEditor({
           busy={busy}
           complete={done}
           action={error ? 'Retry' : 'Confirm & save'}
-          actionDisabled={!!discardable}
           onConfirm={() => void submit()}
           onClose={closeReview}
         >
+          {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
           {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} onDiscarded={discarded} /> : null}
         </TxConfirmDialog>
       ) : null}
@@ -1153,7 +1153,8 @@ export function TokenEditor({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setError(null))
+  // The token calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => setReview(null))
 
   const invalidate = () => {
     setReview(null)

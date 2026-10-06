@@ -72,8 +72,9 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
   const [busy, setBusy] = useState(false)
   const [complete, setComplete] = useState(false)
   const [error, setError] = useState<string | null>(initial.error)
-  const discard = useRelayrDiscard(() => setError(null))
   const [status, setStatus] = useState<string | null>(null)
+  // Discard abandons the saved batch, so the chains are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setReview(null); setReviewBatchId(undefined); setStatus(null) })
   const isClaim = action === 'claim-credits'
   const title = isClaim ? 'Claim credits as ERC-20' : allocation ? 'Distribute' : 'Distribute unlocked allocations'
   // Recovery read failures are surfaced by the handlers before any new review or write.

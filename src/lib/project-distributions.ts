@@ -135,6 +135,11 @@ export async function reverifyDistribution(snapshot: Distribution, account: Addr
     ...(item.kind === 'payouts' ? [item.terminal, item.context.token, item.context.decimals, item.context.currency, item.context.limits.map(limit => [limit.amount, limit.currency]), item.hookFeeless] : [])]
   if (stable(config(fresh)) !== stable(config(snapshot))) throw new Error(`${chainName(snapshot.chainId)}: the project rules, authority, accounting token, or recipients changed. Review again.`)
   if (snapshot.kind === 'reserved' && fresh.kind === 'reserved' && fresh.pending !== snapshot.pending) throw new Error(`${chainName(snapshot.chainId)}: the pending reserved amount changed. Review again.`)
+  // A payout that ran, this one included, used part of the limit: it is never sent again without a fresh review (ruling R114 (f)).
+  if (snapshot.kind === 'payouts' && fresh.kind === 'payouts' &&
+      stable(fresh.context.limits.map(limit => limit.used)) !== stable(snapshot.context.limits.map(limit => limit.used))) {
+    throw new Error(`${chainName(snapshot.chainId)}: payouts were sent since this review. Review again.`)
+  }
   if (snapshot.kind === 'payouts' && fresh.kind === 'payouts' && fresh.quote < snapshot.min) throw new Error(`${chainName(snapshot.chainId)}: the payout quote fell below the reviewed minimum.`)
 }
 

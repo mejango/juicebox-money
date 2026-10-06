@@ -47,8 +47,11 @@ export function RelayrDiscard({ scope, reason, onDiscarded }: {
  * to discard (ruling R114). `capture` takes each attempt's error, `element` is
  * the line and Discard to show in place of that error, and `reset` drops both
  * when the review closes. `clearError` clears the action's copy of the line.
+ * `closeReview`, after Discard, drops the reviewed calls of an action with no
+ * recheck of its own or of a batch, so they go out again only after a fresh
+ * review (ruling R114 (f)).
  */
-export function useRelayrDiscard(clearError: () => void) {
+export function useRelayrDiscard(clearError: () => void, closeReview?: () => void) {
   const [failure, setFailure] = useState<RelayrDiscardError | null>(null)
   return {
     active: failure !== null,
@@ -58,7 +61,7 @@ export function useRelayrDiscard(clearError: () => void) {
       setFailure(null)
     },
     element: failure ? (
-      <RelayrDiscard scope={failure.scope} reason={failure.reason} onDiscarded={() => { setFailure(null); clearError() }} />
+      <RelayrDiscard scope={failure.scope} reason={failure.reason} onDiscarded={() => { setFailure(null); clearError(); closeReview?.() }} />
     ) : null,
   }
 }

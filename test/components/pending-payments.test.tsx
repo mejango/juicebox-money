@@ -193,11 +193,12 @@ describe('pending payment review above activity', () => {
     const discard = tree!.root.findByType(RelayrDiscard)
     expect(discard.props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'changed' })
     expect(text(discard)).toContain('The project changed since this review.')
-    mocks.discard.mockResolvedValue(undefined)
+    mocks.discard.mockImplementation(async () => { mocks.load.mockReturnValue(null) })
     await act(async () => button('Discard').props.onClick())
     expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved:0')
     expect(tree!.root.findAllByType(RelayrDiscard)).toHaveLength(0)
-    expect(dialog().actionDisabled).toBe(false)
+    // Discard abandons the saved batch and closes its review: a fresh one sends again (ruling R114 (f)).
+    expect(tree!.root.findAllByType('review-dialog' as never)).toHaveLength(0)
   })
 
   it('drops the line with its review when the review closes, so it never shows without Discard', async () => {

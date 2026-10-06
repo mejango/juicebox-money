@@ -438,13 +438,13 @@ describe('split replacement recovery', () => {
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
 
-  it('offers only Discard, with its one line, once the earlier signature may already have run, and keeps the saved review', async () => {
+  it('offers Discard, with its one line, beside resuming once the earlier signature may already have run, and keeps the saved review', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'ran' })
     const { journal, renderer, completed, discarded } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
-    expect(labels(renderer)).toEqual(['"Discard"'])
+    expect(labels(renderer)).toEqual(['"Discard"', '"Resume split update"'])
     mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
-    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    await act(async () => { await button(renderer, 'Discard').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
     expect(storage.size).toBe(2)
     expect(discarded).toHaveBeenCalledOnce()
@@ -466,15 +466,26 @@ describe('split replacement recovery', () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'changed' })
     const { journal, renderer, discarded } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('The project changed since this review.')
-    expect(labels(renderer)).toEqual(['"Discard"'])
+    expect(labels(renderer)).toEqual(['"Discard"', '"Resume split update"'])
     mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
-    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    await act(async () => { await button(renderer, 'Discard').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
     expect(storage.size).toBe(2)
     await act(async () => { await button(renderer, 'Edit recipients').props.onClick() })
     expect(storage.size).toBe(0)
     expect(discarded).toHaveBeenCalledTimes(2)
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+  })
+
+  it('resumes a session marked as possibly run, which completes once its bundle proves it ran', async () => {
+    mocks.loadSession.mockReturnValue({ paymentStatus: 'confirmed', records: [], discardable: 'ran' })
+    const { renderer, completed } = await mountSaved()
+    mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
+    await act(async () => { await button(renderer, 'Resume split update').props.onClick() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+    expect(mocks.discard).not.toHaveBeenCalled()
+    expect(completed).toHaveBeenCalledOnce()
+    expect(storage.size).toBe(0)
   })
 
   it('never offers Discard while the saved signature could still run', async () => {

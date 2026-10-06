@@ -562,7 +562,8 @@ export function BuybackActionForm({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setError(null))
+  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setReview(null); setAck(false) })
   const [done, setDone] = useState(false)
 
   useEffect(() => {

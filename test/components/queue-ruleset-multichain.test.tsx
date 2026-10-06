@@ -242,13 +242,13 @@ describe('queue recovery after cancellation or partial execution', () => {
   }
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
-  it('offers only Discard, with its one line, once the earlier signature may already have run, and keeps the saved review', async () => {
+  it('offers Discard, with its one line, beside resuming once the earlier signature may already have run, and keeps the saved review', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: 'ran' })
     const { renderer, completed, discarded, journal } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('may already have run. Check the project, then discard it to review it again.')
-    expect(labels(renderer)).toEqual(['"Discard"'])
+    expect(labels(renderer)).toEqual(['"Discard"', '"Resume ruleset update"'])
     mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
-    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    await act(async () => { await button(renderer, 'Discard').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
     expect(storage.size).toBe(2)
     expect(discarded).toHaveBeenCalledOnce()
@@ -269,8 +269,9 @@ describe('queue recovery after cancellation or partial execution', () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', discardable: 'changed' })
     const { renderer, discarded, journal } = await mountSaved()
     expect(JSON.stringify(renderer.toJSON())).toContain('The project changed since this review.')
+    expect(labels(renderer)).toEqual(['"Discard"', '"Resume ruleset update"'])
     mocks.discard.mockImplementation(async () => { mocks.loadSession.mockReturnValue(null) })
-    await act(async () => { await renderer.root.findByType('button').props.onClick() })
+    await act(async () => { await button(renderer, 'Discard').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith(journal.scope)
     expect(storage.size).toBe(2)
     await act(async () => { await button(renderer, 'Edit rules').props.onClick() })

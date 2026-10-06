@@ -68,9 +68,10 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   const [batch, setBatch] = useState<ProjectBatch | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setError(null))
   const [status, setStatus] = useState<string | null>(null)
   const [complete, setComplete] = useState(false)
+  // Discard abandons the saved batch, so the distributions are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setBatch(null); setReview(null); setReviewAccount(null); setStatus(null) })
   useEffect(() => {
     const saved = loadProjectBatch(scope)
     setBatch(saved?.status === 'pending' ? saved : null)

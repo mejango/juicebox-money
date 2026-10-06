@@ -677,7 +677,7 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => renderer.unmount())
   })
 
-  it('offers Discard instead of a retry once the earlier signature may already have run, then keeps the review to confirm afresh', async () => {
+  it('offers Discard beside a retry once the earlier signature may already have run, then keeps the review to confirm afresh', async () => {
     let scope = ''
     mocks.runAuthorityCalls.mockImplementationOnce(async ({ calls }: { calls: AuthorityCall[] }) => {
       scope = saveSession(calls, 'unpaid')
@@ -689,7 +689,8 @@ describe('metadata editor per-chain review and recovery', () => {
     const originalData = submittedCalls().map(call => call.data)
     const text = renderedText(renderer.root)
     expect(text.match(/may already have run/g)).toHaveLength(1)
-    expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBe(true)
+    // Its retry stays beside Discard: the editor's recheck refuses calls that already ran, and a paid bundle that ran completes.
+    expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBeFalsy()
     await act(async () => buttonWith(renderer, 'Discard').props.onClick())
     expect(loadRelayrPendingSession(scope)).toBeNull()
     // The saved review is the draft: confirmed again, it signs afresh.

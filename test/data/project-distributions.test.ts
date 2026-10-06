@@ -112,6 +112,15 @@ describe('selected destination distributions', () => {
     expect(distributionCall(review).data).toBe(originalData)
   })
 
+  it('refuses a payout that already ran: the used payout limit moved since the review (ruling R114 (f))', async () => {
+    const review = await reviewPayout(projects[1], USDC_ADDRESSES[8453], 12_000_000n, 2, ACCOUNT)
+    // The reviewed payout ran: the limit's used amount grew by it, and what remains still fits it.
+    state.get(8453)!.used = 15_000_000n
+    await expect(reverifyDistribution(review, ACCOUNT)).rejects.toThrow('Base: payouts were sent since this review. Review again.')
+    state.get(8453)!.used = 3_000_000n
+    await expect(reverifyDistribution(review, ACCOUNT)).resolves.toBeUndefined()
+  })
+
   it('allows only the reviewed 1% minimum when a payout needs currency conversion', async () => {
     mocks.contexts.mockImplementation(async (_client, { chainId }) => [{ token: USDC_ADDRESSES[chainId as JBChainId], currency: 9, decimals: 6 }])
     const review = await reviewPayout(projects[1], USDC_ADDRESSES[8453], 12_000_000n, 2, ACCOUNT)

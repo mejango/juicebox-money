@@ -190,19 +190,21 @@ describe('aggregate token action reviews', () => {
     expect(mocks.run.mock.calls[1][0].expectedBatchId).toBeUndefined()
   })
 
-  it('shows the line and Discard in place of the error when its Relayr round can only be discarded, and keeps the saved batch', async () => {
+  it('shows the line and Discard in place of the error when its Relayr round can only be discarded, and then returns to a fresh review', async () => {
     mocks.saved = { id: 'batch-1', status: 'pending', account: ACCOUNT, calls: [call(1, 42), call(10, 84, 2)] }
     mocks.run.mockRejectedValueOnce(new RelayrDiscardError('project-batch:batch-1:0', 'ran'))
     const renderer = await render()
     await click(renderer, 'Resume original batch')
     expect(text(renderer.root).match(/may already have run/g)).toHaveLength(1)
     expect(button(renderer, 'Resume original batch').props.disabled).toBe(true)
-    mocks.discard.mockResolvedValue(undefined)
+    // Discard abandons the saved batch, so its calls go out again only after a fresh review (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.saved = null })
     await act(async () => { await button(renderer, 'Discard').props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith('project-batch:batch-1:0')
     expect(text(renderer.root)).not.toContain('may already have run')
-    expect(button(renderer, 'Resume original batch').props.disabled).toBe(false)
-    expect(mocks.run.mock.calls[0][0].expectedBatchId).toBe('batch-1')
+    expect(button(renderer, 'Resume original batch')).toBeUndefined()
+    expect(text(renderer.root)).toContain('Review selected chains')
+    expect(mocks.run).toHaveBeenCalledOnce()
   })
 
   it('refuses recovery with a wallet different from the original batch account', async () => {

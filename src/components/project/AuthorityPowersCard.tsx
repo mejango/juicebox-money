@@ -308,7 +308,8 @@ export function PowerActionForm({
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setError(null))
+  // The powers have no recheck of their own: after Discard their calls go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setReview(null); setAck(false); setAckExtreme(false) })
 
   useEffect(() => {
     if (!address) return

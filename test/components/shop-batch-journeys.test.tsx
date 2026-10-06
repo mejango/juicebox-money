@@ -166,11 +166,13 @@ describe('shop batch component journeys', () => {
     expect(dialog.props.error).toBeFalsy()
     expect(dialog.props.actionDisabled).toBe(true)
     expect(renderer.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'ran' })
-    mocks.discard.mockResolvedValue(undefined)
+    // Discard abandons the saved batch and closes its review: a fresh one sends again (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.saved = null })
     await act(async () => { await renderer.root.findAllByType('button').find(item => item.props.children === 'Discard')!.props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved:0')
     expect(renderer.root.findAllByType(RelayrDiscard)).toHaveLength(0)
-    expect(renderer.root.findByType(TxConfirmDialog).props.actionDisabled).toBeFalsy()
+    expect(renderer.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+    expect(mocks.run).toHaveBeenCalledOnce()
     await act(async () => renderer.unmount())
   })
 

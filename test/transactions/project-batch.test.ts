@@ -273,6 +273,42 @@ describe('durable project batches', () => {
     expect(reverify).not.toHaveBeenCalled()
   })
 
+  it('abandons the saved journal once its round\'s Relayr session is discarded, so nothing sends those calls again without a fresh review (ruling R114 (f))', async () => {
+    // The round's bundle may already have run: its session ends with Discard.
+    mocks.relayr.mockImplementationOnce(async options => {
+      mocks.pending.set(options.pendingScope, { discardable: 'ran' })
+      throw new Error('This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
+    })
+    await expect(run([call(), call(10)])).rejects.toThrow('may already have run')
+    expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: [] })
+    expect(loadProjectBatch(projectBatchScope(action, 10, 7))).not.toBeNull()
+    // Discard removes the session.
+    mocks.pending.clear()
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect(loadProjectBatch(projectBatchScope(action, 10, 7))).toBeNull()
+    await expect(run()).rejects.toThrow('Choose at least one project action.')
+    expect(mocks.relayr).toHaveBeenCalledTimes(1)
+    // A fresh review from live state starts its own journal.
+    const fresh = await run([call(), call(10)])
+    expect(fresh.status).toBe('complete')
+    expect(mocks.relayr).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the journal of a round whose signing stopped before anything was published', async () => {
+    mocks.client.getTransaction.mockImplementation(async () => {
+      const submitted = mocks.authority.mock.calls.at(-1)![0].calls[0] as ProjectBatchCall
+      return { hash: HASH, chainId: submitted.chainId, from: ACCOUNT, to: TARGET, input: submitted.data, value: 3n, blockHash: BLOCK }
+    })
+    // The first round goes direct and completes; the second is relayed, and its signature is declined.
+    const calls = [{ ...call(1, 'a'), relayr: false as const }, { ...call(10, 'a'), relayr: false as const }, call(1, 'b'), call(10, 'b')]
+    mocks.relayr.mockImplementationOnce(async () => { throw new Error('Signature declined') })
+    await expect(run(calls)).rejects.toThrow('Signature declined')
+    expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: ['1:a', '10:a'] })
+    const resumed = await run()
+    expect(resumed.status).toBe('complete')
+    expect(mocks.relayr).toHaveBeenCalledTimes(2)
+  })
+
   it('blocks another peer route from replacing a pending reviewed call set', async () => {
     mocks.relayr.mockImplementationOnce(async options => {
       mocks.pending.set(options.pendingScope, { paid: true })

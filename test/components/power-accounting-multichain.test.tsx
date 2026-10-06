@@ -108,7 +108,8 @@ describe('multichain accounting-token review', () => {
     await act(async () => { await renderer!.root.findAllByType('button').find(button => button.props.children === 'Discard')!.props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith('authority:0xabc')
     expect(renderer!.root.findAllByType(RelayrDiscard)).toHaveLength(0)
-    expect(renderer!.root.findByType(TxConfirmDialog).props.actionDisabled).toBe(false)
+    // The powers have no recheck of their own, so Discard closes the review: a fresh one sends again (ruling R114 (f)).
+    expect(renderer!.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
   })
 
   it('blocks a destination without valid decimals before review or submission', async () => {

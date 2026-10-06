@@ -584,13 +584,14 @@ export function TransferAuthorityFlow({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const discard = useRelayrDiscard(() => setError(null));
   const [plan, setPlan] = useState<{
     to: Address;
     calls: AuthorityCall[];
   } | null>(null);
   const [step, setStep] = useState(-1);
   const [done, setDone] = useState(false);
+  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
 
   const title = isRevnet ? "Transfer revnet operator" : "Transfer project ownership";
 
@@ -1129,7 +1130,6 @@ export function PermissionEditor({
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const discard = useRelayrDiscard(() => setError(null));
   const [plan, setPlan] = useState<{
     operator: Address;
     chosen: AuthorityDeployment[];
@@ -1138,6 +1138,8 @@ export function PermissionEditor({
   } | null>(null);
   const [step, setStep] = useState(-1);
   const [done, setDone] = useState(false);
+  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
 
   /** Re-read each chain's current bitmap and freeze the exact calls. */
   const review = async () => {

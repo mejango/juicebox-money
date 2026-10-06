@@ -41,7 +41,8 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
   const [freshPlan, setPlan] = useState<MediaPlan | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'pinning' | 'writing' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setMessage(null))
+  // Discard abandons the saved batch, so the media update is reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setMessage(null), () => { setBatch(null); setPlan(null); setPhase('form') })
   const pinnedRef = useRef<Hex | null>(null)
   const busy = ['checking', 'pinning', 'writing'].includes(phase)
   const chainTargets = useMemo(() => (targets ?? []).filter(target => target.hook && !target.error), [targets])

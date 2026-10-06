@@ -34,7 +34,8 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [account, setAccount] = useState<Address | null>(null)
   const [saved, setSaved] = useState<ProjectBatch | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setError(null))
+  // Discard abandons the saved batch, so the payments are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setError(null), () => { setOpen(false); setCalls(null); setSaved(null) })
   const [status, setStatus] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, string>>({})
   useEffect(() => {

@@ -155,7 +155,7 @@ describe('distribution batch reviews and recovery', () => {
     expect(text(renderer)).not.toContain('Some distributions are still pending')
   })
 
-  it('shows the line and Discard, in place of the error, when its Relayr round can only be discarded, and keeps the saved review', async () => {
+  it('shows the line and Discard, in place of the error, when its Relayr round can only be discarded, and then returns to a fresh review', async () => {
     const calls = distributionBatchCalls([reserved(1), reserved(8453)])
     const saved = { id: 'saved-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
     mocks.load.mockReturnValue(saved)
@@ -165,10 +165,14 @@ describe('distribution batch reviews and recovery', () => {
     expect(text(renderer).match(/may already have run/g)).toHaveLength(1)
     const confirm = renderer.root.findAllByType('button').find(item => item.children.join('') === 'Confirm test distributions')!
     expect(confirm.props.disabled).toBe(true)
+    // Discard abandons the saved batch, so its calls go out again only after a fresh review (ruling R114 (f)).
+    mocks.discard.mockImplementation(async () => { mocks.load.mockReturnValue(null) })
     await click(renderer, 'Discard')
     expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved-review:0')
     expect(text(renderer)).not.toContain('may already have run')
-    expect(text(renderer)).toContain('Resume saved distributions')
+    expect(text(renderer)).not.toContain('Confirm test distributions')
+    expect(text(renderer)).not.toContain('Resume saved distributions')
+    expect(mocks.run).toHaveBeenCalledOnce()
   })
 
   it('returns to a fresh review if the runner abandons an unsubmitted stale recovery', async () => {

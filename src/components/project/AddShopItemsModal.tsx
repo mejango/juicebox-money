@@ -37,7 +37,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
   const [batch, setBatch] = useState<ProjectBatch | null>(null)
   const [phase, setPhase] = useState<'form' | 'checking' | 'review' | 'pinning' | 'writing' | 'failed' | 'done'>('form')
   const [message, setMessage] = useState<string | null>(null)
-  const discard = useRelayrDiscard(() => setMessage(null))
+  // Discard abandons the saved batch, so the items are reviewed again from live state (ruling R114 (f)).
+  const discard = useRelayrDiscard(() => setMessage(null), () => { setBatch(null); setReview(null); setPhase('form') })
   const pinnedRef = useRef<PinnedStoreItemDraft[] | null>(null)
   const busy = phase === 'checking' || phase === 'pinning' || phase === 'writing'
   const hasSubmittedTransactions = !!batch
@@ -82,6 +83,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       const frozenItems = items.map(cloneDraftItem)
       // Validate exact per-chain prices, supplies and recipient mappings before uploading.
       buildShopAddCalls(snapshots, address, frozenItems.map(draft => ({ draft, encodedIpfsUri: `0x${'1'.repeat(64)}` })))
+      // A fresh review never sends an earlier review's uploads.
+      pinnedRef.current = null
       setReview({ account: address, items: frozenItems, categories: categories.map(category => ({ ...category })), chainIds: chosen.map(target => target.chainId), snapshots })
       setPhase('review')
     } catch (error) { setMessage(shortError(error, 'Could not review the items.')); setPhase('form') }
