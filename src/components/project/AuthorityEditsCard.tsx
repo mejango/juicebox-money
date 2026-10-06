@@ -473,7 +473,7 @@ type MetadataDestination = {
   nextUri: string
 }
 
-type MetadataReview = {
+export type MetadataReview = {
   account: Address
   isRevnet: boolean
   scope: string
@@ -534,7 +534,7 @@ async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: b
   return { owner, authority, controller, uri }
 }
 
-function metadataReviewCalls(review: MetadataReview, requireSaved = true): AuthorityCall[] {
+export function metadataReviewCalls(review: MetadataReview, requireSaved = true): AuthorityCall[] {
   return review.destinations.map(destination => ({
     chainId: destination.chainId,
     authority: destination.authority,
