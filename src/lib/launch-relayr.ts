@@ -36,6 +36,7 @@ import {
   relayrHeldMessage,
   relayrPostBundle,
   relayrRequestStates,
+  relayrRequestsDead,
   relayrRequestsVerdict,
   relayrRetryOption,
   revertedRelayrQuote,
@@ -159,6 +160,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       if (!lock) throw new Error('This launch is already running in another tab.')
       await withForwarderAuthorizationLock({ account, chainIds: session.chains, owner: `launch:${session.salt}`,
         pendingSessions: readRelayrPendingSessionsForAuthorization,
+        requestsDead: requests => relayrRequestsDead(account, requests),
         execute: run })
     })
   } finally {
@@ -288,13 +290,17 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         journal.abandonable = true
         persist()
         throw new Error(LAUNCH_MAY_HAVE_RUN)
+      } else if (verdict && !verdict.unused) {
+        // A reorg left a finalized nonce below a saved one: it holds until the nonce catches up (ruling R114).
+        throw new Error(relayrHeldMessage(0))
       } else if (verdict && !journal.abandonable) {
         journal.abandonable = true
         persist()
         throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
       }
-      // Relayr's answer matters only while a request can still run (ruling R114).
+      // Relayr's answer matters only while a request can still run (ruling R114), which holds until when.
       if (verdict?.live === false) unreleased = null
+      if (unreleased && heldUntil !== null) throw new Error(relayrHeldMessage(heldUntil), { cause: unreleased })
     }
     if (unreleased) throw unreleased
     if (journal?.abandonable && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase) && journal.signed.length) {
@@ -455,7 +461,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
         const verdict = await outstandingVerdict([...journal.signed, ...(journal.superseded ?? [])])
-        if (verdict && !verdict.live && !verdict.mayHaveRun && await originalPaymentExpired()) journal.abandonable = true
+        if (verdict && !verdict.live && verdict.unused && await originalPaymentExpired()) journal.abandonable = true
         persist()
         throw new Error(journal.abandonable
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'

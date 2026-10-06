@@ -262,7 +262,9 @@ describe('the split editor\'s recheck', () => {
       (mocks.clients.get(chainId) as ReturnType<typeof chainClient>).getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) =>
         blockTag === 'finalized' ? { number: 200n, hash: BLOCK_HASH, timestamp: BigInt(DEADLINE - 600) } : { hash: BLOCK_HASH })
     }
-    await expect(runAuthorityCalls({ calls })).rejects.toThrow(/do not pay again/)
+    vi.mocked(Date.now).mockReturnValue((DEADLINE - 600) * 1_000)
+    // Its requests can still run, so it says until when (ruling R114).
+    await expect(runAuthorityCalls({ calls })).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
     expect(splitReads()).toEqual([])
     expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'confirmed' })
     expect(loadRelayrPendingSession(scope)?.discardable).toBeUndefined()

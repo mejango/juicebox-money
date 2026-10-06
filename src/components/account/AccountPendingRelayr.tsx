@@ -115,24 +115,42 @@ export function AccountPendingRelayr({ address }: { address: string }) {
   return (
     <div className="mb-4 space-y-3">
       {bundles.map(({ scope, session }) => {
+        const projectSafeProof = requiresProjectSafeProof(scope, session)
+        // A check classifies the session (ruling R114): a paid bundle that ran
+        // completes, and one whose requests are all dead can be discarded.
+        const check = projectSafeProof ? null : (
+          <button
+            onClick={() => resume(scope)}
+            disabled={busyScope !== null}
+            className="btn-secondary min-h-[36px] px-4 text-sm"
+          >
+            {busyScope === scope ? 'Checking…' : 'Check original bundle'}
+          </button>
+        )
+        const notice = notices[scope] ? (
+          <p className="mt-2 text-xs text-smoke-600">{notices[scope]}</p>
+        ) : null
         if (session.discardable) {
           return (
-            <div key={scope} className="card p-4">
+            <div key={scope} className="card space-y-2 p-4">
               <RelayrDiscard scope={scope} reason={session.discardable} onDiscarded={refresh} />
+              {check}
+              {notice}
             </div>
           )
         }
         if (relayrQuoteReleased(session)) {
           return (
-            <div key={scope} className="card p-4">
+            <div key={scope} className="card space-y-2 p-4">
               <p className="text-sm text-smoke-700">
                 This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.
               </p>
+              {check}
+              {notice}
             </div>
           )
         }
         const progress = relayrProgress(session.records, session.expectedCount)
-        const projectSafeProof = requiresProjectSafeProof(scope, session)
         return (
           <div key={scope} className="card border-bluebs-500/40 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -149,15 +167,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     ? 'Resume this bundle from the original project action to verify and save every completed call.'
                     : <>Verify this paid bundle from the relevant project&apos;s Owner/Operator tab.</>}
                 </span>
-              ) : (
-                <button
-                  onClick={() => resume(scope)}
-                  disabled={busyScope !== null}
-                  className="btn-secondary min-h-[36px] px-4 text-sm"
-                >
-                  {busyScope === scope ? 'Checking…' : 'Check original bundle'}
-                </button>
-              )}
+              ) : check}
             </div>
             {session.paymentStatus === 'reverted' ? (
               <p className="mt-2 text-xs text-smoke-600">
@@ -210,9 +220,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 )
               })}
             </div>
-            {notices[scope] ? (
-              <p className="mt-2 text-xs text-smoke-600">{notices[scope]}</p>
-            ) : null}
+            {notice}
           </div>
         )
       })}

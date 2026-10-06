@@ -371,7 +371,7 @@ describe('AccountPendingRelayr', () => {
     expect(mocks.resumeRelayrSession).toHaveBeenCalledWith({ scope: 'authority:0xaaa', account: ALICE })
   })
 
-  it('reads an unpaid quote nothing can fund any more as expired, with nothing to check', async () => {
+  it('reads an unpaid quote nothing can fund any more as expired, and offers the check that can discard it', async () => {
     mocks.connectedAddress = ALICE
     const bundleUuid = '01234567-89ab-cdef-0123-456789abcdef'
     const deadline = Math.floor(Date.now() / 1_000) - 60
@@ -390,7 +390,8 @@ describe('AccountPendingRelayr', () => {
     const text = renderedText(renderer.root)
     expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
     expect(text).not.toContain('in flight')
-    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+    // Its old request may still run, so only a check classifies it (ruling R114 (e)).
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
   })
 
   it.each<[string, number, string]>([
@@ -452,7 +453,8 @@ describe('AccountPendingRelayr', () => {
 
     expect(renderedText(renderer.root)).toContain(
       'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.')
-    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+    // A paid bundle that ran completes when checked again, so the check stays beside Discard.
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
     await act(async () => buttonWith(renderer, 'Discard').props.onClick())
     expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
@@ -496,7 +498,7 @@ describe('AccountPendingRelayr', () => {
     expect(buttonWith(renderer, 'Discard')).toBeUndefined()
   })
 
-  it('reads a released quote whose payment reverted as expired, with nothing to check', async () => {
+  it('reads a released quote whose payment reverted as expired, and offers the check that can discard it', async () => {
     mocks.connectedAddress = ALICE
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
       paymentStatus: 'reverted', released: true, records: [],
@@ -509,7 +511,27 @@ describe('AccountPendingRelayr', () => {
 
     const text = renderedText(renderer.root)
     expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
-    expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()
+    // Its old request may still run, so only a check classifies it and offers Discard once every request is dead (ruling R114 (e)).
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+  })
+
+  it('offers Discard after the expired line once every request expired unused, beside the check', async () => {
+    mocks.connectedAddress = ALICE
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session: pendingSession({
+      paymentStatus: 'confirmed', discardable: 'expired',
+    }) }])
+    mocks.discardRelayrSession.mockResolvedValue(undefined)
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE }))
+    })
+
+    expect(renderedText(renderer.root)).toContain('This action\'s earlier signatures expired without running.')
+    expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
+    await act(async () => buttonWith(renderer, 'Discard').props.onClick())
+    expect(mocks.discardRelayrSession).toHaveBeenCalledWith('authority:0xaaa')
   })
 
   it('shows the account its in-flight legs and resumes by session', async () => {

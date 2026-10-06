@@ -828,6 +828,24 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'done' } })
   })
 
+  it('holds a published launch whose finalized nonce fell below a saved one, rather than letting it be cancelled', async () => {
+    for (const client of clients.values()) client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
+    m.forward.mockImplementation(async (call, account) => ({ chain: call.chainId,
+      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
+      data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: account, to: call.target,
+        value: call.value, gas: call.gas, deadline: NOW + 3600, data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }))
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    // A reorg dropped an earlier forwarded transaction: the finalized nonce is below the saved one (ruling R114, known limit).
+    for (const client of clients.values()) {
+      client.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+      client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 0n : true)
+    }
+    await expect(run()).rejects.toThrow(relayrHeldMessage(0))
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
   it('retains independently observed destination hashes when a later provider response omits them', async () => {
     clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
     await expect(run()).rejects.toThrow('unfinished')
@@ -991,10 +1009,10 @@ describe('paying a reverted launch quote again', () => {
       expect(m.pay.mock.calls[1][0]).toMatchObject({ sent: [] })
     })
 
-    it('keeps the quote while Relayr does not report it unpaid', async () => {
+    it('keeps the quote while Relayr does not report it unpaid, saying until when its requests can run', async () => {
       await expired()
       relayrReports({ payment_received: null })
-      await expect(run()).rejects.toThrow(WAITING)
+      await expect(run()).rejects.toMatchObject({ message: relayrHeldMessage(NOW + 3600), cause: expect.objectContaining({ message: WAITING }) })
       expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', payments: [expect.objectContaining({ hash: HASH })] })
       expect(m.quote).toHaveBeenCalledTimes(1)
       expect(m.pay).toHaveBeenCalledTimes(1)

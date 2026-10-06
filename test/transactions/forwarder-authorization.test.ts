@@ -1,17 +1,19 @@
 import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeFunctionData, type Address } from 'viem'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 import type { RelayrPendingSession } from '@/lib/relayr'
 
 const mocks = vi.hoisted(() => ({ launch: vi.fn() }))
 vi.mock('@/lib/launch-session', () => ({ loadLaunchSession: mocks.launch }))
-import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
+import { withForwarderAuthorizationLock, type SignedForwardRequest } from '@/lib/forwarder-authorization'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
 let pending: { scope: string; session: RelayrPendingSession | null }[]
 let names: string[]
+/** Whether every request a reservation published is dead, as ruling R114 classifies it. */
+let requestsDead: Mock<(requests: readonly SignedForwardRequest[]) => Promise<boolean>>
 
 function entry(chain: JBChainId = 1, from = ALICE): RelayrEntry {
   return { chain, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain], value: '0',
@@ -24,11 +26,12 @@ function session(entries: RelayrEntry[] = [entry()]): RelayrPendingSession {
     records: [], publishedEntries: entries }
 }
 const run = (owner: `relayr:${string}` | `launch:${string}` = 'relayr:new', chains = [1], account = ALICE) =>
-  withForwarderAuthorizationLock({ account, chainIds: chains, owner, pendingSessions: () => pending,
+  withForwarderAuthorizationLock({ account, chainIds: chains, owner, pendingSessions: () => pending, requestsDead,
     execute: async assertAvailable => { assertAvailable(); return 'signed' } })
 
 beforeEach(() => {
   pending = []; names = []; mocks.launch.mockReturnValue(null)
+  requestsDead = vi.fn(async () => false)
   const held = new Set<string>()
   vi.stubGlobal('navigator', { locks: { request: async (name: string, _options: unknown, execute: (lock: object | null) => Promise<unknown>) => {
     names.push(name)
@@ -43,7 +46,7 @@ describe('shared forwarder nonce ownership', () => {
     let release!: () => void
     const gated = new Promise<void>(resolve => { release = resolve })
     const first = withForwarderAuthorizationLock({ account: ALICE, chainIds: [10, 1, 10], owner: 'relayr:action-a',
-      pendingSessions: () => pending, execute: async assertAvailable => { assertAvailable(); await gated } })
+      pendingSessions: () => pending, requestsDead, execute: async assertAvailable => { assertAvailable(); await gated } })
     expect(names).toEqual([`jb-forwarder-authorization:${ALICE}:1`, `jb-forwarder-authorization:${ALICE}:10`])
     await expect(run('relayr:action-b', [1])).rejects.toThrow('Another action is authorizing')
     await expect(run('relayr:other-wallet', [1], BOB)).resolves.toBe('signed')
@@ -90,10 +93,45 @@ describe('shared forwarder nonce ownership', () => {
     await expect(run()).resolves.toBe('signed')
   })
 
+  it('reserves a session exactly while one of its requests is live, never by its quote or the clock (ruling R117)', async () => {
+    pending = [{ scope: 'earlier', session: { ...session([entry(1), entry(10)]), chainIds: [1, 10], expectedCount: 2, itemCount: 2,
+      publishedNonces: ['4', '7'] } }]
+    await expect(run()).rejects.toThrow('Another published action')
+    // Each of its requests, Optimism's included, is classified once before the run.
+    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, deadline: 4_000_000_000, nonce: '4' }, { chainId: 10, deadline: 4_000_000_000, nonce: '7' }])
+    requestsDead.mockResolvedValue(true)
+    await expect(run()).resolves.toBe('signed')
+    // A session that published again is read afresh.
+    requestsDead.mockResolvedValueOnce(true).mockResolvedValue(false)
+    let reads = 0
+    const before = pending[0].session!
+    const changed = { ...before, publishedNonces: ['5', '7'] }
+    pending = [{ scope: 'earlier', session: before }]
+    const swapping = () => (++reads > 1 ? [{ scope: 'earlier', session: changed }] : pending)
+    await expect(withForwarderAuthorizationLock({ account: ALICE, chainIds: [1], owner: 'relayr:new', pendingSessions: swapping,
+      requestsDead, execute: async assertAvailable => { assertAvailable(); return 'signed' } })).rejects.toThrow('Another published action')
+  })
+
+  it('reserves a launch exactly while one of its outstanding requests is live (ruling R117)', async () => {
+    const launch = { salt: 'launch-salt', statuses: { 1: { phase: 'pending' } },
+      relayr: { published: true, signed: [{ chainId: 1, entry: entry(), nonce: '0', deadline: 4_000_000_000 }], superseded: [] } }
+    mocks.launch.mockReturnValue(launch)
+    await expect(run()).rejects.toThrow('Another published action')
+    expect(requestsDead).toHaveBeenCalledWith([{ chainId: 1, deadline: 4_000_000_000, nonce: '0' }])
+    requestsDead.mockResolvedValue(true)
+    await expect(run()).resolves.toBe('signed')
+  })
+
+  it('keeps reserving a legacy session it cannot classify', async () => {
+    pending = [{ scope: 'old-authority', session: { ...session(), publishedEntries: undefined } }]
+    requestsDead.mockResolvedValue(true)
+    await expect(run()).rejects.toThrow('Another published action')
+  })
+
   it('lets receipt-only recovery resolve old conflicts without granting a new authorization', async () => {
     pending = [{ scope: 'other', session: session() }]
     await expect(withForwarderAuthorizationLock({ account: ALICE, chainIds: [1], owner: 'relayr:original', pendingSessions: () => pending,
-      execute: async () => 'checked original receipt' })).resolves.toBe('checked original receipt')
+      requestsDead, execute: async () => 'checked original receipt' })).resolves.toBe('checked original receipt')
     vi.stubGlobal('navigator', {})
     await expect(run()).rejects.toThrow('Web Locks support')
   })

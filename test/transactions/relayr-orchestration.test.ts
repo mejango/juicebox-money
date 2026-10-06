@@ -1,4 +1,4 @@
-import { encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
+import { ContractFunctionExecutionError, HttpRequestError, encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
@@ -111,7 +111,13 @@ const CHANGED = 'The project changed since this review.'
 /** The line a session shows while an old request can still run, until `deadline` (seconds). */
 const held = (deadline: number) => `This action's earlier signature can still run until ${formatDateTime(deadline)}. Try again after that.`
 const HELD_UNCONFIRMED = 'This action\'s earlier signature may still run. Try again in a few minutes.'
-const EXPIRED_UNUSED = 'This action\'s earlier signatures expired without running. Reopen the original action to sign it again.'
+const EXPIRED_LINE = 'This action\'s earlier signatures expired without running.'
+/** A held session's line, whatever its time. */
+const HELD_RE = /^This action's earlier signature can still run until .+\. Try again after that\.$/
+/** A recheck that could not reach the chain. */
+const COULD_NOT_CHECK = 'Couldn\'t check the project. Try again.'
+/** What the account view throws once every request expired unused (ruling R114 (e)). */
+const EXPIRED_DISCARD = { name: 'RelayrDiscardError', reason: 'expired', message: EXPIRED_LINE }
 const PAYMENT_RUNTIME = '0x608060405260043610156010575f80fd5b5f3560e01c63103903a7146022575f80fd5b604036600319011260ef576004356fffffffffffffffffffffffffffffffff19811680910360ef5760243564ffffffffff811680910360ef5780421160ce575f341560c6575b5f8080809373755ff2f75a0a586ecfa2b9a3c959cb662458a1053491f11560bb5760407fb96b060a9c075a83da0cf1f9405deeb5df21df681a762de16c3d5eaf99531cd8918151903482526020820152a2005b6040513d5f823e3d90fd5b506108fc6068565b90630f01bd8760e21b5f5260045260245264ffffffffff421660445260645ffd5b5f80fdfea26469706673582212206ea0d2ba1e0cb26cc9293b24f1a7aecc1de7e328ca83d6b3bf5382ac44c7390064736f6c634300081a0033' as Hex
 
 function paymentCalldata(
@@ -1115,7 +1121,8 @@ describe('Relayr funding choice and exact execution proof', () => {
     const saved = loadRelayrPendingSession(options.pendingScope)!
     expect(saved).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID, paymentOptions: [] })
     expect(relayrQuoteReleased(saved)).toBe(true)
-    expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+    // Its published requests can still run, so it keeps reserving the wallet's forwarder nonce (ruling R117).
+    expect(readRelayrPendingSessionsForAuthorization()).toHaveLength(1)
     expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     // The same signed calls are quoted again, and that quote is paid.
@@ -1421,7 +1428,9 @@ describe('Relayr funding choice and exact execution proof', () => {
       paymentStatus: 'sending', paymentHash: null, bundleUuid: BUNDLE_UUID,
     })
     mocks.client.getTransaction.mockRejectedValueOnce(new Error('Destination RPC unavailable'))
-    await expect(runRelayrCalls(options)).rejects.toThrow(/Could not read destination transaction .* on chain 1/)
+    // Its request can still run, so it holds, saying until when (ruling R114); the proof's reason is the cause.
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ message: expect.stringMatching(HELD_RE),
+      cause: expect.objectContaining({ message: expect.stringMatching(/Could not read destination transaction .* on chain 1/) }) })
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'sending', paymentHash: null })
     expect(posts).toHaveLength(1)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
@@ -1435,10 +1444,9 @@ describe('Relayr funding choice and exact execution proof', () => {
     ['shared hash', /one destination transaction for two signed calls/],
     ['calldata', /does not prove the signed Relayr call/],
     ['receipt target', /Could not read destination transaction/],
-    // A reverted destination leaves the forwarder nonce unused, so its request can still run (amended ruling R114).
-    ['receipt status', /^This action's earlier signature can still run until .+\. Try again after that\.$/],
+    ['receipt status', /it reverted onchain/],
     ['canonical block', /no longer canonical/],
-  ])('keeps paid bundles pending when the %s proof is wrong', async (problem, message) => {
+  ])('keeps paid bundles pending, saying until when, when the %s proof is wrong', async (problem, message) => {
     const posts = installSuccessfulBundle()
     const twoChains = problem === 'shared hash'
     /** Relayr's status reports the posted calls' records as `edit` changes them. */
@@ -1472,9 +1480,11 @@ describe('Relayr funding choice and exact execution proof', () => {
     }
     const options = { calls: twoChains ? [...calls, { chainId: 10 as const, target: BOB, data: '0x5678' as Hex, value: 2n }] : calls,
       account: ALICE, pendingScope: `wrong-${problem}`, paymentChainId: 1 }
-    await expect(runRelayrCalls(options)).rejects.toThrow(message)
+    // Its requests can still run, so it says until when (ruling R114); the proof's reason is the cause.
+    const holds = { message: expect.stringMatching(HELD_RE), cause: expect.objectContaining({ message: expect.stringMatching(message) }) }
+    await expect(runRelayrCalls(options)).rejects.toMatchObject(holds)
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'confirmed', paymentHash: HASH })
-    await expect(runRelayrCalls(options)).rejects.toThrow(message)
+    await expect(runRelayrCalls(options)).rejects.toMatchObject(holds)
     expect(loadRelayrPendingSession(options.pendingScope)).not.toBeNull()
     expect(posts).toHaveLength(1)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(twoChains ? 2 : 1)
@@ -1570,11 +1580,11 @@ describe('paying a reverted Relayr payment again', () => {
   it.each<[string, Record<string, unknown>]>([
     ['Relayr reports a payment from elsewhere', { payment_received: true }],
     ['a call is running', { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Included' } }] }],
-  ])('proves the destinations instead of paying again when %s, and waits while they run', async (_, bundle) => {
+  ])('proves the destinations instead of paying again when %s, and waits while they run, saying until when', async (_, bundle) => {
     relayr(bundle)
     await revertedPayment()
-    await expect(runRelayrCalls(options)).rejects.toThrow(
-      'Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.')
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ message: expect.stringMatching(HELD_RE),
+      cause: expect.objectContaining({ message: 'Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.' }) })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'reverted' })
   })
@@ -1632,14 +1642,15 @@ describe('paying a reverted Relayr payment again', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
-  it('does not pay again once the quote expires, while its release is unproven', async () => {
+  it('does not pay again once the quote expires, while its release is unproven, and says until when its request can run', async () => {
     const start = Date.now()
     const deadline = Math.floor(start / 1_000) + 600
     relayr({}, [paymentFor({}, deadline)])
     await revertedPayment()
     vi.spyOn(Date, 'now').mockReturnValue((deadline - 15) * 1_000)
-    await expect(runRelayrCalls(options)).rejects.toThrow(
-      'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.')
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ message: expect.stringMatching(HELD_RE),
+      cause: expect.objectContaining({ message:
+        'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.' }) })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(mocks.requireReview).toHaveBeenCalledTimes(2)
   })
@@ -1698,6 +1709,10 @@ describe('paying a reverted Relayr payment again', () => {
     const START = 1_900_000_000_000
     const DEADLINE = START / 1_000 + 600
     const WAITING = 'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.'
+    /** Its old request, signed at START, can still run until here: the quote holds until then (ruling R114). */
+    const HELD = held(START / 1_000 + RELAYR_FORWARDER_DEADLINE_SECONDS)
+    const holds = (cause: string | RegExp = WAITING) => ({ message: HELD,
+      cause: expect.objectContaining({ message: typeof cause === 'string' ? cause : expect.stringMatching(cause) }) })
     let finalizedAt: number
     let finalizedHash: Hex
 
@@ -1747,7 +1762,7 @@ describe('paying a reverted Relayr payment again', () => {
       expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
     })
 
-    it('releases it from the account view, which frees the wallet\'s forwarder nonce', async () => {
+    it('releases it from the account view, and it keeps reserving the wallet\'s forwarder nonce while its old request can still run (ruling R117)', async () => {
       await expired()
       expect(readRelayrPendingSessionsForAuthorization()).toHaveLength(1)
       await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(
@@ -1755,12 +1770,14 @@ describe('paying a reverted Relayr payment again', () => {
       const saved = loadRelayrPendingSession(options.pendingScope)!
       expect(saved).toMatchObject({ paymentStatus: 'reverted', released: true, payments: [expect.objectContaining({ hash: HASH })] })
       expect(relayrQuoteReleased(saved)).toBe(true)
-      expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+      expect(readRelayrPendingSessionsForAuthorization()).toHaveLength(1)
+      await expect(runRelayrCalls({ calls: [{ chainId: 1, target: BOB, data: '0x5678' }], account: ALICE, pendingScope: 'next-action' }))
+        .rejects.toThrow('Another published action')
     })
 
     it('keeps the quote while another option on the paid chain is still open at its finalized block', async () => {
       const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ amount: '200' }, DEADLINE + 3_600)])
-      await expect(runRelayrCalls(options)).rejects.toThrow(WAITING)
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
       expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
       expect(posts).toHaveLength(1)
     })
@@ -1821,7 +1838,7 @@ describe('paying a reverted Relayr payment again', () => {
       const requestsExpired = START / 1_000 + RELAYR_FORWARDER_DEADLINE_SECONDS + 60
       vi.mocked(Date.now).mockReturnValue(requestsExpired * 1_000)
       finalizedAt = requestsExpired
-      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(EXPIRED_UNUSED)
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toMatchObject(EXPIRED_DISCARD)
       mocks.wallet.sendTransaction.mockResolvedValueOnce(SECOND_PAYMENT)
       await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
       expect(mocks.wallet.signTypedData.mock.calls.map(([request]) => request.message.nonce)).toEqual([4n, 4n])
@@ -1831,7 +1848,7 @@ describe('paying a reverted Relayr payment again', () => {
 
     it('keeps the quote while another of its options is still open at the finalized block of its chain', async () => {
       const { posts } = await expired({}, [paymentFor({}, DEADLINE), paymentFor({ chain: 10 }, DEADLINE + 3_600)])
-      await expect(runRelayrCalls(options)).rejects.toThrow(WAITING)
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
       expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
       expect(posts).toHaveLength(1)
       expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
@@ -1846,11 +1863,11 @@ describe('paying a reverted Relayr payment again', () => {
         'Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.'],
       ['Relayr reports a destination hash', () => {},
         { transactions: [{ tx_uuid: OTHER_UUID, status: { state: 'Pending', data: { hash: `0x${'77'.repeat(32)}` } } }] }, /do not pay again/],
-    ])('keeps the quote when %s', async (_, arrange, bundle, message) => {
+    ])('keeps the quote, saying until when its old request can run, when %s', async (_, arrange, bundle, message) => {
       const { posts } = await expired(bundle)
       arrange(posts)
-      await expect(runRelayrCalls(options)).rejects.toThrow(message)
-      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toThrow(message)
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds(message))
+      await expect(resumeRelayrSession({ scope: options.pendingScope, account: ALICE })).rejects.toMatchObject(holds(message))
       const saved = loadRelayrPendingSession(options.pendingScope)!
       expect(saved).toMatchObject({ paymentStatus: 'reverted' })
       expect(saved.released).toBeUndefined()
@@ -1917,12 +1934,16 @@ describe('unpaid Relayr quotes', () => {
     expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: BUNDLE_UUID })
   }
 
-  it('stop reserving the wallet\'s forwarder nonce at their payment deadline, and not before', async () => {
+  it('keep reserving the wallet\'s forwarder nonce past their payment deadline while a request they published can still run, and stop once every one is dead (ruling R117)', async () => {
     installSuccessfulBundle(quotes)
     await unpaidQuote()
     now.mockReturnValue(LAST_PAYABLE)
     await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
     now.mockReturnValue(EXPIRED)
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
     await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
@@ -1960,13 +1981,15 @@ describe('unpaid Relayr quotes', () => {
     expect(reads).not.toHaveBeenCalled()
   })
 
-  it('release a publication whose quote response was lost once every request it published expired', async () => {
+  it('release a publication whose quote response was lost once every request it published is dead at a finalized block (ruling R117)', async () => {
     installSuccessfulBundle()
     vi.mocked(fetch).mockImplementationOnce(async () => { throw new DOMException('quote response lost', 'TimeoutError') })
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'lost' })).rejects.toThrow(/did not return a quote/)
     expect(loadRelayrPendingSession('lost')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: 'publication-pending' })
     await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
     now.mockReturnValue(REQUESTS_EXPIRED)
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
     await expect(runRelayrCalls(next)).resolves.toMatchObject({ paymentHash: HASH })
   })
 
@@ -2010,13 +2033,13 @@ describe('unpaid Relayr quotes', () => {
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('stop reserving at once when none of their options can be authenticated', async () => {
+  it('keep reserving while a request they published can still run, even when none of their options can be authenticated (ruling R117)', async () => {
     installSuccessfulBundle([paymentFor({ chain: 11155111 })])
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'unfundable' })).rejects.toThrow(/network family/)
     const saved = loadRelayrPendingSession('unfundable')!
     expect(saved).toMatchObject({ paymentStatus: 'unpaid', paymentOptions: [] })
     expect(relayrQuoteReleased(saved)).toBe(true)
-    expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
+    await expect(runRelayrCalls(next)).rejects.toThrow('Another published action')
   })
 
   it('are not released once a payment was sent', async () => {
@@ -2307,8 +2330,9 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
     await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toThrow(reopen)
     now.mockReturnValue(REQUESTS_EXPIRED)
     finalizedAt(REQUESTS_EXPIRED / 1_000)
-    await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toThrow(EXPIRED_UNUSED)
-    expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    // The account view cannot run the action's recheck, so it offers Discard (ruling R114 (e)).
+    await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(EXPIRED_DISCARD)
+    expect(loadRelayrPendingSession('r114')).toMatchObject({ discardable: 'expired' })
     nonces = { 1: 5n, 10: 4n }
     await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toThrow(DISCARDABLE)
     expect(loadRelayrPendingSession('r114')).toMatchObject({ discardable: 'ran' })
@@ -2386,6 +2410,11 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       expect(posts).toHaveLength(2)
       expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
       expect(loadRelayrPendingSession('r114')).toBeNull()
+      // The new payment's review says why the first one can't be reused.
+      const payments = mocks.requireReview.mock.calls.filter(([review]) => review.title === 'Review Relayr payment')
+      expect(payments).toHaveLength(2)
+      expect(payments[0][0].description).not.toContain('earlier payment')
+      expect(payments[1][0].description).toContain('The earlier payment can\'t be reused: its bundle ran and reverted.')
     })
 
     it('offers Discard with the changed line once every request expired unused and the recheck fails', async () => {
@@ -2412,14 +2441,93 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       expect(loadRelayrPendingSession('r114')).toBeNull()
     })
 
-    it('sends a session whose requests expired unused back to its action from the account view', async () => {
+    it('offers Discard from the account view once every request expired unused, and its action still signs them again (ruling R114 (e))', async () => {
       await paidAndReverted()
       now.mockReturnValue(REQUESTS_EXPIRED)
       finalizedAt(REQUESTS_EXPIRED / 1_000)
-      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toThrow(EXPIRED_UNUSED)
-      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'confirmed' })
-      expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+      await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(EXPIRED_DISCARD)
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'confirmed', discardable: 'expired' })
+      expect(readRelayrPendingSessionsForAuthorization()).toEqual([])
       expect(signed()).toEqual([[1, 4n], [10, 4n]])
+      await expect(action()).resolves.toMatchObject({ paymentHash: HASH })
+      expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
     })
+
+    it('stops reserving once every request is dead, so another action on its chains signs without visiting the account view (ruling R117)', async () => {
+      await paidAndReverted()
+      const other = () => runRelayrCalls({ calls: calls.map(call => ({ ...call, data: '0x9999' as Hex })), account: ALICE, pendingScope: 'other', reverify })
+      await expect(other()).rejects.toThrow('Another published action')
+      now.mockReturnValue(REQUESTS_EXPIRED)
+      finalizedAt(REQUESTS_EXPIRED / 1_000)
+      await expect(other()).resolves.toMatchObject({ paymentHash: HASH })
+      expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
+      expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'confirmed' })
+    })
+  })
+
+  it('stops reserving a payment the wallet may have sent once every request is dead, and the account view offers Discard (ruling R117)', async () => {
+    installSuccessfulBundle(quotes)
+    // Relayr never received the payment: it reports the bundle unpaid with its calls pending.
+    const relayr = vi.mocked(fetch).getMockImplementation()!
+    let unpaid = true
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method !== 'POST' && unpaid
+      ? response({ bundle_uuid: BUNDLE_UUID, payment_received: false, transactions: [
+        { tx_uuid: DESTINATION_UUIDS[0], status: { state: 'Pending' } }, { tx_uuid: DESTINATION_UUIDS[1], status: { state: 'Pending' } }] })
+      : relayr(input, init))
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('WalletConnect request timed out'))
+    await expect(action()).rejects.toThrow('Your wallet may have sent the Relayr payment without returning its hash.')
+    expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'sending' })
+    const other = () => runRelayrCalls({ calls: calls.map(call => ({ ...call, data: '0x9999' as Hex })), account: ALICE, pendingScope: 'other', reverify })
+    await expect(other()).rejects.toThrow('Another published action')
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    // Relayr still reports it unpaid, so the account view's check waits out its poll.
+    let clock = REQUESTS_EXPIRED
+    now.mockImplementation(() => (clock += 20_000))
+    vi.stubGlobal('setTimeout', (run: () => void) => { run(); return 0 })
+    await expect(resumeRelayrSession({ scope: 'r114', account: ALICE })).rejects.toMatchObject(EXPIRED_DISCARD)
+    expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'sending', discardable: 'expired' })
+    unpaid = false
+    await expect(other()).resolves.toMatchObject({ paymentHash: HASH })
+  })
+
+  it('completes a session marked as possibly run when its action runs again and Relayr proves its calls ran', async () => {
+    installSuccessfulBundle(quotes)
+    const onComplete = vi.fn(async () => {}).mockRejectedValueOnce(new Error('Could not save the completed calls.'))
+    const paid = () => runRelayrCalls({ calls, account: ALICE, pendingScope: 'r114', reverify, onComplete })
+    await expect(paid()).rejects.toThrow('Could not save the completed calls.')
+    // The poll never saw the destination hashes, and Relayr cannot be read once both requests are dead.
+    saveRelayrPendingSession('r114', { ...loadRelayrPendingSession('r114')!, records: [] })
+    nonces = { 1: 5n, 10: 5n }
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    let clock = REQUESTS_EXPIRED
+    now.mockImplementation(() => (clock += 20_000))
+    vi.stubGlobal('setTimeout', (run: () => void) => { run(); return 0 })
+    const relayr = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' ? relayr(input, init) : Promise.reject(new TypeError('Failed to fetch')))
+    await expect(paid()).rejects.toMatchObject({ name: 'RelayrDiscardError', reason: 'ran' })
+    expect(loadRelayrPendingSession('r114')).toMatchObject({ discardable: 'ran' })
+    vi.mocked(fetch).mockImplementation(relayr)
+    await expect(paid()).resolves.toMatchObject({ paymentHash: HASH })
+    expect(onComplete).toHaveBeenCalledTimes(2)
+    expect(loadRelayrPendingSession('r114')).toBeNull()
+  })
+
+  it('says it could not check the project, and keeps the session, when the recheck cannot reach the chain', async () => {
+    installSuccessfulBundle(quotes)
+    unrunUntilPaid()
+    await unpaidQuote()
+    now.mockReturnValue(REQUESTS_EXPIRED)
+    finalizedAt(REQUESTS_EXPIRED / 1_000)
+    reverify.mockRejectedValueOnce(new ContractFunctionExecutionError(
+      new HttpRequestError({ url: 'https://rpc.example', status: 503, details: 'Service Unavailable' }),
+      { abi: [], functionName: 'splitsOf' }))
+    await expect(action()).rejects.toThrow(COULD_NOT_CHECK)
+    expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'unpaid' })
+    expect(loadRelayrPendingSession('r114')?.discardable).toBeUndefined()
+    expect(signed()).toEqual([[1, 4n], [10, 4n]])
+    // Once the chain answers, the recheck passes and the calls are signed again.
+    await expect(action()).resolves.toMatchObject({ paymentHash: HASH })
+    expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
   })
 })
