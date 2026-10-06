@@ -1212,9 +1212,9 @@ export function PayPanel({
         : tx;
   const sequenceSafePhase = sequenceSafeTx.phase;
   const sequenceSafeError = sequenceSafeTx.error;
-  // A Safe stage whose result can't be proven here says so in place of the stage's own line.
-  const sequenceSafeNotice =
-    sequenceSafeStage && sequenceSafeTx.confirmationUncertain ? sequenceSafeTx.notice : null;
+  // A Safe stage with the Safe says where it is in place of the stage's own line:
+  // awaiting its signers, executed with its receipt still missing, or unproven.
+  const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
   // A stage another flow dismissed shows nothing any more.
   const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
   // An unproven or lost stage ends with its line: Dismiss releases its call and frees the panel.
@@ -2404,7 +2404,7 @@ export function PayPanel({
       {sequenceSafeStage && !sequenceOpen ? (
         <div className="mt-3 flex items-start justify-between gap-3">
           <p className="text-sm text-smoke-700">
-            {sequenceSafeTx.notice ??
+            {sequenceSafeNotice ??
               (sequenceSafeLost ? SAFE_PROPOSAL_UNCONFIRMED : "Submitted. Confirming onchain…")}
           </p>
           {sequenceSafeReleasable ? (

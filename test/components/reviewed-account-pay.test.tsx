@@ -186,14 +186,18 @@ async function click(label: string) {
   await act(async () => button(label).click())
 }
 
-/** Review a payment as Alice: the sequence dialog opens on its frozen actions. */
-async function reviewPayment() {
+/**
+ * Review a payment of `amount` as Alice: the sequence dialog opens on its
+ * frozen actions. Proposals stay with the Safe for the page, so each Safe test
+ * pays its own amount.
+ */
+async function reviewPayment(amount = '1') {
   await act(async () =>
     root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
   )
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, amount)
     input.dispatchEvent(new Event('input', { bubbles: true }))
   })
   // The panel debounces the amount for 400 ms before it previews and quotes.
@@ -275,7 +279,7 @@ describe('a payment from a Safe', () => {
     for (const name of ['first', 'second']) {
       const input = panel(name).querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
       await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '3')
         input.dispatchEvent(new Event('input', { bubbles: true }))
       })
     }
@@ -297,10 +301,12 @@ describe('a payment from a Safe', () => {
     m.safe = true
     let lose!: (reason: Error) => void
     m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
-    await reviewPayment()
+    await reviewPayment('2')
     await click('Confirm & Pay')
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    // The dialog says what the panel will.
+    expect(dialogStatus()).toBe(AWAITING)
 
     await click('Done')
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
