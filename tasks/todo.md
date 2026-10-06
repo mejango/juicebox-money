@@ -182,3 +182,16 @@ Rebased verification: full suite passed 2,512 tests with two concurrency fixture
 Plan review: keep inventory ownership in pending-payments.ts; unchanged permissionless retry and saved actions remain available.
 
 Review: destination inventory includes incoming calls from sources 6 and 9, excludes source-only pages, rejects unrelated destination and malformed source rows, and preserves original commitment/calldata. New retry activity belongs to the destination; legacy saved attempts accept their original source activity metadata. Registry regenerated. Focused data/component tests, typecheck, changed-file lint and offline registry check pass. Browser fixture updated for unequal source/destination; browser suite not run.
+
+## 2026-10-06 — Relayr batch for pending routing payments
+- [x] Trace existing direct batches, gateway permissions, and raw Relayr recovery patterns.
+- [x] Add one Relayr bundle for independent pending-payment calls, including repeated destination chains.
+- [x] Keep exact payment/call binding, progress recovery, live rechecks, and legacy direct attempts.
+- [x] Update pending-payment review copy and add focused regression tests.
+- [x] Run focused tests, types, and changed-file lint; document results.
+
+Plan review: gateway retries are permissionless and retain original committed beneficiaries; raw requests avoid a forwarding wrapper near the transaction gas limit. Ordinary authority actions retain their existing chain sequencing. Coordinate transport implementation across both apps before changing recovery logic.
+
+Review: new independent pending payments quote as one raw Relayr bundle, including repeated destination chains, with one funding payment and per-call outcomes. Existing false-tagged saved attempts keep their original direct/Safe recovery. Shared raw funding lifecycle was extracted from payer deployments first (49 payer tests passed before/after), then reused. Exact gateway calldata, commitment/failure state, gas cap and bounded raw eth_call are checked before quote/funding; inventory and rechecks use two workers. Canonical receipt matching binds quote UUID plus virtual nonce and calldata, including reverted siblings. 178 focused tests, typecheck, changed-file ESLint, transaction inventory, source invariants, dead-code check and diff check pass. No wallet transaction, commit or push performed.
+
+Destination recovery follow-up: enumerate and authenticate old source-scoped journals by committed destination calldata, show unfinished destination participation, and resume the original scope/action unchanged. Fresh actions use route-destination-payments to avoid legacy alias collisions. Multiple legacy journals are offered one at a time; all-completed pending journals can finish without resending. Added corresponding regressions and lesson. Full suite passes 2,542 tests across 190 files. Full typecheck, changed-file ESLint, source invariants, transaction inventory and dead-code check pass. Full-suite source scan required naming the shared lifecycle callback saveState (persist is reserved for query tags); pre-existing queue recovery tests now install their required Web Locks fixture.

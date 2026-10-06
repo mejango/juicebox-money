@@ -16,3 +16,6 @@ and if it truly is blocked, say so up front and ask rather than shipping around 
 
 ## 2026-10-06 — Pending routing belongs to the receiving project
 Show payments awaiting routing on the destination project, not the source that initiated them. Scope queries, validation and new activity to destination projectId; preserve sourceProjectId in committed on-chain call data. Test unequal source/destination IDs.
+
+## 2026-10-06 — Destination changes include saved recovery discovery
+When moving an action between project pages, migrate discovery of durable recovery state too. Authenticate the destination from immutable call data, hide source-only saved batches, and retain original scope/action/transaction hashes for resume. Give fresh destination actions a separate namespace so legacy source aliases cannot capture them. Completed calls must not keep an unrelated page's recovery card visible.

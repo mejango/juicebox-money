@@ -27,6 +27,8 @@ vi.mock('@tanstack/react-query', () => ({
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, isConnected: mocks.connected, openSignIn: mocks.openSignIn }) }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: ComponentProps<typeof TxConfirmDialog>) => props.open ? createElement('review-dialog', props) : null }))
 vi.mock('@/lib/pending-payments', () => ({
+  PENDING_PAYMENT_ACTION: 'route-destination-payments',
+  loadPendingPaymentBatch: mocks.load,
   fetchPendingPayments: mocks.fetch, reviewPendingPayment: mocks.review, reverifyPendingPayment: mocks.reverify,
   reconcilePendingPayment: mocks.reconcile, pendingPaymentOutcome: mocks.outcome,
   pendingPaymentId: (payment: ReviewedPayment['payment']) => `${payment.chainId}:${payment.gateway}:${payment.pendingCallId}`,
@@ -39,7 +41,7 @@ vi.mock('@/lib/pending-payments', () => ({
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
-  loadProjectBatch: mocks.load, runProjectBatch: mocks.run,
+  runProjectBatch: mocks.run,
 }))
 
 import { PendingPayments } from '@/components/project/PendingPayments'
@@ -110,6 +112,8 @@ describe('pending payment review above activity', () => {
     expect(dialog().title).toBe('Review pending payments')
     expect(dialog().steps).toHaveLength(2)
     expect(dialog().stepsIntro).toContain('does not make them atomic')
+    expect(dialog().stepsIntro).toContain('one fee payment')
+    expect(dialog().stepsIntro).toContain('same chain')
     expect(dialog().rows?.filter(item => item.label === 'From project').map(item => item.value)).toEqual(['#6', '#6'])
     mocks.run.mockImplementation(async options => {
       expect(options.reverify).toBe(mocks.reverify)
@@ -122,6 +126,7 @@ describe('pending payment review above activity', () => {
     })
     await act(async () => dialog().onConfirm())
     expect(mocks.run).toHaveBeenCalledTimes(1)
+    expect(mocks.run.mock.calls[0][0]).toMatchObject({ action: 'route-destination-payments', scope: 'route-destination-payments:1:17' })
     expect(dialog().complete).toBe(true)
     expect(dialog().rows?.filter(item => item.label === 'Outcome').map(item => item.value)).toEqual([
       'Attempt confirmed; payment is still awaiting routing.', 'Attempt confirmed; payment is still awaiting routing.',
@@ -219,13 +224,14 @@ describe('pending payment review above activity', () => {
     const reviewed = row().review!
     const calls = [{ id: 'saved-call', chainId: 1, projectId: 17, authority: mocks.address, target: reviewed.payment.gateway,
       value: 0n, data: '0x1234', context: reviewed }] as ProjectBatchCall[]
-    const saved = { id: 'original-batch', calls, account: mocks.address, completedIds: [], status: 'pending' } as unknown as ProjectBatch
+    const saved = { id: 'original-batch', scope: 'route-pending-payments:1:6', action: 'route-pending-payments', calls, account: mocks.address, completedIds: [], status: 'pending' } as unknown as ProjectBatch
     mocks.load.mockReturnValue(saved)
     await render()
     await act(async () => button('Resume saved attempts').props.onClick())
     mocks.run.mockResolvedValue(saved)
     await act(async () => dialog().onConfirm())
-    expect(mocks.run.mock.calls[0][0]).toMatchObject({ expectedBatchId: 'original-batch', calls })
+    expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: 'route-pending-payments:1:6', action: 'route-pending-payments', expectedBatchId: 'original-batch', calls })
+    expect(mocks.load).toHaveBeenCalledWith(expect.arrayContaining([[1, 17], [10, 42]]))
     expect(dialog().complete).toBe(false)
     expect(dialog().status).toContain('original action is saved')
   })

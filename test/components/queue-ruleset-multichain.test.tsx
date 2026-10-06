@@ -83,6 +83,7 @@ function installReads() {
 }
 beforeEach(() => {
   storage.clear(); reads.clear(); currentReview = review(); mocks.wallet.address = ACCOUNT
+  vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
   vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
   mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })

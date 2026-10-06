@@ -9,11 +9,12 @@ import {
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
-  relayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
+  relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
   readRecord: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
+  rawPending: new Map<string, unknown>(),
 }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -40,8 +41,12 @@ vi.mock('@/lib/relayr', () => ({
   runRelayrCalls: mocks.relayr,
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
 }))
+vi.mock('@/lib/raw-relayr', () => ({
+  loadRawRelayrSession: (scope: string) => mocks.rawPending.get(scope) ?? null,
+  runRawRelayrCalls: mocks.rawRelayr,
+}))
 
-import { loadProjectBatch, projectBatchRounds, projectBatchScope, runProjectBatch,
+import { loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
   type ProjectBatchCall } from '@/lib/project-batch'
 
 /** A flow that never ends, for runs whose signal is not under test. */
@@ -72,15 +77,18 @@ const call = (chainId = 1, suffix = ''): ProjectBatchCall => ({
   id: `${chainId}:${suffix}`, projectId: 7, chainId: chainId as 1, authority: ACCOUNT,
   target: TARGET, data: '0x1234', value: 3n, context: { amount: 6n, recipient: TARGET },
 })
-const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ signal: flow, scope, action, account: ACCOUNT, calls, ...extra })
+const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ signal: flow, scope, action, account: ACCOUNT, calls, reverify: async () => {}, ...extra })
 
 beforeEach(() => {
   vi.resetAllMocks()
   mocks.pending.clear()
+  mocks.rawPending.clear()
   mocks.account = ACCOUNT
   mocks.safe = false
   const storage = new Map<string, string>()
   vi.stubGlobal('window', { localStorage: {
+    get length() { return storage.size },
+    key: (index: number) => [...storage.keys()][index] ?? null,
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
   } })
@@ -107,9 +115,89 @@ beforeEach(() => {
       ({ chain: item.chainId, status: { state: 'success', data: { hash: HASH } } })))
     mocks.pending.delete(options.pendingScope)
   })
+  mocks.rawRelayr.mockImplementation(async options => {
+    if (!mocks.rawPending.has(options.pendingScope)) await options.reverify()
+    mocks.rawPending.set(options.pendingScope, { paid: true })
+    await options.onComplete(options.calls.map(() => ({ status: 'success', logs: [] })))
+    mocks.rawPending.delete(options.pendingScope)
+  })
 })
 
 describe('durable project batches', () => {
+  it('requires live semantic validation for raw permissionless calls', async () => {
+    await expect(run([{ ...call(), relayr: 'permissionless' }], { reverify: undefined })).rejects.toThrow('require live validation')
+    expect(mocks.rawRelayr).not.toHaveBeenCalled()
+  })
+
+  it('discovers one immutable action journal through its original project aliases', async () => {
+    const calls = [call(1, 'a'), call(10, 'a')]
+    mocks.relayr.mockImplementation(async options => { mocks.pending.set(options.pendingScope, { paid: true }); throw new Error('original bundle pending') })
+    await expect(run(calls)).rejects.toThrow('original bundle pending')
+    const saved = loadProjectBatch(scope)!
+    expect(loadProjectBatches(action)).toEqual([saved])
+    expect(loadProjectBatches('unrelated-action')).toEqual([])
+    expect(loadProjectBatch(projectBatchScope(action, 10, 7))?.id).toBe(saved.id)
+  })
+
+  it('finishes a recovered journal whose calls were already marked complete', async () => {
+    const batch = await run([call()])
+    const key = `jb-project-batch:v1:journal:${batch.id}`
+    const saved = JSON.parse(window.localStorage.getItem(key)!)
+    window.localStorage.setItem(key, JSON.stringify({ ...saved, status: 'pending' }))
+    mocks.authority.mockClear()
+    const recovered = await run()
+    expect(recovered.status).toBe('complete')
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect(mocks.authority).not.toHaveBeenCalled()
+  })
+  it('quotes independent same-chain and cross-chain payments in one raw Relayr bundle', async () => {
+    const calls = [call(1, 'a'), call(1, 'b'), call(10, 'c')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    const verify = vi.fn()
+    const batch = await run(calls, { verifyCompletion: verify })
+    expect(projectBatchRounds(calls)).toEqual([calls.map(item => item.id)])
+    expect(batch.status).toBe('complete')
+    expect(mocks.rawRelayr).toHaveBeenCalledTimes(1)
+    expect(mocks.rawRelayr.mock.calls[0][0].calls).toEqual(calls)
+    expect(verify.mock.calls.map(([item]) => item.id)).toEqual(calls.map(item => item.id))
+    expect(mocks.relayr).not.toHaveBeenCalled()
+    expect(mocks.authority).not.toHaveBeenCalled()
+    expect(mocks.identity).not.toHaveBeenCalled()
+  })
+
+  it('resumes the original raw payment bundle after completion proof fails', async () => {
+    const calls = [call(1, 'a'), call(1, 'b')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    const reverify = vi.fn()
+    const verify = vi.fn().mockRejectedValueOnce(new Error('receipt unavailable'))
+    await expect(run(calls, { reverify, verifyCompletion: verify })).rejects.toThrow('receipt unavailable')
+    const saved = loadProjectBatch(scope)!
+    expect(saved).not.toBeNull()
+    expect(saved.completedIds).toEqual([])
+    const rawScope = mocks.rawRelayr.mock.calls[0][0].pendingScope
+    expect(mocks.rawPending.has(rawScope)).toBe(true)
+    reverify.mockRejectedValue(new Error('already attempted'))
+    const resumed = await run(undefined, { reverify, verifyCompletion: verify })
+    expect(resumed.status).toBe('complete')
+    expect(mocks.rawRelayr.mock.calls[1][0].pendingScope).toBe(rawScope)
+    expect(mocks.authority).not.toHaveBeenCalled()
+  })
+
+  it('removes resolved unsent payments before quoting the remaining raw entries', async () => {
+    const calls = [call(1, 'a'), call(1, 'b')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    const batch = await run(calls, { reconcileUnsubmitted: async (item: ProjectBatchCall) => item.id === calls[0].id })
+    expect(batch.status).toBe('complete')
+    expect(mocks.rawRelayr.mock.calls[0][0].calls).toEqual([calls[1]])
+  })
+
+  it('retains a raw bundle when one entry has no exact proven receipt', async () => {
+    const calls = [call(1, 'a'), call(1, 'b')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    mocks.rawRelayr.mockImplementation(async options => {
+      mocks.rawPending.set(options.pendingScope, { paid: true })
+      await options.onComplete([{ status: 'success', logs: [] }])
+    })
+    await expect(run(calls)).rejects.toThrow('exact receipt')
+    expect(loadProjectBatch(scope)?.completedIds).toEqual([])
+  })
+
   it('keeps every allocation and orders repeated chain calls in later rounds', async () => {
     const calls = [call(1, 'a'), call(1, 'b'), call(10, 'a'), call(10, 'b')]
     expect(projectBatchRounds(calls)).toEqual([['1:a', '10:a'], ['1:b', '10:b']])

@@ -26,13 +26,15 @@ import {
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
+import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type ProjectBatchCall = AuthorityCall & {
   id: string
   projectId: number
-  /** Calls near the per-transaction gas ceiling cannot fit a forwarding wrapper. */
-  relayr?: false
+  /** Permissionless calls are independent raw entries, with no forwarding wrapper. */
+  relayr?: false | 'permissionless'
   /** Immutable, serializable application preconditions and review details. */
   context?: unknown
 }
@@ -112,13 +114,14 @@ function readBatch(scope: string): ProjectBatch | null {
 }
 
 const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
+const savedRelayrRound = (scope: string) => loadRelayrPendingSession(scope) ?? loadRawRelayrSession(scope)
 
 /**
  * A round whose published Relayr session is gone before its calls completed
  * was discarded, and its calls may already have run.
  */
 function discardedRound(batch: ProjectBatch): boolean {
-  return (batch.relayrPublished ?? []).some(round => !loadRelayrPendingSession(relayrScopeOf(batch, round)) &&
+  return (batch.relayrPublished ?? []).some(round => !savedRelayrRound(relayrScopeOf(batch, round)) &&
     (batch.relayrCallIds?.[String(round)] ?? []).some(id => !batch.completedIds.includes(id)))
 }
 
@@ -135,6 +138,24 @@ export function loadProjectBatch(scope: string): ProjectBatch | null {
     persist(batch)
   }
   return batch?.status === 'pending' && !batch.abandoned ? batch : null
+}
+
+/** Discover durable action journals without rewriting their original recovery identities. */
+export function loadProjectBatches(action: string): ProjectBatch[] {
+  if (typeof window === 'undefined') return []
+  const storage = window.localStorage
+  const prefix = `${PREFIX}alias:${action}:`
+  const scopes: string[] = []
+  for (let index = 0; index < storage.length; index++) {
+    const key = storage.key(index)
+    if (key?.startsWith(prefix)) scopes.push(key.slice(`${PREFIX}alias:`.length))
+  }
+  const batches = new Map<string, ProjectBatch>()
+  for (const scope of scopes) {
+    const batch = loadProjectBatch(scope)
+    if (batch) batches.set(batch.id, batch)
+  }
+  return [...batches.values()]
 }
 
 function persist(batch: ProjectBatch, attach = false): void {
@@ -160,6 +181,9 @@ function identity(calls: ProjectBatchCall[]): string {
 
 /** A later call on the same chain waits for the earlier call's canonical receipt. */
 export function projectBatchRounds(calls: ProjectBatchCall[]): string[][] {
+  // These calls authenticate independent retained payments; none depends on
+  // another's nonce or execution. Relayr quotes all entries with one payment.
+  if (calls.length && calls.every(call => call.relayr === 'permissionless')) return [calls.map(call => call.id)]
   const next = new Map<number, number>()
   const rounds: string[][] = []
   for (const call of calls) {
@@ -304,6 +328,9 @@ export async function runProjectBatch({
   const previous = loadProjectBatch(scope)
   const proposedCalls = calls ?? previous?.calls
   if (!proposedCalls?.length) throw new Error('Choose at least one project action.')
+  if (proposedCalls.some(call => call.relayr === 'permissionless') && !reverify) {
+    throw new Error('Permissionless routing calls require live validation before Relayr submission.')
+  }
   if (new Set(proposedCalls.map(call => call.id)).size !== proposedCalls.length) {
     throw new Error('Each reviewed project call must have a unique identifier.')
   }
@@ -340,12 +367,14 @@ export async function runProjectBatch({
         relayrChainIds: [...new Set(frozen.map(call => call.chainId).filter(relayrSupportsChain))] }
       // Save the entire intent and every participant before any signature can escape.
       persist(batch, true)
-      for (const call of batch.calls) await reverify?.(call)
+      if (batch.calls.every(call => call.relayr === 'permissionless')) {
+        await mapConcurrentChecks(batch.calls, async call => { await reverify?.(call) })
+      } else for (const call of batch.calls) await reverify?.(call)
       // This one review covers each wallet send below. A call's gas cap is not
       // its sent gas limit, which is measured at send time, so it is not shown.
       const viaSafe = isSafeConnection(wagmiConfig)
       await requireTransactionReview({ title,
-        description: `Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
+        description: `Review each destination and its amounts. ${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Independent pending payments are submitted together through Relayr; each has its own routing outcome.' : 'Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A Safe app signs the sent gas as safeTxGas; each call is sent with 0.
         calls: batch.calls.map(({ gas: _gas, ...call }) => ({ ...call, from: call.authority, to: call.target,
@@ -358,6 +387,7 @@ export async function runProjectBatch({
       if (journal.completedIds.length === journal.calls.length) journal.status = 'complete'
       persist(journal)
     }
+    if (journal.completedIds.length === journal.calls.length) { complete([]); return journal }
     const report = (message: string, round: number) => onProgress?.({ message,
       completed: journal.completedIds.length, total: journal.calls.length, round: round + 1, rounds: journal.rounds.length })
     // A Safe submission whose result is final but not this call's success never
@@ -380,6 +410,43 @@ export async function runProjectBatch({
       if (!pending.length) continue
       checkAccount()
       const relayrScope = relayrScopeOf(journal, round)
+      const rawSaved = loadRawRelayrSession(relayrScope)
+      if (rawSaved || (!isSafeConnection(wagmiConfig) && pending.every(call => call.relayr === 'permissionless') &&
+        pending.every(call => relayrSupportsChain(call.chainId) && !journal.submissions[call.id]) &&
+        relayrPaymentChains(pending.map(call => call.chainId)).length)) {
+        const boundIds = journal.relayrCallIds?.[String(round)]
+        let rawCalls = boundIds ? pending.filter(call => boundIds.includes(call.id)) : pending
+        if (!rawSaved && !boundIds) {
+          for (const call of rawCalls) if (await reconcileUnsubmitted?.(call)) complete([call.id])
+          rawCalls = rawCalls.filter(call => !journal.completedIds.includes(call.id))
+        }
+        if (rawCalls.length) {
+          ;(journal.relayrCallIds ??= {})[String(round)] = rawCalls.map(call => call.id)
+          persist(journal)
+          const notePublished = () => {
+            if (!loadRawRelayrSession(relayrScope) || journal.relayrPublished?.includes(round)) return
+            ;(journal.relayrPublished ??= []).push(round)
+            persist(journal)
+          }
+          try {
+            await runRawRelayrCalls({ calls: rawCalls, account, pendingScope: relayrScope,
+              preferredPaymentChainId: startChainId,
+              reverify: async () => { checkAccount(); await mapConcurrentChecks(rawCalls, async call => { await reverify?.(call) }); checkAccount() },
+              onProgress: progress => { notePublished(); report(progress.message, round) },
+              onComplete: async receipts => {
+                if (receipts.length !== rawCalls.length) throw new Error('The original bundle has not identified an exact receipt for every pending payment.')
+                for (let index = 0; index < rawCalls.length; index++) {
+                  if (receipts[index].status === 'reverted' && !acceptRevertedTransactions) throw new Error('A relayed project action reverted.')
+                  await verifyCompletion?.(rawCalls[index], receipts[index])
+                }
+                complete(rawCalls.map(call => call.id))
+              },
+            })
+          } finally { notePublished() }
+        }
+        pending = pending.filter(call => !journal.completedIds.includes(call.id))
+        if (!pending.length) continue
+      }
       const boundRelayIds = journal.relayrCallIds?.[String(round)]
       let relayCalls = boundRelayIds ? pending.filter(call => boundRelayIds.includes(call.id)) : []
       const savedRelay = loadRelayrPendingSession(relayrScope)
@@ -387,7 +454,7 @@ export async function runProjectBatch({
       if (!boundRelayIds && !journal.relayrRounds.includes(round) && !savedRelay && !isSafeConnection(wagmiConfig)) {
         const relayrChainIds = journal.relayrChainIds ?? [1, 10, 8453, 42161]
         const eligibility = await Promise.all(pending.map(async call => {
-          if (call.relayr === false || !relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
+          if (call.relayr !== undefined || !relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
           const identity = await readAuthorityIdentity(clientFor(call.chainId), call.authority)
           return (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa') && await relayrTargetSupportsForwarder(call)
         }))
@@ -551,7 +618,7 @@ export async function runProjectBatch({
         // A cancelled review or failed preflight exposes no executable request.
         // Published signatures, unknown sends, and completed calls remain recoverable.
         const exposed = batch.completedIds.length > 0 || Object.keys(batch.submissions).length > 0 ||
-          batch.rounds.some((_round, index) => loadRelayrPendingSession(relayrScopeOf(batch!, index)))
+          batch.rounds.some((_round, index) => savedRelayrRound(relayrScopeOf(batch!, index)))
         if (!exposed) { batch.abandoned = true; persist(batch) }
       }
       throw error

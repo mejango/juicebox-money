@@ -3,14 +3,15 @@ import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, keccak256, 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  bendystraw: vi.fn(), clientFor: vi.fn(), symbol: vi.fn(),
-  client: { getBlock: vi.fn(), readContract: vi.fn() },
+  bendystraw: vi.fn(), clientFor: vi.fn(), symbol: vi.fn(), batches: vi.fn(),
+  client: { getBlock: vi.fn(), readContract: vi.fn(), request: vi.fn() },
 }))
 vi.mock('@/lib/bendystraw', () => ({ bendystraw: mocks.bendystraw }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor }))
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: mocks.symbol }))
+vi.mock('@/lib/project-batch', () => ({ loadProjectBatches: mocks.batches }))
 
-import { fetchPendingPayments, paymentCommitment, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPayment } from '@/lib/pending-payments'
+import { fetchPendingPayments, loadPendingPaymentBatch, paymentCommitment, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPayment } from '@/lib/pending-payments'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -49,6 +50,8 @@ beforeEach(() => {
   live = { commitment: payment().callCommitment, failure: { errorHash: zeroHash, count: 0, lastFailureAt: 0, highestGasLimit: 0n }, timestamp: 100_000n, gasLimit: 30_000_000n }
   mocks.clientFor.mockReturnValue(mocks.client)
   mocks.symbol.mockResolvedValue('ETH')
+  mocks.batches.mockReturnValue([])
+  mocks.client.request.mockResolvedValue('0x')
   mocks.client.getBlock.mockImplementation(async () => ({ number: 123n, timestamp: live.timestamp, gasLimit: live.gasLimit }))
   mocks.client.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
     if (functionName === 'pendingCallCommitmentOf') return live.commitment
@@ -138,7 +141,7 @@ describe('live custody and permissionless retry review', () => {
     expect(mocks.client.readContract.mock.calls).toHaveLength(4)
     for (const [request] of mocks.client.readContract.mock.calls) expect(request).toMatchObject({ address: GATEWAY, blockNumber: 123n })
     const call = pendingPaymentCall(review, ACCOUNT)
-    expect(call).toMatchObject({ authority: ACCOUNT, target: GATEWAY, value: 0n, relayr: false, projectId: 1, id: pendingPaymentId(row) })
+    expect(call).toMatchObject({ authority: ACCOUNT, target: GATEWAY, value: 0n, relayr: 'permissionless', projectId: 1, id: pendingPaymentId(row) })
     const decoded = decodeFunctionData({ abi: routerGatewayAbi, data: call.data })
     expect(decoded).toEqual({ functionName: 'processPendingCall', args: [row.pendingCallId, tuple(row), row.memo, row.metadata] })
   })
@@ -194,8 +197,52 @@ describe('live custody and permissionless retry review', () => {
 
   it('resumes legacy source-scoped saved attempts while rejecting unrelated project metadata', async () => {
     const call = pendingPaymentCall((await reviewPendingPayment(payment()))!, ACCOUNT)
-    await expect(reverifyPendingPayment({ ...call, projectId: 17 })).resolves.toBeUndefined()
+    await expect(reverifyPendingPayment({ ...call, projectId: 17, relayr: false })).resolves.toBeUndefined()
     await expect(reverifyPendingPayment({ ...call, projectId: 999 })).rejects.toThrow('changed since review')
+  })
+
+  it('discovers legacy source-scoped recovery only on the exact committed destination', async () => {
+    const reviewed = (await reviewPendingPayment(payment()))!
+    const original = { id: 'original-batch', scope: 'route-pending-payments:1:17',
+      calls: [{ ...pendingPaymentCall(reviewed, ACCOUNT), projectId: 17, relayr: false }],
+      submissions: { original: { kind: 'direct', hash: ERROR } }, completedIds: [] }
+    mocks.batches.mockReturnValue([original])
+    expect(loadPendingPaymentBatch([[1, 17]])).toBeNull()
+    expect(loadPendingPaymentBatch([[1, 1]])).toBe(original)
+    expect(original.scope).toBe('route-pending-payments:1:17')
+    expect(original.submissions.original.hash).toBe(ERROR)
+    mocks.batches.mockReturnValue([{ ...original, completedIds: [original.calls[0].id] }])
+    expect(loadPendingPaymentBatch([[1, 1]])?.scope).toBe(original.scope)
+    mocks.batches.mockReturnValue([{ ...original, calls: [{ ...original.calls[0], data: '0x1234' }] }])
+    expect(() => loadPendingPaymentBatch([[1, 1]])).toThrow('differs from its committed destination')
+  })
+
+  it('offers multiple legacy source journals for one destination in deterministic sequence', async () => {
+    const reviewed = (await reviewPendingPayment(payment()))!
+    const call = pendingPaymentCall(reviewed, ACCOUNT)
+    const first = { id: 'first', scope: 'route-pending-payments:1:17', calls: [call], completedIds: [] }
+    const second = { ...first, id: 'second', scope: 'route-pending-payments:1:9' }
+    mocks.batches.mockReturnValue([second, first])
+    expect(loadPendingPaymentBatch([[1, 1]])).toBe(first)
+    mocks.batches.mockReturnValue([second])
+    expect(loadPendingPaymentBatch([[1, 1]])).toBe(second)
+  })
+
+  it('rejects modified raw calldata, value and gas before paying Relayr', async () => {
+    const call = pendingPaymentCall((await reviewPendingPayment(payment()))!, ACCOUNT)
+    for (const changes of [{ data: '0x12345678' as Hex }, { value: 1n }, { gas: 100_000n }, { relayr: undefined }]) {
+      await expect(reverifyPendingPayment({ ...call, ...changes })).rejects.toThrow('changed since review')
+    }
+  })
+
+  it('simulates exact raw gateway calls without caller authority and propagates simulation failures', async () => {
+    const call = pendingPaymentCall((await reviewPendingPayment(payment()))!, ACCOUNT)
+    await reverifyPendingPayment(call)
+    expect(mocks.client.request).toHaveBeenCalledWith({ method: 'eth_call', params: [{
+      from: '0x0000000000000000000000000000000000000000', to: GATEWAY, data: call.data, value: '0x0', gas: '0x1000000',
+    }, 'latest'] })
+    mocks.client.request.mockRejectedValueOnce(new Error('gateway simulation reverted'))
+    await expect(reverifyPendingPayment(call)).rejects.toThrow('gateway simulation reverted')
   })
 
   it('rejects a resolved payment or a modified reviewed destination before submission', async () => {

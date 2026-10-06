@@ -10,10 +10,10 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
-import { fetchPendingPayments, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
-import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { mapConcurrentChecks } from '@/lib/concurrent-checks'
+import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
+import { projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
-const ACTION = 'route-pending-payments'
 const subscribeHydration = () => () => {}
 const clientHydrated = () => true
 const serverHydrated = () => false
@@ -29,7 +29,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
   const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated)
-  const scope = projectBatchScope(ACTION, chainId, projectId)
+  const scope = projectBatchScope(PENDING_PAYMENT_ACTION, chainId, projectId)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [complete, setComplete] = useState(false)
@@ -42,9 +42,9 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [status, setStatus] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, string>>({})
   useEffect(() => {
-    try { setSaved(loadProjectBatch(scope)) }
+    try { setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not read saved payment actions.') }
-  }, [scope])
+  }, [chainId, projectId, chains])
 
   const pending = useQuery({
     queryKey: ['pendingPayments', 'destination', chainId, projectId, chains],
@@ -56,11 +56,11 @@ export function PendingPayments({ chainId, projectId, chains }: {
         if (deployments.has(chain) && deployments.get(chain) !== project) throw new Error('Conflicting project deployments. Reload the project.')
         deployments.set(chain, project)
       }
-      const payments = (await Promise.all([...deployments].map(([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal })))).flat()
-      const reviewed = await Promise.all(payments.map(async payment => {
+      const payments = (await mapConcurrentChecks([...deployments], ([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal }))).flat()
+      const reviewed = await mapConcurrentChecks(payments, async payment => {
         try { return { payment, review: await reviewPendingPayment(payment), error: null } }
         catch (failure) { return { payment, review: null, error: failure instanceof Error ? failure.message : 'Could not verify this payment.' } }
-      }))
+      })
       return reviewed.filter(item => item.review || item.error)
     },
   })
@@ -71,7 +71,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const begin = (payments: ReviewedPayment[]) => {
     if (!isConnected || !address) { openSignIn(); return }
     try {
-      const journal = loadProjectBatch(scope)
+      const journal = loadPendingPaymentBatch([[chainId, projectId], ...chains])
       setSaved(journal)
       setCalls(journal?.calls ?? payments.map(payment => pendingPaymentCall(payment, address)))
       setAccount(journal?.account ?? address)
@@ -84,7 +84,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     if (!account || !isAddressEqual(account, address)) { setError('Reconnect the wallet that reviewed these payments.'); return }
     setBusy(true); setError(null); discard.capture(null)
     try {
-      const result = await runProjectBatch({ scope, action: ACTION, account: address, calls, expectedBatchId: saved?.id,
+      const result = await runProjectBatch({ scope: saved?.scope ?? scope, action: saved?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: saved?.id,
         title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
@@ -104,15 +104,15 @@ export function PendingPayments({ chainId, projectId, chains }: {
           const outcome = pendingPaymentOutcome(call, receipt)
           setOutcomes(previous => ({ ...previous, [call.id]: outcome === 'routed' ? 'Payment routed.' : outcome === 'returned' ? 'Payment returned to its source project.' : 'Attempt confirmed; payment is still awaiting routing.' }))
         },
-        onProgress: progress => { setStatus(progress.message); setSaved(loadProjectBatch(scope)) },
+        onProgress: progress => { setStatus(progress.message); setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) },
       })
-      setSaved(result.status === 'pending' ? result : null)
+      setSaved(result.status === 'pending' ? result : loadPendingPaymentBatch([[chainId, projectId], ...chains]))
       setComplete(result.status === 'complete')
       setStatus(result.status === 'complete' ? 'The reviewed batch is finished. Each payment’s outcome is shown below.' : 'The original action is saved. Resume it to check its execution before trying again.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the reviewed payments.')
       discard.capture(failure)
-      setSaved(loadProjectBatch(scope))
+      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
     } finally {
       setBusy(false)
       await queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
@@ -146,7 +146,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
         {saved ? 'Resume saved attempts' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
       </button>
     </div>
-    <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them; only network fees come from your wallet.</p>
+    <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments through Relayr and pay the quoted fees once.</p>
     {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments.</p> : null}
     <ul className="mt-3 divide-y divide-smoke-200">
       {rows.map(item => <li key={pendingPaymentId(item.payment)} className="flex flex-wrap items-center justify-between gap-3 py-3">
@@ -163,7 +163,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     {error && !open ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
     <TxConfirmDialog open={open} title={complete ? 'Payment batch finished' : 'Review pending payments'} rows={reviewedRows}
       steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
-      stepsIntro="Each payment is a separate transaction or Safe proposal. The batch saves progress across chains; it does not make them atomic."
+      stepsIntro="Relayr bundles available payments into one fee payment, including payments on the same chain. Each routing attempt has its own outcome; the batch does not make them atomic. Safe wallets and unsupported networks use separate transactions."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
       action={saved ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={!calls?.length || discard.active}
       onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>

@@ -1,8 +1,9 @@
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
-import { decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, isAddress, isAddressEqual, keccak256, parseAbi, parseAbiParameters, zeroHash, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
+import { decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, isAddress, isAddressEqual, keccak256, parseAbi, parseAbiParameters, zeroAddress, zeroHash, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from '@/lib/bendystraw'
 import { clientFor } from '@/lib/authority'
-import type { ProjectBatchCall } from '@/lib/project-batch'
+import { loadProjectBatches, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import { rolloutChain, rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -18,6 +19,7 @@ export type ReviewedPayment = {
   failure: { errorHash: Hex; count: number; lastFailureAt: number; highestGasLimit: bigint }
   readyAt: bigint; ready: boolean; gas: bigint; decimals: number | null; symbol: string
 }
+export const PENDING_PAYMENT_ACTION = 'route-destination-payments'
 
 const PENDING_PAYMENTS_QUERY = `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
   routerPendingCalls(
@@ -132,10 +134,32 @@ export function pendingPaymentCall(review: ReviewedPayment, account: Address): P
   const { payment, functionName } = review
   const args = [payment.pendingCallId, callTuple(payment), payment.memo, payment.metadata] as const
   return { id: pendingPaymentId(payment), chainId: payment.chainId, projectId: payment.projectId,
-    authority: account, target: payment.gateway, value: 0n, gas: review.gas, relayr: false,
+    authority: account, target: payment.gateway, value: 0n, gas: review.gas, relayr: 'permissionless',
     abi: routerGatewayAbi, functionName, args, contractName: 'JBRouterTerminalGateway',
     data: encodeFunctionData({ abi: routerGatewayAbi, functionName, args }),
     label: functionName === 'finalizePendingCall' ? 'Route or return pending payment' : 'Retry pending payment', context: review }
+}
+
+/** Legacy journals keep source-scoped aliases, but belong on their committed destinations. */
+export function loadPendingPaymentBatch(destinations: readonly (readonly [number, number])[]): ProjectBatch | null {
+  const candidates = new Map([...loadProjectBatches('route-pending-payments'), ...loadProjectBatches(PENDING_PAYMENT_ACTION)]
+    .map(batch => [batch.id, batch]))
+  const batches = [...candidates.values()].filter(batch => batch.calls.some(call => {
+    const hasUnfinished = batch.calls.some(item => !batch.completedIds.includes(item.id))
+    if (hasUnfinished && batch.completedIds.includes(call.id)) return false
+    const review = call.context as ReviewedPayment | undefined
+    if (!review?.payment || !destinations.some(([chainId, projectId]) => call.chainId === chainId && review.payment.projectId === projectId)) return false
+    const { payment } = review
+    validatePayment(payment, call.chainId, payment.projectId)
+    const expected = pendingPaymentCall(review, call.authority)
+    if (expected.data !== call.data || !isAddressEqual(expected.target, call.target) || expected.id !== call.id || call.value !== 0n) {
+      throw new Error('The saved pending payment differs from its committed destination. Keep its original recovery data.')
+    }
+    return true
+  }))
+  // Several old source journals can converge on one destination. Keep every
+  // one reachable, finishing one original journal before offering the next.
+  return batches.sort((a, b) => a.scope.localeCompare(b.scope) || a.id.localeCompare(b.id))[0] ?? null
 }
 
 export async function reverifyPendingPayment(call: ProjectBatchCall): Promise<void> {
@@ -146,9 +170,17 @@ export async function reverifyPendingPayment(call: ProjectBatchCall): Promise<vo
   if (expected.data !== call.data || expected.target.toLowerCase() !== call.target.toLowerCase() || expected.chainId !== call.chainId ||
     // Saved attempts from before destination-scoped inventories used source project activity metadata.
     (expected.projectId !== call.projectId && reviewed.payment.sourceProjectId !== call.projectId) || expected.id !== call.id || call.value !== 0n ||
+    call.gas !== reviewed.gas || call.gas > fresh.gas || (call.relayr !== 'permissionless' && call.relayr !== false) ||
     fresh.failure.errorHash !== reviewed.failure.errorHash || fresh.failure.count !== reviewed.failure.count ||
     fresh.failure.lastFailureAt !== reviewed.failure.lastFailureAt || fresh.failure.highestGasLimit !== reviewed.failure.highestGasLimit) {
     throw new Error('The pending payment changed since review. Refresh before retrying.')
+  }
+  if (call.relayr === 'permissionless') {
+    // These exact gateway methods are caller-independent. Simulate the raw
+    // request with no sender authority, without following CCIP callbacks.
+    await simulateStateChangingTransaction(clientFor(call.chainId), {
+      from: zeroAddress, to: call.target, data: call.data, value: 0n, gas: call.gas,
+    })
   }
 }
 

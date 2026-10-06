@@ -851,3 +851,20 @@ describe('paying a reverted payer quote again', () => {
     expect(mocks.pay.mock.calls[1][0].sent).toEqual([expect.objectContaining({ hash: PAYMENT_HASH })])
   })
 })
+
+it('shared raw lifecycle rechecks the owner before publishing and again before funding', async () => {
+  const { runRawRelayrLifecycle } = await import('@/lib/raw-relayr-lifecycle')
+  review = makeReview()
+  const reverify = vi.fn().mockResolvedValue(undefined)
+  mocks.post.mockImplementation(async (entries: RelayrEntry[]) => {
+    expect(reverify).toHaveBeenCalledTimes(1)
+    return quoteFor(entries)
+  })
+  mocks.paymentSent.mockImplementation(() => { expect(reverify).toHaveBeenCalledTimes(2) })
+  await runRawRelayrLifecycle({ session: review,
+    entries: review.calls.map(call => ({ chain: call.chainId, target: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: '0' })),
+    saveState: vi.fn(), assertAccount: vi.fn(), reverify,
+  })
+  expect(reverify).toHaveBeenCalledTimes(2)
+  expect(mocks.paymentSent).toHaveBeenCalledOnce()
+})
