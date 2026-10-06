@@ -97,12 +97,27 @@ enables the full artifact comparison; it does not trust the fixture alone.
   the gate requires one record per send, exact request/calldata coverage, and a
   dedicated test reference beyond the shared wrapper test. Every test file an
   action lists must carry the action's marker in the title of an `it` or `test`
-  (`.each` included) that proves the action: `wallet-action:` plus the action's
-  name in lowercase with hyphens (`wallet-action:approve-an-erc-20`). A
-  `describe` or `suite` title does not count, and nothing under `.skip`,
-  `.todo`, `.skipIf`, `.runIf`, `.fails` or a bracketed modifier
-  (`describe['skip']`) counts, so a broad test file cannot make a new operation
-  look covered.
+  that runs and proves the action: `wallet-action:` plus the action's name in
+  lowercase with hyphens (`wallet-action:approve-an-erc-20`). A marker counts
+  only on a test written directly in a `describe` body or at the top of the file
+  (not inside an `if`, a loop or a function, and not after a `return`), with an
+  inline callback, options that carry no `skip`, `todo` or `fails` and no spread,
+  computed key or variable before the callback (a constant after it is a
+  timeout), a context that the test and the hooks of its suite only read as
+  `ctx.name` and never as `skip` (the `arguments` of a `function` callback are
+  the context too), no `beforeEach`, `afterEach` or `aroundEach` in its suite or
+  the suites around it that is not written inline or as `vi.<name>`, no call
+  statement there but a test, suite, hook, `vi`, `vitest` or `expect` call (a
+  helper may register a hook that skips), and, for `.each` and `.for`, a table
+  written as an array literal with a row; a `describe` or `suite` title does not
+  count, and nothing under `.skip`, `.todo`, `.skipIf`, `.runIf`, `.fails`,
+  `.extend` or a bracketed modifier (`describe['skip']`) counts, so a broad test
+  file cannot make a new operation look covered. A hook hung off the test API
+  (`test.beforeEach`) is refused like any hook the check cannot read. The check
+  does not read a helper call inside a declaration or expression
+  (`const gate = installGate()`, `ok && installGate()`) or an alias of an
+  extended test (`const test = base.extend({...})`), since refusing every
+  suite-level call, `new` included, would drop 52 of the 92 marked titles today.
 - Every review call that carries an ABI must decode with the SDK's
   `functionFromCall` (its `args` encode to exactly its calldata), or the review
   shows it as raw bytes. `test/review-calls-setup.ts` checks each test's mock

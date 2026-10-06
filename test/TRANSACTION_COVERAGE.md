@@ -12,12 +12,10 @@ Legend:
 - **—** — no dedicated regression test yet
 
 Each test file named for an action that a wallet write maps to carries the
-action's marker in the `it` or `test` title (`.each` included) of a test that
-proves it, for example `wallet-action:approve-an-erc-20` for "Approve an
-ERC-20". A `describe` or `suite` title, and any test under `.skip`, `.todo`,
-`.skipIf`, `.runIf`, `.fails` or a bracketed modifier (`describe['skip']`),
-does not count. `npm run transaction:check` fails on a
-missing marker.
+action's marker in the title of a test that proves it, for example
+`wallet-action:approve-an-erc-20` for "Approve an ERC-20". The
+`transaction:check` entry in [TESTING.md](../TESTING.md) says which tests count,
+and the check fails on a missing marker.
 
 | User action | Contract function or authorization | Coverage | Test |
 | --- | --- | :---: | --- |

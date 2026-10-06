@@ -109,7 +109,7 @@ describe('buyback 1.4.0 + gateway preset', () => {
     expect(rolloutTargets(11155111)).toEqual({ hook: NEW_HOOK, terminal: NEW_TERMINAL })
   })
 
-  it.each(MAINNETS)('wallet-action:submit-a-safe-operator-batch builds a migration to the executed targets on mainnet chain %i after checking code and registry permissions', async chainId => {
+  it.each([1, 10, 8453, 42161] as const)('wallet-action:submit-a-safe-operator-batch builds a migration to the executed targets on mainnet chain %i after checking code and registry permissions', async chainId => {
     const targets = rolloutTargets(chainId)!
     expect(targets).not.toBeNull()
     const client = chain({
