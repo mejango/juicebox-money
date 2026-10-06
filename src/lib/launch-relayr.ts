@@ -254,6 +254,14 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const verdict = relayrRequestsVerdict(await relayrRequestStates(relayrChainClient, outstanding.map(signedLaunchRequest)))
       return relayrSessionOutcome(verdict, { nonces: outstanding.map(item => item.nonce) })
     }
+    /** Every request a journal published: the signatures it holds and those it replaced. */
+    const publishedRequests = (target: LaunchRelayrJournal) => [...target.signed, ...(target.superseded ?? [])]
+    /** Marks the journal for cancelling and ends the run: every request it published is dead, and it is not signed again. */
+    const abandon: (target: LaunchRelayrJournal, line: string, cause?: unknown) => never = (target, line, cause) => {
+      target.abandonable = true
+      persist()
+      throw new Error(line, cause === undefined ? undefined : { cause })
+    }
     const originalPaymentExpired = async (): Promise<boolean> => {
       const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
       return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
@@ -293,23 +301,19 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
      */
     let heldUntil: number | null = null
     if (journal?.published && !fundedElsewhere && ['signing', 'quoting', 'quoted', 'payment-reverted'].includes(journal.phase)) {
-      const outcome = await outstandingOutcome([...journal.signed, ...(journal.superseded ?? [])])
+      const outcome = await outstandingOutcome(publishedRequests(journal))
       if (outcome?.kind === 'hold') {
         // A dead request may have run while another can, so nothing is signed again until every one is dead.
         throw new Error(relayrHeldMessage(outcome.until))
       } else if (outcome?.kind === 'refresh') {
         heldUntil = outcome.until
       } else if (outcome?.kind === 'discard' && outcome.reason === 'ran') {
-        journal.abandonable = true
-        persist()
-        throw new Error(LAUNCH_MAY_HAVE_RUN)
+        abandon(journal, LAUNCH_MAY_HAVE_RUN)
       } else if (outcome?.kind === 'reorg-hold') {
         // A reorg left a finalized nonce below a saved one: it holds until the nonce catches up (ruling R114).
         throw new Error(relayrHeldMessage(0))
       } else if (outcome?.kind === 'discard' && !journal.abandonable) {
-        journal.abandonable = true
-        persist()
-        throw new Error('All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
+        abandon(journal, 'All outstanding launch authorizations expired unused. You can change the setup or retry this launch; any earlier relay payments are not refunded automatically.')
       }
       // Relayr's answer matters only while a request can still run (ruling R114), which holds until when.
       if (outcome && outcome.kind !== 'refresh') unreleased = null
@@ -423,12 +427,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           error: unproven instanceof Error ? unproven.message : 'Waiting for the original Relayr destination transaction.' })
       }
       if (allDone) return true
-      if (ran && !held) {
-        // Every outstanding request is dead and one may have run: only cancelling ends the launch.
-        original.abandonable = true
-        persist()
-        throw new Error(LAUNCH_MAY_HAVE_RUN)
-      }
+      // Every outstanding request is dead and one may have run: only cancelling ends the launch.
+      if (ran && !held) abandon(original, LAUNCH_MAY_HAVE_RUN)
       if (allRemainingRetryable) {
         current.relayr = {
           account, phase: 'signing', signed: [], records: [],
@@ -473,7 +473,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       if (journal.phase === 'payment-signing') {
         current.relayr = journal
         current.paymentChainId = journal.paymentChainId
-        const outcome = await outstandingOutcome([...journal.signed, ...(journal.superseded ?? [])])
+        const outcome = await outstandingOutcome(publishedRequests(journal))
         if (outcome?.kind === 'discard' && outcome.reason === 'expired' && await originalPaymentExpired()) journal.abandonable = true
         persist()
         throw new Error(journal.abandonable
