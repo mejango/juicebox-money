@@ -33,6 +33,7 @@ import {
   formatUnits,
   parseEther,
   parseUnits,
+  zeroAddress,
   type Address,
   type PublicClient,
 } from "viem";
@@ -55,7 +56,7 @@ import {
   formatDuration,
   toLocalDateTimeInput,
 } from "@/lib/format";
-import { fetchSafeInfo } from "@/lib/safe";
+import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
@@ -356,12 +357,12 @@ export function QueueRulesetFlow({
 
   // The owner may be a Safe: any of its signers can queue THROUGH the Safe
   // (runAuthorityCalls proposes the exact call there, like EditSplitsFlow).
-  const { data: ownerSafe } = useQuery({
-    queryKey: ["queueRulesetOwnerSafe", chainId, owner, address],
+  const ownerAccount = useQuery({
+    ...safeAccountQueryOptions(chainId, (owner as Address | undefined) ?? zeroAddress),
     enabled: !isRevnet && !!owner && !!address && !isOwner,
-    staleTime: 30_000,
-    queryFn: () => fetchSafeInfo(chainId, owner as Address),
+    select: account => account.safe,
   });
+  const ownerSafe = ownerAccount.isError ? null : ownerAccount.data;
   const isOwnerSafeSigner =
     !!address &&
     !!ownerSafe?.owners.some(

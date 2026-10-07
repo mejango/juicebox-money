@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import type { Address } from 'viem'
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   resumeRelayrSession: vi.fn(),
   discardRelayrSession: vi.fn(),
   safeService: vi.fn(),
-  fetchSafeInfo: vi.fn(),
+  readAuthorityIdentity: vi.fn(),
 }))
 
 vi.mock('next/link', () => ({
@@ -59,8 +60,15 @@ vi.mock('@/lib/relayr', async importOriginal => ({
   discardRelayrSession: mocks.discardRelayrSession,
 }))
 vi.mock('@/lib/safe', () => ({
-  fetchSafeInfo: mocks.fetchSafeInfo,
   SAFE_SERVICE: { fetch: mocks.safeService },
+}))
+vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
+}))
+vi.mock('@/lib/wallet-core', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/wallet-core')>()),
+  publicClient: (chainId: number) => ({ chain: { id: chainId } }),
 }))
 vi.mock('@/providers/Providers', () => ({
   wagmiConfig: {},
@@ -191,7 +199,7 @@ beforeEach(() => {
   mocks.fetchRelayrBundlesByAccount.mockResolvedValue([])
   mocks.safeService.mockImplementation(async () => new Response(JSON.stringify({ safes: [] })))
   mocks.getProjectsOwnedBy.mockResolvedValue([])
-  mocks.fetchSafeInfo.mockResolvedValue(null)
+  mocks.readAuthorityIdentity.mockResolvedValue(null)
 })
 
 describe('AccountActivity', () => {
@@ -681,20 +689,24 @@ describe('AccountSafeProjects', () => {
     mocks.getProjectsOwnedBy.mockResolvedValue([
       project({ projectId: 7, name: 'Safe project' }),
       project({ projectId: 8, name: 'Already owned' }),
+      project({ projectId: 9, name: 'Another Safe project' }),
+      project({ projectId: 7, name: 'Duplicate Safe project' }),
     ])
-    mocks.fetchSafeInfo.mockResolvedValue({
+    mocks.readAuthorityIdentity.mockResolvedValue({
+      kind: 'safe',
       threshold: 2,
       owners: [ALICE, BOB, SAFE],
     })
 
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        createElement(AccountSafeProjects, {
+        createElement(QueryClientProvider, { client }, createElement(AccountSafeProjects, {
           address: ALICE,
           ownedKeys: ['1:8'],
           ownedCount: 1,
-        }),
+        })),
       )
     })
 
@@ -702,28 +714,37 @@ describe('AccountSafeProjects', () => {
     expect(text).toContain('Safe project')
     expect(text).toContain('via Safe')
     expect(text).toContain('(2/3)')
+    expect(text).toContain('Another Safe project')
     expect(text).not.toContain('Already owned')
+    expect(text).not.toContain('Duplicate Safe project')
+    // Distinct projects with the same chain/account share one identity request.
+    expect(mocks.readAuthorityIdentity).toHaveBeenCalledExactlyOnceWith({ chain: { id: 1 } }, SAFE)
     // Only the chain with a hosted Safe service is queried.
     expect(mocks.safeService).toHaveBeenCalledExactlyOnceWith(
       `https://api.safe.global/tx-service/eth/api/v1/owners/${ALICE}/safes/`,
       expect.anything(),
     )
+    await act(async () => renderer.unmount())
+    client.clear()
   })
 
   it('reports an empty account only after the Safe check settles', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
-        createElement(AccountSafeProjects, {
+        createElement(QueryClientProvider, { client }, createElement(AccountSafeProjects, {
           address: ALICE,
           ownedKeys: [],
           ownedCount: 0,
-        }),
+        })),
       )
     })
     expect(renderedText(renderer.root)).toContain(
       'does not own any projects yet',
     )
+    await act(async () => renderer.unmount())
+    client.clear()
   })
 
   it('drops projects whose owner is not one of the Safes', () => {

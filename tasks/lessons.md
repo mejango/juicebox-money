@@ -37,3 +37,9 @@ Mocked journal storage cannot verify serialization or reload identity. Cover quo
 
 ## 2026-10-06 — An unused Safe quote must not block the current transaction set
 A lost quote response is not a submitted wallet payment. Use the shared Safe lifecycle's funding-evidence decision to let users review and quote the currently ready set again, including changed chain selections. Preserve real or ambiguous funding and verify the complete user journey through an explicit payment, rather than stopping at recovery diagnostics.
+
+## 2026-10-07 — Independent account and queue reads should progress independently
+Do not hide every chain behind the slowest account classification or mount a queue only after its parent repeats the same expensive Safe checks. Share display queries, show each verified result as it arrives, and leave live authority and execution checks at the transaction boundary. An RPC failure means unknown with retry, never a guessed EOA or contract type.
+
+## 2026-10-07 — Progress labels must follow the operation and its evidence
+Use shared lifecycle phases to distinguish quote requests, wallet confirmation, payment confirmation and destination execution. Render each canonically verified chain immediately while other chains remain pending, and keep its transaction link visible. Verify delayed responses and receipt arrival through the actual controller and storage; a funding receipt must never stand in for a Safe execution receipt.

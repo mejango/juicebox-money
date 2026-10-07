@@ -259,6 +259,20 @@ Review: the normal Execute action now handles an unused quote, including a lost 
 
 Published-package verification: SDK 2.24.2 is installed from the registry and all 745 distribution files match the verified preview. Repeated the full checks after the locked dependency installation: all 2,639 tests, full types and lint, source invariants, transaction inventory and whitespace checks pass. No further app source changes were needed.
 
+## 2026-10-07 — Load account and Safe queue information independently
+- [x] Render verified authority addresses per chain without waiting for every account classification.
+- [x] Share display-only account identity queries and start Safe queue reads while those checks are pending.
+- [x] Keep unknown account types retryable and transaction authority checks fresh.
+- [x] Verify partial-chain loading, retries, write controls, handle tuples and existing authority flows.
+
+Plan review: the Account card, Safe queue, badges, batch tray, editors and Safe-owned project list consume the same read-only identity query. Each chain progresses independently; no completed account check grants transaction authority. The query loads SDK and wallet modules lazily to keep the header lightweight. Failed identity reads remain unknown, and transaction boundaries continue to recheck current authority, Safe policy and nonce before writing.
+
+Account review: strict live authority reads and shared canonical account classification progress per chain. Verified addresses and candidate queue groups render while other classifications are pending; full resolved authority tuples remain available to handle checks. Unknown classifications expose Retry and withhold transfer/deployment controls. Nineteen loading, Safe deployment, permission and Relayr-discard tests pass, including delayed authorities and identities, null/error retry, and stale indexed candidates excluded from queue discovery. Typecheck and changed-file lint pass. Queue integration and final app checks are tracked by the coordinating task.
+
+Shared display review: all component Safe identity reads now use this query owner, including the badge, batch tray, editors and Safe-owned projects. Transaction identity reads remain fresh and internal to the transaction module. All 67 account/tray/loading/deployment/queue-service tests and 69 editor/ruleset tests pass, including one identity read shared by an Account card and badge, and by two projects owned by the same Safe. Changed-source lint, dead-code, source and transaction-inventory gates pass. The full run exposed one test-only concurrent-import mock issue; module spies fixed it while preserving the queue assertions. Final combined SDK integration verification remains with the coordinating task.
+
+Safe progress review: rendered caller tests use the real SDK controller and journal through a delayed quote response, wallet rejection, confirmed funding, independently arriving execution receipts and background completion. The quote request has its own phase; a pending wallet request removes the Pay action, and definite rejection restores the same unpaid quote. Exact destination receipts and Safe success events produce independent Executed/Confirming links, then refresh both queues after completion, with one quote and one payment. Explicit failed destination records remain Failed. All 70 focused modal/adapter tests and the full 2,652-test suite across 193 files pass against the frozen SDK preview; full types, full lint and whitespace checks pass. Published-package and production verification remain with the coordinating task.
+
 ## Browser verification repair for Safe quote release (2026-10-07)
 
 ## Plan refinement
@@ -290,3 +304,12 @@ Evidence: `/tmp/safe-quote-replacement-builds.Cs0JWc/published-juicebox-*`, `bas
 CI run 37562644216 for commit 15d83b70 passed its production build, but aggregate JavaScript measured 2521.7 KiB against the 2520 KiB cap. Every route, largest chunk, stylesheet and lazy-loading check passed. The local published build measured 2519.6 KiB; the controlled local baseline/current comparison was 2,580,158/2,580,108 B (-50 B). The precise source of the cross-environment output difference has not been established.
 
 The release owner approved only the minimum aggregate ceiling of 2522 KiB. Home/create/project ceilings remain 438/506/570 KiB, largest chunk 450 KiB, CSS 20 KiB and all lazy-loading assertions remain unchanged. The amended gate on the retained published build, script lint, source checks and diff checks all pass; no runtime changes or repeated full build/browser runs were needed. The parent owns committing, pushing and observing the next CI run, including the browser gate skipped after this budget failure. CI evidence: `/tmp/jbm-ci-37562644216-failed.log`.
+
+
+### Safe progress and Account loading preview verification (2026-10-07)
+
+The isolated physical dependency clone builds successfully with Node 26.7.0/npm 12.0.1 and CI flags; all 57 production browser tests plus strict fixture audit pass. All 115,570 dependency files/links and source inputs stayed unchanged. This remains preview evidence until official SDK 2.24.3 and the final installed graph are reconciled.
+
+A controlled 75841bd baseline with the identical physical dependency graph and integrity-verified official SDK 2.24.2 measured 2,582,256 gzip bytes; current Account/queue display reads and per-chain Safe progress measure 2,587,564 bytes (+5,308). The release owner approved only the minimum aggregate ceiling of 2527 KiB. Route ceilings 438/506/570 KiB, largest chunk 450 KiB, CSS 20 KiB and every lazy-loading assertion remain unchanged. The amended budget gate passes against the retained preview output, along with script lint, source guards and diff checks. Evidence: `/tmp/safe-progress-final-verification.y3xQVa/juicebox-budget-comparison.json`, `juicebox-preview-*`, `juicebox-baseline-*`. No additional build/browser run was needed for this budget/comment-only adjustment.
+
+Published SDK 2.24.3 is now reconciled: all 745 SDK dist files, the full physical runtime dependency graph and application source match the tested preview. Every difference was inspected: SDK version/lock metadata, Vitest timing/order cache, the approved budget checker and task notes. The retained build, all budget checks and 57 browser passes therefore qualify for the official package; local evidence is ready. No repeated build/browser run was needed. The parent owns remote Linux CI confirmation. Full manifests and qualification: `/tmp/safe-progress-final-verification.y3xQVa/juicebox-published-comparison-summary.json` and `juicebox-published-*.json`.

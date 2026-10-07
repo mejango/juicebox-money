@@ -52,7 +52,7 @@ import {
 } from '@/lib/format'
 import { lpSplitHookGeneration } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
-import { fetchSafeInfo } from '@/lib/safe'
+import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import type { RawSplit } from '@/lib/splits-types'
 import { draftSplitRecipient } from '@/lib/split-recipient'
 import {
@@ -558,12 +558,12 @@ export function EditSplitsFlow({
     | Address
     | null
     | undefined
-  const { data: authoritySafe } = useQuery({
-    queryKey: ['editSplitsAuthoritySafe', chainId, projectAuthority],
+  const authorityAccount = useQuery({
+    ...safeAccountQueryOptions(chainId, projectAuthority ?? zeroAddress),
     enabled: mounted && !!projectAuthority,
-    staleTime: 30_000,
-    queryFn: () => fetchSafeInfo(chainId, projectAuthority!),
+    select: account => account.safe,
   })
+  const authoritySafe = authorityAccount.isError ? null : authorityAccount.data
   const isDirectAuthority =
     !!address &&
     !!projectAuthority &&

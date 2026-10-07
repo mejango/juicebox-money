@@ -402,26 +402,6 @@ export function SplitsCardSkeleton({ isRevnet = false }: { isRevnet?: boolean })
   )
 }
 
-export function AccountGroupsSkeleton() {
-  return (
-    <div className="mt-4 space-y-4" role="status" aria-label="Loading project control">
-      <span className="sr-only">Loading project control</span>
-      {Array.from({ length: 2 }, (_, index) => (
-        <div key={index} className="rounded-xl border border-smoke-200 p-4" aria-hidden="true">
-          <div className="flex flex-wrap items-center gap-2">
-            <Skeleton className="h-5 w-20 rounded-full" />
-            <Skeleton className="h-5 w-24 rounded-full" />
-          </div>
-          <div className="mt-3 flex items-center justify-between gap-4">
-            <Skeleton className="h-4 w-36 rounded" />
-            <Skeleton className="h-9 w-24 rounded-lg" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export function ActionRowsSkeleton({
   rows = 3,
   label = 'Loading actions',

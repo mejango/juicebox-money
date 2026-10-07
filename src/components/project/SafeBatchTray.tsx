@@ -3,13 +3,14 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import type { Address } from 'viem'
+import { zeroAddress, type Address } from 'viem'
 import { SafeBatchDialog } from '@/components/project/SafeBatchDialog'
 import { SafeBatchPresetDialog } from '@/components/project/SafeBatchPresetDialog'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
-import { fetchSafeInfo, readSafeQueue } from '@/lib/safe'
+import { readSafeQueue } from '@/lib/safe'
+import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
 import {
   hasSafeService,
@@ -39,13 +40,12 @@ function callsKey(calls: readonly BatchCall[]): string {
  */
 function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: BatchStep[]) {
   const key = steps.length ? callsKey(composeBatch(steps).calls) : null
-  // The Safe's owners and threshold change rarely; the queue is polled.
-  const info = useQuery({
-    queryKey: ['safeBatchPolicy', chainId, authority],
+  const account = useQuery({
+    ...safeAccountQueryOptions(chainId, authority ?? zeroAddress),
     enabled: !!authority && !!key && hasSafeService(chainId),
-    staleTime: 60_000,
-    queryFn: () => fetchSafeInfo(chainId, authority!),
-  }).data
+    select: account => account.safe,
+  })
+  const info = account.isError ? null : account.data
   const tx = useQuery({
     queryKey: ['safeBatchProposed', chainId, authority, key],
     enabled: !!info,

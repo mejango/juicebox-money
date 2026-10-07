@@ -14,7 +14,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   resolvePreset: vi.fn(),
   readSafeQueue: vi.fn(),
-  fetchSafeInfo: vi.fn(),
+  readAuthorityIdentity: vi.fn(),
   service: true,
 }))
 
@@ -32,7 +32,14 @@ vi.mock('@/lib/authority', () => ({
 vi.mock('@/lib/safe', async original => ({
   ...(await original<typeof import('@/lib/safe')>()),
   readSafeQueue: mocks.readSafeQueue,
-  fetchSafeInfo: mocks.fetchSafeInfo,
+}))
+vi.mock('@bananapus/nana-sdk-core/safe', async original => ({
+  ...(await original<typeof import('@bananapus/nana-sdk-core/safe')>()),
+  readAuthorityIdentity: mocks.readAuthorityIdentity,
+}))
+vi.mock('@/lib/wallet-core', async original => ({
+  ...(await original<typeof import('@/lib/wallet-core')>()),
+  publicClient: (chainId: number) => ({ chain: { id: chainId } }),
 }))
 vi.mock('@bananapus/nana-sdk-core/safe-service', async original => ({
   ...(await original<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
@@ -79,7 +86,7 @@ beforeEach(() => {
   })
   mocks.resolvePreset.mockResolvedValue({ status: 'nothing', message: 'Nothing to do.', steps: [] })
   mocks.readSafeQueue.mockResolvedValue({ nonce: 10, pending: [] })
-  mocks.fetchSafeInfo.mockResolvedValue({ owners: [mocks.wallet.address, HOOK], threshold: 2 })
+  mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', owners: [mocks.wallet.address, HOOK], threshold: 2 })
   mocks.service = true
 })
 
@@ -219,7 +226,7 @@ describe('Safe batch tray', () => {
     seed()
     render()
     await settle()
-    expect(mocks.fetchSafeInfo).not.toHaveBeenCalled()
+    expect(mocks.readAuthorityIdentity).not.toHaveBeenCalled()
     expect(mocks.readSafeQueue).not.toHaveBeenCalled()
     expect(button('Review and propose on Ethereum')).toBeTruthy()
   })

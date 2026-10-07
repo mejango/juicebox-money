@@ -1,6 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import type { Address } from 'viem'
 import {
@@ -10,7 +11,8 @@ import {
 } from '@/components/account/AccountProjectCard'
 import { getProjectsOwnedBy, type BsProject } from '@/lib/bendystraw'
 import { fetchSafesOwnedBy } from '@bananapus/nana-sdk-core/safe-service'
-import { fetchSafeInfo, SAFE_SERVICE } from '@/lib/safe'
+import { SAFE_SERVICE } from '@/lib/safe'
+import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
 export type SafeOwnedProject = { project: BsProject; viaSafe: SafeOwnership }
@@ -50,6 +52,7 @@ export function AccountSafeProjects({
   ownedCount: number
 }) {
   const [rows, setRows] = useState<SafeOwnedProject[] | null>(null)
+  const queryClient = useQueryClient()
 
   useEffect(() => {
     let stopped = false
@@ -72,10 +75,9 @@ export function AccountSafeProjects({
         const deduped = dedupeSafeProjects(projects, safes, ownedKeys)
         const withThresholds = await Promise.all(
           deduped.map(async ({ project, safe }) => {
-            const info = await fetchSafeInfo(
-              project.chainId as JBChainId,
-              safe as Address,
-            )
+            const info = await queryClient.fetchQuery(safeAccountQueryOptions(
+              project.chainId as JBChainId, safe as Address,
+            )).then(account => account.safe, () => null)
             return {
               project,
               viaSafe: {

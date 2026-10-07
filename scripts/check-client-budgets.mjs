@@ -165,7 +165,10 @@ const budgets = {
   // Linux CI run 37562644216 measures 2521.7 KiB, versus 2519.6 locally.
   // The controlled local baseline/current comparison is 2,580,158/2,580,108 B
   // (-50 B); round the observed CI total up to 2522 without changing other caps.
-  allScripts: 2522 * KIB,
+  // With the same physical dependency graph, 75841bd + official SDK 2.24.2
+  // measures 2,582,256 B; shared Account/queue reads and Safe progress measure
+  // 2,587,564 B (+5,308 B). Round up only the aggregate to 2527 KiB.
+  allScripts: 2527 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

@@ -171,7 +171,7 @@ function connectedWallet(chainId: JBChainId, expected?: Address) {
   })
 }
 
-export async function fetchSafeInfo(
+async function fetchSafeInfo(
   chainId: JBChainId,
   safe: Address,
 ): Promise<SafeInfo | null> {

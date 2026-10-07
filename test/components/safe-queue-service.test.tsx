@@ -18,6 +18,8 @@ const TARGET = '0x5555555555555555555555555555555555555555' as Address
 const mocks = vi.hoisted(() => ({
   fetch: vi.fn(),
   info: { owners: [] as Address[], threshold: 1 },
+  readIdentity: vi.fn(),
+  readAuthority: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
 }))
 
@@ -25,26 +27,19 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: OWNER }) }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/hooks/useEnsName', () => ({ useEnsName: () => ({ data: undefined }) }))
 vi.mock('@/lib/authority', () => ({
-  clientFor: () => ({ readContract: async () => SAFE }),
+  clientFor: (chainId: number) => ({ readContract: () => mocks.readAuthority(chainId) }),
 }))
-vi.mock('@/lib/safe', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/safe')>()),
-  fetchSafeInfo: async () => mocks.info,
-}))
-vi.mock('@/lib/wallet-core', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/wallet-core')>()),
-  publicClient: () => ({}),
-}))
+vi.mock('@/lib/wallet-core', { spy: true })
 vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
 }))
-vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
-  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
-  readBoundedSafeNonce: async () => 5n,
-}))
+vi.mock('@bananapus/nana-sdk-core/safe', { spy: true })
 
 import { SafeQueueCard, type SafeQueueChain } from '@/components/project/SafeQueueCard'
+import { safeAccountQueryOptions } from '@/lib/safe-account-query'
+import { publicClient } from '@/lib/wallet-core'
+import { readAuthorityIdentity, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import { jbProjectHandlesAbi, PROJECT_HANDLES_ADDRESS } from '@/lib/project-handles'
 
 function textOf(node: ReactTestInstance): string {
@@ -59,8 +54,9 @@ async function renderQueue(
   chains: SafeQueueChain[] = [
     { chainId, name, projectId: 42, isRevnet: false, handleTuples: [{ chainId, projectId: 42 }] },
   ],
+  waitForAll = true,
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
 ) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(
@@ -72,17 +68,20 @@ async function renderQueue(
           authorityLabel: 'Project owner',
         }),
       ),
-      // The card loads once its section has a node to observe.
-      { createNodeMock: () => ({}) },
     )
   })
-  await vi.waitFor(() => {
+  if (waitForAll) await vi.waitFor(() => {
     expect(textOf(renderer.root)).not.toContain('Loading multisig transactions')
   })
 }
 
 beforeEach(() => {
   mocks.info = { owners: [OWNER], threshold: 1 }
+  mocks.readIdentity.mockReset().mockImplementation(async () => ({ kind: 'safe', ...mocks.info }))
+  vi.mocked(readAuthorityIdentity).mockImplementation(mocks.readIdentity)
+  vi.mocked(readBoundedSafeNonce).mockResolvedValue(5n)
+  vi.mocked(publicClient).mockImplementation(chainId => ({ chain: { id: chainId } }) as unknown as ReturnType<typeof publicClient>)
+  mocks.readAuthority.mockReset().mockResolvedValue(SAFE)
   mocks.fetch.mockReset().mockRejectedValue(new Error('No Safe service in this test'))
   vi.stubGlobal('fetch', mocks.fetch)
 })
@@ -92,6 +91,71 @@ afterEach(async () => {
 })
 
 describe('Safe queue and the transaction service', () => {
+  it('loads offscreen and renders a verified chain while another identity is still pending', async () => {
+    const slow = Promise.withResolvers<{ kind: 'safe'; owners: Address[]; threshold: number }>()
+    mocks.readIdentity.mockImplementation((client: { chain: { id: number } }) =>
+      client.chain.id === 10 ? slow.promise : Promise.resolve({ kind: 'safe', ...mocks.info }),
+    )
+    const observe = vi.fn()
+    vi.stubGlobal('IntersectionObserver', class { observe = observe; disconnect() {} })
+    mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ results: [], next: null })))
+    await renderQueue(1, 'Ethereum', [
+      { chainId: 1, name: 'Ethereum', projectId: 42, isRevnet: false, handleTuples: [] },
+      { chainId: 10, name: 'Optimism', projectId: 42, isRevnet: false, handleTuples: [] },
+    ], false)
+
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('No pending transactions.'))
+    expect(textOf(renderer.root)).toContain('Loading multisig transactions')
+    expect(mocks.fetch.mock.calls.some(([url]) => String(url).includes('/oeth/'))).toBe(true)
+    expect(mocks.readIdentity).toHaveBeenCalledTimes(2)
+    expect(observe).not.toHaveBeenCalled()
+
+    await act(async () => slow.resolve({ kind: 'safe', ...mocks.info }))
+    await vi.waitFor(() => expect(textOf(renderer.root)).not.toContain('Loading multisig transactions'))
+  })
+
+  it('shares an in-flight Account proof while fetching proposals, withholding rows until that proof resolves', async () => {
+    const identity = Promise.withResolvers<{ kind: 'safe'; owners: Address[]; threshold: number }>()
+    mocks.readIdentity.mockReturnValue(identity.promise)
+    mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ results: [], next: null })))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const account = client.fetchQuery(safeAccountQueryOptions(1, SAFE))
+    await renderQueue(1, 'Ethereum', undefined, false, client)
+
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled())
+    expect(mocks.readIdentity).toHaveBeenCalledTimes(1)
+    expect(textOf(renderer.root)).toContain('Loading multisig transactions')
+    expect(textOf(renderer.root)).not.toContain('No pending transactions.')
+    await act(async () => identity.resolve({ kind: 'safe', ...mocks.info }))
+    await account
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('No pending transactions.'))
+  })
+
+  it('offers a chain retry after an unreadable identity and recovers without a reload', async () => {
+    mocks.readIdentity.mockResolvedValueOnce(null)
+    mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ results: [], next: null })))
+    await renderQueue(1, 'Ethereum')
+    expect(textOf(renderer.root)).toContain('Could not verify this account.')
+    expect(textOf(renderer.root)).not.toContain('No pending transactions.')
+    const retry = renderer.root.findAllByType('button').find(button => textOf(button) === 'Retry Ethereum')!
+    expect(retry).toBeDefined()
+    await act(async () => retry.props.onClick())
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('No pending transactions.'))
+    expect(mocks.readIdentity).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not publish a queue until the parallel live authority check succeeds', async () => {
+    const authority = Promise.withResolvers<Address>()
+    mocks.readAuthority.mockReturnValue(authority.promise)
+    mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ results: [], next: null })))
+    await renderQueue(1, 'Ethereum', undefined, false)
+    await vi.waitFor(() => expect(mocks.fetch).toHaveBeenCalled())
+    expect(textOf(renderer.root)).toContain('Loading multisig transactions')
+    await act(async () => authority.resolve(TARGET))
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('This Safe is no longer the project owner'))
+    expect(textOf(renderer.root)).not.toContain('No pending transactions.')
+  })
+
   it("shows one line on a chain without Safe's service, and asks it nothing", async () => {
     await renderQueue(11155420, 'Optimism Sepolia')
 

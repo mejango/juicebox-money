@@ -4,7 +4,7 @@ import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/s
 export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 
 import { createProjectSafeRelayr, legacySafeRelayrBindings, safeRelayrSession } from '@/lib/safe-relayr'
-import { canReplaceSafeRelayrQuote, SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
+import { canReplaceSafeRelayrQuote, SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession, type SafeRelayrPhase, type SafeRelayrProgress } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
@@ -14,7 +14,7 @@ import {
   revOwnerAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { getAccount } from "@wagmi/core";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,6 +39,7 @@ import {
 } from "@/lib/relayr";
 import {
   RELAYR_UUID_RE,
+  RelayrProofUnavailableError,
   relayrDestinationHash,
   relayrRecordChain,
   relayrStateIsFailed,
@@ -51,7 +52,6 @@ import {
 import {
   confirmSafeTx,
   executeSafeTx,
-  fetchSafeInfo,
   getSafeNextNonce,
   readSafeQueue,
   safeExecRelayrEntry,
@@ -76,6 +76,7 @@ import { wagmiConfig } from "@/providers/Providers";
 import { AddressLabel } from "@/components/ui/AddressLabel";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
+import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import {
   ENS_REGISTRY_ADDRESS,
   PROJECT_HANDLES_ADDRESS,
@@ -216,7 +217,10 @@ export async function verifyRelayrSafeBatchLanding(
 
 async function assertProjectSafePostconditions(execution: SafeRelayrExecution): Promise<void> {
   const nonce = await readBoundedSafeNonce(clientFor(execution.entry.chain as JBChainId), execution.safe);
-  if (nonce === null || nonce <= BigInt(execution.nonce)) {
+  if (nonce === null) {
+    throw new RelayrProofUnavailableError("Waiting for the Safe nonce to become available.");
+  }
+  if (nonce <= BigInt(execution.nonce)) {
     throw new Error("Could not prove the exact Safe execution consumed its nonce. Keep the paid bundle pending.");
   }
   await assertRelayrProjectHandlePostcondition(execution.entry.chain as JBChainId, execution.safe, execution.entry);
@@ -793,6 +797,17 @@ function initialPaymentIndex(payments: readonly RelayrPayment[]): number {
   return connected >= 0 ? connected : payments.length === 1 ? 0 : -1;
 }
 
+const PHASE_LABELS: Record<SafeRelayrPhase, string> = {
+  reviewing: 'Review the Safe executions…',
+  quoting: 'Requesting Relayr quote…',
+  'payment-review': 'Review the Relayr payment…',
+  'payment-submitting': 'Confirm the Relayr payment in your wallet…',
+  'payment-confirming': 'Confirming payment…',
+  executing: 'Waiting for the Safe executions to confirm…',
+  complete: 'All Safe executions confirmed.',
+};
+type ExecutionProgress = Pick<Extract<SafeRelayrProgress, { type: 'execution' }>, 'status' | 'hash' | 'message'>;
+
 export function SafeQueueCard({
   safe,
   chains,
@@ -814,6 +829,9 @@ export function SafeQueueCard({
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRows, setBatchRows] = useState<BatchDialogRow[]>([]);
   const [batchStatus, setBatchStatus] = useState<Record<number, string>>({});
+  const [executionProgress, setExecutionProgress] = useState<Record<number, ExecutionProgress>>({});
+  const [phase, setPhase] = useState<SafeRelayrPhase | null>(null);
+  const [watchingBundle, setWatchingBundle] = useState(false);
   const [batchDone, setBatchDone] = useState(false);
   const batchRun = useRef<AbortController | null>(null);
   const activeAccount = useRef(address);
@@ -827,6 +845,9 @@ export function SafeQueueCard({
     setBatchOpen(false);
     setBatchRows([]);
     setBatchStatus({});
+    setExecutionProgress({});
+    setPhase(null);
+    setWatchingBundle(false);
     setBatchDone(false);
     setNotice(null);
     setError(null);
@@ -834,23 +855,7 @@ export function SafeQueueCard({
     setRecoveryResult(null);
     return () => batchRun.current?.abort();
   }, [address, safe]);
-  // The queue loads once the card is on screen, then refreshes on focus and
-  // after actions rather than on a timer.
-  const sectionRef = useRef<HTMLElement>(null);
-  const [onScreen, setOnScreen] = useState(false);
-  useEffect(() => {
-    const node = sectionRef.current;
-    if (!node || onScreen) return;
-    if (typeof IntersectionObserver === "undefined") {
-      setOnScreen(true);
-      return;
-    }
-    const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) setOnScreen(true);
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [onScreen]);
+  const queryClient = useQueryClient();
   const pendingScope = useMemo(
     () => `safe-queue:${safe.toLowerCase()}`,
     [safe],
@@ -868,111 +873,110 @@ export function SafeQueueCard({
   }, [pendingSession, pendingScope]);
   const resumedScopeRef = useRef<string | null>(null);
 
-  const query = useQuery({
+  const queries = useQueries({ queries: chains.map(chain => ({
     queryKey: [
       "safeQueues",
-      safe,
-      chains
-        .map(
-          (chain) =>
-            `${chain.chainId}:${chain.projectId}:${chain.isRevnet ? "revnet" : "owner"}:${chain.handleOnly ? "handles" : "project"}:${chain.handleTuples.map(tuple => `${tuple.chainId}:${tuple.projectId}`).join("|")}`,
-        )
-        .join(","),
+      safe.toLowerCase(),
+      chain.chainId,
+      chain.projectId,
+      chain.isRevnet,
+      !!chain.handleOnly,
+      chain.handleOnly ? chain.handleTuples.map(tuple => `${tuple.chainId}:${tuple.projectId}`).sort().join("|") : "",
     ],
-    // Each refresh re-reads every chain's Safe identity (~15 RPC calls per
-    // chain) through one rate-limited JB Center host, so there is no timer:
-    // load when on screen, refresh on focus (never mid-action) and after
-    // actions. Actions re-verify live state themselves.
-    enabled: onScreen,
+    // Load with the operator tab, sharing Account's display proof. Each chain
+    // renders independently; signing and execution still verify fresh state.
     staleTime: 60_000,
     refetchOnWindowFocus: !busy,
-    queryFn: async (): Promise<ChainQueue[]> =>
-      Promise.all(
-        chains.map(async (chain) => {
-          try {
-            if (!chain.handleOnly) await assertSafeProjectAuthority(chain, safe);
-            const info = await fetchSafeInfo(chain.chainId, safe);
-            if (!info) {
-              return {
-                ...chain,
-                info: null,
-                currentNonce: null,
-                transactions: [],
-                blocked: {},
-                error: null,
-              };
-            }
-            if (!hasSafeService(chain.chainId)) {
-              return {
-                ...chain,
-                info,
-                currentNonce: await getSafeNextNonce(chain.chainId, safe),
-                transactions: [],
-                blocked: {},
-                error: null,
-              };
-            }
-            const { nonce: currentNonce, pending } = await readSafeQueue(
-              chain.chainId,
-              safe,
-            );
-            const visibleTransactions: SafeQueuedTransaction[] = [];
-            const blocked: Record<string, string> = {};
-            for (const transaction of pending) {
-              if (!chain.handleOnly) {
-                visibleTransactions.push(transaction);
-                continue;
-              }
-              try {
-                if (
-                  await assertQueuedProjectHandleContext(
-                    chain.chainId,
-                    safe,
-                    transaction,
-                    chain.handleTuples,
-                  )
-                ) {
-                  visibleTransactions.push(transaction);
-                }
-              } catch (handleError) {
-                // A claim whose Safe can't be proven the same on Ethereum is
-                // shown with that line, and is never actionable here.
-                if (handleError instanceof UnprovenSafeError && transaction.safeTxHash) {
-                  visibleTransactions.push(transaction);
-                  blocked[transaction.safeTxHash.toLowerCase()] = handleError.message;
-                }
-                // A stale or malformed handle proposal stays hidden and can
-                // only be managed in the Safe app.
-              }
-            }
-            return {
-              ...chain,
-              info,
-              currentNonce,
-              transactions: visibleTransactions,
-              blocked,
-              error: null,
-            };
-          } catch (queueError) {
-            return {
-              ...chain,
-              info: null,
-              currentNonce: null,
-              transactions: [],
-              blocked: {},
-              error:
-                queueError instanceof Error
-                  ? queueError.message
-                  : "Could not load the Safe queue.",
-            };
+    queryFn: async (): Promise<ChainQueue> => {
+      try {
+        // Read-only inventory can load alongside the proofs, but no row
+        // becomes actionable until all three reads have succeeded.
+        const [, { safe: info }, queue] = await Promise.all([
+          chain.handleOnly ? undefined : assertSafeProjectAuthority(chain, safe),
+          queryClient.fetchQuery(safeAccountQueryOptions(chain.chainId, safe)),
+          hasSafeService(chain.chainId)
+            ? readSafeQueue(chain.chainId, safe)
+            : getSafeNextNonce(chain.chainId, safe).then(nonce => ({ nonce, pending: [] })),
+        ]);
+        if (!info) {
+          return {
+            ...chain,
+            info: null,
+            currentNonce: null,
+            transactions: [],
+            blocked: {},
+            error: null,
+          };
+        }
+        if (!hasSafeService(chain.chainId)) {
+          return {
+            ...chain,
+            info,
+            currentNonce: queue.nonce,
+            transactions: [],
+            blocked: {},
+            error: null,
+          };
+        }
+        const { nonce: currentNonce, pending } = queue;
+        const visibleTransactions: SafeQueuedTransaction[] = [];
+        const blocked: Record<string, string> = {};
+        for (const transaction of pending) {
+          if (!chain.handleOnly) {
+            visibleTransactions.push(transaction);
+            continue;
           }
-        }),
-      ),
-  });
+          try {
+            if (
+              await assertQueuedProjectHandleContext(
+                chain.chainId,
+                safe,
+                transaction,
+                chain.handleTuples,
+              )
+            ) {
+              visibleTransactions.push(transaction);
+            }
+          } catch (handleError) {
+            // A claim whose Safe can't be proven the same on Ethereum is
+            // shown with that line, and is never actionable here.
+            if (handleError instanceof UnprovenSafeError && transaction.safeTxHash) {
+              visibleTransactions.push(transaction);
+              blocked[transaction.safeTxHash.toLowerCase()] = handleError.message;
+            }
+            // A stale or malformed handle proposal stays hidden and can
+            // only be managed in the Safe app.
+          }
+        }
+        return {
+          ...chain,
+          info,
+          currentNonce,
+          transactions: visibleTransactions,
+          blocked,
+          error: null,
+        };
+      } catch (queueError) {
+        return {
+          ...chain,
+          info: null,
+          currentNonce: null,
+          transactions: [],
+          blocked: {},
+          error:
+            queueError instanceof Error
+              ? queueError.message
+              : "Could not load the Safe queue.",
+        };
+      }
+    },
+  })) });
 
   const ready = useMemo<ReadyTx[]>(() => {
     const rows: ReadyTx[] = [];
-    for (const chain of query.data ?? []) {
+    for (const query of queries) {
+      const chain = query.data;
+      if (!chain) continue;
       const plan = executionPlan(
         chain.currentNonce,
         chain.transactions,
@@ -982,7 +986,7 @@ export function SafeQueueCard({
       for (const transaction of plan.batch) rows.push({ chain, tx: transaction });
     }
     return rows;
-  }, [query.data]);
+  }, [queries]);
   // Relayr runs one transaction per chain: each chain's current nonce.
   const relayrRows = useMemo(
     () =>
@@ -1001,12 +1005,38 @@ export function SafeQueueCard({
   const readyBatchCount = relayrBatch
     ? new Set(ready.map((row) => row.chain.chainId)).size
     : ready.length;
-  const refetchQueues = query.refetch;
+  const refetchQueues = async () => {
+    await Promise.all(chains.map(chain => queryClient.invalidateQueries({
+      queryKey: safeAccountQueryOptions(chain.chainId, safe).queryKey,
+      refetchType: 'none',
+    })));
+    await Promise.all(queries.map(query => query.refetch()));
+  };
 
   const makeController = (signal?: AbortSignal) => createProjectSafeRelayr({
     scope: pendingScope,
     onSaved: session => {
-      if (!signal?.aborted && activeAccount.current === address) setPendingSession(session);
+      if (!signal?.aborted && activeAccount.current === address) {
+        setPendingSession(session);
+        if (session?.safeLifecycle && !canReplaceSafeRelayrQuote(session.safeLifecycle)) {
+          setRecovery(session.safeLifecycle);
+        } else if (session?.safeLifecycle) {
+          // A definite wallet rejection can restore the same unpaid quote.
+          setRecovery(current => current?.id === session.safeLifecycle!.id ? null : current);
+        }
+      }
+    },
+    onProgress: progress => {
+      if (signal?.aborted || activeAccount.current !== address) return;
+      if (progress.type === 'phase') {
+        setPhase(progress.phase);
+        setNotice(PHASE_LABELS[progress.phase]);
+      } else {
+        setExecutionProgress(current => ({
+          ...current,
+          [progress.execution.entry.chain]: { status: progress.status, hash: progress.hash, message: progress.message },
+        }));
+      }
     },
     revalidate: async execution => {
       let context = execution.context as SafeReviewContext | undefined;
@@ -1054,6 +1084,7 @@ export function SafeQueueCard({
       setNotice(`Executed ${result.session.executions.length} Safe transactions.`);
       await refetchQueues();
     } else if (result.state === "ready") {
+      setPhase(null);
       setRecovery(null);
       setBatchReview({ session: result.session, payments: result.payments });
       setPaymentIndex(initialPaymentIndex(result.payments));
@@ -1073,13 +1104,19 @@ export function SafeQueueCard({
       }
     } else {
       setRecovery(result.session);
+      setBatchReview(null);
       if (result.session.executions.length) setBatchRows(result.session.executions.map(savedBatchDialogRow));
-      setNotice(result.recovery?.message ?? "The existing bundle is still pending. Check its status before submitting another payment.");
+      setNotice(current => result.recovery?.message ?? current ?? "Checking the existing bundle's execution status…");
     }
   };
 
-  const watchExistingBundle = (session: SafeRelayrSession, run: AbortController) => {
-    void makeController(run.signal).watch({
+  const watchExistingBundle = (
+    session: SafeRelayrSession,
+    run: AbortController,
+    controller: ReturnType<typeof createProjectSafeRelayr>,
+  ) => {
+    setWatchingBundle(true);
+    void controller.watch({
       account: session.account, sessionId: session.id, signal: run.signal,
       onUpdate: async result => {
         if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
@@ -1095,8 +1132,12 @@ export function SafeQueueCard({
       },
     }).catch((watchError: unknown) => {
       if (!run.signal.aborted && batchRun.current === run) {
+        setPhase(null);
+        setNotice(null);
         setError(watchError instanceof Error ? watchError.message : "Could not check the existing bundle.");
       }
+    }).finally(() => {
+      if (!run.signal.aborted && batchRun.current === run) setWatchingBundle(false);
     });
   };
 
@@ -1113,7 +1154,7 @@ export function SafeQueueCard({
       const session = safeRelayrSession(pendingScope);
       if (!session) throw new Error("The saved Safe bundle is no longer available on this device. Reopen the Safe queue to review its current status.");
       const controller = makeController(run.signal);
-      let result = await controller.check({ account: session.account, sessionId: session.id });
+      let result = await controller.check({ account: session.account, sessionId: session.id, signal: run.signal });
       if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
       if (result.state === "ready" && !run.signal.aborted) {
         setBatchRows(result.session.executions.map(savedBatchDialogRow));
@@ -1129,7 +1170,7 @@ export function SafeQueueCard({
       }
       if (!run.signal.aborted && activeAccount.current === address) {
         await applyResult(result);
-        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run);
+        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run, controller);
       }
     } catch (checkError) {
       if (!run.signal.aborted) setError(checkError instanceof Error ? checkError.message : "Could not check the existing bundle.");
@@ -1265,6 +1306,8 @@ export function SafeQueueCard({
 
       setBatchRows(relayrRows.map(batchDialogRow));
       setBatchStatus({});
+      setExecutionProgress({});
+      setPhase(null);
       setBatchDone(false);
       setBatchReview(null);
       setRecovery(null);
@@ -1284,6 +1327,8 @@ export function SafeQueueCard({
       if (!run.signal.aborted && activeAccount.current === address) await applyResult(result);
     } catch (batchError) {
       if (run.signal.aborted || batchRun.current !== run) return;
+      setPhase(null);
+      setNotice(null);
       if (batchError instanceof SafeRelayrRecoveryError) {
         setRecovery(batchError.session);
         if (batchError.session.executions.length) setBatchRows(batchError.session.executions.map(savedBatchDialogRow));
@@ -1314,7 +1359,8 @@ export function SafeQueueCard({
     setRecoveryResult(null);
     setNotice(null);
     try {
-      const result = await makeController(run.signal).fund({
+      const controller = makeController(run.signal);
+      const result = await controller.fund({
         account: address, sessionId: batchReview.session.id, paymentChainId: payment.chain, signal: run.signal,
         onStatus: (index, status) => {
           if (!run.signal.aborted) setBatchStatus(current => ({ ...current, [batchReview.session.executions[index].entry.chain]: CHECK_STATUS_LABELS[status] }));
@@ -1322,12 +1368,15 @@ export function SafeQueueCard({
       });
       if (!run.signal.aborted && activeAccount.current === address) {
         await applyResult(result);
-        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run);
+        if (result.state === "pending" && !result.recovery) watchExistingBundle(result.session, run, controller);
       }
     } catch (batchError) {
       if (run.signal.aborted) return;
+      setPhase(null);
+      setNotice(null);
       if (batchError instanceof SafeRelayrRecoveryError) {
         setRecovery(batchError.session);
+        setBatchReview(null);
         if (batchError.session.executions.length) setBatchRows(batchError.session.executions.map(savedBatchDialogRow));
         if (batchError.recovery) {
           await applyResult({ state: batchError.session.state === "released" ? "released" : "pending", session: batchError.session, payments: [], recovery: batchError.recovery });
@@ -1344,7 +1393,7 @@ export function SafeQueueCard({
           saved = null;
         }
         if (!saved || saved.id !== batchReview.session.id ||
-            saved.account.toLowerCase() !== address.toLowerCase() || saved.paymentStatus !== "unfunded") {
+            saved.account.toLowerCase() !== address.toLowerCase() || !canReplaceSafeRelayrQuote(saved)) {
           setRecovery(saved ?? batchReview.session);
           if (saved?.executions.length) setBatchRows(saved.executions.map(savedBatchDialogRow));
           setBatchReview(null);
@@ -1392,6 +1441,9 @@ export function SafeQueueCard({
     setBatchReview(null);
     setBatchRows([]);
     setBatchStatus({});
+    setExecutionProgress({});
+    setPhase(null);
+    setWatchingBundle(false);
     setBatchDone(false);
     setNotice(null);
     setError(null);
@@ -1416,6 +1468,11 @@ export function SafeQueueCard({
   };
 
   const rowStatus = ({ chainId, nonce }: BatchDialogRow): string => {
+    const progress = executionProgress[chainId];
+    if (progress) return progress.status === 'executed' ? 'Executed'
+      : progress.status === 'failed' ? 'Failed'
+      : progress.status === 'confirming' ? 'Confirming…' : 'Waiting for execution';
+    if (batchDone) return 'Executed';
     if (busy === "recover-bundle") return "Checking…";
     const nonceCheck = recoveryResult?.recovery?.checks?.find(check => check.chainId === chainId && check.nonce === nonce);
     if (nonceCheck) return nonceCheck.state === "consumed" ? "Nonce already used"
@@ -1423,8 +1480,8 @@ export function SafeQueueCard({
     if (recoveryResult?.recovery) return "Status unavailable";
     if (!pendingSession || batchDone || (pendingSession.safeLifecycle?.paymentStatus === "unfunded" && !recovery)) return batchStatus[chainId] ?? "Waiting";
     const state = paidRecord(chainId)?.status?.state;
-    if (relayrStateIsSuccess(state)) return "Landed | verifying";
     if (relayrStateIsFailed(state)) return "Failed";
+    if (relayrStateIsSuccess(state) || (paidRecord(chainId) && relayrDestinationHash(paidRecord(chainId)!))) return "Confirming…";
     return pendingSession.paymentStatus === "confirmed"
       ? "Executing…"
       : "Waiting for payment";
@@ -1446,8 +1503,8 @@ export function SafeQueueCard({
           </div>
         ) : recovery ? (
           <div className="flex justify-end">
-            <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null} className="btn-primary min-h-[42px] px-5 text-sm">
-              {busy ? "Checking…" : recoveryResult?.state === "ready" && !savedAccountNotice(recoveryResult.session) ? "Review saved quote" : RELAYR_UUID_RE.test(recovery.bundleUuid ?? "") ? "Check existing bundle" : "Check Safe nonces"}
+            <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null || watchingBundle} className="btn-primary min-h-[42px] px-5 text-sm">
+              {busy || watchingBundle ? phase ? PHASE_LABELS[phase] : "Checking…" : recoveryResult?.state === "ready" && !savedAccountNotice(recoveryResult.session) ? "Review saved quote" : RELAYR_UUID_RE.test(recovery.bundleUuid ?? "") ? "Check execution status" : "Check Safe nonces"}
             </button>
           </div>
         ) : error && !batchReview && !busy ? (
@@ -1474,7 +1531,7 @@ export function SafeQueueCard({
                 }`}
               >
                 <option value={-1} disabled>
-                  {batchReview ? "Choose a chain" : "Getting a quote…"}
+                  {batchReview ? "Choose a chain" : phase ? PHASE_LABELS[phase] : "Checking…"}
                 </option>
                 {batchReview?.payments.map((option, index) => (
                   <option key={`${option.chain}:${option.amount}:${index}`} value={index}>
@@ -1489,7 +1546,7 @@ export function SafeQueueCard({
               disabled={!!busy || !payment}
               className="btn-primary min-h-[42px] shrink-0 px-5 text-sm"
             >
-              {busy === "execute-all"
+              {busy && phase ? PHASE_LABELS[phase] : busy === "execute-all"
                 ? "Executing…"
                 : busy === "quote-all"
                   ? "Checking…"
@@ -1503,7 +1560,7 @@ export function SafeQueueCard({
         {batchRows.map((row) => {
           const status = rowStatus(row);
           const record = paidRecord(row.chainId);
-          const hash = record ? relayrDestinationHash(record) : null;
+          const hash = executionProgress[row.chainId]?.hash ?? (record ? relayrDestinationHash(record) : null);
           const failed = status === "Failed" || status === "Check failed" || status === "Changed";
           return (
             <li key={row.chainId} className="px-3 py-2.5 text-sm">
@@ -1581,7 +1638,7 @@ export function SafeQueueCard({
   const viaSafeApp = useSafeConnection(wagmiConfig);
 
   return (
-    <section ref={sectionRef} className="card p-5">
+    <section className="card p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <span className="field-label">Pending multisig transactions</span>
@@ -1622,11 +1679,15 @@ export function SafeQueueCard({
 
       {batchOpen ? executeAllDialog : null}
 
-      {query.isPending ? (
-        <SafeQueueSkeleton groups={chains.length} />
-      ) : (
         <div className="mt-4 space-y-5">
-          {(query.data ?? []).map((chain) => {
+          {queries.map((query, index) => {
+            const chain = query.data;
+            if (!chain) return (
+              <div key={chains[index].chainId} aria-label={`Loading ${chains[index].name} multisig transactions`}>
+                <p className="text-sm text-smoke-500">{chains[index].name}</p>
+                <SafeQueueSkeleton groups={1} />
+              </div>
+            );
             const isSigner =
               !!address &&
               !!chain.info?.owners.some(
@@ -1669,9 +1730,13 @@ export function SafeQueueCard({
                 </div>
 
                 {chain.error ? (
-                  <p className="px-4 py-4 text-sm text-red-700">
-                    {chain.error}
-                  </p>
+                  <div className="px-4 py-4 text-sm">
+                    <p className="text-red-700">{chain.error}</p>
+                    <button type="button" className="btn-secondary mt-3 px-3 py-2" disabled={query.isFetching || !!busy}
+                      onClick={() => void query.refetch()}>
+                      {query.isFetching ? "Retrying…" : `Retry ${chain.name}`}
+                    </button>
+                  </div>
                 ) : !chain.info ? (
                   <p className="px-4 py-4 text-sm text-smoke-500">
                     Safe is not deployed on {chain.name}.
@@ -1833,7 +1898,6 @@ export function SafeQueueCard({
             );
           })}
         </div>
-      )}
 
       {!batchOpen && notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
       {!batchOpen ? <TxError error={error} /> : null}

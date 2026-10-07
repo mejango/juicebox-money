@@ -7,6 +7,7 @@ import { isAddress } from "viem";
 import type { JBChainId } from "@bananapus/nana-sdk-core";
 import type { Address } from "viem";
 import { SAFE_PREFIX } from "@/lib/safe-connector";
+import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 
 /** A chain-specific Safe badge. The address link remains a separate action. */
 export function SafeBadge({ address, chainId }: { address: string; chainId: number }) {
@@ -30,15 +31,11 @@ export function SafeBadge({ address, chainId }: { address: string; chainId: numb
     };
   }, [position, id]);
   const query = useQuery({
-    queryKey: ["safe-badge", chainId, address.toLowerCase()],
+    ...safeAccountQueryOptions(chainId as JBChainId, address as Address),
     enabled: Boolean(prefix) && isAddress(address),
-    staleTime: 15_000,
-    queryFn: async () => {
-      const { fetchSafeInfo } = await import("@/lib/safe");
-      return fetchSafeInfo(chainId as JBChainId, address as Address);
-    },
+    select: (account) => account.safe,
   });
-  const info = query.data;
+  const info = query.isError ? null : query.data;
   if (!prefix || !info) return null;
 
   const show = () => {
@@ -50,7 +47,7 @@ export function SafeBadge({ address, chainId }: { address: string; chainId: numb
       left: Math.max(8, Math.min(box.left, window.innerWidth - width - 8)),
       top: Math.min(box.bottom + 6, window.innerHeight - 120),
     });
-    if (Date.now() - query.dataUpdatedAt > 15_000) void query.refetch();
+    if (query.isStale) void query.refetch();
   };
 
   return (

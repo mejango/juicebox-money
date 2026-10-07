@@ -9,6 +9,7 @@ import {
   createSafeRelayrController,
   SafeRelayrRecoveryError,
   type SafeRelayrExecution,
+  type SafeRelayrProgress,
   type SafeRelayrSession,
 } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { wagmiConfig } from '@/providers/Providers'
@@ -102,11 +103,12 @@ export function safeRelayrSession(scope: string): SafeRelayrSession | null {
   }
 }
 
-export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerified }: {
+export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerified, onProgress }: {
   scope: string
   revalidate: (execution: SafeRelayrExecution, account: Address) => Promise<void>
   onSaved: (session: RelayrPendingSession | null) => void
   afterVerified: (execution: SafeRelayrExecution) => Promise<void>
+  onProgress?: (progress: SafeRelayrProgress) => void
 }) {
   let fundingChainId: number | undefined
   return createSafeRelayrController({
@@ -153,6 +155,7 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
     currentAccount: () => getAccount(wagmiConfig).address,
     revalidate,
     afterVerified,
+    onProgress,
     review: async (executions, { resumed }) => {
       await requireTransactionReview({
         title: `Review ${executions.length} Safe executions`,

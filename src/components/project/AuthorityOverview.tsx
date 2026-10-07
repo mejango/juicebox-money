@@ -7,16 +7,13 @@ import {
   jbPermissionsAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { zeroAddress, type Address } from "viem";
 import { AddressField } from "@/components/create/AddressField";
 import { CheckRow } from "@/components/create/ui";
 import { ChainIcon } from "@/components/ChainIcon";
-import {
-  AccountGroupsSkeleton,
-  ActionRowsSkeleton,
-} from "@/components/LoadingSkeletons";
+import { ActionRowsSkeleton } from "@/components/LoadingSkeletons";
 import { useSafeBatch } from "@/components/project/SafeBatchProvider";
 import {
   SafeQueueCard,
@@ -50,10 +47,10 @@ import {
 } from "@/lib/permissions";
 import {
   deploySafeSameAddress,
-  fetchSafeInfo,
   SAFE_SERVICE,
   type SafeInfo,
 } from "@/lib/safe";
+import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import {
   readMatchingAuthorityIdentities,
   readSafeCreation,
@@ -78,6 +75,8 @@ type AuthorityRow = AuthorityDeployment & {
   authority: Address | null;
   safe: SafeInfo | null;
   accountType: "Safe Multisig" | "EOA" | "Contract" | "Unknown";
+  checking?: boolean;
+  error?: string;
 };
 
 type AuthorityGroup = {
@@ -85,52 +84,10 @@ type AuthorityGroup = {
   authority: Address | null;
   safe: SafeInfo | null;
   accountType: AuthorityRow["accountType"];
+  checking?: boolean;
+  error?: string;
   rows: AuthorityRow[];
 };
-
-async function readAuthorityRows(
-  deployments: AuthorityDeployment[],
-  isRevnet: boolean,
-): Promise<AuthorityRow[]> {
-  return Promise.all(
-    deployments.map(async (deployment) => {
-      const client = clientFor(deployment.chainId);
-      const authority = await readAuthorityOf(client, deployment, {
-        indexedOnly: isRevnet,
-      });
-
-      let safe: SafeInfo | null = null;
-      let accountType: AuthorityRow["accountType"] = "Unknown";
-      if (authority) {
-        safe = await fetchSafeInfo(deployment.chainId, authority);
-        if (safe) accountType = "Safe Multisig";
-        else {
-          // "This owner is an EOA" is a trust statement, not a default. An
-          // absent result legitimately MEANS no code, so the read failure
-          // needs its own sentinel — swallowing it to null turned an RPC blip
-          // into a confident (and possibly wrong) claim that a Safe-controlled
-          // project is controlled by one key.
-          const code = await client
-            .getBytecode({ address: authority })
-            .catch(() => "unreadable" as const);
-          accountType =
-            code === "unreadable"
-              ? "Unknown"
-              : !code || code === "0x"
-                ? "EOA"
-                : "Contract";
-        }
-      }
-      return {
-        ...deployment,
-        name: chainName(deployment.chainId),
-        authority,
-        safe,
-        accountType,
-      };
-    }),
-  );
-}
 
 function groupAuthorityRows(rows: AuthorityRow[]): AuthorityGroup[] {
   const groups = new Map<string, AuthorityGroup>();
@@ -141,12 +98,14 @@ function groupAuthorityRows(rows: AuthorityRow[]): AuthorityGroup[] {
           .sort()
           .join(",")}`
       : "";
-    const key = `${row.authority?.toLowerCase() ?? "unknown"}:${row.accountType}:${safeKey}`;
+    const key = `${row.authority?.toLowerCase() ?? "unknown"}:${row.accountType}:${safeKey}:${row.checking ?? false}:${row.error ?? ""}`;
     const group = groups.get(key) ?? {
       key,
       authority: row.authority,
       safe: row.safe,
       accountType: row.accountType,
+      checking: row.checking,
+      error: row.error,
       rows: [],
     };
     group.rows.push(row);
@@ -240,25 +199,53 @@ export function AuthorityOverview({
   beforePermissions?: React.ReactNode;
 }) {
   const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
-  const authorityQuery = useQuery({
-    queryKey: [
-      "authorityRows",
-      isRevnet,
-      deployments
-        .map(
-          (row) =>
-            `${row.chainId}:${row.projectId}:${row.indexedAuthority ?? ""}`,
-        )
-        .join(","),
-    ],
-    staleTime: 30_000,
-    queryFn: () => readAuthorityRows(deployments, isRevnet),
+  const authorityQueries = useQueries({
+    queries: deployments.map((deployment) => ({
+      queryKey: ["projectAuthority", isRevnet, deployment.chainId, deployment.projectId, deployment.indexedAuthority?.toLowerCase() ?? ""],
+      staleTime: 30_000,
+      retry: false,
+      queryFn: async () => {
+        const authority = await readAuthorityOf(clientFor(deployment.chainId), deployment, {
+          indexedOnly: isRevnet,
+          strict: true,
+        });
+        if (!authority) throw new Error("Could not read project control. Retry the check.");
+        return authority;
+      },
+    })),
   });
-  // `rows` intentionally falls back to a fresh empty array only while the
-  // query has no data; no derived group can be observed in that state.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const rows = authorityQuery.data ?? [];
-  const groups = useMemo(() => groupAuthorityRows(rows), [rows]);
+  const accountQueries = useQueries({
+    queries: deployments.map((deployment, index) => ({
+      ...safeAccountQueryOptions(deployment.chainId, authorityQueries[index].data ?? zeroAddress),
+      enabled: !!authorityQueries[index].data && !authorityQueries[index].isError,
+    })),
+  });
+  const rows: AuthorityRow[] = deployments.map((deployment, index) => {
+    const control = authorityQueries[index];
+    const account = accountQueries[index];
+    const authority = control.isError ? null : control.data ?? null;
+    return {
+      ...deployment,
+      name: chainName(deployment.chainId),
+      authority,
+      safe: authority && !account.isError ? account.data?.safe ?? null : null,
+      accountType: authority && !account.isError ? account.data?.accountType ?? "Unknown" : "Unknown",
+      checking: control.isPending || (!!authority && account.isPending),
+      error: control.error?.message ?? (authority ? account.error?.message : undefined),
+    };
+  });
+  const groups = groupAuthorityRows(rows);
+  const refreshAccounts = () => {
+    void Promise.all(authorityQueries.map((query) => query.refetch()));
+    void Promise.all(accountQueries.filter((_, index) => !!rows[index].authority).map((query) => query.refetch()));
+  };
+  const retryRows = (groupRows: AuthorityRow[]) => {
+    for (const row of groupRows) {
+      const index = deployments.findIndex((deployment) => deployment.chainId === row.chainId && deployment.projectId === row.projectId);
+      if (authorityQueries[index].isError) void authorityQueries[index].refetch();
+      else if (row.authority) void accountQueries[index].refetch();
+    }
+  };
   const known = rows.filter((row) => !!row.authority);
   const differs =
     known.length > 1 &&
@@ -266,20 +253,20 @@ export function AuthorityOverview({
       (row) =>
         row.authority!.toLowerCase() !== known[0].authority!.toLowerCase(),
     );
-  const safeGroups = useMemo(() => {
+  const safeGroups = (() => {
     const byAddress = new Map<
       string,
       { safe: Address; rows: AuthorityRow[] }
     >();
     for (const row of rows) {
-      if (!row.authority || !row.safe) continue;
+      if (!row.authority) continue;
       const key = row.authority.toLowerCase();
       const group = byAddress.get(key) ?? { safe: row.authority, rows: [] };
       group.rows.push(row);
       byAddress.set(key, group);
     }
-    return [...byAddress.values()];
-  }, [rows]);
+    return [...byAddress.values()].filter((group) => group.rows.some((row) => row.safe || row.checking || row.error));
+  })();
 
   return (
     <>
@@ -292,14 +279,7 @@ export function AuthorityOverview({
               : "The project NFT is ownership. Its project owner controls owner-only actions, either directly or through a Safe."}
           </p>
         </div>
-        {authorityQuery.isLoading ? (
-          <AccountGroupsSkeleton />
-        ) : authorityQuery.isError ? (
-          <p className="mt-4 text-sm text-red-700">
-            Could not read project control.
-          </p>
-        ) : (
-          <div className="mt-4 space-y-4">
+        <div className="mt-4 space-y-4">
             {differs ? (
               <div className="callout callout-warning text-sm">
                 {authorityLabel} differs by chain. Actions below are scoped to
@@ -310,6 +290,8 @@ export function AuthorityOverview({
             {groups.map((group) => {
               const safeElsewhere =
                 !group.safe &&
+                !group.checking && !group.error &&
+                group.accountType === "EOA" &&
                 !!group.authority &&
                 rows.some(
                   (row) =>
@@ -345,12 +327,12 @@ export function AuthorityOverview({
                           title={group.authority}
                         />
                       ) : (
-                        <span className="text-smoke-500">Unknown</span>
+                        <span className="text-smoke-500">{group.checking ? "Checking…" : "Unknown"}</span>
                       )}
                     </dd>
                     <dt className="text-smoke-500">Type</dt>
                     <dd className="font-medium text-ink">
-                      {safeElsewhere
+                      {group.checking ? "Checking…" : safeElsewhere
                         ? "Safe Multisig (not deployed here yet)"
                         : group.accountType}
                     </dd>
@@ -376,6 +358,14 @@ export function AuthorityOverview({
                       </>
                     ) : null}
                   </dl>
+                  {group.error ? (
+                    <div className="mt-3 text-sm">
+                      <p className="text-red-700">{group.error}</p>
+                      <button type="button" className="btn-secondary mt-2 min-h-[36px] px-3 text-xs" onClick={() => retryRows(group.rows)}>
+                        Retry
+                      </button>
+                    </div>
+                  ) : null}
                   {safeElsewhere && group.authority ? (
                     <DeploySafeButtons
                       safe={group.authority}
@@ -387,17 +377,18 @@ export function AuthorityOverview({
                             group.authority!.toLowerCase(),
                       )}
                       isRevnet={isRevnet}
-                      onDone={() => authorityQuery.refetch()}
+                      onDone={refreshAccounts}
                     />
                   ) : null}
                   {group.authority &&
+                  !group.checking && !group.error &&
                   !safeElsewhere &&
                   (group.safe || group.accountType === "EOA") ? (
                     <TransferAuthorityFlow
                       rows={group.rows}
                       authority={group.authority}
                       isRevnet={isRevnet}
-                      onDone={() => authorityQuery.refetch()}
+                      onDone={refreshAccounts}
                     />
                   ) : null}
                   {group.authority &&
@@ -414,17 +405,17 @@ export function AuthorityOverview({
               );
             })}
           </div>
-        )}
       </section>
 
       {afterAccount}
 
-      {safeGroups.map((group) => (
-        <SafeQueueCard
+      {safeGroups.map((group) => {
+        const queueRows = group.rows.filter((row) => row.safe || row.checking || row.error);
+        return <SafeQueueCard
           key={group.safe}
           safe={group.safe}
           chains={[
-            ...group.rows.map((row) => ({
+            ...queueRows.map((row) => ({
               chainId: row.chainId,
               name: row.name,
               projectId: row.projectId,
@@ -434,12 +425,12 @@ export function AuthorityOverview({
                 projectId: source.projectId,
               })),
             })),
-            ...(group.rows.some((row) => row.chainId === 1)
+            ...(queueRows.some((row) => row.chainId === 1)
               ? []
               : [{
                   chainId: 1 as JBChainId,
                   name: chainName(1),
-                  projectId: group.rows[0].projectId,
+                  projectId: queueRows[0].projectId,
                   isRevnet,
                   handleOnly: true,
                   handleTuples: group.rows.map((source) => ({
@@ -449,8 +440,8 @@ export function AuthorityOverview({
                 }]),
           ] satisfies SafeQueueChain[]}
           authorityLabel={authorityLabel}
-        />
-      ))}
+        />;
+      })}
 
       {beforePermissions}
 

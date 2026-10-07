@@ -5,7 +5,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { SAFE_FACTORY } from '@bananapus/nana-sdk-core/safe'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { creationRecord, creationUrl, OWNERS, PROVEN_SAFE, provenSafeChain } from '../support/proven-safe'
+import { creationRecord, creationUrl, PROVEN_SAFE, provenSafeChain } from '../support/proven-safe'
 import { emptyChain } from '../support/safe-chain'
 
 // The account card's "Deploy Safe on {chain}": the project's Safe exists on
@@ -24,10 +24,9 @@ vi.mock('@/lib/authority', async importOriginal => ({
 }))
 vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
-  fetchSafeInfo: async (chainId: number) =>
-    chainId === 8453 ? null : { owners: OWNERS, threshold: 2 },
   deploySafeSameAddress: mocks.deploySafeSameAddress,
 }))
+vi.mock('@/lib/wallet-core', { spy: true })
 vi.mock('@/lib/bendystraw', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/bendystraw')>()),
   getPermissionHoldersAcrossDeployments: async () => [],
@@ -54,6 +53,8 @@ beforeEach(async () => {
     8453: Object.assign(emptyChain(), { getBytecode: async () => undefined }),
   }
   mocks.deploySafeSameAddress.mockReset().mockResolvedValue(undefined)
+  const { publicClient } = await import('@/lib/wallet-core')
+  vi.mocked(publicClient).mockImplementation(chainId => mocks.clients[chainId] as ReturnType<typeof publicClient>)
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -89,7 +90,7 @@ async function deployOnBase(creation: () => Response) {
     const found = [...container.querySelectorAll('button')].find(
       element => element.textContent === 'Deploy Safe on Base',
     )
-    expect(found).toBeDefined()
+    expect(found, container.textContent ?? '').toBeDefined()
     return found!
   })
   await act(async () => button.click())
