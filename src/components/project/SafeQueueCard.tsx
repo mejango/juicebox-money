@@ -1557,7 +1557,7 @@ export function SafeQueueCard({
                 ? "Executing…"
                 : busy === "quote-all"
                   ? "Checking…"
-                  : `Pay once and execute ${batchRows.length}`}
+                  : "Pay"}
             </button>
           </div>
         )

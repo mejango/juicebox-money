@@ -1148,7 +1148,7 @@ export async function relayrPay({
     description: [note,
       'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
     ].filter(Boolean).join(' '),
-    confirmLabel: 'Agree & pay',
+    confirmLabel: 'Pay',
     calls: [
       {
         chainId,

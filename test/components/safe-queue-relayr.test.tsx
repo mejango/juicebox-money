@@ -393,7 +393,7 @@ describe('Safe queue Relayr execution', () => {
     await act(async () => { response.resolve(); await preparing })
     expect(textOf(renderer.root)).not.toMatch(/Getting payment options/)
     expect(dialog.findAllByType('select')).toHaveLength(1)
-    expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
+    expect(button(/^Pay$/).props.disabled).toBe(true)
     expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({ state: 'active', bundleUuid: BUNDLE, paymentStatus: 'unfunded' })
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).not.toHaveBeenCalled()
@@ -439,7 +439,7 @@ describe('Safe queue Relayr execution', () => {
       await args[0].reverify?.()
       throw new Error('Stopped before wallet payment')
     })
-    await checkPhase(() => button(/Pay once and execute 2/).props.onClick())
+    await checkPhase(() => button(/^Pay$/).props.onClick())
     expect(mocks.simulateFrozen).toHaveBeenCalledTimes(4)
     expect(mocks.session?.paymentStatus).toBe('unpaid')
   })
@@ -468,7 +468,7 @@ describe('Safe queue Relayr execution', () => {
       submit()
       return HASH
     })
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.simulateFrozen).toHaveBeenCalledTimes(4)
     expect(submit).not.toHaveBeenCalled()
     expect(mocks.session?.paymentStatus).toBe('unpaid')
@@ -484,7 +484,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.simulateFrozen.mock.calls.map(args => args[2])).toEqual([5, 5, 5, 5])
     expect(renderer.root.findAllByType('option').filter(node => !node.props.disabled)).toHaveLength(2)
     await selectPayment(1)
-    await click(/Pay once and execute 4/)
+    await click(/^Pay$/)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 84532 }),
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [...testnets], reverifyBeforeSendOnly: true }))
     // Check 1 ran at review; check 2 belongs to relayrPay right before sending.
@@ -504,7 +504,7 @@ describe('Safe queue Relayr execution', () => {
     await click(/Execute 2 ready/)
     expect(mocks.post.mock.calls[0][0]).toHaveLength(2)
     expect(mocks.simulateFrozen.mock.calls.map(args => args[2])).toEqual([5, 5])
-    expect(button(/Pay once and execute 2/).props.disabled).toBe(true)
+    expect(button(/^Pay$/).props.disabled).toBe(true)
     const select = renderer.root.findByType('select')
     expect(select.props.value).toBe(-1)
     expect(select.props['aria-label']).toBe('Pay on')
@@ -514,7 +514,7 @@ describe('Safe queue Relayr execution', () => {
     ])
 
     await selectPayment(1)
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 10 }),
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [1, 10], reverifyBeforeSendOnly: true }))
     expect(mocks.session).toMatchObject({
@@ -524,7 +524,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.session?.expectedSafeExecutions).toHaveLength(2)
     expect(mocks.clear).not.toHaveBeenCalled()
     // A saved receipt replaces the pay button, so no second payment can start.
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
     await click(/Check execution status/)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
@@ -535,7 +535,7 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 2 ready/)
     expect(renderer.root.findByType('select').props.value).toBe(1)
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ payment: expect.objectContaining({ chain: 10 }),
       account: OWNER, bundleUuid: BUNDLE, destinationChainIds: [1, 10], reverifyBeforeSendOnly: true }))
   })
@@ -555,15 +555,15 @@ describe('Safe queue Relayr execution', () => {
     await selectPayment(0)
     let funding!: Promise<void>
     await act(async () => {
-      funding = button(/Pay once and execute 2/).props.onClick()
+      funding = button(/^Pay$/).props.onClick()
       await vi.waitFor(() => expect(loadRelayrPendingSession(scope)?.safeLifecycle?.paymentStatus).toBe('sending'))
     })
     expect(button(/Confirm the payment in your wallet/).props.disabled).toBe(true)
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
     await act(async () => { wallet.resolve(); await funding })
     expect(loadRelayrPendingSession(scope)).toMatchObject({ bundleUuid: BUNDLE, paymentStatus: 'unpaid', paymentHash: null })
     expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({ id: reviewed.id, paymentStatus: 'unfunded', quote: reviewed.quote })
-    expect(button(/Pay once and execute 2/).props.disabled).toBe(false)
+    expect(button(/^Pay$/).props.disabled).toBe(false)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
@@ -580,7 +580,7 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 2 ready/)
     await selectPayment(1)
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.review).toHaveBeenCalledTimes(1)
@@ -619,7 +619,7 @@ describe('Safe queue Relayr execution', () => {
       account: OWNER, createdAt: Date.now(),
     }
     const savedBeforePayment = mocks.save.mock.calls.length
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.save).toHaveBeenCalledTimes(savedBeforePayment)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.clear).not.toHaveBeenCalled()
@@ -637,11 +637,11 @@ describe('Safe queue Relayr execution', () => {
     else saveRelayrPendingSession(scope, {
       ...saved, safeLifecycle: { ...saved.safeLifecycle!, id: 'replacement-session' },
     })
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(button(/Check execution status/).props.disabled).toBe(false)
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
     if (state === 'missing') expect(loadRelayrPendingSession(scope)).toBeNull()
     else expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe('replacement-session')
   })
@@ -665,14 +665,14 @@ describe('Safe queue Relayr execution', () => {
     await renderQueue()
     await click(/Execute 2 ready/)
     await selectPayment(0)
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.session).toMatchObject({ paymentStatus: 'confirmed', paymentHash: HASH })
     expect(mocks.session?.records).toHaveLength(2)
     expect(mocks.clear).not.toHaveBeenCalled()
     expect(textOf(renderer.root)).toMatch(/Confirming/)
     expect(textOf(renderer.root)).toMatch(/Failed/)
     // The known destination hash has no receipt yet, so polling remains read-only.
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
     await closeBatch()
     await click(/View existing bundle/)
     await closeBatch()
@@ -722,7 +722,7 @@ describe('Safe queue Relayr execution', () => {
     mocks.refetch.mockClear()
     let funding!: Promise<void>
     await act(async () => {
-      funding = button(/Pay once and execute 2/).props.onClick()
+      funding = button(/^Pay$/).props.onClick()
       await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledWith(1, expect.objectContaining({ method: 'eth_call' })))
     })
     const executionLinks = () => renderer.root.findAllByType('a').filter(node => hashes.some(hash => node.props.href.endsWith(hash)))
@@ -731,7 +731,7 @@ describe('Safe queue Relayr execution', () => {
       `https://etherscan.io/tx/${hashes[0]}`,
       `https://optimistic.etherscan.io/tx/${hashes[1]}`,
     ])
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
     expect(mocks.refetch).not.toHaveBeenCalled()
     expect(loadRelayrPendingSession(scope)?.safeLifecycle?.state).toBe('active')
 
@@ -878,7 +878,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.review).toHaveBeenCalledTimes(2)
     expect(mocks.simulateFrozen.mock.calls.slice(-2).map(args => args[3])).toEqual(currentEntries.map(entry => entry.data))
     await selectPayment(0)
-    await click(/Pay once and execute 2/)
+    await click(/^Pay$/)
     expect(mocks.simulateFrozen.mock.calls.slice(-2).map(args => args[3])).toEqual(currentEntries.map(entry => entry.data))
     expect(mocks.session?.expectedTransactions?.map(binding => binding.entry)).toEqual(currentEntries)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
@@ -898,7 +898,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.clear).not.toHaveBeenCalled()
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
   })
 
   it('retains the existing receipt when a different nonce selection shares its Safe journal', async () => {
@@ -945,7 +945,7 @@ describe('Safe queue Relayr execution', () => {
     const newSessionId = loadRelayrPendingSession(scope)?.safeLifecycle?.id
     expect(newSessionId).not.toBe(sessionId)
     await selectPayment(0)
-    await click(/Pay once and execute 4/)
+    await click(/^Pay$/)
     expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'sending', paymentChainId: 1 })
     expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(newSessionId)
     await click(/Check execution status/)
@@ -996,7 +996,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.review.mock.invocationCallOrder[1]).toBeLessThan(mocks.post.mock.invocationCallOrder[1])
     expect(mocks.pay).not.toHaveBeenCalled()
     await selectPayment(0)
-    await click(/Pay once and execute 3/)
+    await click(/^Pay$/)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledWith(expect.objectContaining({ bundleUuid: nextBundle, destinationChainIds: [1, 10, 8453] }))
     expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(current.safeLifecycle!.id)
@@ -1049,7 +1049,7 @@ describe('Safe queue Relayr execution', () => {
     expect(fundingJournal).not.toBeNull()
     expect(storage.getItem(`jb-relayr-pending-v1:${scope}`)).toBe(fundingJournal)
     expect(button(/Check execution status/).props.disabled).toBe(false)
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
   })
 
   it.each([true, false])('reviews a new quote with the current wallet when an unused quote was saved by another wallet (legacy=%s)', async legacy => {
@@ -1099,7 +1099,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).not.toHaveBeenCalled()
     expect(mocks.review).toHaveBeenCalledTimes(1)
-    expect(() => button(/Pay once and execute 2/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
   })
 
   it('clears a previous action error when opening the saved bundle and checks it without another click', async () => {
@@ -1275,7 +1275,7 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.review).not.toHaveBeenCalled()
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.pay).not.toHaveBeenCalled()
-    expect(() => button(/Pay once and execute/)).toThrow()
+    expect(() => button(/^Pay$/)).toThrow()
   })
 
   it('refuses a queued transaction that pays a gas refund, in one line', async () => {

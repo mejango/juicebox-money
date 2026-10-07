@@ -463,6 +463,7 @@ describe('Relayr quote and payment boundaries', () => {
     await expect(pay(payment, [1], { onSent: sent, reverify })).resolves.toMatchObject({ hash: HASH })
     expect(mocks.requireReview).toHaveBeenCalledWith(
       expect.objectContaining({
+        confirmLabel: 'Pay',
         calls: [
           expect.objectContaining({
             chainId: 1,
