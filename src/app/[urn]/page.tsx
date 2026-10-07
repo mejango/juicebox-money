@@ -47,11 +47,11 @@ import {
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
 import {
-  getProjectPageData,
   projectAuthorityMatchesMainnet,
   readLiveProjectAuthorityContext,
   revnetOperatorFromPermissionHistory,
 } from "@/lib/project-fallback";
+import { getProjectPageData as getPageDataCached } from "@/lib/project-server-data";
 import {
   getProjectLinkPreview,
   previewVersion,
@@ -74,9 +74,6 @@ import { SUPPORTED_CHAINS } from "@/lib/chains";
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
 
-// getProjectPageData is backed by a POST, which Next's fetch cache doesn't
-// dedupe — memoize per request so generateMetadata + page share one call.
-const getPageDataCached = cache(getProjectPageData);
 const getRevnetOperatorCached = cache(getRevnetOperator);
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
 const getSuckerGroupProjectsCached = cache(getSuckerGroupProjects);

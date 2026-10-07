@@ -6,7 +6,7 @@ import {
   type BsProject,
 } from '@/lib/bendystraw'
 import { formatTokenAmount, ipfsUrl } from '@/lib/format'
-import { getProjectPageData } from '@/lib/project-fallback'
+import { getProjectPageData } from '@/lib/project-server-data'
 
 type ProjectLinkPreviewMetadata = {
   name?: string
