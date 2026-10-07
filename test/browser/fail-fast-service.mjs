@@ -24,8 +24,10 @@ import {
   encodeFunctionResult,
   erc20Abi,
   multicall3Abi,
+  parseAbi,
   zeroAddress,
 } from 'viem'
+import { namehash } from 'viem/ens'
 
 const portIndex = process.argv.indexOf('--port')
 const port = Number(
@@ -53,6 +55,16 @@ const TOKENS = addressOf(JBCoreContracts.JBTokens)
 const PRICES = addressOf(JBCoreContracts.JBPrices)
 const PROJECTS = addressOf(JBCoreContracts.JBProjects)
 const PROJECT_HANDLES = '0x726f4a3dfd2fb8297f8ab98d215b42a92d8eefe8'
+const PROJECT_HANDLE = 'browser-fixture'
+const ENS_NODE = namehash(`${PROJECT_HANDLE}.eth`)
+const ENS_REGISTRY = '0x00000000000c2e074ec69a0dfb2997ba6c7d2e1e'
+const ENS_RESOLVER = '0x5555555555555555555555555555555555555555'
+const FIXTURE_BLOCK = '0x123456'
+const ensRegistryAbi = parseAbi([
+  'function resolver(bytes32 node) view returns (address)',
+  'function owner(bytes32 node) view returns (address)',
+])
+const ensResolverAbi = parseAbi(['function text(bytes32 node, string key) view returns (string)'])
 const REV_OWNER = addressOf(RevnetCoreContracts.REVOwner)
 const BUYBACK_REGISTRY = addressOf(
   JBBuybackHookContracts.JBBuybackHookRegistry,
@@ -254,6 +266,31 @@ function exactValue(actual, expected) {
 
 const contractFixtures = [
   {
+    name: 'ENSRegistry.resolver',
+    address: ENS_REGISTRY,
+    abi: ensRegistryAbi,
+    functionName: 'resolver',
+    args: [ENS_NODE],
+    result: ENS_RESOLVER,
+  },
+  {
+    name: 'ENSRegistry.owner',
+    address: ENS_REGISTRY,
+    abi: ensRegistryAbi,
+    functionName: 'owner',
+    args: [ENS_NODE],
+    result: OWNER,
+  },
+  {
+    name: 'ENSResolver.text',
+    directOnly: true,
+    address: ENS_RESOLVER,
+    abi: ensResolverAbi,
+    functionName: 'text',
+    args: [ENS_NODE, 'juicebox'],
+    result: '1:1',
+  },
+  {
     name: 'JBMultiTerminal.accountingContextsOf',
     address: MULTI_TERMINAL,
     abi: jbMultiTerminalAbi,
@@ -381,7 +418,7 @@ const contractFixtures = [
     abi: projectHandlesAbi,
     functionName: 'ensNamePartsOf',
     args: [1n, 1n, OWNER],
-    result: [],
+    result: [PROJECT_HANDLE],
   },
   {
     name: 'JBProjectHandles.handleOf',
@@ -389,7 +426,7 @@ const contractFixtures = [
     abi: projectHandlesAbi,
     functionName: 'handleOf',
     args: [1n, 1n, OWNER],
-    result: '',
+    result: PROJECT_HANDLE,
   },
   {
     name: 'REVOwner.tiered721HookOf',
@@ -981,7 +1018,7 @@ function rpcResult(id, result) {
   return { jsonrpc: '2.0', id: id ?? null, result }
 }
 
-function contractReadResult(chainId, to, data) {
+function contractReadResult(chainId, to, data, direct = true) {
   const candidates = contractFixtures.filter(
     fixture => fixture.address === to && fixture.chainIds.includes(chainId),
   )
@@ -996,6 +1033,10 @@ function contractReadResult(chainId, to, data) {
           actual: decoded.args ?? [],
         }
         continue
+      }
+      if (fixture.directOnly && !direct) {
+        recordUnknown('contract-context', `${fixture.name} requires a direct call from JBProjectHandles`)
+        return null
       }
       increment(state.contracts, fixture.name)
       return fixture.encodedResult
@@ -1043,7 +1084,7 @@ function handleRpcCall(payload, chainId) {
     }
     if (method === 'eth_chainId') return rpcResult(id, `0x${chainId.toString(16)}`)
     if (method === 'net_version') return rpcResult(id, String(chainId))
-    return rpcResult(id, '0x123456')
+    return rpcResult(id, FIXTURE_BLOCK)
   }
 
   if (method === 'eth_getCode') {
@@ -1065,16 +1106,20 @@ function handleRpcCall(payload, chainId) {
     return rpcError(id, `Deterministic fixture does not implement ${String(method)}`)
   }
 
+  const callTarget = typeof params?.[0]?.to === 'string' ? params[0].to.toLowerCase() : ''
+  const isEnsRegistry = chainId === CHAIN_ID && callTarget === ENS_REGISTRY
+  const isEnsResolver = chainId === CHAIN_ID && callTarget === ENS_RESOLVER
   if (
     !Array.isArray(params) ||
     params.length !== 2 ||
-    params[1] !== 'latest' ||
-    !Object.keys(params[0]).every(key => ['to', 'data', 'gas'].includes(key)) ||
+    (params[1] !== 'latest' && !((isEnsRegistry || isEnsResolver) && params[1] === FIXTURE_BLOCK)) ||
+    !Object.keys(params[0]).every(key => ['to', 'data', 'gas', ...(isEnsResolver ? ['from'] : [])].includes(key)) ||
     typeof params[0].to !== 'string' ||
     !/^0x[0-9a-f]{40}$/i.test(params[0].to) ||
     typeof params[0].data !== 'string' ||
     !/^0x[0-9a-f]*$/i.test(params[0].data) ||
-    (params[0].gas !== undefined && !/^0x[0-9a-f]+$/i.test(params[0].gas))
+    (params[0].gas !== undefined && !/^0x[0-9a-f]+$/i.test(params[0].gas)) ||
+    (isEnsResolver && (params[0].from?.toLowerCase() !== PROJECT_HANDLES || params[0].gas !== '0x1e848'))
   ) {
     recordUnknown(
       'rpc-parameters',
@@ -1107,6 +1152,7 @@ function handleRpcCall(payload, chainId) {
         chainId,
         innerCall.target.toLowerCase(),
         innerCall.callData,
+        false,
       )
       return returnData
         ? { success: true, returnData }

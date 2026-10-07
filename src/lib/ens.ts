@@ -1,6 +1,7 @@
 import { JB_CHAINS } from '@bananapus/nana-sdk-core'
 import { createPublicClient, http, isAddress, type Address } from 'viem'
 import { normalize } from 'viem/ens'
+import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import {
   PROJECT_HANDLES_CHAIN_ID,
   normalizeProjectHandle,
@@ -17,13 +18,16 @@ import {
  * ENS lives on mainnet regardless of which chains a project launches to.
  */
 
+const IS_DETERMINISTIC_BROWSER =
+  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
+
 const ensClient = createPublicClient({
   chain: JB_CHAINS[PROJECT_HANDLES_CHAIN_ID].chain,
   // CORS-friendly public RPC (several big providers block browser origins).
-  transport: http('https://ethereum-rpc.publicnode.com'),
+  transport: IS_DETERMINISTIC_BROWSER
+    ? jbCenterRpcTransport(PROJECT_HANDLES_CHAIN_ID)
+    : http('https://ethereum-rpc.publicnode.com'),
 })
-const IS_DETERMINISTIC_BROWSER =
-  process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
 
 const addressCache = new Map<string, Address | null>()
 const nameCache = new Map<string, string | null>()
@@ -87,7 +91,7 @@ export async function lookupProjectHandleTarget(
   input: string,
 ): Promise<ProjectHandleTarget | null> {
   const normalized = normalizeProjectHandle(input)
-  if (!normalized || IS_DETERMINISTIC_BROWSER) return null
+  if (!normalized) return null
 
   let target: ProjectHandleTarget | null = null
   try {
@@ -116,7 +120,6 @@ export async function lookupVerifiedProjectHandle({
   projectId: number
   setter: Address
 }): Promise<string | null> {
-  if (IS_DETERMINISTIC_BROWSER) return null
   try {
     return await readBoundedProjectHandle(ensClient, {
       chainId,
