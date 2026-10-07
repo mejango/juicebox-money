@@ -178,7 +178,12 @@ const budgets = {
   // 096540c/f5e293f measure 2,588,016/2,592,848 B (+4,832 B). Server React
   // barrels and duplicate controller imports were removed before measuring.
   // Round only these measured costs; project/largest/style/lazy caps stay fixed.
-  allScripts: 2533 * KIB,
+  // Terms alone now transfers 3,604 B instead of 180,159 B in the matched
+  // browser fixture. The separate chunk duplicates 1,197 B of shared help text
+  // (no SDK/ABI copies) and adds compression overhead: aggregate 2,592,848 ->
+  // 2,594,575 B. Keep the simple import boundary and round only this measured
+  // total to the next KiB; initial-route/largest/style/lazy limits stay fixed.
+  allScripts: 2534 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

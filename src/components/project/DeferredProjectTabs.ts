@@ -8,4 +8,3 @@ export { FundsTab } from "@/components/project/FundsTab";
 export { OwnersTab } from "@/components/project/OwnersTab";
 export { RulesetsTab } from "@/components/project/RulesetsTab";
 export { ShopTab } from "@/components/project/ShopTab";
-export { TermsTab } from "@/components/project/TermsTab";
