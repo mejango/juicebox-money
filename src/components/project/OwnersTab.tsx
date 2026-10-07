@@ -807,8 +807,7 @@ function OwnersDonut({
             onBlur={() => setActiveHolder(null)}
           >
             <title>
-              <AddressText address={holder.address} /> —{' '}
-              {holderPercentLabel(holder.balance, total)}
+              {holder.address} — {holderPercentLabel(holder.balance, total)}
             </title>
           </path>
         ))}
