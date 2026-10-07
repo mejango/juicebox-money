@@ -58,7 +58,10 @@ const budgets = {
     // SDK modules as home); taking it in place of jbm's copies, with the launch's Safe
     // wait signals, measures 503.3. Round up to the next KiB.
     // The same shared gate measures 517,232/518,996 B in that comparison.
-    '/create/page': 507 * KIB,
+    // Service-neutral status/error presentation measures 518,999 -> 519,278 B
+    // (+279 B) on the matching physical locked graph. Its import-free formatter
+    // stays in create's existing chunk; round only this measured route cost.
+    '/create/page': 508 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -183,7 +186,11 @@ const budgets = {
   // (no SDK/ABI copies) and adds compression overhead: aggregate 2,592,848 ->
   // 2,594,575 B. Keep the simple import boundary and round only this measured
   // total to the next KiB; initial-route/largest/style/lazy limits stay fixed.
-  allScripts: 2534 * KIB,
+  // The same service-neutral copy measures 2,594,575 -> 2,595,210 B (+635 B).
+  // Webpack emits the small formatter in create and an existing shared lazy
+  // chunk; all 185 chunks and initial-route file counts remain unchanged.
+  // Round this cost; home/project/largest/style/lazy limits stay fixed.
+  allScripts: 2535 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
