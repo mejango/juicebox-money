@@ -8,7 +8,7 @@ import { projectAuthorityMatchesMainnet, readLiveProjectAuthorityContext, revnet
 import { decodeProjectRouteSegment, projectHandleFromRoute, verifyProjectHandleAuthorityWithFallback } from '@/lib/project-handles'
 import { getProjectPageData as getPageDataCached } from '@/lib/project-server-data'
 import { parseUrn } from '@/lib/urn'
-import { QueryClient } from '@tanstack/react-query'
+import { QueryClient } from '@tanstack/query-core'
 import { PROJECT_ROUTE_STALE_MS, type ProjectRouteSnapshot } from '@/lib/project-route'
 
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates)

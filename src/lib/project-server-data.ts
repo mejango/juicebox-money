@@ -1,4 +1,4 @@
-import { QueryClient, type QueryKey } from '@tanstack/react-query'
+import { QueryClient, type QueryKey } from '@tanstack/query-core'
 import { cache } from 'react'
 import { ipfsUrl } from '@/lib/format'
 import {
