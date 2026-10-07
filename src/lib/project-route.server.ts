@@ -124,6 +124,12 @@ export async function resolveProjectRoute(segment: string, force = false) {
   const requested = decoded && projectHandleFromRoute(decoded)
   if (!requested) return resolveProjectRouteUncached(segment)
   const queryKey = ['verifiedProjectAlias', requested.handle] as const
+  if (force) {
+    // A mutation-triggered check cannot reuse a proof started before it.
+    // Let existing callers finish, then deduplicate the new proof normally.
+    const pending = aliasQueries.getQueryCache().find({ queryKey, exact: true })
+    if (pending?.state.fetchStatus === 'fetching') await pending.promise?.catch(() => undefined)
+  }
   try {
     return await aliasQueries.fetchQuery({
       queryKey,

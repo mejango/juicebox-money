@@ -38,15 +38,32 @@ describe('five-second verified alias owner', () => {
     expect((await resolveProjectRoute('@design.juicebox'))!.checkedAt).toBe(Date.now())
     expect(mocks.target).toHaveBeenCalledTimes(2)
   })
-  it('does not cancel a normal request when a concurrent caller forces verification', async () => {
+  it('lets a pre-mutation request finish but forced waiters share a new post-mutation proof', async () => {
     let finish!: (value: typeof target) => void
-    mocks.target.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    mocks.target.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
     const { resolveProjectRoute } = await import('@/lib/project-route.server')
     const normal = resolveProjectRoute('@design.juicebox')
+    mocks.target.mockResolvedValue({ ...target, projectId: 8 })
     const forced = resolveProjectRoute('@design.juicebox', true)
+    const concurrentForced = resolveProjectRoute('@design.juicebox', true)
+    expect(mocks.target).toHaveBeenCalledTimes(1)
     finish(target)
-    const routes = await Promise.all([normal, forced])
-    expect(routes.every(route => route?.projectId === 7)).toBe(true)
+    expect((await normal)?.projectId).toBe(7)
+    expect((await forced)?.projectId).toBe(8)
+    expect((await concurrentForced)?.projectId).toBe(8)
+    expect(mocks.target).toHaveBeenCalledTimes(2)
+  })
+  it('still performs a forced fresh proof after the earlier in-flight proof fails', async () => {
+    let fail!: (error: Error) => void
+    mocks.target.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject }))
+    const { resolveProjectRoute } = await import('@/lib/project-route.server')
+    const normal = resolveProjectRoute('@design.juicebox').catch(error => error)
+    mocks.target.mockResolvedValue({ ...target, projectId: 8 })
+    const forced = resolveProjectRoute('@design.juicebox', true)
+    fail(new Error('Old proof unavailable'))
+    expect(await normal).toMatchObject({ message: 'Old proof unavailable' })
+    expect((await forced)?.projectId).toBe(8)
+    expect(mocks.target).toHaveBeenCalledTimes(2)
   })
   it('never caches rejected identity and preserves unavailable exceptions for the page error boundary', async () => {
     const { resolveProjectRoute } = await import('@/lib/project-route.server')
