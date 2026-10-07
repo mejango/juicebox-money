@@ -24,7 +24,7 @@ import {
   suckerBytes32ToAddress,
   suckerTimestampSeconds,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   encodeFunctionData,
@@ -274,6 +274,7 @@ async function readLiveChain(
   client: PublicClient,
   chainId: number,
   projectId: number,
+  _queryClient: QueryClient,
 ): Promise<LiveChain> {
   const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId as JBChainId
@@ -361,6 +362,7 @@ export function GossipCard({
   chains: [number, number][]
 }) {
   const config = useConfig()
+  const queryClient = useQueryClient()
 
   // In-flight markers live in card state (seeded from localStorage) so a Sync
   // submit re-renders every row's pending status.
@@ -423,7 +425,7 @@ export function GossipCard({
             chainId: cid as JBChainId,
           }) as PublicClient | undefined
           live[cid] = client
-            ? await readLiveChain(client, cid, pid).catch(() => ({
+            ? await readLiveChain(client, cid, pid, queryClient).catch(() => ({
                 supply: null,
                 balances: [],
                 verified: false,

@@ -9,7 +9,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import {
   useEffect,
   useId,
@@ -63,6 +63,7 @@ async function fetchParticipants(query: string): Promise<ParticipantPage> {
 async function readChainTreasury(
   config: ReturnType<typeof useConfig>,
   [rawChainId, rawProjectId]: [number, number],
+  _queryClient: QueryClient,
 ): Promise<ChainTreasury> {
   const chainId = rawChainId as JBChainId
   const client = getPublicClient(config, { chainId }) as
@@ -272,6 +273,7 @@ export function ProjectStats({
   isRevnet: boolean
 }) {
   const config = useConfig()
+  const queryClient = useQueryClient()
   const raisedTooltipId = useId()
   const treasuryTooltipId = useId()
   const { data, isLoading, isFetching: treasuryFetching } = useQuery({
@@ -281,7 +283,7 @@ export function ProjectStats({
     retry: 1,
     queryFn: async () => {
       const chainResults = await Promise.all(
-        chains.map(pair => readChainTreasury(config, pair)),
+        chains.map(pair => readChainTreasury(config, pair, queryClient)),
       )
       const rows = chainResults.flatMap(result => result.rows)
       const failedChainIds = chainResults
