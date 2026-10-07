@@ -66,7 +66,23 @@ const STORE_KEY = 'jbm:query-cache:v1'
 type Allowed = { file: string; key: string; reason: string }
 
 /** Persisted queries that the scan may not pass, and are safe: the file, the key as the scan reports it, and why. */
-const ALLOWED: Allowed[] = []
+const ALLOWED: Allowed[] = [
+  {
+    file: 'src/components/project/OwnersTab.tsx',
+    key: "[...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'splitStages')]",
+    reason: 'The shared display key accepts only protocol, chain and public project identity; stage display has no account input.',
+  },
+  {
+    file: 'src/components/project/OwnersTab.tsx',
+    key: "[...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'chainStageSplits'), stageIndex, isCurrentStage]",
+    reason: 'The shared public project key is extended only by a stage index and current-stage flag, never a wallet.',
+  },
+  {
+    file: 'src/components/project/RevnetPriceCard.tsx',
+    key: "[ ...projectDisplayKey(args, 'priceReferences'), chains, axisBaseCurrency, ]",
+    reason: 'args contains chainId and projectId; peer project deployments and base currency are public display inputs.',
+  },
+]
 
 type Persisted = {
   line: number
@@ -279,8 +295,10 @@ describe('persisted query scope', () => {
     const tagged = files.filter((_, index) => results[index].tagged)
     // The floor is the number of files that tag a persisted query. Raise it when a task tags another file, and lower it
     // only when a file stops persisting one on purpose.
-    expect(tagged).toContain(join('src', 'hooks', 'useProjectTokenSymbol.ts'))
-    expect(tagged.length).toBeGreaterThanOrEqual(17)
+    expect(tagged).toContain(join('src', 'lib', 'project-display-queries.ts'))
+    // Terms, Rulesets and Funds now share memory-only evidence with Pay; the
+    // project-token persistence tag moved into its single query owner.
+    expect(tagged.length).toBeGreaterThanOrEqual(14)
   })
 })
 
@@ -625,7 +643,7 @@ export function Balance() {
   })
 
   it.each([
-    [join('src', 'hooks', 'useProjectTokenSymbol.ts'), 'a meta: PERSIST tag'],
+    [join('src', 'lib', 'project-display-queries.ts'), 'a meta: PERSIST tag'],
     [join('src', 'hooks', 'useCashOutFloor.ts'), 'a cachedQuery tag'],
   ])('passes the real %s, and sees %s in it', file => {
     const text = readFileSync(file, 'utf8')

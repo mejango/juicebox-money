@@ -1,6 +1,14 @@
 'use client'
 
-import { accountingContextsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
+import {
+  accountingContextsQuery,
+  accountingContextSymbolsQuery,
+  currentRulesetQuery,
+  projectDisplayKey,
+  projectDisplayQuery,
+  invalidateProjectDisplayQueries,
+  type ProjectDisplayReader,
+} from '@/lib/project-display-queries'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -22,7 +30,7 @@ import {
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { explorerTxUrl } from '@/lib/chainDisplay'
-import { useQuery } from '@tanstack/react-query'
+import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import {
   formatUnits,
@@ -51,7 +59,6 @@ import {
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { buildUseAllowanceRequest } from '@/lib/transaction-builders'
-import { PERSIST } from '@/lib/query-persist'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -130,6 +137,7 @@ type ChainFundsResult = {
   chainId: JBChainId
   projectId: number
   verified: boolean
+  pending?: boolean
   snapshot: ChainFundsSnapshot | null
 }
 
@@ -142,6 +150,7 @@ type FundsKind = FundsKindDescriptor & {
 }
 
 async function readChainFunds(
+  queryClient: ProjectDisplayReader,
   config: ReturnType<typeof useConfig>,
   pair: readonly [number, number],
   descriptor: FundsKindDescriptor,
@@ -169,174 +178,170 @@ async function readChainFunds(
   ] as Address | undefined
 
   if (!client || !terminal || !store || !limitsAddress || !splitsAddress) {
-    return { chainId, projectId, verified: false, snapshot: null }
+    throw new Error('No public client or protocol deployment')
   }
 
-  try {
-    const pid = BigInt(projectId)
-    const [contexts, current] = await Promise.all([
-      accountingContextsQuery(client, { chainId, projectId: pid }).queryFn(),
-      currentRulesetQuery(client, { chainId, projectId: pid }).queryFn(),
+  const pid = BigInt(projectId)
+  const [contexts, current] = await Promise.all([
+    queryClient.fetchQuery(accountingContextsQuery(client, { chainId, projectId: pid })),
+    queryClient.fetchQuery(currentRulesetQuery(client, { chainId, projectId: pid })),
+  ])
+  const candidates = await Promise.all(
+    contexts.map(async ctx => ({
+      ctx,
+      symbol: await tokenSymbol(client, ctx.token, { chainId }),
+    })),
+  )
+  const match = candidates.find(({ ctx, symbol }) => {
+    const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+    if (chainId === homeChainId && ctx.token === descriptor.homeToken) return true
+    return descriptor.native
+      ? native
+      : !native &&
+          ctx.decimals === descriptor.decimals &&
+          symbol.toLowerCase() === descriptor.symbol.toLowerCase()
+  })
+  if (!match) return { chainId, projectId, verified: true, snapshot: null }
+
+  const { ctx, symbol } = match
+  const rulesetId = current.ruleset.id
+  const cycleNumber = current.ruleset.cycleNumber
+  const [balance, payoutLimits, surplusAllowances, surplus, splits] =
+    await Promise.all([
+      client.readContract({
+        address: store,
+        abi: jbTerminalStoreAbi,
+        functionName: 'balanceOf',
+        args: [terminal, pid, ctx.token],
+      }),
+      client.readContract({
+        address: limitsAddress,
+        abi: jbFundAccessLimitsAbi,
+        functionName: 'payoutLimitsOf',
+        args: [pid, BigInt(rulesetId), terminal, ctx.token],
+      }),
+      client.readContract({
+        address: limitsAddress,
+        abi: jbFundAccessLimitsAbi,
+        functionName: 'surplusAllowancesOf',
+        args: [pid, BigInt(rulesetId), terminal, ctx.token],
+      }),
+      client
+        .readContract({
+          address: store,
+          abi: jbTerminalStoreAbi,
+          functionName: 'currentSurplusOf',
+          args: [
+            pid,
+            [terminal],
+            [ctx.token],
+            BigInt(ctx.decimals),
+            BigInt(ctx.currency),
+          ],
+        }),
+      client
+        .readContract({
+          address: splitsAddress,
+          abi: jbSplitsAbi,
+          functionName: 'splitsOf',
+          args: [pid, BigInt(rulesetId), payoutSplitGroupId(ctx.token)],
+        }),
     ])
-    const candidates = await Promise.all(
-      contexts.map(async ctx => ({
-        ctx,
-        symbol: await tokenSymbol(client, ctx.token, { chainId }),
-      })),
-    )
-    const match = candidates.find(({ ctx, symbol }) => {
-      const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-      if (chainId === homeChainId && ctx.token === descriptor.homeToken) return true
-      return descriptor.native
-        ? native
-        : !native &&
-            ctx.decimals === descriptor.decimals &&
-            symbol.toLowerCase() === descriptor.symbol.toLowerCase()
-    })
-    if (!match) return { chainId, projectId, verified: true, snapshot: null }
 
-    const { ctx, symbol } = match
-    const rulesetId = current.ruleset.id
-    const cycleNumber = current.ruleset.cycleNumber
-    const [balance, payoutLimits, surplusAllowances, surplus, splits] =
-      await Promise.all([
-        client.readContract({
-          address: store,
-          abi: jbTerminalStoreAbi,
-          functionName: 'balanceOf',
-          args: [terminal, pid, ctx.token],
-        }),
-        client.readContract({
-          address: limitsAddress,
-          abi: jbFundAccessLimitsAbi,
-          functionName: 'payoutLimitsOf',
-          args: [pid, BigInt(rulesetId), terminal, ctx.token],
-        }),
-        client.readContract({
-          address: limitsAddress,
-          abi: jbFundAccessLimitsAbi,
-          functionName: 'surplusAllowancesOf',
-          args: [pid, BigInt(rulesetId), terminal, ctx.token],
-        }),
-        client
-          .readContract({
-            address: store,
-            abi: jbTerminalStoreAbi,
-            functionName: 'currentSurplusOf',
-            args: [
-              pid,
-              [terminal],
-              [ctx.token],
-              BigInt(ctx.decimals),
-              BigInt(ctx.currency),
-            ],
-          }),
-        client
-          .readContract({
-            address: splitsAddress,
-            abi: jbSplitsAbi,
-            functionName: 'splitsOf',
-            args: [pid, BigInt(rulesetId), payoutSplitGroupId(ctx.token)],
-          }),
-      ])
-
-    const payoutUsage = await Promise.all(
-      payoutLimits.map(limit =>
-        client.readContract({
-          address: store,
-          abi: jbTerminalStoreAbi,
-          functionName: 'usedPayoutLimitOf',
-          args: [
-            terminal,
-            pid,
-            ctx.token,
-            BigInt(cycleNumber),
-            BigInt(limit.currency),
-          ],
-        }),
-      ),
-    )
-    const allowanceUsage = await Promise.all(
-      surplusAllowances.map(allowance =>
-        client.readContract({
-          address: store,
-          abi: jbTerminalStoreAbi,
-          functionName: 'usedSurplusAllowanceOf',
-          args: [
-            terminal,
-            pid,
-            ctx.token,
-            BigInt(rulesetId),
-            BigInt(allowance.currency),
-          ],
-        }),
-      ),
-    )
-    const payoutLines = payoutLimits.map((limit, index) => {
-      const used = payoutUsage[index] ?? 0n
-      return {
-        amount: limit.amount,
-        currency: limit.currency,
-        used,
-        remaining: limit.amount > used ? limit.amount - used : 0n,
-      }
-    })
-    const allowanceLines = surplusAllowances.map((allowance, index) => {
-      const used = allowanceUsage[index] ?? 0n
-      return {
-        amount: allowance.amount,
-        currency: allowance.currency,
-        used,
-        remaining: allowance.amount > used ? allowance.amount - used : 0n,
-      }
-    })
-    const usdPrice = pricesAddress
-      ? await client
-          .readContract({
-            address: pricesAddress,
-            abi: jbPricesAbi,
-            functionName: 'pricePerUnitOf',
-            args: [
-              pid,
-              BigInt(USD_CURRENCY_ID(6)),
-              BigInt(ctx.currency),
-              18n,
-            ],
-          })
-          .catch(() => null)
-      : null
-    const usd = treasuryUsdValue({
-      balance,
-      usdPrice,
-      symbol,
-      decimals: ctx.decimals,
-    })
-
+  const payoutUsage = await Promise.all(
+    payoutLimits.map(limit =>
+      client.readContract({
+        address: store,
+        abi: jbTerminalStoreAbi,
+        functionName: 'usedPayoutLimitOf',
+        args: [
+          terminal,
+          pid,
+          ctx.token,
+          BigInt(cycleNumber),
+          BigInt(limit.currency),
+        ],
+      }),
+    ),
+  )
+  const allowanceUsage = await Promise.all(
+    surplusAllowances.map(allowance =>
+      client.readContract({
+        address: store,
+        abi: jbTerminalStoreAbi,
+        functionName: 'usedSurplusAllowanceOf',
+        args: [
+          terminal,
+          pid,
+          ctx.token,
+          BigInt(rulesetId),
+          BigInt(allowance.currency),
+        ],
+      }),
+    ),
+  )
+  const payoutLines = payoutLimits.map((limit, index) => {
+    const used = payoutUsage[index] ?? 0n
     return {
+      amount: limit.amount,
+      currency: limit.currency,
+      used,
+      remaining: limit.amount > used ? limit.amount - used : 0n,
+    }
+  })
+  const allowanceLines = surplusAllowances.map((allowance, index) => {
+    const used = allowanceUsage[index] ?? 0n
+    return {
+      amount: allowance.amount,
+      currency: allowance.currency,
+      used,
+      remaining: allowance.amount > used ? allowance.amount - used : 0n,
+    }
+  })
+  const usdPrice = pricesAddress
+    ? await client
+        .readContract({
+          address: pricesAddress,
+          abi: jbPricesAbi,
+          functionName: 'pricePerUnitOf',
+          args: [
+            pid,
+            BigInt(USD_CURRENCY_ID(6)),
+            BigInt(ctx.currency),
+            18n,
+          ],
+        })
+        .catch(() => null)
+    : null
+  const usd = treasuryUsdValue({
+    balance,
+    usdPrice,
+    symbol,
+    decimals: ctx.decimals,
+  })
+
+  return {
+    chainId,
+    projectId,
+    verified: true,
+    snapshot: {
       chainId,
       projectId,
-      verified: true,
-      snapshot: {
-        chainId,
-        projectId,
-        ctx,
-        tokenSymbol: symbol,
-        balance,
-        usd,
-        surplus,
-        payoutLines,
-        allowanceLines,
-        splits,
-        rulesetId,
-        rulesetCycleNumber: cycleNumber,
-        ownerMustSendPayouts: current.metadata.ownerMustSendPayouts,
-        terminal,
-        store,
-        limitsAddress,
-      },
-    }
-  } catch {
-    return { chainId, projectId, verified: false, snapshot: null }
+      ctx,
+      tokenSymbol: symbol,
+      balance,
+      usd,
+      surplus,
+      payoutLines,
+      allowanceLines,
+      splits,
+      rulesetId,
+      rulesetCycleNumber: cycleNumber,
+      ownerMustSendPayouts: current.metadata.ownerMustSendPayouts,
+      terminal,
+      store,
+      limitsAddress,
+    },
   }
 }
 
@@ -380,6 +385,7 @@ export function FundsTab({
   projectId: number
   chains: readonly [number, number][]
 }) {
+  const queryClient = useQueryClient()
   const config = useConfig()
   const { address } = useViewedAccount()
   const [selectedKey, setSelectedKey] = useState('')
@@ -393,71 +399,48 @@ export function FundsTab({
       : [homePair, ...supplied]
   }, [chains, chainId, projectId])
 
-  const {
-    data: matrix,
-    isLoading,
-    refetch,
-  } = useQuery({
-    queryKey: ['fundsMatrix', chainPairs, chainId, projectId],
-    meta: PERSIST,
-    staleTime: 30_000,
-    retry: 1,
-    queryFn: async () => {
-      const homeClient = getPublicClient(config, { chainId }) as
-        | PublicClient
-        | undefined
-      if (!homeClient) throw new Error('No public client')
-      const homeContexts = await accountingContextsQuery(homeClient, {
-        chainId,
-        projectId: BigInt(projectId),
-      }).queryFn()
-      const descriptors = await Promise.all(
-        homeContexts.map(async ctx => {
-          const symbol = await tokenSymbol(homeClient, ctx.token, { chainId })
-          const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-          return {
-            key: native ? 'native' : `${symbol.toLowerCase()}:${ctx.decimals}`,
-            homeToken: ctx.token,
-            native,
-            symbol,
-            decimals: ctx.decimals,
-          } satisfies FundsKindDescriptor
-        }),
-      )
-      const kinds: FundsKind[] = await Promise.all(
-        descriptors.map(async descriptor => {
-          const snapshots = await Promise.all(
-            chainPairs.map(pair =>
-              readChainFunds(config, pair, descriptor, chainId),
-            ),
-          )
-          const present = snapshots.flatMap(result =>
-            result.snapshot ? [result.snapshot] : [],
-          )
-          const readsVerified = snapshots.every(result => result.verified)
-          return {
-            ...descriptor,
-            snapshots,
-            totalBalance: present.reduce(
-              (sum, snapshot) => sum + snapshot.balance,
-              0n,
-            ),
-            totalUsd: present.reduce(
-              (sum, snapshot) => sum + (snapshot.usd ?? 0n),
-              0n,
-            ),
-            readsVerified,
-            fullyPriced:
-              readsVerified &&
-              present.every(
-                snapshot => snapshot.balance === 0n || snapshot.usd != null,
-              ),
-          }
-        }),
-      )
-      return kinds
-    },
+  const homeClient = getPublicClient(config, { chainId }) as PublicClient | undefined
+  const descriptorsQuery = useQuery({
+    ...accountingContextSymbolsQuery(homeClient!, queryClient, { chainId, projectId: BigInt(projectId) }),
+    enabled: !!homeClient,
   })
+  const descriptors = useMemo(() => (descriptorsQuery.data ?? []).map(ctx => {
+    const native = ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
+    return {
+      key: native ? 'native' : `${ctx.symbol.toLowerCase()}:${ctx.decimals}`,
+      homeToken: ctx.token,
+      native,
+      symbol: ctx.symbol,
+      decimals: ctx.decimals,
+    }
+  }), [descriptorsQuery.data])
+  const snapshotQueries = useQueries({ queries: descriptors.flatMap(descriptor => chainPairs.map(pair => {
+    const rowChainId = pair[0] as JBChainId
+    const project = { chainId: rowChainId, projectId: BigInt(pair[1]) }
+    return projectDisplayQuery(queryClient, {
+      queryKey: [...projectDisplayKey(project, 'fundsSnapshot'), chainId, descriptor],
+      retry: 1,
+      queryFn: reader => readChainFunds(reader, config, pair, descriptor, chainId),
+    })
+  })) })
+  const matrix: FundsKind[] = descriptors.map((descriptor, descriptorIndex) => {
+    const snapshots = chainPairs.map(([id, pid], chainIndex) => {
+      const query = snapshotQueries[descriptorIndex * chainPairs.length + chainIndex]
+      return query.data ?? { chainId: id as JBChainId, projectId: pid, verified: false, snapshot: null, pending: query.isPending }
+    })
+    const present = snapshots.flatMap(result => result.snapshot ? [result.snapshot] : [])
+    const readsVerified = snapshots.every(result => result.verified)
+    return {
+      ...descriptor,
+      snapshots,
+      totalBalance: present.reduce((sum, snapshot) => sum + snapshot.balance, 0n),
+      totalUsd: present.reduce((sum, snapshot) => sum + (snapshot.usd ?? 0n), 0n),
+      readsVerified,
+      fullyPriced: readsVerified && present.every(snapshot => snapshot.balance === 0n || snapshot.usd != null),
+    }
+  })
+  const refetch = () => Promise.all(chainPairs.map(([id]) => invalidateProjectDisplayQueries(queryClient, id)))
+  const isLoading = descriptorsQuery.isLoading
 
   useEffect(() => {
     if (!matrix?.length) return
@@ -480,7 +463,10 @@ export function FundsTab({
   if (isLoading) {
     return <FundsTabSkeleton />
   }
-  if (!matrix?.length) {
+  if (descriptorsQuery.isError && !matrix.length) {
+    return <div className="card p-6"><p>Funds could not be loaded. <button className="underline" onClick={() => void descriptorsQuery.refetch()}>Retry</button></p></div>
+  }
+  if (!matrix.length) {
     return (
       <div className="card p-6">
         <span className="field-label">Funds</span>
@@ -503,7 +489,7 @@ export function FundsTab({
     .filter(kind => kind.totalBalance > 0n)
     .map(
       kind =>
-        `${formatTokenAmount(kind.totalBalance, kind.decimals)} ${kind.symbol}`,
+        `${kind.readsVerified ? formatTokenAmount(kind.totalBalance, kind.decimals) : '…'} ${kind.symbol}`,
     )
   const totalBalanceLabel = !allReadsVerified
     ? '—'
@@ -546,14 +532,14 @@ export function FundsTab({
                 {kind.symbol}
               </span>
               <span className="text-xs font-normal text-smoke-600">
-                {formatTokenAmount(kind.totalBalance, kind.decimals)}
+                {kind.readsVerified ? formatTokenAmount(kind.totalBalance, kind.decimals) : '…'}
               </span>
             </button>
           )
         })}
       </div>
 
-      <p className="mt-5 text-sm text-smoke-700">Balance</p>
+      <p className="mt-5 text-sm text-smoke-700">{selected.readsVerified ? 'Balance' : 'Verified balance so far'}</p>
       <p className="mt-1 font-agrandir text-2xl font-medium text-ink">
         {formatTokenAmount(selected.totalBalance, selected.decimals)}{' '}
         {selected.symbol}
@@ -594,7 +580,7 @@ export function FundsTab({
                         )} ${snapshot.tokenSymbol}`
                       : result.verified
                         ? 'Not added'
-                        : '—'}
+                        : result.pending ? 'Loading…' : 'Unavailable'}
                   </td>
                   <td className="py-2 text-right">
                     {snapshot
@@ -620,6 +606,8 @@ export function FundsTab({
           </tbody>
         </table>
       </div>
+
+      {!allReadsVerified ? <p className="mt-3 text-sm text-smoke-700">{matrix.some(kind => kind.snapshots.some(result => result.pending)) ? 'Other chains are still loading.' : 'Some chains could not be verified.'} <button className="underline" onClick={() => void refetch()}>Retry</button></p> : null}
 
       {home ? (
         <div className="mt-6 grid gap-6 border-t border-smoke-200 pt-6 lg:grid-cols-2">

@@ -1,6 +1,11 @@
 "use client";
 
-import { accountingContextsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
+import {
+  accountingContextsQuery,
+  currentRulesetQuery,
+  projectDisplayKey,
+  projectDisplayQuery,
+} from '@/lib/project-display-queries'
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   bytes32ToCidV0,
@@ -26,7 +31,7 @@ import {
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalShell } from "@/components/ui/ModalShell";
@@ -251,6 +256,7 @@ export function PayPanel({
   chains: [number, number][];
   payDisclosure?: string;
 }) {
+  const queryClient = useQueryClient();
   const { isConnected, address, openSignIn } = useWallet();
   const {
     quantities: cart,
@@ -347,12 +353,12 @@ export function PayPanel({
   // ONLY when a preview through the attached entry confirms it can route them (else a
   // dead route reverts at pay time). Built atomically so the token list is
   // never a partial/desynced snapshot.
-  const { data: surface, isError: surfaceError } = useQuery<PaySurface>({
-    queryKey: ["paySurface", chainId, projectId],
+  const { data: surface, isError: surfaceError } = useQuery(projectDisplayQuery(queryClient, {
+    queryKey: projectDisplayKey({ chainId, projectId: BigInt(projectId) }, "paySurface"),
     enabled: !!publicClient,
-    staleTime: 60_000,
+
     retry: 1,
-    queryFn: async (): Promise<PaySurface> => {
+    queryFn: async (reader): Promise<PaySurface> => {
       const client = publicClient!;
       const pid = BigInt(projectId);
       const args = { chainId, projectId: pid };
@@ -361,8 +367,8 @@ export function PayPanel({
       const multiTerminal =
         jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
       const [contexts, ruleset, terminalsRaw] = await Promise.all([
-        accountingContextsQuery(client, args).queryFn(),
-        currentRulesetQuery(client, args).queryFn(),
+        reader.fetchQuery(accountingContextsQuery(client, args)),
+        reader.fetchQuery(currentRulesetQuery(client, args)),
         client
           .readContract({
             address: directory,
@@ -440,7 +446,7 @@ export function PayPanel({
         unknown,
       };
     },
-  });
+  }));
 
   // The project's OWN token symbol ("You get X MARKEE") — resolved on-chain,
   // NOT bendystraw's accounting symbol.
@@ -969,14 +975,14 @@ export function PayPanel({
   // slippage-protected minimum—not its optimistic quote—against what the
   // terminal guarantees. Shop checkouts stay on the terminal because the
   // direct pool cannot mint the selected NFTs.
-  const { data: market } = useQuery({
+  const { data: market } = useQuery(projectDisplayQuery(queryClient, {
     queryKey: ["payMarket", chainId, projectId],
     enabled: !!publicClient && mode === "pay" && cartCount === 0,
     staleTime: 30_000,
     retry: false,
-    queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
-  });
+    queryFn: (reader) =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
+  }));
   const {
     data: directSwapQuote,
     isFetching: directSwapQuoteLoading,

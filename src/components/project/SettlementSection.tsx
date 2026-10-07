@@ -17,12 +17,11 @@ import {
   buildToRemoteTx,
   classifySuckerTransport,
   findSuckerTransportValue,
-  getAccountingContexts,
   getV6SuckerPairs,
   jbSuckerV6Abi,
   suckerBytes32ToAddress,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import {
@@ -53,6 +52,7 @@ import { isKnownController } from '@/lib/manage'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -185,13 +185,15 @@ type ChainComposition = {
 
 function CompositionCard({ chains }: { chains: [number, number][] }) {
   const config = useConfig()
+  const queryClient = useQueryClient()
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 30000,
     queryKey: ['settlement-composition', chains],
     meta: PERSIST,
-    staleTime: 30_000,
+
     retry: 1,
-    queryFn: async (): Promise<ChainComposition[]> => {
+    queryFn: async (reader): Promise<ChainComposition[]> => {
       return Promise.all(
         chains.map(async ([cid, pid]): Promise<ChainComposition> => {
           const client = getPublicClient(config, {
@@ -230,10 +232,10 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
                   .catch(() => null)) as bigint | null)
               : null
 
-          const contexts = await getAccountingContexts(client, {
+          const contexts = await reader.fetchQuery(accountingContextsQuery(client, {
             chainId: cid as JBChainId,
             projectId: BigInt(pid),
-          }).catch(() => null)
+          })).catch(() => null)
 
           const balances = contexts === null
             ? null
@@ -258,7 +260,7 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
         }),
       )
     },
-  })
+  }))
 
   const totalSupply = useMemo(
     () => (data ?? []).reduce((sum, c) => sum + (c.supply ?? 0n), 0n),

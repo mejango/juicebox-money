@@ -1,5 +1,6 @@
 'use client'
 
+import { projectDisplayQuery } from '@/lib/project-display-queries'
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -226,14 +227,15 @@ export function CashOutPanel({
   // Claimed project tokens can be sold directly into the buyback pool. This
   // bypasses the terminal fee, so compare its protected output against the
   // hook-aware terminal route and offer it only when it is strictly better.
-  const { data: market } = useQuery({
+  const { data: market } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 30000,
     queryKey: ['cashOutMarket', chainId, projectId],
     enabled: !!publicClient && !!projectToken,
-    staleTime: 30_000,
+
     retry: false,
-    queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, queryClient),
-  })
+    queryFn: (reader) =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
+  }))
   const directSellDirection =
     market?.status === 'pool' && projectToken && context
       ? uniswapV4SwapDirection({

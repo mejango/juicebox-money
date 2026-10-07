@@ -36,7 +36,8 @@ import {
 } from '@/components/LoadingSkeletons'
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
 import { Revalidating } from '@/components/ui/Revalidating'
-import { cachedQuery } from '@/lib/query-persist'
+import { cachedQuery, PERSIST } from '@/lib/query-persist'
+import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
@@ -228,7 +229,7 @@ export async function resolveMarket(
   chainId: JBChainId,
   projectId: number,
   nativeSymbol: string,
-  _queryClient?: QueryClient,
+  queryClient?: Pick<QueryClient, 'fetchQuery'>,
 ): Promise<MarketResult> {
   const pid = BigInt(projectId)
 
@@ -299,10 +300,10 @@ export async function resolveMarket(
 
   // The pool's pair (terminal) token = the project's primary accounting token
   // (website lpPairFor). Native ETH maps to the zero-address pool currency.
-  const contexts = await getAccountingContexts(client, {
-    chainId,
-    projectId: pid,
-  })
+  const args = { chainId, projectId: pid }
+  const contexts = queryClient
+    ? await queryClient.fetchQuery(accountingContextsQuery(client, args))
+    : await getAccountingContexts(client, args)
   const primary = contexts[0]
   if (!primary) return { status: 'none' }
   const isNative = lc(primary.token) === lc(NATIVE_TOKEN)
@@ -932,18 +933,19 @@ export function MarketSection({
     isLoading,
     isError,
     isFetching: marketFetching,
-  } = useQuery(
-    cachedQuery({
-      queryKey: ['market', chainId, projectId],
+  } = useQuery(projectDisplayQuery(queryClient, {
+      meta: PERSIST,
+    staleTime: 60000,
+    queryKey: ['market', chainId, projectId],
       enabled: !!publicClient,
-      staleTime: 60_000,
+
       refetchInterval: 15_000,
       refetchOnWindowFocus: true,
-      retry: 1,
-      queryFn: () =>
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, queryClient),
-    }),
-  )
+
+    retry: 1,
+      queryFn: (reader) =>
+        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
+    }))
 
   const hasPool = market?.status === 'pool'
 

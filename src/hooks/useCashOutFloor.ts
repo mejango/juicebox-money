@@ -1,12 +1,13 @@
 'use client'
 
 import { jbMultiTerminalAbi, type JBChainId } from '@bananapus/nana-sdk-core'
-import { getCurrentRuleset, v6Address } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
-import { cachedQuery } from '@/lib/query-persist'
+import { PERSIST } from '@/lib/query-persist'
+import { currentRulesetQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 
 const ONE_TOKEN = 10n ** 18n
 
@@ -23,13 +24,16 @@ export function useCashOutFloor(
   enabled = true,
 ) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  return useQuery(
-    cachedQuery({
+  const queryClient = useQueryClient()
+  const rulesetQuery = currentRulesetQuery(publicClient!, { chainId, projectId: BigInt(projectId) })
+  return useQuery(projectDisplayQuery(queryClient, {
+    meta: PERSIST,
+    staleTime: 15000,
     queryKey: ['marketFloor', chainId, projectId],
     enabled: !!publicClient && enabled,
-    staleTime: 60_000,
+
     retry: 0,
-    queryFn: async (): Promise<number | null> => {
+    queryFn: async (reader): Promise<number | null> => {
       const client = publicClient!
       const context = await getCashOutContext(client, {
         chainId,
@@ -42,10 +46,7 @@ export function useCashOutFloor(
       // fee-free surplus counter as well. Either read failing leaves the floor
       // UNKNOWN: the gross would overstate it and zero would erase it, so the
       // marker is withheld instead.
-      const ruleset = await getCurrentRuleset(client, {
-        chainId,
-        projectId: BigInt(projectId),
-      }).catch(() => null)
+      const ruleset = await reader.fetchQuery(rulesetQuery).catch(() => null)
       if (!ruleset) return null
       const cashOutTaxRate = BigInt(ruleset.metadata.cashOutTaxRate)
 
@@ -76,6 +77,5 @@ export function useCashOutFloor(
       const value = Number(formatUnits(net, context.decimals))
       return Number.isFinite(value) && value > 0 ? value : null
     },
-    }),
-  )
+    }))
 }

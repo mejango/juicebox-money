@@ -1,5 +1,6 @@
 'use client'
 
+import { projectDisplayQuery } from '@/lib/project-display-queries'
 import {
   buildCollectUniswapV4FeesTx,
   readUniswapV4PositionFees,
@@ -71,14 +72,15 @@ export function useUserLpSummary(
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const positionManager = POSITION_MANAGER_BY_CHAIN[chainId] ?? null
 
-  const market = useQuery({
+  const market = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 60000,
     queryKey: ['market', chainId, projectId],
     meta: PERSIST,
     enabled: !!client,
-    staleTime: 60_000,
+
     retry: 1,
-    queryFn: () => resolveMarket(client!, chainId, projectId, nativeSymbol, queryClient),
-  })
+    queryFn: (reader) => resolveMarket(client!, chainId, projectId, nativeSymbol, reader),
+  }))
   const pool: Pool | null =
     market.data?.status === 'pool' ? (market.data as Pool) : null
 

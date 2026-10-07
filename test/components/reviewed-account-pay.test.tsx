@@ -14,6 +14,7 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { zeroAddress, type Address } from 'viem'
+import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -22,6 +23,8 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
 const CHANGED = 'The connected account changed. Review again.'
+
+const displayQueries = new QueryClient()
 
 const m = vi.hoisted(() => ({
   token: 'native' as 'native' | 'erc20',
@@ -73,7 +76,8 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
-  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => query(String(queryKey[0])),
+    useQueryClient: () => displayQueries,
+  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => query(String(queryKey[0] === 'projectDisplay' ? queryKey[4] : queryKey[0])),
 }))
 vi.mock('@/hooks/useProjectTokenSymbol', () => ({
   useProjectTokenSymbol: () => ({ data: { symbol: 'TKN' } }),
