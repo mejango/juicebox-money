@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { markParaSession, useParaAuth, type ParaRequest } from '@/providers/ParaAuthContext'
 import { preloadParaHost } from '@/providers/preload-para'
 
+const router = vi.hoisted(() => ({ refresh: vi.fn() }))
 const para = vi.hoisted(() => ({
   host: vi.fn(),
   client: vi.fn(),
@@ -15,6 +16,7 @@ const para = vi.hoisted(() => ({
 }))
 
 vi.hoisted(() => { vi.stubEnv('NEXT_PUBLIC_DETERMINISTIC_BROWSER', 'false') })
+vi.mock('next/navigation', () => ({ useRouter: () => router }))
 vi.mock('wagmi', () => ({
   createConfig: () => ({}),
   injected: () => ({}),
