@@ -283,3 +283,10 @@ The official SDK 2.24.2 and sharp 0.35.5 installation changed the installed depe
 The unchanged budget gate measured home 447,501 B and create 517,399 B above the old 436/504 KiB caps. A controlled ac8430c baseline used the same final dependencies with only the official SDK 2.24.1 override, whose tarball SHA512 matched the committed lockfile. Baseline home/create were 447,505/517,401 B, so the current change is 4/2 B smaller. The release owner approved only the minimum 438/506 KiB caps; aggregate 2520, project 570, largest chunk 450, CSS 20 KiB and all lazy-loading checks remain unchanged. Current aggregate is 2,580,108 B, 50 B below the controlled baseline.
 
 Evidence: `/tmp/safe-quote-replacement-builds.Cs0JWc/published-juicebox-*`, `baseline-juicebox-*`, and `official-sdk-2.24.1-proof.json`. The old SDK backup differed from the verified archive and was not used. No wallet action, commit or push occurred in verification.
+
+
+### Post-push Linux CI aggregate budget correction (2026-10-07)
+
+CI run 37562644216 for commit 15d83b70 passed its production build, but aggregate JavaScript measured 2521.7 KiB against the 2520 KiB cap. Every route, largest chunk, stylesheet and lazy-loading check passed. The local published build measured 2519.6 KiB; the controlled local baseline/current comparison was 2,580,158/2,580,108 B (-50 B). The precise source of the cross-environment output difference has not been established.
+
+The release owner approved only the minimum aggregate ceiling of 2522 KiB. Home/create/project ceilings remain 438/506/570 KiB, largest chunk 450 KiB, CSS 20 KiB and all lazy-loading assertions remain unchanged. The amended gate on the retained published build, script lint, source checks and diff checks all pass; no runtime changes or repeated full build/browser runs were needed. The parent owns committing, pushing and observing the next CI run, including the browser gate skipped after this budget failure. CI evidence: `/tmp/jbm-ci-37562644216-failed.log`.

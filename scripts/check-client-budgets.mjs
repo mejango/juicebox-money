@@ -162,7 +162,10 @@ const budgets = {
   // Safe recovery checks saved accounts/nonces and preserves malformed funding
   // history. With the same SDK patch, unchanged main measures 2518.4 KiB and
   // these client changes 2519.2 KiB. Round up only the aggregate ceiling.
-  allScripts: 2520 * KIB,
+  // Linux CI run 37562644216 measures 2521.7 KiB, versus 2519.6 locally.
+  // The controlled local baseline/current comparison is 2,580,158/2,580,108 B
+  // (-50 B); round the observed CI total up to 2522 without changing other caps.
+  allScripts: 2522 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
