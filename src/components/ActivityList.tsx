@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from 'react'
 import { formatUnits, type Address } from 'viem'
-import { SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
+import { mergeCrossChainActivityGroups, SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
 import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
@@ -360,9 +360,6 @@ function eventDisplaySignature(event: BsActivityEvent): string {
   return 'other'
 }
 
-/** How far apart two chains' halves of one relayed action can land. */
-const CROSS_CHAIN_MERGE_WINDOW = 6 * 3600
-
 export type CrossChainGroup<T extends BsActivityEvent> = {
   group: T[]
   /** Every chain this action ran on; the first is the group's home chain. */
@@ -377,30 +374,16 @@ export type CrossChainGroup<T extends BsActivityEvent> = {
 export function mergeCrossChainGroups<T extends BsActivityEvent>(
   groups: T[][],
 ): CrossChainGroup<T>[] {
-  const merged: (CrossChainGroup<T> & { signature: string })[] = []
-  for (const group of groups) {
-    const signature = `${group[0].from}|${group
+  return mergeCrossChainActivityGroups(groups.map(group => ({
+    value: group,
+    signature: `${group[0].from}|${group
       .map(eventDisplaySignature)
       .sort()
-      .join('||')}`
-    const host = merged.find(
-      entry =>
-        entry.signature === signature &&
-        Math.abs(entry.group[0].timestamp - group[0].timestamp) <=
-          CROSS_CHAIN_MERGE_WINDOW &&
-        !entry.chains.some(chain => chain.chainId === group[0].chainId),
-    )
-    if (host) {
-      host.chains.push({ chainId: group[0].chainId, txHash: group[0].txHash })
-    } else {
-      merged.push({
-        group,
-        chains: [{ chainId: group[0].chainId, txHash: group[0].txHash }],
-        signature,
-      })
-    }
-  }
-  return merged.map(({ group, chains }) => ({ group, chains }))
+      .join('||')}`,
+    chainId: group[0].chainId,
+    txHash: group[0].txHash,
+    timestamp: group[0].timestamp,
+  }))).map(({ value: group, chains }) => ({ group, chains }))
 }
 
 function joinActionNodes(actions: ReactNode[]): ReactNode {
