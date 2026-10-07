@@ -7,9 +7,10 @@ import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
-import { cache } from "react";
+import { cache, Suspense } from "react";
 import { isAddressEqual, type Address } from "viem";
-import { ActivityList } from "@/components/ActivityList";
+import { ActivityRows, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
+import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
 import { PendingPayments } from "@/components/project/PendingPayments";
 import { ChainIcon } from "@/components/ChainIcon";
 import { TreasuryCard } from "@/components/TreasuryCard";
@@ -34,19 +35,15 @@ import {
   TermsTab,
 } from "@/components/project/LazyProjectTabs";
 import {
-  BsActivityEvent,
   BsProject,
-  getProjectActivity,
-  getProjectActivityByProject,
-  getRevnetOperator,
   getRevnetOperatorCandidates,
-  getSuckerGroupProjects,
   projectGroupPaymentsCount,
   projectGroupIsIncomplete,
   resolveProjectDeployments,
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
-import { getProjectPageData as getPageDataCached } from "@/lib/project-server-data";
+import { getProjectPageData as getPageDataCached, getIndexedProjectDisplay, getProjectSiblings, getProjectMetadata as fetchProjectMetadata } from "@/lib/project-server-data";
+import type { ProjectPageData } from "@/lib/project-fallback";
 import {
   getProjectLinkPreview,
   previewVersion,
@@ -65,9 +62,10 @@ import { resolveProjectRouteCached, type ResolvedProjectRoute } from "@/lib/proj
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
 
-const getRevnetOperatorCached = cache(getRevnetOperator);
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
-const getSuckerGroupProjectsCached = cache(getSuckerGroupProjects);
+const getRevnetOperatorCached = cache(async (chainId: number, projectId: number) =>
+  (await getRevnetOperatorCandidatesCached(chainId, projectId))[0] ?? null,
+);
 
 /**
  * The verified handle names the PROJECT, so it is the canonical URL for every
@@ -90,9 +88,10 @@ const lookupCanonicalHandleCached = cache(
       if (!authority) return null;
       const deployments: [number, number][] = [[chainId, projectId]];
       if (project.suckerGroupId) {
-        const siblings = await getSuckerGroupProjectsCached(
-          project.suckerGroupId,
+        const siblings = await getProjectSiblings(
           chainId,
+          projectId,
+          project.suckerGroupId,
         ).catch(() => [] as BsProject[]);
         for (const sibling of siblings) {
           if (
@@ -122,41 +121,6 @@ const lookupCanonicalHandleCached = cache(
   ),
 );
 
-
-type ProjectMetadata = {
-  name?: string;
-  projectTagline?: string;
-  description?: string;
-  logoUri?: string;
-  coverImageUri?: string;
-  payDisclosure?: string;
-  infoUri?: string;
-  twitter?: string;
-  discord?: string;
-  telegram?: string;
-  whatsapp?: string;
-  instagram?: string;
-};
-
-async function fetchProjectMetadata(
-  metadataUri: string | null,
-): Promise<ProjectMetadata | null> {
-  const url = ipfsUrl(metadataUri);
-  if (!url) return null;
-  try {
-    const res = await fetch(url, {
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as unknown;
-    return typeof json === "object" && json !== null
-      ? (json as ProjectMetadata)
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 /** Escaped, hydration-safe fallback while the browser sanitizer initializes. */
 function toParagraphs(text: string): string[] {
@@ -433,7 +397,27 @@ export default async function ProjectPage({
   const urn = await resolveProjectRouteCached(segment);
   if (!urn) redirect(legacyHref(`/${segment}`));
 
-  const result = await getPageDataCached(urn.chainId, urn.projectId);
+  const pending = getPageDataCached(urn.chainId, urn.projectId);
+  // An indexed identity can paint while the current onchain metadata pointer
+  // is reconciled. Missing/error identities retain the original fallback/404 path.
+  const indexed = await getIndexedProjectDisplay(urn.chainId, urn.projectId).catch(() => null);
+  if (!indexed) return <ProjectPageContents urn={urn} result={await pending} />;
+  return (
+    <Suspense fallback={<ProjectPageSkeleton hint={{
+      name: indexed.name?.trim() || `Project ${indexed.projectId}`,
+      logoUri: indexed.logoUri,
+      tagline: indexed.projectTagline,
+    }} />}>
+      <ProjectPageContents urn={urn} result={pending} />
+    </Suspense>
+  );
+}
+
+async function ProjectPageContents({ urn, result: pending }: {
+  urn: ResolvedProjectRoute;
+  result: ProjectPageData | null | Promise<ProjectPageData | null>;
+}) {
+  const result = await pending;
   if (!result) notFound();
   if (result.degraded) {
     return (
@@ -450,19 +434,13 @@ export default async function ProjectPage({
   const project = result.project;
 
   const isRevnet = urn.verifiedIsRevnet ?? !!project.isRevnet;
-  const [metadata, activityResult, siblings, operator] = await Promise.all([
+  const [metadata, siblings, operator] = await Promise.all([
     fetchProjectMetadata(project.metadataUri),
-    (project.suckerGroupId
-      ? getProjectActivity(project.suckerGroupId, 250, urn.chainId)
-      : getProjectActivityByProject(urn.chainId, project.projectId, 250)
-    )
-      .then(page => ({ events: page.items, total: page.totalCount, error: false }))
-      .catch(() => ({ events: [] as BsActivityEvent[], total: 0, error: true })),
     // An indexer failure here used to read as "this project is on one chain": the page
     // rendered fully, but cross-chain stats, per-chain tabs and authorities all silently
     // shrank to the home chain. Carry the failure so the UI can say so instead.
     (project.suckerGroupId
-      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId, { policy: 'no-store' })
+      ? getProjectSiblings(urn.chainId, project.projectId, project.suckerGroupId)
       : Promise.resolve([] as BsProject[])
     )
       .then(projects => ({ projects, error: projectGroupIsIncomplete(project, projects) }))
@@ -478,7 +456,6 @@ export default async function ProjectPage({
           )
       : Promise.resolve(null),
   ]);
-  const activity = activityResult.events;
   const siblingProjects = siblings.projects;
 
   const name =
@@ -563,10 +540,10 @@ export default async function ProjectPage({
     version: row.version,
     operator: authorities.find(([id]) => id === row.chainId)?.[1],
   }));
-  const indexedHandleOperatorCandidates = await getRevnetOperatorCandidatesCached(
+  const indexedHandleOperatorCandidates = isRevnet ? await getRevnetOperatorCandidatesCached(
     urn.chainId,
     project.projectId,
-  ).catch(() => []);
+  ).catch(() => []) : [];
   const handleOperatorCandidates = Array.from(
     new Set([
       ...indexedHandleOperatorCandidates,
@@ -744,7 +721,7 @@ export default async function ProjectPage({
             </div>
           </div>
         </header>
-        {siblings.error || activityResult.error || operator === undefined ? (
+        {siblings.error || operator === undefined ? (
           <ProjectDataStatus deployments={diagnosticDeployments} notice="partial" />
         ) : null}
 
@@ -763,16 +740,16 @@ export default async function ProjectPage({
           activity={
             <section className="min-[801px]:mt-8">
               <PendingPayments key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
-              <ActivityList
-                events={activity}
-                total={activityResult.total}
-                error={activityResult.error}
+              <Suspense fallback={<div role="status" aria-label="Loading activity"><ActivityRows /></div>}>
+              <ProjectActivity
                 chainId={urn.chainId}
                 projectId={project.projectId}
                 suckerGroupId={project.suckerGroupId}
                 accountingToken={accountingToken}
                 isRevnet={isRevnet}
+                deployments={diagnosticDeployments}
               />
+              </Suspense>
             </section>
           }
           tabs={[

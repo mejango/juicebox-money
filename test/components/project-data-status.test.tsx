@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ refresh: vi.fn(), invalidate: vi.fn(), copy: vi.fn() }))
+const mocks = vi.hoisted(() => ({ refresh: vi.fn(), invalidate: vi.fn(), copy: vi.fn(), refreshDisplay: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/app/actions/project-display', () => ({ refreshProjectDisplay: mocks.refreshDisplay }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }), useParams: () => ({ urn: 'basesep:45' }) }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/components/ui/ModalShell', () => ({ ModalShell: ({ children, footer }: { children: ReactNode; footer: ReactNode }) => <section>{children}{footer}</section> }))
@@ -74,6 +75,7 @@ describe('project data status and deployment checks', () => {
     expect(text(tree!.root)).not.toMatch(/catching up|just launched|finished indexing/)
     await act(async () => button('Retry').props.onClick())
     expect(mocks.invalidate).toHaveBeenCalledOnce()
+    expect(mocks.refreshDisplay.mock.calls).toEqual([[84532, 45], [1, 9]])
     expect(mocks.refresh).toHaveBeenCalledOnce()
     expect(fetch).not.toHaveBeenCalled()
   })

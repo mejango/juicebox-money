@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // projectUri field the app doesn't know about, so these tests pin the exact
 // object handed to Juicebox Center for every edit shape.
 const mocks = vi.hoisted(() => ({
+  refreshProjectDisplay: vi.fn().mockResolvedValue(undefined),
   metadata: undefined as Record<string, unknown> | undefined,
   loading: false,
   errored: false,
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   readAuthorityIdentity: vi.fn(),
   requestLock: vi.fn(),
 }))
+
+vi.mock('@/app/actions/project-display', () => ({ refreshProjectDisplay: mocks.refreshProjectDisplay }))
 
 vi.mock('@tanstack/react-query', () => ({
   useQuery: mocks.useQuery,
@@ -351,6 +354,16 @@ describe('metadata editor custom properties', () => {
       scoreboard: { url: 'https://scores.example' },
     })
     expect(pinned.tags).toEqual(['games'])
+    expect(mocks.refreshProjectDisplay.mock.calls).toEqual(ROWS.map(row => [row.chainId, row.projectId]))
+  })
+
+  it('preserves a completed save when display invalidation is unavailable', async () => {
+    mocks.refreshProjectDisplay.mockRejectedValueOnce(new Error('refresh unavailable'))
+    const onDone = vi.fn()
+    const renderer = await renderEditor(ROWS, onDone)
+    await saveAndReadPin(renderer)
+    expect(onDone).toHaveBeenCalledOnce()
+    expect(renderedText(renderer.root)).not.toContain('refresh unavailable')
   })
 
   it('lands edits, additions, and deletions from the box', async () => {

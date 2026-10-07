@@ -1,5 +1,7 @@
 'use client'
 
+import { refreshProjectDisplay } from '@/app/actions/project-display'
+
 import {
   JBCoreContracts,
   jbContractAddress,
@@ -874,6 +876,10 @@ export function MetadataEditor({
         setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         removeMetadataReview(frozen)
         setDone(true)
+        // Display refresh failure cannot change the completed transaction outcome.
+        await Promise.all(frozen.destinations.map(destination =>
+          refreshProjectDisplay(destination.chainId, destination.projectId),
+        )).catch(() => undefined)
         onDone()
       })
     } catch (submitError) {
