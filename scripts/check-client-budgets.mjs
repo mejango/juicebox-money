@@ -32,7 +32,10 @@ const budgets = {
     // On the final locked graph, ac8430c + official SDK 2.24.1 measures home
     // 447,505 B and create 517,401 B. SDK 2.24.2 plus the Safe changes is 4/2 B
     // smaller; round those existing baseline costs up to 438/506 KiB.
-    '/page': 438 * KIB,
+    // Bounded alias navigation adds its shared identity gate. On matching
+    // physical locked installs, 096540c/f5e293f measure 447,195/448,951 B.
+    // Heavy read/controller imports were separated before rounding this cost.
+    '/page': 439 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -54,7 +57,8 @@ const budgets = {
     // SDK 2.21.0 brings create from 502.1 to 503.0 KiB on the same toolchain (the same
     // SDK modules as home); taking it in place of jbm's copies, with the launch's Safe
     // wait signals, measures 503.3. Round up to the next KiB.
-    '/create/page': 506 * KIB,
+    // The same shared gate measures 517,232/518,996 B in that comparison.
+    '/create/page': 507 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -170,7 +174,11 @@ const budgets = {
   // 2,587,564 B (+5,308 B). Round up only the aggregate to 2527 KiB.
   // Passive Safe preparation measures 2,587,667 B (+103 B on the same graph),
   // 19 B over 2527 KiB. Round only the aggregate ceiling up to 2528 KiB.
-  allScripts: 2528 * KIB,
+  // Bounded display reuse and verified alias navigation: physical baseline
+  // 096540c/f5e293f measure 2,588,016/2,592,848 B (+4,832 B). Server React
+  // barrels and duplicate controller imports were removed before measuring.
+  // Round only these measured costs; project/largest/style/lazy caps stay fixed.
+  allScripts: 2533 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
