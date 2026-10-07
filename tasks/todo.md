@@ -358,7 +358,7 @@ Authorized by the website performance implementation plan at `/Users/jango/Docum
 - [x] Render each Funds chain independently and current rules independently of history/upcoming reads. Partial funds are labeled and totals withheld until verified; failures expose retry. Stable ruleset IDs preserve selection when delayed history arrives.
 - [x] Preserve final transaction simulation/authority/nonce/expiry guards. Optional market display readers share accounting evidence; omitted readers used by execution guards still read live and resolve the project's actual controller.
 - [x] Verify full local unit suite (196 files, 2,668 tests), TypeScript, full ESLint, dead-code check, source invariants and whitespace checks. Added in-flight deduplication, TTL expiry, invalidation, failed-read recovery, delayed-composition refresh, slow-chain and slow-history regressions. Independent cache review accepted the corrected expiry and invalidation boundaries.
-- [ ] Integration owner runs release/build/browser checks on the combined application changes. No install, build or deployment was performed in this task worktree.
+- [x] Integration owner completed locked-install release/build/browser checks on the combined application changes; details follow below.
 
 ### Review
 
@@ -412,3 +412,14 @@ Extraction review: 234 affected tests, touched ESLint, source invariants, TypeSc
 - **Resource budget:** Two import lines plus manifest/root-lock metadata, no install or dependency reification. One controlled build after focused tests; leave existing Providers/config ownership alone if caps pass.
 
 Server-import review: 35 server resolution, data freshness, streaming, invalidation and API tests pass; touched lint, whitespace checks and production TypeScript pass. Runtime QueryClient identity and unchanged lock package graph are verified; only the direct dependency declaration was added. Production total falls 2527.5 → 2519.8 KiB; create 514.5 → 511.8 KiB remains above 506, and home rechunks to 438.1 KiB (438 cap). The remaining modal/full-route-provider coupling is delegated to the navigation owner. npm ls cannot validate this symlinked node_modules checkout (it classifies the linked package tree as extraneous); root must repeat the dependency-tree gate after integration. No install or physical dependency change occurred.
+
+
+## 2026-10-07 — Combined performance verification
+
+All application changes are integrated on `codex/performance-20261007`. Final application source is f5e293f; 40d8ed2 changes only measured bundle limits. Full pinned Node 26.7 / npm 12 locked-install checks pass: dependencies/audit/container definition, lint/types/source/dead code, pinned deployments, live+offline schema and transaction inventory; 212 unit suites / 2,763 tests with coverage; production build; all bundle/lazy/style gates; 59 Chromium browser tests including real handle navigation at 390/1280px. The production image passed read-only/non-root readiness and exact version checks. Real Para browser verification observes zero guest runtime downloads or initialization after six seconds, intent-only preload, and explicit sign-in/marked-session initialization; vendor requests were blocked, so this is not an authentication test.
+
+Controlled comparison uses matching physical dependency contents and a common deterministic ENS transport/fixture overlay on baseline 096540c. All 20 original desktop/mobile journeys pass with zero unknown fixture reads or page errors. Reentry removes the baseline's two project reads and six contract reads in the observed mobile phases. Original assertion-completion timings are mixed and retain Playwright polling delay. A separately reviewed three-run mobile diagnostic records actual click-to-DOM readiness: entry 2367→2329 ms, reentry 541→438 ms; following-frame reentry 542→442 ms. These are local fixture observations, not paint measurements or production forecasts.
+
+After removing duplicate imports, clean physical baseline/final gzip totals are 2,588,016/2,592,848 bytes. Only measured ceilings are rounded: home 439, create 507 and aggregate 2533 KiB; other project/largest/style/lazy limits remain unchanged. The earlier symlink-based passing measurements are superseded by the physical integration build.
+
+Independent source, cache/invalidation, alias/review and measurement-method reviews are complete. Verification records and limitations are in `/Users/jango/Documents/jb/v6/evm/docs/WEBSITE_PERFORMANCE_IMPLEMENTATION.md` and `docs/performance/2026-10-07-verification.json`; raw checks remain under `/private/tmp/jb-performance-checks`. No push or production deployment was performed. All owned browser, fixture and container processes are stopped.
