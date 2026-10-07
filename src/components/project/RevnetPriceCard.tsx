@@ -1,11 +1,12 @@
 'use client'
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
 import {
   accountingContextsQuery,
   accountingContextSymbolsQuery,
   allRulesetsQuery,
   currentRulesetQuery,
-  projectDisplayKey,
   projectDisplayQuery,
 } from '@/lib/project-display-queries'
 import {

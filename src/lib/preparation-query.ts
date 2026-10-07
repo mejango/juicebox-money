@@ -1,6 +1,6 @@
 import type { QueryClient } from '@tanstack/react-query'
 import type { AuthorityResult } from '@/lib/authority'
-import { invalidateProjectDisplayQueries } from '@/lib/project-display-queries'
+import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 
 /** Brief reuse for draft evidence only; review and send guards still re-read. */
 export function preparationStaleTime(

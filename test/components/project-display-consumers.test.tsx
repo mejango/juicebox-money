@@ -10,7 +10,8 @@ import { AutoIssuanceSection } from '@/components/project/AutoIssuanceSection'
 import { LoansSection } from '@/components/project/LoansSection'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { addrOf } from '@/lib/contracts'
-import { accountingContextsQuery, allRulesetsQuery, projectTokenQuery, projectDisplayQuery } from '@/lib/project-display-queries'
+import { accountingContextsQuery, allRulesetsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
+import { projectTokenQuery } from '@/lib/project-token-query'
 
 const mocks = vi.hoisted(() => ({ client: { readContract: vi.fn() } }))
 vi.mock('wagmi', () => ({ usePublicClient: () => mocks.client }))

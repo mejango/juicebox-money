@@ -1,11 +1,12 @@
 "use client";
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
 import {
   accountingContextSymbolsQuery,
   allRulesetsQuery,
   currentRulesetQuery,
   upcomingRulesetQuery,
-  projectDisplayKey,
 } from '@/lib/project-display-queries'
 import {
   USD_CURRENCY_ID,

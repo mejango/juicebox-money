@@ -1,9 +1,10 @@
 "use client";
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
 import {
   accountingContextsQuery,
   currentRulesetQuery,
-  projectDisplayKey,
   projectDisplayQuery,
 } from '@/lib/project-display-queries'
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";

@@ -1,12 +1,12 @@
 'use client'
 
+import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
+
 import {
   accountingContextsQuery,
   accountingContextSymbolsQuery,
   currentRulesetQuery,
-  projectDisplayKey,
   projectDisplayQuery,
-  invalidateProjectDisplayQueries,
   type ProjectDisplayReader,
 } from '@/lib/project-display-queries'
 import {

@@ -1,21 +1,16 @@
-import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   getAccountingContexts,
   getAllRulesets,
   getCurrentRuleset,
-  getTokenAddress,
   getUpcomingRuleset,
 } from '@bananapus/nana-sdk-core/v6'
 import type {
   QueryClient,
-  QueryKey,
   UseQueryOptions,
 } from '@tanstack/react-query'
-import { erc20Abi, type Address, type PublicClient } from 'viem'
+import type { PublicClient } from 'viem'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { PERSIST } from '@/lib/query-persist'
-
-type Project = { chainId: JBChainId; projectId: bigint }
+import { projectDisplayKey, type DisplayProject } from '@/lib/project-display-cache'
 
 // Display/preparation evidence only. Final transaction simulation and send
 // guards continue to read their own live evidence. Keys include the protocol,
@@ -23,17 +18,7 @@ type Project = { chainId: JBChainId; projectId: bigint }
 const PROJECT_RULESET_STALE_MS = 15_000
 const PROJECT_CONFIGURATION_STALE_MS = 60_000
 
-export function projectDisplayKey(project: Project, kind: string) {
-  return [
-    'projectDisplay',
-    6,
-    project.chainId,
-    project.projectId.toString(),
-    kind,
-  ] as const
-}
-
-export function currentRulesetQuery(client: PublicClient, project: Project) {
+export function currentRulesetQuery(client: PublicClient, project: DisplayProject) {
   return {
     queryKey: projectDisplayKey(project, 'currentRuleset'),
     staleTime: PROJECT_RULESET_STALE_MS,
@@ -42,7 +27,7 @@ export function currentRulesetQuery(client: PublicClient, project: Project) {
   }
 }
 
-export function upcomingRulesetQuery(client: PublicClient, project: Project) {
+export function upcomingRulesetQuery(client: PublicClient, project: DisplayProject) {
   return {
     queryKey: projectDisplayKey(project, 'upcomingRuleset'),
     staleTime: PROJECT_RULESET_STALE_MS,
@@ -53,7 +38,7 @@ export function upcomingRulesetQuery(client: PublicClient, project: Project) {
 
 export function allRulesetsQuery(
   client: PublicClient,
-  project: Project & { size: bigint },
+  project: DisplayProject & { size: bigint },
 ) {
   return {
     queryKey: [
@@ -68,40 +53,13 @@ export function allRulesetsQuery(
 
 export function accountingContextsQuery(
   client: PublicClient,
-  project: Project,
+  project: DisplayProject,
 ) {
   return {
     queryKey: projectDisplayKey(project, 'accountingContexts'),
     staleTime: PROJECT_CONFIGURATION_STALE_MS,
     retry: 1,
     queryFn: () => getAccountingContexts(client, project),
-  }
-}
-
-/** Existing project-token cache contract, shared with every symbol consumer. */
-export function projectTokenQuery(
-  client: PublicClient,
-  chainId: JBChainId,
-  projectId: number,
-) {
-  return {
-    queryKey: ['marketProjectSymbol', chainId, projectId] as const,
-    meta: PERSIST,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<{ address: Address; symbol: string } | null> => {
-      const token = await getTokenAddress(client, {
-        chainId,
-        projectId: BigInt(projectId),
-      })
-      if (!token) return null
-      const symbol = await client.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })
-      return { address: token, symbol }
-    },
   }
 }
 
@@ -175,7 +133,7 @@ export function projectDisplayQuery<T>(
 export function accountingContextSymbolsQuery(
   client: PublicClient,
   queryClient: QueryClient,
-  project: Project,
+  project: DisplayProject,
 ) {
   return projectDisplayQuery(queryClient, {
     queryKey: projectDisplayKey(project, 'accountingContextSymbols'),
@@ -193,51 +151,4 @@ export function accountingContextSymbolsQuery(
         ),
       ),
   })
-}
-
-/** Confirmed writes expire public display evidence; proposals alone do not. */
-export async function invalidateProjectDisplayQueries(
-  client: QueryClient,
-  chainId: number,
-) {
-  const filters = {
-    predicate: (query: { queryKey: QueryKey }) => {
-      const [root, scope] = query.queryKey
-      if (root === 'projectDisplay') {
-        if (query.queryKey[2] === chainId) return true
-        // The price reference combines all project deployments under the home
-        // chain; a peer-chain write also expires that aggregate.
-        return (
-          query.queryKey[4] === 'priceReferences' &&
-          Array.isArray(query.queryKey[5]) &&
-          query.queryKey[5].some(
-            (pair) => Array.isArray(pair) && pair[0] === chainId,
-          )
-        )
-      }
-      if (
-        [
-          'marketProjectSymbol',
-          'yourPosition',
-          'market',
-          'payMarket',
-          'cashOutMarket',
-          'marketFloor',
-        ].includes(String(root))
-      ) {
-        return scope === chainId
-      }
-      return (
-        ['projectTreasuryUsd', 'gossip', 'settlement-composition'].includes(
-          String(root),
-        ) &&
-        Array.isArray(scope) &&
-        scope.some((pair) => Array.isArray(pair) && pair[0] === chainId)
-      )
-    },
-  }
-  // Cancel initial fills too. Otherwise a read started before the receipt can
-  // finish afterwards and grant old evidence a new freshness window.
-  await client.cancelQueries(filters)
-  return client.invalidateQueries(filters)
 }

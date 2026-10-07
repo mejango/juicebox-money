@@ -4,7 +4,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { projectTokenQuery } from '@/lib/project-display-queries'
+import { projectTokenQuery } from '@/lib/project-token-query'
 
 /**
  * The project's OWN ERC-20 token address + symbol, resolved on-chain (NOT

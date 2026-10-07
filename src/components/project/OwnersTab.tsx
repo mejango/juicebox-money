@@ -1,11 +1,12 @@
 'use client'
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
 import {
   accountingContextsQuery,
   allRulesetsQuery,
   currentRulesetQuery,
   projectDisplayQuery,
-  projectDisplayKey,
 } from '@/lib/project-display-queries'
 import {
   JBCoreContracts,

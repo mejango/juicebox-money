@@ -1,3 +1,4 @@
+import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 import type { PublicClient } from 'viem'
@@ -7,7 +8,6 @@ import {
   currentRulesetQuery,
   upcomingRulesetQuery,
   projectDisplayQuery,
-  invalidateProjectDisplayQueries,
 } from '@/lib/project-display-queries'
 
 const sdk = vi.hoisted(() => ({

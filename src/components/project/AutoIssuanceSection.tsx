@@ -18,7 +18,8 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
-import { allRulesetsQuery, projectTokenQuery } from '@/lib/project-display-queries'
+import { allRulesetsQuery } from '@/lib/project-display-queries'
+import { projectTokenQuery } from '@/lib/project-token-query'
 
 /** One auto-issuance allocation on a specific chain, deduped by
  *  (chain, stageId, beneficiary). */

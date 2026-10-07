@@ -295,7 +295,7 @@ describe('persisted query scope', () => {
     const tagged = files.filter((_, index) => results[index].tagged)
     // The floor is the number of files that tag a persisted query. Raise it when a task tags another file, and lower it
     // only when a file stops persisting one on purpose.
-    expect(tagged).toContain(join('src', 'lib', 'project-display-queries.ts'))
+    expect(tagged).toContain(join('src', 'lib', 'project-token-query.ts'))
     // Terms, Rulesets and Funds now share memory-only evidence with Pay; the
     // project-token persistence tag moved into its single query owner.
     expect(tagged.length).toBeGreaterThanOrEqual(14)
@@ -643,7 +643,7 @@ export function Balance() {
   })
 
   it.each([
-    [join('src', 'lib', 'project-display-queries.ts'), 'a meta: PERSIST tag'],
+    [join('src', 'lib', 'project-token-query.ts'), 'a meta: PERSIST tag'],
     [join('src', 'hooks', 'useCashOutFloor.ts'), 'a cachedQuery tag'],
   ])('passes the real %s, and sees %s in it', file => {
     const text = readFileSync(file, 'utf8')
