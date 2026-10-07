@@ -1,5 +1,6 @@
 import { BaseError, ContractFunctionRevertedError } from 'viem'
 import { TransactionReviewCancelledError } from '@/lib/transaction-review'
+import { transactionMessage } from '@/lib/transaction-message'
 
 /** A failure with copy that's already user-ready: friendlyError shows it as it reads. */
 export class FlowError extends Error {}
@@ -37,9 +38,11 @@ export function shortError(
   error: unknown,
   fallback = 'Something went wrong.',
 ): string {
-  if (error instanceof TransactionReviewCancelledError) return error.message
+  if (error instanceof TransactionReviewCancelledError) return transactionMessage(error.message)
   if (error instanceof Error) {
     const message = viemMessage(error)
+    const displayed = transactionMessage(message)
+    if (displayed !== message) return displayed
     if (/denied|rejected/i.test(message)) return 'Transaction cancelled.'
     return message
   }
@@ -48,13 +51,15 @@ export function shortError(
 
 /** A friendly one-line message out of a viem/wagmi error. */
 export function friendlyError(e: unknown): string {
-  if (e instanceof TransactionReviewCancelledError || e instanceof FlowError) return e.message
+  if (e instanceof TransactionReviewCancelledError || e instanceof FlowError) return transactionMessage(e.message)
   const message =
     e instanceof BaseError
       ? viemMessage(e)
       : e instanceof Error
         ? e.message
         : 'Something went wrong.'
+  const displayed = transactionMessage(message)
+  if (displayed !== message) return displayed
   return /reject|denied|cancel/i.test(message)
     ? 'You cancelled in your wallet.'
     : message

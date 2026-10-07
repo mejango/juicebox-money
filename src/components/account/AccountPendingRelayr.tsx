@@ -1,5 +1,6 @@
 'use client'
 
+import { transactionMessage } from '@/lib/transaction-message'
 import { useCallback, useEffect, useState } from 'react'
 import { ChainIcon } from '@/components/ChainIcon'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
@@ -131,7 +132,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
           </button>
         )
         const notice = notices[scope] ? (
-          <p className="mt-2 text-xs text-smoke-600">{notices[scope]}</p>
+          <p className="mt-2 text-xs text-smoke-600">{transactionMessage(notices[scope])}</p>
         ) : null
         if (session.discardable) {
           return (
@@ -146,7 +147,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
           return (
             <div key={scope} className="card space-y-2 p-4">
               <p className="text-sm text-smoke-700">
-                This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.
+                This unpaid quote expired. Nothing was paid; review the action again for a new quote.
               </p>
               {check}
               {notice}
@@ -161,7 +162,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                 Cross-chain action in flight
                 <span className="ml-2 text-xs font-normal text-smoke-500">
                   {formatDate(Math.floor(session.createdAt / 1000))},{' '}
-                  {`${progress.confirmed}/${progress.total} Relayr-reported; onchain proof pending`}
+                  {`${progress.confirmed}/${progress.total} reported; onchain proof pending`}
                 </span>
               </div>
               {projectSafeProof ? (
@@ -204,7 +205,7 @@ export function AccountPendingRelayr({ address }: { address: string }) {
                     <ChainIcon chainId={chainId} size={14} />
                     {chainName(chainId)}:{' '}
                     {reportedState === 'confirmed'
-                      ? 'Relayr-reported; verification pending'
+                      ? 'Reported; verification pending'
                       : state}
                   </span>
                 )

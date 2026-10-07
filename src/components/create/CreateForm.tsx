@@ -2124,7 +2124,7 @@ export function CreateForm() {
         unverified.length > 0
           ? `This launch was interrupted while your wallet was signing on ${unverified.join(", ")}. Check your wallet's recent activity there BEFORE pressing Try again — if a launch went through, resuming would create a second project. Chains that already launched are kept.`
           : session.transport === "relayr"
-            ? "Resume this launch to check its saved Relayr bundle. Completed chains are kept; an uncertain payment or launch is checked before anything is sent again."
+            ? "Resume this launch to check its saved bundle. Completed chains are kept; an uncertain payment or launch is checked before anything is sent again."
             : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
       );
     }
@@ -2423,7 +2423,7 @@ export function CreateForm() {
       steps={launchSteps}
       stepsIntro={
         usesRelayr
-          ? "Sign each chain's launch request, then review the Relayr quote and pay once."
+          ? "Sign each chain's launch request, then review the quote and pay once."
           : undefined
       }
       activeIndex={launchActiveIndex}
@@ -2465,7 +2465,7 @@ export function CreateForm() {
       ))}
       {usesRelayr && phase !== "done" && relayrFundingStarted && activeLaunchSession?.relayr?.paymentChainId ? (
         <p className="text-sm text-smoke-700">
-          Checking the saved Relayr payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
+          Checking the saved payment on {chainName(activeLaunchSession.relayr.paymentChainId)}.
         </p>
       ) : null}
       {launchTxLinks.length > 0 ? (

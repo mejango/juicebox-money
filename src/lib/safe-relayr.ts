@@ -159,7 +159,7 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
     review: async (executions, { resumed }) => {
       await requireTransactionReview({
         title: `Review ${executions.length} Safe executions`,
-        confirmLabel: resumed ? 'Use saved quote' : 'Agree & request Relayr quote',
+        confirmLabel: resumed ? 'Use saved quote' : 'Review & get payment options',
         calls: executions.map(({ entry }) => {
           const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: entry.data })
           if (decoded.functionName !== 'execTransaction') throw new Error('The saved call is not a Safe execution.')

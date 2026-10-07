@@ -1,3 +1,5 @@
+import { transactionMessage } from '@/lib/transaction-message'
+
 /**
  * The red error block every write flow renders under its action button.
  * Renders nothing when there's no error, so callers can pass their state
@@ -13,7 +15,7 @@ export function TxError({
   if (!error) return null
   // Wallet errors carry unbroken hex; `wrap-anywhere` (unlike `break-words`)
   // also shrinks the min-content width, so one can't widen its container.
-  return <p className={`wrap-anywhere ${className}`}>{error}</p>
+  return <p className={`wrap-anywhere ${className}`}>{transactionMessage(error)}</p>
 }
 
 /** The authority cards' compact variant (smaller text, tighter margin). */

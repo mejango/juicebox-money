@@ -365,7 +365,7 @@ export function MultiChainBuybackRouterCard({
           Choose the hook that decides, on every payment, whether to issue
           tokens or buy them on the AMM, then point it at a Uniswap v4 pool
           and tune the pool’s TWAP window. Select every intended chain; EOA
-          actions use one Relayr payment, while Safe actions are proposed to
+          actions use one payment, while Safe actions are proposed to
           each chain’s multisig.
         </p>
         {body(['hook', 'pool', 'setPool', 'twap'], 'Buyback hook')}

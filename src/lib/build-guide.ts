@@ -416,7 +416,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Connect wallets and request approval',
     paragraphs: [
-      'A wallet can send a transaction directly. A shared Safe wallet needs a proposal and approvals before execution. Relayr can send a group of approved calls across chains. Permit2 grants limited token spending for swaps. This site chooses the flow based on the connected account.',
+      'A wallet can send a transaction directly. A shared Safe wallet needs a proposal and approvals before execution. A group of approved calls can be sent across chains with one payment. Permit2 grants limited token spending for swaps. This site chooses the flow based on the connected account.',
     ],
     blocks: [
       {
@@ -424,7 +424,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         label: 'Signing paths in this site',
         rows: [
           ['Wallet write', 'submitReviewedContractWrite: review the decoded call → switch chain → simulate as the connected account → sign → wait for the receipt'],
-          ['Actions on behalf of an owner', 'runAuthorityCalls selects the flow. A directly controlled wallet signs itself. An account that supports forwarded calls (ERC-2771) can approve a prepaid Relayr bundle. A Safe receives proposals in its transaction service'],
+          ['Actions on behalf of an owner', 'runAuthorityCalls selects the flow. A directly controlled wallet signs itself. An account that supports forwarded calls (ERC-2771) can approve a prepaid bundle. A Safe receives proposals in its transaction service'],
           ['Safe', 'Propose, approve, then execute. A Safe can use the same address on another chain, but its deployment and signing authority must be checked on each chain'],
           ['Permit2', 'Used for direct Uniswap V4 swaps. Other token payments use approve for the exact amount'],
         ],
@@ -437,9 +437,9 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'links',
         items: [
           { href: `${REPO}/src/lib/authority.ts`, label: 'runAuthorityCalls' },
-          { href: `${REPO}/src/lib/relayr.ts`, label: 'Relayr' },
+          { href: `${REPO}/src/lib/relayr.ts`, label: 'Cross-chain execution' },
           { href: `${REPO}/src/lib/safe.ts`, label: 'Safe' },
-          { href: `${SKILLS}/jb-relayr/SKILL.md`, label: 'Relayr integration skill' },
+          { href: `${SKILLS}/jb-relayr/SKILL.md`, label: 'Cross-chain execution integration skill' },
         ],
       },
     ],

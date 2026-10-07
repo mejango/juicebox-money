@@ -1,5 +1,6 @@
 'use client'
 
+import { transactionMessage } from '@/lib/transaction-message'
 import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState, useSyncExternalStore } from 'react'
@@ -179,10 +180,10 @@ export function PendingPayments({ chainId, projectId, chains }: {
         {recovery ? 'Resume saved batch' : checking && !verification.error ? 'Checking pending payments…' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
       </button>
     </div>
-    <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments through Relayr and pay the quoted fees once.</p>
+    <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments and pay the quoted fees once.</p>
     {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
     {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
-    {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status">{status}</p> : null}
+    {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status">{transactionMessage(status)}</p> : null}
     <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing. ${available.length} ready`}</p>
     {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
     {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
@@ -192,17 +193,17 @@ export function PendingPayments({ chainId, projectId, chains }: {
           <p className="font-medium">{item.review ? amountLabel(item.review) : `${item.payment.amount} base units of ${truncateAddress(item.payment.token)}`}</p>
           <p className="text-smoke-500">{chainName(item.payment.chainId)}: project #{item.payment.sourceProjectId} → #{item.payment.projectId}</p>
           {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500">{verification.error ? 'Could not check this payment.' : 'Checking availability…'}</p> : null}
-          {item.error ? <p className="mt-1 text-red-600">{item.error}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
+          {item.error ? <p className="mt-1 text-red-600">{transactionMessage(item.error)}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
         </div>
         <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>
           {item.review?.functionName === 'finalizePendingCall' ? 'Route or return' : 'Retry payment'}
         </button>
       </li>)}
     </ul>
-    {error && !open ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
+    {error && !open ? <p className="mt-2 text-sm text-red-600">{transactionMessage(error)}</p> : null}
     <TxConfirmDialog open={open} title={complete ? 'Payment batch finished' : 'Review pending payments'} rows={reviewedRows}
       steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)}: ${call.label}` }))}
-      stepsIntro="Relayr bundles available payments into one fee payment, including payments on the same chain. Each routing attempt has its own outcome; the batch does not make them atomic. Safe wallets and unsupported networks use separate transactions."
+      stepsIntro="Available payments are bundled into one fee payment, including payments on the same chain. Each routing attempt has its own outcome; the batch does not make them atomic. Safe wallets and unsupported networks use separate transactions."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={needsReview && !complete ? 'Close this review and reopen pending payments to review the current batch.' : status} error={discard.active ? null : error}
       action={savedSelection ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={needsReview || !calls?.length || discard.active}
       onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>

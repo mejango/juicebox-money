@@ -364,6 +364,27 @@ describe('AccountHeader view-as', () => {
 })
 
 describe('AccountPendingRelayr', () => {
+  it('renders an older recovery error without changing its diagnostics or saved payment evidence', async () => {
+    mocks.connectedAddress = ALICE
+    const session = pendingSession()
+    const original = JSON.stringify(session)
+    const cause = { bundleUuid: session.bundleUuid, paymentHash: session.paymentHash }
+    const failure = new Error('Your wallet may have sent the Relayr payment without returning its hash. Check the saved bundle; do not pay again.', { cause })
+    mocks.fetchRelayrBundlesByAccount.mockResolvedValue([{ scope: 'authority:0xaaa', session }])
+    mocks.resumeRelayrSession.mockRejectedValueOnce(failure)
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(AccountPendingRelayr, { address: ALICE })) })
+    await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
+    const text = renderedText(renderer.root)
+    expect(text).toContain('Your wallet may have sent the payment without returning its hash. Check the saved bundle; do not pay again.')
+    expect(text).not.toMatch(/Relayr|Nothing was paid/i)
+    expect(failure.message).toContain('Relayr payment')
+    expect(failure.cause).toBe(cause)
+    expect(JSON.stringify(session)).toBe(original)
+    expect(mocks.resumeRelayrSession).toHaveBeenCalledExactlyOnceWith({ scope: 'authority:0xaaa', account: ALICE })
+    await act(async () => renderer.unmount())
+  })
+
   it('stays hidden for viewers who are not the account', async () => {
     mocks.connectedAddress = BOB
     mocks.fetchRelayrBundlesByAccount.mockResolvedValue([
@@ -419,7 +440,7 @@ describe('AccountPendingRelayr', () => {
     })
 
     const text = renderedText(renderer.root)
-    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    expect(text).toContain('This unpaid quote expired. Nothing was paid; review the action again for a new quote.')
     expect(text).not.toContain('in flight')
     // Its old request may still run, so only a check classifies it (ruling R114 (e)).
     expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
@@ -579,7 +600,7 @@ describe('AccountPendingRelayr', () => {
     })
 
     const text = renderedText(renderer.root)
-    expect(text).toContain('This unpaid Relayr quote expired. Nothing was paid; review the action again for a new quote.')
+    expect(text).toContain('This unpaid quote expired. Nothing was paid; review the action again for a new quote.')
     // Its old request may still run, so only a check classifies it and offers Discard once every request is dead (ruling R114 (e)).
     expect(buttonWith(renderer, 'Check original bundle')).toBeDefined()
   })
@@ -623,8 +644,8 @@ describe('AccountPendingRelayr', () => {
 
     const text = renderedText(renderer.root)
     expect(text).toContain('Cross-chain action in flight')
-    expect(text).toContain('1/2 Relayr-reported; onchain proof pending')
-    expect(text).toContain('Ethereum: Relayr-reported; verification pending')
+    expect(text).toContain('1/2 reported; onchain proof pending')
+    expect(text).toContain('Ethereum: Reported; verification pending')
     expect(text).toContain('Optimism: pending')
 
     await act(async () => buttonWith(renderer, 'Check original bundle').props.onClick())
@@ -659,7 +680,7 @@ describe('AccountPendingRelayr', () => {
     })
 
     const text = renderedText(renderer.root)
-    expect(text).toContain('Relayr-reported; onchain proof pending')
+    expect(text).toContain('reported; onchain proof pending')
     expect(text).toContain('Owner/Operator tab')
     expect(text).not.toContain('Ethereum: confirmed')
     expect(buttonWith(renderer, 'Check original bundle')).toBeUndefined()

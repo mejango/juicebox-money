@@ -135,9 +135,9 @@ export function projectBatchRecoveryReason(batch: ProjectBatch): string {
   try {
     for (let round = 0; round < batch.rounds.length; round++) {
       const session = loadRawRelayrSession(relayrScopeOf(batch, round))
-      if (session?.phase === 'quoted') return 'A Relayr quote is saved. Re-check it to see whether it expired without funding.'
-      if (session?.phase === 'publishing') return 'The Relayr request started, but its quote response was not saved. Its outcome is unknown.'
-      if (session) return 'A Relayr funding or execution attempt is saved. Resume it to verify its outcome before starting another batch.'
+      if (session?.phase === 'quoted') return 'A quote is saved. Re-check it to see whether it expired without funding.'
+      if (session?.phase === 'publishing') return 'The request started, but its quote response was not saved. Its outcome is unknown.'
+      if (session) return 'A funding or execution attempt is saved. Resume it to verify its outcome before starting another batch.'
     }
   } catch { return 'Saved recovery data could not be verified. Keep it until its status can be checked.' }
   return 'This saved batch contains submission or relay evidence. Its status must be checked before replacing it.'
@@ -437,7 +437,7 @@ export async function runProjectBatch({
       // its sent gas limit, which is measured at send time, so it is not shown.
       const viaSafe = isSafeConnection(wagmiConfig)
       await requireTransactionReview({ title,
-        description: `Review each destination and its amounts. ${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Independent pending payments are submitted together through Relayr; each has its own routing outcome.' : 'Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
+        description: `Review each destination and its amounts. ${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Independent pending payments are submitted together; each has its own routing outcome.' : 'Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A Safe app signs the sent gas as safeTxGas; each call is sent with 0.
         calls: batch.calls.map(({ gas: _gas, ...call }) => ({ ...call, from: call.authority, to: call.target,
@@ -551,7 +551,7 @@ export async function runProjectBatch({
           await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
             reverify: async () => { checkAccount(); for (const call of relayCalls) await reverify?.(call) },
             onProgress: progress => report(progress.phase === 'executing'
-              ? `Relayr reports ${progress.done}/${progress.total} destinations complete; verifying their transactions…`
+              ? `Reported status: ${progress.done}/${progress.total} destinations complete; verifying their transactions…`
               : `Round ${round + 1}/${journal.rounds.length}: ${progress.phase.replaceAll('-', ' ')}…`, round),
             onComplete: async records => {
               if (verifyCompletion) for (const call of relayCalls) {
