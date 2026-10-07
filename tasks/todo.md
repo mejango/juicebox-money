@@ -336,3 +336,14 @@ Plan review: the approved workspace refinement extracts the existing Juicebox po
 Review: ActivityList now adapts each existing group into the shared helper and restores the unchanged `{group, chains}` shape. The local matching loop and window are removed; display signatures and all existing tests are untouched. All 42 unchanged cross-chain, same-transaction and activity-metadata regressions pass against the real SDK preview export, as do full types, source invariants, targeted lint and whitespace checks. The coordinator owns the official SDK 2.24.4 pin and final publication gates.
 
 Official package qualification: root manifest and lockfile now pin published core2.24.4 with verified registry integrity. All753 distribution files match the tested preview; unrelated physical dependencies and runtime sources are unchanged. The qualified production build measures2,587,907B (+240B) and passes the unchanged2528KiB aggregate limit plus all route/chunk/CSS/lazy guards. The final actual-package cross-chain/same-tx25-test rerun and exact-toolchain dependency check pass. Hosted CI and live revision checks are tracked by the workspace release checklist.
+
+
+## 2026-10-07 — Keep anonymous browsing free of wallet initialization
+
+- [x] Remove only the root provider's idle Para mount; preserve intent preload, sign-in/add-funds, and marked-session restoration.
+- [x] Add wallet-enabled provider regressions covering native idle and timeout fallback after page load, intent preload, explicit requests, and marked sessions.
+- [x] Verify the focused wallet suites, touched lint, full types, and source invariants; production build/browser evidence belongs to combined integration.
+
+Plan review: use `/Users/jango/Documents/jb/v6/evm/docs/WEBSITE_PERFORMANCE_IMPLEMENTATION.md` (refinement gate passed), root `AGENTS.md`, pinned `workflow/ponytail/SKILL.md`/`README.md`, `docs/PLAN_REFINEMENT.md`, and relevant root/app lessons. Existing Para context, lazy host, reconnect marker, and module preload already own the behavior; remove the conflicting unsolicited mount without introducing a second wallet loader. The new provider tests run with Para enabled, and both idle cases fail on the original provider while explicit requests and session verification pass. The installed Next16.3.8 lazy-loading guide confirms the existing conditional React.lazy boundary is appropriate.
+
+Review: all 32 focused wallet tests pass, including the new provider idle regressions and existing connector restoration/auth/host behavior. Full types, touched-file ESLint, source invariants, and whitespace checks pass. Independent read-only review found no blockers. Existing browser builds intentionally disable Para, so these enabled-provider timing regressions provide the direct guard; a production-environment browser network capture remains part of combined integration verification. No build, dependency installation, push or deployment was performed in this worktree.
