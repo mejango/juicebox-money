@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, type ButtonHTMLAttributes, type ReactNode, useCallback, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useProjectRouteBlocked } from '@/providers/ProjectRouteContext'
+import { useProjectRouteBlocked } from '@/providers/ProjectRouteBlockedContext'
 
 /**
  * Body scroll lock, reference counted.

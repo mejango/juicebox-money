@@ -7,6 +7,7 @@ import {
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import { ProjectRouteBlockedContext } from '@/providers/ProjectRouteBlockedContext'
 import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handles'
 import {
   projectRouteIdentity, projectRouteIsFresh, projectRouteQueryKey,
@@ -271,7 +272,9 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
       void verify(undefined, true)
     },
   }), [error, register, router, scope, snapshot, state, verify])
-  return <ProjectRouteContext.Provider value={value}>{children}</ProjectRouteContext.Provider>
+  return <ProjectRouteBlockedContext.Provider value={state !== 'ready'}>
+    <ProjectRouteContext.Provider value={value}>{children}</ProjectRouteContext.Provider>
+  </ProjectRouteBlockedContext.Provider>
 }
 
 export function useResolvedProjectRoute() {
@@ -280,10 +283,6 @@ export function useResolvedProjectRoute() {
 
 export function useProjectReviewScope() {
   return useContext(ProjectRouteContext).scope
-}
-
-export function useProjectRouteBlocked() {
-  return useContext(ProjectRouteContext).state !== 'ready'
 }
 
 /** Preserve same-project UI while verifying; withhold actions until evidence recovers. */

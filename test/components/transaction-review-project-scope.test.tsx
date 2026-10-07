@@ -6,7 +6,8 @@ import type { ProjectReviewScope } from '@/providers/ProjectRouteContext'
 import type { TransactionReviewDialogProps } from '@/components/TransactionReviewProvider'
 const mocks = vi.hoisted(() => ({ scope: null as ProjectReviewScope | null, blocked: false }))
 vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined }) }))
-vi.mock('@/providers/ProjectRouteContext', () => ({ useProjectReviewScope: () => mocks.scope, useProjectRouteBlocked: () => mocks.blocked }))
+vi.mock('@/providers/ProjectRouteContext', () => ({ useProjectReviewScope: () => mocks.scope }))
+vi.mock('@/providers/ProjectRouteBlockedContext', () => ({ useProjectRouteBlocked: () => mocks.blocked }))
 vi.mock('@/components/TransactionReviewDialog', () => ({ TransactionReviewDialog: ({ pending, onFinish }: TransactionReviewDialogProps) => <div>
   <p>{pending.kind === 'review' ? pending.request.title : 'Funding'}</p>
   <button onClick={() => onFinish(pending.kind === 'review' ? true : 8453)}>Approve</button>

@@ -12,7 +12,8 @@ import {
 import type { Address } from 'viem'
 import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
-import { useProjectReviewScope, useProjectRouteBlocked, type ProjectReviewScope } from '@/providers/ProjectRouteContext'
+import { useProjectReviewScope, type ProjectReviewScope } from '@/providers/ProjectRouteContext'
+import { useProjectRouteBlocked } from '@/providers/ProjectRouteBlockedContext'
 import {
   registerFundingChainSelectionHandler,
   registerTransactionReviewHandler,
