@@ -21,7 +21,7 @@ import { ProjectTabs } from "@/components/project/Tabs";
 import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
 import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
-import { ProjectRouteSync } from "@/providers/ProjectRouteContext";
+import { ProjectRouteBoundary } from "@/providers/ProjectRouteContext";
 import {
   FundsTab,
   OwnersTab,
@@ -51,7 +51,7 @@ import {
   canonicalHandleOf,
 } from "@/lib/project-handles";
 import { chainName, legacyHref, toUrn } from "@/lib/urn";
-import { resolveProjectRouteCached, type ResolvedProjectRoute } from "@/lib/project-route.server";
+import { resolveProjectRouteCached, projectRouteSnapshot, type ResolvedProjectRoute } from "@/lib/project-route.server";
 
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
@@ -324,8 +324,17 @@ export default async function ProjectPage({
   // An indexed identity can paint while the current onchain metadata pointer
   // is reconciled. Missing/error identities retain the original fallback/404 path.
   const indexed = await getIndexedProjectDisplay(urn.chainId, urn.projectId).catch(() => null);
-  if (!indexed) return <ProjectPageContents urn={urn} result={await pending} />;
+  if (!indexed) {
+    const result = await pending;
+    if (!result) notFound();
+    return (
+      <ProjectRouteBoundary snapshot={projectRouteSnapshot(urn)}>
+        <ProjectPageContents urn={urn} result={result} />
+      </ProjectRouteBoundary>
+    );
+  }
   return (
+    <ProjectRouteBoundary snapshot={projectRouteSnapshot(urn)}>
     <Suspense fallback={<ProjectPageSkeleton hint={{
       name: indexed.name?.trim() || `Project ${indexed.projectId}`,
       logoUri: indexed.logoUri,
@@ -333,6 +342,7 @@ export default async function ProjectPage({
     }} />}>
       <ProjectPageContents urn={urn} result={pending} />
     </Suspense>
+    </ProjectRouteBoundary>
   );
 }
 
@@ -344,14 +354,11 @@ async function ProjectPageContents({ urn, result: pending }: {
   if (!result) notFound();
   if (result.degraded) {
     return (
-      <>
-        <ProjectRouteSync route={urn} />
         <DegradedProjectShell
           route={urn}
           project={result.project}
           reason={result.reason}
         />
-      </>
     );
   }
   const project = result.project;
@@ -453,7 +460,6 @@ async function ProjectPageContents({ urn, result: pending }: {
   return (
     <ShopCartProvider>
     <SafeBatchProvider deployments={authorityDeployments} isRevnet={isRevnet}>
-      <ProjectRouteSync route={urn} />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
         <Suspense fallback={<ProjectHeaderSkeleton hint={{ name: project.name?.trim() || `Project ${project.projectId}`, logoUri: project.logoUri, tagline: project.projectTagline }} />}>
         <ProjectHeader project={project} metadata={metadata} urn={urn} chains={chains} chainPairs={chainPairs} isRevnet={isRevnet} authority={authority} totalRaisedUsd={totalRaisedUsd} paymentsCount={paymentsCount} />
