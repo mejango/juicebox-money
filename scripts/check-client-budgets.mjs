@@ -168,7 +168,9 @@ const budgets = {
   // With the same physical dependency graph, 75841bd + official SDK 2.24.2
   // measures 2,582,256 B; shared Account/queue reads and Safe progress measure
   // 2,587,564 B (+5,308 B). Round up only the aggregate to 2527 KiB.
-  allScripts: 2527 * KIB,
+  // Passive Safe preparation measures 2,587,667 B (+103 B on the same graph),
+  // 19 B over 2527 KiB. Round only the aggregate ceiling up to 2528 KiB.
+  allScripts: 2528 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

@@ -43,3 +43,6 @@ Do not hide every chain behind the slowest account classification or mount a que
 
 ## 2026-10-07 — Progress labels must follow the operation and its evidence
 Use shared lifecycle phases to distinguish quote requests, wallet confirmation, payment confirmation and destination execution. Render each canonically verified chain immediately while other chains remain pending, and keep its transaction link visible. Verify delayed responses and receipt arrival through the actual controller and storage; a funding receipt must never stand in for a Safe execution receipt.
+
+## 2026-10-07 — Automatic work is status, not an idle action
+During automatic Safe checks and quote preparation, show one passive progress indicator and retain dismissal. Do not render a disabled action or empty payment selector before a quote exists. Keep phase copy in one location and verify that real controls appear only when usable data is available.

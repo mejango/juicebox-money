@@ -1488,6 +1488,7 @@ export function SafeQueueCard({
   };
 
   const payment = batchReview?.payments[paymentIndex];
+  const preparingBatch = !batchDone && !recovery && !batchReview && !(error && !busy);
   const executeAllDialog = (
     <ModalShell
       title={`Execute ${batchRows.length} Safe transactions`}
@@ -1513,6 +1514,11 @@ export function SafeQueueCard({
               Retry checks
             </button>
           </div>
+        ) : preparingBatch ? (
+          <p role="status" className="flex items-center gap-2 text-sm text-smoke-600">
+            <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-smoke-300 border-t-smoke-700 motion-reduce:animate-none" />
+            {phase ? PHASE_LABELS[phase] : "Checking…"}
+          </p>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative min-w-0 flex-1">
@@ -1525,13 +1531,13 @@ export function SafeQueueCard({
                 aria-label="Pay on"
                 value={paymentIndex}
                 onChange={(event) => setPaymentIndex(Number(event.target.value))}
-                disabled={!!busy || !batchReview}
+                disabled={!!busy}
                 className={`select-caret min-h-[42px] w-full truncate rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
                   payment ? "pl-9" : "pl-3"
                 }`}
               >
                 <option value={-1} disabled>
-                  {batchReview ? "Choose a chain" : phase ? PHASE_LABELS[phase] : "Checking…"}
+                  Choose a chain
                 </option>
                 {batchReview?.payments.map((option, index) => (
                   <option key={`${option.chain}:${option.amount}:${index}`} value={index}>
@@ -1611,7 +1617,7 @@ export function SafeQueueCard({
           Relayr payment on {chainName(pendingSession.paymentChainId)} ↗
         </a>
       ) : null}
-      {notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {notice && !preparingBatch ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
       {recoveryResult?.recovery ? (
         <ul className="mt-3 space-y-1 text-sm">
           {batchRows.map(row => {
