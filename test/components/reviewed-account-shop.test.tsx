@@ -6,10 +6,13 @@
  * reaches the wallet, and the dialog says why.
  */
 
+import { QueryClient } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import type { Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const displayQueries = new QueryClient()
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -79,7 +82,7 @@ vi.mock('@tanstack/react-query', async importOriginal => {
   })
   return {
     ...(await importOriginal<typeof import('@tanstack/react-query')>()),
-    useQueryClient: () => ({ invalidateQueries: vi.fn() }),
+    useQueryClient: () => displayQueries,
     useQuery: () => ({
       data: quote(),
       isFetching: false,

@@ -553,7 +553,7 @@ export function SafeQueueSkeleton({ groups = 2 }: { groups?: number }) {
   )
 }
 
-function ProjectPayPanelSkeleton() {
+export function ProjectPayPanelSkeleton() {
   return (
     <div className="rounded-xl border-2 border-bluebs-500 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(87,119,235,0.25)] ring-4 ring-bluebs-500/10" aria-hidden="true">
       <div className="flex items-center gap-2"><Skeleton className="h-5 w-10 rounded" /><Skeleton className="h-4 w-28 rounded" /></div>
@@ -566,7 +566,7 @@ function ProjectPayPanelSkeleton() {
   )
 }
 
-function OverviewTabSkeleton() {
+export function OverviewTabSkeleton() {
   return (
     <div className="space-y-5" aria-hidden="true">
       <div className="card p-5">
@@ -584,18 +584,8 @@ function OverviewTabSkeleton() {
   )
 }
 
-export function ProjectPageSkeleton({
-  hint = null,
-}: {
-  hint?: ProjectNavigationHint | null
-} = {}) {
+export function ProjectHeaderSkeleton({ hint }: { hint: ProjectNavigationHint | null }) {
   return (
-    <div
-      className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12"
-      role="status"
-      aria-label="Loading project"
-    >
-      <span className="sr-only">Loading project</span>
       <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
         {hint ? (
           <>
@@ -636,6 +626,22 @@ export function ProjectPageSkeleton({
           </>
         )}
       </header>
+  )
+}
+
+export function ProjectPageSkeleton({
+  hint = null,
+}: {
+  hint?: ProjectNavigationHint | null
+} = {}) {
+  return (
+    <div
+      className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12"
+      role="status"
+      aria-label="Loading project"
+    >
+      <span className="sr-only">Loading project</span>
+      <ProjectHeaderSkeleton hint={hint} />
 
       <div className="scrollbar-none -mx-4 mt-8 flex gap-3 overflow-x-auto overflow-y-hidden px-4 sm:mx-0 sm:px-0">
         {Array.from({ length: 4 }, (_, index) => (

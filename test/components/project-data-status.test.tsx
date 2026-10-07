@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ refresh: vi.fn(), invalidate: vi.fn(), copy: vi.fn() }))
+const mocks = vi.hoisted(() => ({ refresh: vi.fn(), invalidate: vi.fn(), copy: vi.fn(), refreshDisplay: vi.fn().mockResolvedValue(undefined) }))
+vi.mock('@/app/actions/project-display', () => ({ refreshProjectDisplay: mocks.refreshDisplay }))
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mocks.refresh }), useParams: () => ({ urn: 'basesep:45' }) }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
 vi.mock('@/components/ui/ModalShell', () => ({ ModalShell: ({ children, footer }: { children: ReactNode; footer: ReactNode }) => <section>{children}{footer}</section> }))
@@ -14,7 +15,7 @@ vi.mock('next/dynamic', async () => {
 
 import { ProjectDataStatus } from '@/components/project/ProjectDataStatus'
 import ProjectError from '@/app/[urn]/error'
-const deployments = [{ chainId: 84532, projectId: 45, version: 6 }, { chainId: 1, projectId: 9, version: 6 }]
+const deployments = [{ chainId: 84532, projectId: 45, version: 6, suckerGroupId: 'known-group' }, { chainId: 1, projectId: 9, version: 6 }]
 const report = (id = '45') => ({
   checkedAt: '2026-10-04T12:00:00.000Z',
   deployment: {
@@ -74,6 +75,7 @@ describe('project data status and deployment checks', () => {
     expect(text(tree!.root)).not.toMatch(/catching up|just launched|finished indexing/)
     await act(async () => button('Retry').props.onClick())
     expect(mocks.invalidate).toHaveBeenCalledOnce()
+    expect(mocks.refreshDisplay.mock.calls).toEqual([[84532, 45, 'known-group'], [1, 9, undefined]])
     expect(mocks.refresh).toHaveBeenCalledOnce()
     expect(fetch).not.toHaveBeenCalled()
   })

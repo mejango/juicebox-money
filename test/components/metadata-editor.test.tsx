@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // projectUri field the app doesn't know about, so these tests pin the exact
 // object handed to Juicebox Center for every edit shape.
 const mocks = vi.hoisted(() => ({
+  refreshProjectDisplay: vi.fn().mockResolvedValue(undefined),
   metadata: undefined as Record<string, unknown> | undefined,
   loading: false,
   errored: false,
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   readAuthorityIdentity: vi.fn(),
   requestLock: vi.fn(),
 }))
+
+vi.mock('@/app/actions/project-display', () => ({ refreshProjectDisplay: mocks.refreshProjectDisplay }))
 
 vi.mock('@tanstack/react-query', () => ({
   useQuery: mocks.useQuery,
@@ -222,13 +225,14 @@ function customBox(renderer: TestRenderer.ReactTestRenderer) {
     .find(area => area.props['aria-label'] === 'Custom properties (JSON)')!
 }
 
-async function renderEditor(rows = ROWS, onDone = vi.fn(), isRevnet = false) {
+async function renderEditor(rows = ROWS, onDone = vi.fn(), isRevnet = false, suckerGroupId?: string) {
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(MetadataEditor, {
         rows,
         isRevnet,
+        suckerGroupId,
         initial: INITIAL,
         onCancel: () => {},
         onDone,
@@ -344,13 +348,23 @@ describe('metadata editor custom properties', () => {
   })
 
   it('keeps untouched custom properties verbatim through a save', async () => {
-    const renderer = await renderEditor()
+    const renderer = await renderEditor(ROWS, vi.fn(), false, 'known-group')
     const pinned = await saveAndReadPin(renderer)
     expect(pinned.leagueID).toBe(42)
     expect(pinned.extensions).toEqual({
       scoreboard: { url: 'https://scores.example' },
     })
     expect(pinned.tags).toEqual(['games'])
+    expect(mocks.refreshProjectDisplay.mock.calls).toEqual(ROWS.map(row => [row.chainId, row.projectId, 'known-group']))
+  })
+
+  it('preserves a completed save when display invalidation is unavailable', async () => {
+    mocks.refreshProjectDisplay.mockRejectedValueOnce(new Error('refresh unavailable'))
+    const onDone = vi.fn()
+    const renderer = await renderEditor(ROWS, onDone)
+    await saveAndReadPin(renderer)
+    expect(onDone).toHaveBeenCalledOnce()
+    expect(renderedText(renderer.root)).not.toContain('refresh unavailable')
   })
 
   it('lands edits, additions, and deletions from the box', async () => {

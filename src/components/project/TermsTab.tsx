@@ -1,19 +1,19 @@
 'use client'
 
 import {
-  JB_CHAINS,
-  NATIVE_TOKEN,
+  accountingContextSymbolsQuery,
+  allRulesetsQuery,
+  currentRulesetQuery,
+} from '@/lib/project-display-queries'
+import {
   USD_CURRENCY_ID,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, type PublicClient } from 'viem'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { TermsTabSkeleton } from '@/components/LoadingSkeletons'
@@ -23,10 +23,8 @@ import {
   formatCountdown,
   formatDate,
   formatTokenAmount,
-  truncateAddress,
 } from '@/lib/format'
 import { IssuanceLadder } from './IssuanceLadder'
-import { PERSIST } from '@/lib/query-persist'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 import Link from 'next/link'
@@ -59,42 +57,19 @@ export function TermsTab({
   projectId: number
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['termsTab', chainId, projectId],
-    meta: PERSIST,
+  const queryClient = useQueryClient()
+  const args = { chainId, projectId: BigInt(projectId) }
+  const { data: all, isLoading, isError, refetch } = useQuery({
+    ...allRulesetsQuery(publicClient!, { ...args, size: 50n }),
     enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const args = { chainId, projectId: BigInt(projectId) }
-      const [all, current, contexts] = await Promise.all([
-        getAllRulesets(publicClient!, { ...args, size: 50n }),
-        getCurrentRuleset(publicClient!, args).catch(() => null),
-        getAccountingContexts(publicClient!, args).catch(
-          () => [] as const,
-        ),
-      ])
-      // The base currency can be token-keyed (uint32(uint160(token)), e.g. a
-      // USDC-based revnet) — resolve those to the token's symbol.
-      const contextSymbols = await Promise.all(
-        contexts.map(async ctx => ({
-          currency: ctx.currency,
-          symbol:
-            ctx.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-              ? nativeSymbol
-              : await publicClient!
-                  .readContract({
-                    address: ctx.token,
-                    abi: erc20Abi,
-                    functionName: 'symbol',
-                  })
-                  .catch(() => truncateAddress(ctx.token)),
-        })),
-      )
-      return { all, current, contextSymbols }
-    },
+  })
+  const { data: currentRuleset } = useQuery({
+    ...currentRulesetQuery(publicClient!, args),
+    enabled: !!publicClient,
+  })
+  const { data: contextSymbols } = useQuery({
+    ...accountingContextSymbolsQuery(publicClient!, queryClient, args),
+    enabled: !!publicClient,
   })
 
   // The revnet's OWN token symbol (bendystraw's tokenSymbol is the
@@ -106,7 +81,7 @@ export function TermsTab({
     return <TermsTabSkeleton />
   }
 
-  const stages: readonly JBRulesetWithMetadata[] = (data?.all ?? [])
+  const stages: readonly JBRulesetWithMetadata[] = (all ?? [])
     .slice()
     .sort((a, b) => a.ruleset.start - b.ruleset.start)
 
@@ -116,6 +91,7 @@ export function TermsTab({
         <span className="field-label">Terms</span>
         <p className="mt-2 text-sm text-smoke-700">
           {isError ? 'Couldn’t read stages right now.' : 'No stages found onchain.'}
+          {isError ? <button className="ml-2 underline" onClick={() => void refetch()}>Retry</button> : null}
         </p>
       </div>
     )
@@ -125,7 +101,7 @@ export function TermsTab({
   const baseCurrencyLabel = (currency: number): string => {
     if (currency === 1) return 'ETH'
     if (currency === USD_CURRENCY_ID(6)) return 'USD'
-    const match = data?.contextSymbols.find(c => c.currency === currency)
+    const match = contextSymbols?.find(c => c.currency === currency)
     return match ? match.symbol : `currency ${currency}`
   }
 
@@ -136,7 +112,7 @@ export function TermsTab({
     stages.findLastIndex(s => s.ruleset.start <= now),
   )
   const firstStageStarted = stages[0].ruleset.start <= now
-  const current = data?.current && data.current.ruleset.id !== 0 ? data.current : null
+  const current = currentRuleset && currentRuleset.ruleset.id !== 0 ? currentRuleset : null
   const live = current ?? stages[activeIdx]
   const base = baseCurrencyLabel(live.metadata.baseCurrency)
 

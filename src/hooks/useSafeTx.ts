@@ -1,6 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import {
   BaseError,
@@ -414,6 +416,8 @@ function recordProposal(
  * 2. Phases drive the caller's UI; `error` carries a friendly message.
  */
 export function useSafeTx(chainId: number) {
+  const queryClient = useQueryClient()
+  const invalidatedReceipt = useRef<string | null>(null)
   const { isConnected, isCenterWallet } = useWallet()
   const publicClient = usePublicClient({ chainId })
   const { writeContractAsync } = useWriteContract()
@@ -524,6 +528,16 @@ export function useSafeTx(chainId: number) {
       inFlightRef.current = false
     }
   }, [effectivePhase])
+
+  const confirmedChainId = proposal?.chainId ?? chainId
+  const confirmedHash = proposal?.executionHash ?? receiptData?.transactionHash
+  useEffect(() => {
+    if (effectivePhase !== 'success' || !confirmedHash) return
+    const identity = `${confirmedChainId}:${confirmedHash}`
+    if (invalidatedReceipt.current === identity) return
+    invalidatedReceipt.current = identity
+    void invalidateProjectDisplayQueries(queryClient, confirmedChainId)
+  }, [confirmedChainId, confirmedHash, effectivePhase, queryClient])
 
   const send = useCallback(
     async (

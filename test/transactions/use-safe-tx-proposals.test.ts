@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import {
@@ -22,6 +23,12 @@ import { STAMPED_CHAIN, STAMPED_SITES } from '../support/stamped-sites'
 // this session, shared by every flow, and follows each to its result: a flow
 // that closes, remounts or changes chain never drops one, and never proposes
 // the same call twice while one is pending.
+
+const displayQueries = new QueryClient()
+vi.mock('@tanstack/react-query', async importOriginal => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
+  useQueryClient: () => displayQueries,
+}))
 
 const mocks = vi.hoisted(() => ({
   publicClient: {
@@ -168,6 +175,7 @@ function signersDecide() {
 }
 
 beforeEach(async () => {
+  displayQueries.clear()
   // The registry lives for the page: each test starts a page of its own.
   vi.resetModules()
   ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
@@ -204,6 +212,8 @@ beforeEach(async () => {
 describe('a Safe proposal', () => {
   it('ends its confirm on Done while the signers decide, and settles once the Safe executes it', async () => {
     const execute = signersDecide()
+    const displayKey = ['projectDisplay', 6, 10, '1', 'currentRuleset']
+    displayQueries.setQueryData(displayKey, { marker: true })
     const flow = await mount()
     await flow.send()
     await settle()
@@ -229,8 +239,10 @@ describe('a Safe proposal', () => {
       signal: expect.any(AbortSignal),
     })
 
+    expect(displayQueries.getQueryState(displayKey)?.isInvalidated).toBe(false)
     execute()
     await settle()
+    expect(displayQueries.getQueryState(displayKey)?.isInvalidated).toBe(true)
     expect(flow.tx).toMatchObject({
       phase: 'success',
       busy: false,

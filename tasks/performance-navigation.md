@@ -1,0 +1,71 @@
+# Project navigation performance
+
+Required workspace resources: `/Users/jango/Documents/jb/v6/evm/AGENTS.md`, `workflow/ponytail/SKILL.md`, `workflow/ponytail/README.md`, `docs/PLAN_REFINEMENT.md`, `tasks/lessons.md`; local `AGENTS.md` applies. Parent execution plan: `/Users/jango/Documents/jb/v6/evm/docs/WEBSITE_PERFORMANCE_IMPLEMENTATION.md`.
+
+## Plan refinement
+
+- **Objective:** Keep pretty project URLs and make same-project tab/hash/history navigation client-local while revalidating mutable aliases within a five-second successful verification window.
+- **System fit:** The existing server resolver remains the sole authority for alias identity; a read-only endpoint and route snapshot feed the existing client route provider. Positively changed bindings reset the document, failed verification blocks stale actions, and durable transaction recovery and fresh execution checks retain their existing owners.
+- **Reuse and simplicity:** First extract the resolver without changing behavior, then reuse TanStack Query for a five-second, nonpersistent success cache. Reuse existing hash updates and retained tabs; add one route boundary rather than another routing framework.
+- **Evidence and unknowns:** Existing alias hash/popstate handlers call document reload. Ordinary same-project views can preserve state under a verified lease; replacing only a positively changed binding avoids retaining old financial preparations. Endpoint errors cannot prolong stale identity.
+- **Verification:** Run resolver regressions before the behavior change, then transition tests for same-identity reuse, expiry, rebinding, failed verification, late responses, history restoration and encoded aliases. Check exact serial IDs and no-store endpoint behavior. Parent owns combined build/browser/release gates.
+- **Resource budget:** Isolated perf/jbm-navigation worktree, Node 26.7, existing installed dependencies and focused tests only. Coordinate shared page imports with server worker; no builds, pushes or deployments.
+
+## Work
+
+- [x] Extract route resolver; preserve behavior and verify. 705bd6e, 58 focused tests passed.
+- [x] Add shared snapshot/endpoint, bounded client verification and project boundary.
+- [x] Route hash/history transitions through verification, preserve same-project state, block stale actions.
+- [x] Verify transitions, API behavior, type/lint checks and document result.
+
+## Plan refinement
+
+- **Objective:** Complete local alias navigation plus scoped approval verification without replaying declined actions or changing pretty URLs.
+- **System fit:** The existing global transaction review queue captures the current project identity and awaits verification when the user approves; changed identity or canceled review declines. Final immutable transaction checks and durable recovery remain unchanged.
+- **Reuse and simplicity:** Extend the existing review owner and native modal lifecycle rather than intercepting arbitrary buttons or editing thirteen write seams. Keep five-second browsing leases interaction-driven, not periodic.
+- **Evidence and unknowns:** Independent review found clock-skew, force-cancellation and native top-layer dialog hazards. Report server lease age and conservatively account for transit locally; preserve unavailable errors, and close native modal presentation while gated without discarding its form state.
+- **Verification:** Test >5-second review approval with unchanged identity, rebinding during verification, cancel while awaiting, stale dialog IDs, modal Retry reachability and concurrent normal/forced server resolution.
+- **Resource budget:** Continue focused Node 26.7 checks, one independent reader and root-managed integration; no builds or deployments.
+
+## Final refinement: proven alias rebinding
+
+- **Objective and evidence:** Preserve client-local same-project tabs, hashes and graphs. Independent review found that a delayed financial preparation can enqueue after an alias has rebound, bypassing a scope captured only at enqueue time.
+- **Architecture decision:** Root approved one document reload only when the authoritative endpoint positively proves a different tuple/authority. This replaces the proposed RSC refresh acknowledgement state machine and cancels old JavaScript preparations and global reviews. Expiry, unavailable evidence and unchanged proofs never reload. No transaction journal is cleared.
+- **Reuse and scope:** Keep the existing review queue's asynchronous approval check and final immutable write guards. Avoid adding origin propagation across every transaction preparation owner. The boundary preserves local state while verifying the same identity; failed proof closes modal presentation so Retry remains reachable.
+- **Gate:** Plan check passed: the observable goal is preserved, the exception has positive authority evidence, failure remains recoverable, durable recovery is untouched, and tests enforce exactly one reload only on a changed tuple/authority. Parent confirmed the exception explicitly before this refinement.
+- **Verification:** Cover unchanged TTL checks and idle navigation with zero reloads; changed project or authority with one reload and a retained destination hash; blocked/retry with no reload; canceled/slow reviews and stale proof responses. Parent owns real-browser and combined build gates.
+
+## Review and verification
+
+- Node 26.7.0: 182 tests passed across 16 focused suites covering route/cache/API, retained tabs, handle editing, native modal recovery, global review and existing Safe transaction flows. The final test-only probe cleanup passed its 10 navigation cases again.
+- TypeScript `tsc --noEmit`, ESLint on every changed source/test file with zero warnings, source invariants, transaction inventory and `git diff --check` passed. Next type generation had already completed for this isolated checkout; no production build was run here.
+- Independent final review by `wallet_startup` found no remaining blocking issue. Earlier review findings are enforced by clock-age conversion, server failure invalidation, stale-request guards, blocked late enqueue rejection, scoped approval cancellation and modal recovery tests.
+- Parent integration must place the boundary around both the new streamed project fallback and completed content. Parent owns combined build and controlled real-browser validation. No push or deployment performed.
+
+## Follow-up refinement: same-alias server refresh
+
+- **Evidence and objective:** Combined review found that registering a changed server snapshot under the same alias overwrote the prior verified identity before comparison. Preserve that prior identity until endpoint verification can prove whether a document reset is necessary.
+- **Design and recovery:** Keep the incoming server fingerprint separate from the retained browser identity. Gate mismatched content immediately; changed endpoint identity takes the existing one-time document reset. If endpoint identity remains unchanged but server content disagrees, retain a retryable error. Explicit Retry refreshes the server subtree as well as checking the endpoint; no automatic refresh loop or broad transaction changes.
+- **Gate:** Plan check passed against the original navigation outcome, authoritative identity owner, failure/recovery contract and independent reviewer feedback. Add expired-lease tuple/authority registration tests, failed proof and stale-server recovery coverage before committing.
+- **Budget:** Focused isolated-tree edits and checks only; parent keeps its frozen browser/build integration unchanged until the follow-up commit is ready. Remove the two unused public exports flagged by the parent dead-code check.
+- **Result:** Retained identity and candidate gating are implemented; a mismatch immediately removes the global review scope. All 186 tests in 16 focused suites passed, followed by a 15-case navigation pass including the additional in-flight invalidation regression. TypeScript, changed-file ESLint, Knip and diff checks passed. Independent final review by `juicebox_performance` confirmed the reported bypass is closed and identified no further blocker.
+
+## Follow-up refinement: forced server proof ordering
+
+- **Evidence and design:** `fetchQuery(staleTime: 0)` shares an already-running proof, so a force request after a mutation could accept a proof started beforehand. A forced request now awaits the existing public query promise without canceling its callers, then starts a fresh query. Waiters share the next read through the existing QueryClient; no second cache is added.
+- **Gate and verification:** Root explicitly approved this owner-level ordering change. Preserve normal-reader outcomes and normal five-second reuse; test a deferred old target followed by a changed target, several forced waiters, and a failed earlier proof. A prior failure must not prevent the fresh attempt. Run focused route tests, type/lint and diff checks before commit.
+- **Result:** All 24 route/cache/API/navigation tests passed, including normal A completing uncanceled while two forced waiters receive post-mutation B from one new proof, and a failed old proof followed by successful fresh B. TypeScript, changed-file ESLint and diff checks passed.
+
+## Bundle refinement: lightweight modal state owner
+
+- **Evidence and objective:** The bundle worker measured Create at 511.8 KiB against its 506 KiB cap. `ModalShell` imports the full alias controller solely to read one boolean, bringing navigation dependencies into its graph.
+- **Behavior-preserving design and gate:** Extract that boolean context into a React-only module; the existing `ProjectRouteProvider` supplies exactly the same blocked state over the same subtree. Both existing consumers use the one lightweight owner. Root explicitly corrected the initial global-dialog concern, so this change does not alter provider coverage, Para lifecycle or blocking semantics. Plan check passed as a narrow import-boundary refactor.
+- **Verification:** Run the existing modal recovery, navigation and global review tests plus types/lint/Knip. The bundle worker owns the controlled rebuild and budget comparison; no build or dependency changes in this worktree.
+- **Result:** The extraction preserves the original provider subtree and boolean expression. All 54 tests across nine modal/navigation/review suites passed, as did TypeScript, changed-file ESLint, Knip and diff checks.
+
+## Browser refinement: real pretty-handle navigation
+
+- **Evidence and objective:** Existing browser journeys use numeric routes, and deterministic ENS alias lookup currently returns null before any fixture read. Exercise a real pretty-handle route through the production resolver, endpoint and client boundary.
+- **Narrow design:** Root authorized deterministic-only ENS transport through the existing local RPC fixture owner. Production ENS transport remains unchanged and wallet-name lookup remains disabled in deterministic runs. The fixture supplies one exact ENS node, resolver text record and reverse handle claim; pinned-block and sender allowances are restricted to those exact ENS requests. Unknown RPC calls remain failures.
+- **Gate and verification:** Plan check passed: no fake server-rendered identity or general fixture fallback. Browser checks cover retained document/draft through tabs, graph range, hash history and expired-proof failure/Retry. Unit/type/lint checks run here; root rebuilds its isolated production-shape browser runtime once and runs the new spec plus suite. No isolated production build or wallet sends.
+- **Prepared result:** 53 existing handle/cache/navigation/ENS tests plus two new transport-branch tests passed; TypeScript, changed-file ESLint, fixture syntax and Playwright test discovery passed. A live localhost-only probe exercised the real forward/reverse readers with zero unexpected requests, then confirmed wrong sender, wrong block and unknown text key are rejected. Independent review found and closed a Multicall sender bypass; a second live probe confirms nested resolver calls fail and enter the unknown-request audit. The two browser cases await the parent's rebuilt runtime; no browser pass is claimed yet.

@@ -499,7 +499,7 @@ export async function getProjectActivity(
   limit = 20,
   chainId?: number,
   offset = 0,
-  { signal }: { signal?: AbortSignal } = {},
+  { signal, policy = 'live' }: { signal?: AbortSignal; policy?: 'live' | 'no-store' } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
@@ -548,7 +548,7 @@ export async function getProjectActivity(
       pageSize: limit,
       max: limit,
       startOffset: offset,
-      policy: 'live',
+      policy,
       signal,
     },
   )
@@ -560,7 +560,7 @@ export async function getProjectActivityByProject(
   projectId: number,
   limit = 20,
   offset = 0,
-  { signal }: { signal?: AbortSignal } = {},
+  { signal, policy = 'live' }: { signal?: AbortSignal; policy?: 'live' | 'no-store' } = {},
 ): Promise<{ items: BsActivityEvent[]; totalCount: number }> {
   const page = await getPagedItems<BsActivityEvent>(
     `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
@@ -610,7 +610,7 @@ export async function getProjectActivityByProject(
       pageSize: limit,
       max: limit,
       startOffset: offset,
-      policy: 'live',
+      policy,
       signal,
     },
   )
@@ -1248,7 +1248,10 @@ export async function getSuckerGroupProjects(
 }
 
 /** A linked project must itself occur in the returned versioned group records. */
-export function projectGroupIsIncomplete(project: BsProject, members: BsProject[]): boolean {
+export function projectGroupIsIncomplete(
+  project: Pick<BsProject, 'chainId' | 'projectId' | 'version' | 'suckerGroupId'>,
+  members: BsProject[],
+): boolean {
   return !!project.suckerGroupId && !members.some(member => matchesProjectRef(member, [project]))
 }
 
@@ -1434,7 +1437,7 @@ export async function getPagedItems<T>(
      */
     startOffset?: number
     network?: BendystrawNetwork
-    policy?: BendystrawCachePolicy
+    policy?: BendystrawCachePolicy | 'no-store'
     /** The caller's, for every page's request. */
     signal?: AbortSignal
   } = {},

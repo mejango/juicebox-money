@@ -7,8 +7,9 @@ import { useEffect, useRef, useState, useTransition } from 'react'
 import { isAddress } from 'viem'
 import dynamic from 'next/dynamic'
 import type { ProjectDiagnosticReport } from '@/lib/project-diagnostics'
+import { refreshProjectDisplay } from '@/app/actions/project-display'
 
-export type Deployment = { chainId: number; projectId: number; version: number; operator?: string | null }
+export type Deployment = { chainId: number; projectId: number; version: number; operator?: string | null; suckerGroupId?: string | null }
 const ProjectDeploymentDialog = dynamic(() => import('./ProjectDeploymentDialog'), {
   loading: () => <p role="status">Opening deployment check…</p>,
 })
@@ -101,6 +102,9 @@ function ProjectDataStatusContents({
             className="font-medium underline underline-offset-4 disabled:opacity-50"
             disabled={refreshing}
             onClick={() => startRefresh(async () => {
+              await Promise.all(deployments.map(deployment =>
+                refreshProjectDisplay(deployment.chainId, deployment.projectId, deployment.suckerGroupId),
+              )).catch(() => undefined)
               await queryClient.invalidateQueries()
               router.refresh()
             })}

@@ -1,5 +1,6 @@
 'use client'
 
+import { projectDisplayQuery } from '@/lib/project-display-queries'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import {
   JB_CHAINS,
@@ -245,19 +246,21 @@ export function AddLiquidityFlow({
   showHeading?: boolean
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const chainMeta = JB_CHAINS[chainId]
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
 
   // Resolve the pool (shared cache with the Market card).
-  const { data: market, isLoading: marketLoading } = useQuery({
+  const { data: market, isLoading: marketLoading } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 60000,
     queryKey: ['market', chainId, projectId],
     enabled: !!publicClient,
-    staleTime: 60_000,
+
     retry: 1,
-    queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
-  })
+    queryFn: (reader) =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
+  }))
   const pool = market?.status === 'pool' ? market : null
 
   // The project's OWN token — required; if there's no deployed ERC-20 there's

@@ -1,5 +1,13 @@
 'use client'
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
+import {
+  accountingContextsQuery,
+  allRulesetsQuery,
+  currentRulesetQuery,
+  projectDisplayQuery,
+} from '@/lib/project-display-queries'
 import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
@@ -14,15 +22,12 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
-  getAccountingContexts,
-  getAllRulesets,
   getBorrowableAmount,
   getCreditBalance,
-  getCurrentRuleset,
   getTokenAddress,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
@@ -423,18 +428,19 @@ function YourChainRow({
   /** Every (chainId, projectId) pair in the group — the LP modal spans them all. */
   chains: [number, number][]
 }) {
+  const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
   const {
     data: position,
     isLoading,
     isError,
-  } = useQuery({
+  } = useQuery(projectDisplayQuery(queryClient, {
     queryKey: ['yourPosition', chainId, projectId, holder, isRevnet],
     enabled: !!publicClient,
-    staleTime: 30_000,
+
     retry: 1,
-    queryFn: async (): Promise<Position> => {
+    queryFn: async (reader): Promise<Position> => {
       const client = publicClient!
       const tokensAddress = jbContractAddress['6'][JBCoreContracts.JBTokens][
         chainId
@@ -461,14 +467,14 @@ function YourChainRow({
           holder,
         }),
         getTokenAddress(client, { chainId, projectId: BigInt(projectId) }),
-        getAccountingContexts(client, {
+        reader.fetchQuery(accountingContextsQuery(client, {
           chainId,
           projectId: BigInt(projectId),
-        }),
-        getCurrentRuleset(client, {
+        })),
+        reader.fetchQuery(currentRulesetQuery(client, {
           chainId,
           projectId: BigInt(projectId),
-        }).catch(() => null),
+        })).catch(() => null),
       ])
       const erc20Balance = token
         ? await client.readContract({
@@ -563,7 +569,7 @@ function YourChainRow({
         maxLoan,
       }
     },
-  })
+  }))
 
   return (
     <>
@@ -807,8 +813,7 @@ function OwnersDonut({
             onBlur={() => setActiveHolder(null)}
           >
             <title>
-              <AddressText address={holder.address} /> —{' '}
-              {holderPercentLabel(holder.balance, total)}
+              {holder.address} — {holderPercentLabel(holder.balance, total)}
             </title>
           </path>
         ))}
@@ -1133,6 +1138,7 @@ function ReservedCard({
   isRevnet: boolean
   chains: [number, number][]
 }) {
+  const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
   const splitsAddress = jbContractAddress['6'][JBCoreContracts.JBSplits][
@@ -1143,21 +1149,21 @@ function ReservedCard({
     data: stageData,
     isLoading: rulesetLoading,
     isError: rulesetError,
-  } = useQuery({
-    queryKey: ['splitStages', chainId, projectId],
+  } = useQuery(projectDisplayQuery(queryClient, {
+    queryKey: [...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'splitStages')],
     meta: PERSIST,
     enabled: !!publicClient,
-    staleTime: 60_000,
+
     retry: 1,
-    queryFn: async () => {
+    queryFn: async (reader) => {
       const args = { chainId, projectId: BigInt(projectId) }
       const [all, current] = await Promise.all([
-        getAllRulesets(publicClient!, { ...args, size: 50n }),
-        getCurrentRuleset(publicClient!, args).catch(() => null),
+        reader.fetchQuery(allRulesetsQuery(publicClient!, { ...args, size: 50n })),
+        reader.fetchQuery(currentRulesetQuery(publicClient!, args)).catch(() => null),
       ])
       return { all, current }
     },
-  })
+  }))
 
   const stages: readonly JBRulesetWithMetadata[] = useMemo(
     () =>
@@ -1351,6 +1357,7 @@ function ChainSplitsBlock({
   reservedPercent: number
   isCurrentStage: boolean
 }) {
+  const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const directoryAddress = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId
@@ -1369,20 +1376,20 @@ function ChainSplitsBlock({
     data: chainRows,
     isLoading: chainRowsLoading,
     isError: chainRowsError,
-  } = useQuery({
-    queryKey: ['chainStageSplits', chainId, projectId, stageIndex, isCurrentStage],
+  } = useQuery(projectDisplayQuery(queryClient, {
+    queryKey: [...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'chainStageSplits'), stageIndex, isCurrentStage],
     meta: PERSIST,
     enabled: homeRows === null && !!publicClient,
-    staleTime: 60_000,
+
     retry: 1,
-    queryFn: async (): Promise<readonly SplitRow[]> => {
+    queryFn: async (reader): Promise<readonly SplitRow[]> => {
       const args = { chainId, projectId: BigInt(projectId) }
       // The current stage uses this chain's own currentRulesetOf (it also
       // absorbs cycle rollover); a browsed stage is matched by start order.
       const rid = isCurrentStage
-        ? (await getCurrentRuleset(publicClient!, args)).ruleset.id
+        ? (await reader.fetchQuery(currentRulesetQuery(publicClient!, args))).ruleset.id
         : stageRulesetIdOn(
-            await getAllRulesets(publicClient!, { ...args, size: 50n }),
+            await reader.fetchQuery(allRulesetsQuery(publicClient!, { ...args, size: 50n })),
             stageIndex,
           )
       if (rid == null) {
@@ -1397,7 +1404,7 @@ function ChainSplitsBlock({
         args: [BigInt(projectId), BigInt(rid), RESERVED_TOKEN_SPLIT_GROUP_ID],
       })) as readonly SplitRow[]
     },
-  })
+  }))
 
   const rows = homeRows ?? chainRows ?? []
 

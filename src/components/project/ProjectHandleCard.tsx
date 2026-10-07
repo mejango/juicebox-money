@@ -1,5 +1,7 @@
 'use client'
 
+import { invalidateProjectRoute } from '@/providers/ProjectRouteContext'
+
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
@@ -525,6 +527,7 @@ export function ProjectHandleCard({
         )
       }
       setPendingSafe(null)
+      invalidateProjectRoute()
       setProgress('ENS record updated and verified onchain.')
       await previewQuery.refetch()
       return true
@@ -719,6 +722,7 @@ export function ProjectHandleCard({
           : current,
       )
       clearProjectHandleDraft(draftKey, normalized.ensName)
+      invalidateProjectRoute()
       setProgress(`@${normalized.handle} is now verified onchain.`)
       await Promise.all([stateQuery.refetch(), previewQuery.refetch()])
       return true

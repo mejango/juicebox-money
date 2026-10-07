@@ -17,14 +17,13 @@ import {
   buildSyncAccountingDataTx,
   classifySuckerTransport,
   findSuckerTransportValue,
-  getAccountingContexts,
   getV6SuckerPairs,
   relativeSuckerDrift,
   suckerAccountingContextKey,
   suckerBytes32ToAddress,
   suckerTimestampSeconds,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   encodeFunctionData,
@@ -43,6 +42,7 @@ import { formatTokenAmount } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
 
@@ -274,6 +274,7 @@ async function readLiveChain(
   client: PublicClient,
   chainId: number,
   projectId: number,
+  queryClient: Pick<QueryClient, 'fetchQuery'>,
 ): Promise<LiveChain> {
   const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
     chainId as JBChainId
@@ -313,10 +314,10 @@ async function readLiveChain(
 
   let contexts
   try {
-    contexts = await getAccountingContexts(client, {
+    contexts = await queryClient.fetchQuery(accountingContextsQuery(client, {
       chainId: chainId as JBChainId,
       projectId: BigInt(projectId),
-    })
+    }))
   } catch {
     return { supply: null, balances: [], verified: false }
   }
@@ -361,6 +362,7 @@ export function GossipCard({
   chains: [number, number][]
 }) {
   const config = useConfig()
+  const queryClient = useQueryClient()
 
   // In-flight markers live in card state (seeded from localStorage) so a Sync
   // submit re-renders every row's pending status.
@@ -384,13 +386,14 @@ export function GossipCard({
     })
   }, [])
 
-  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 30000,
     queryKey: ['gossip', chains],
     meta: PERSIST,
-    staleTime: 30_000,
+
     retry: 1,
     enabled: chains.length >= 2,
-    queryFn: async (): Promise<GossipData> => {
+    queryFn: async (reader): Promise<GossipData> => {
       // Per-chain sucker pairs (each row's syncSucker/viewSucker come from here).
       const pairsByChain: Record<number, { local: Address; remoteChainId: number }[]> =
         {}
@@ -423,7 +426,7 @@ export function GossipCard({
             chainId: cid as JBChainId,
           }) as PublicClient | undefined
           live[cid] = client
-            ? await readLiveChain(client, cid, pid).catch(() => ({
+            ? await readLiveChain(client, cid, pid, reader).catch(() => ({
                 supply: null,
                 balances: [],
                 verified: false,
@@ -508,7 +511,7 @@ export function GossipCard({
 
       return { blocks, live }
     },
-  })
+  }))
 
   // Which chains each chain already knows with a real snapshot — a sync from a
   // peer re-gossips everything IT knows, so one sync can cover those too.

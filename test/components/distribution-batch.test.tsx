@@ -1,14 +1,19 @@
 import { JBCoreContracts, USDC_ADDRESSES, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { QueryClient } from '@tanstack/react-query'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() },
-  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), verify: vi.fn(), options: [] as unknown[], invalidate: vi.fn(), discard: vi.fn(),
+  load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), verify: vi.fn(), options: [] as unknown[], discard: vi.fn(),
 }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
-vi.mock('@tanstack/react-query', () => ({ useQuery: () => ({ data: mocks.options, isLoading: false }), useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
+vi.mock('@tanstack/react-query', async original => ({
+  ...await original<typeof import('@tanstack/react-query')>(),
+  useQuery: () => ({ data: mocks.options, isLoading: false }),
+  useQueryClient: () => queryClient,
+}))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, runProjectBatch: mocks.run, projectBatchScope: (action: string, chain: number, project: number) => `${action}:${chain}:${project}` }))
 vi.mock('@/lib/project-distributions', async original => ({ ...await original<typeof import('@/lib/project-distributions')>(), reviewPayout: mocks.payout, reviewReserved: mocks.reserved, reverifyDistribution: mocks.reverify, verifyDistributionCompletion: mocks.verify }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: { title: string; rows: { label: string; value: string }[]; status?: string | null; error: string | null; actionDisabled?: boolean; children?: React.ReactNode; onConfirm: () => void }) => <div><span>{props.title}</span>{props.rows.map((row, index) => <p key={index}>{row.label}: {row.value}</p>)}{props.status}{props.error}{props.children}<button disabled={props.actionDisabled} onClick={props.onConfirm}>Confirm test distributions</button></div> }))
@@ -22,6 +27,7 @@ const ACCOUNT = mocks.wallet.address as Address
 const OTHER = '0x2222222222222222222222222222222222222222' as Address
 const CHAINS = [[1, 17], [8453, 303]] as const
 const renderers: ReactTestRenderer[] = []
+let queryClient: QueryClient
 function reserved(chain: JBChainId): ReservedDistribution {
   return { kind: 'reserved', chainId: chain, projectId: chain === 1 ? 17 : 303, owner: ACCOUNT, authority: ACCOUNT,
     controller: jbContractAddress['6'][JBCoreContracts.JBController][chain], symbol: chain === 1 ? 'AAA' : 'BBB',
@@ -51,6 +57,7 @@ async function click(renderer: ReactTestRenderer, label: string) {
   await act(async () => { await button!.props.onClick() })
 }
 beforeEach(() => {
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   mocks.wallet.address = ACCOUNT
   mocks.load.mockReturnValue(null)
   mocks.run.mockResolvedValue({ status: 'complete', calls: [], completedIds: [] })
@@ -59,7 +66,10 @@ beforeEach(() => {
   mocks.payout.mockImplementation(async ({ chainId }, _token, amount) => ({ ...payout(chainId), amount }))
   mocks.options = CHAINS.map(([chainId, projectId]) => ({ project: { chainId, projectId }, payout: { chainId, projectId, terminal: payout(chainId).terminal, contexts: [payout(chainId).context] }, reserved: reserved(chainId), error: null }))
 })
-afterEach(async () => { for (const renderer of renderers.splice(0)) await act(async () => renderer.unmount()) })
+afterEach(async () => {
+  for (const renderer of renderers.splice(0)) await act(async () => renderer.unmount())
+  queryClient.clear()
+})
 
 describe('distribution batch reviews and recovery', () => {
   it('rejects excess token precision instead of rounding the reviewed payout', async () => {
@@ -157,6 +167,48 @@ describe('distribution batch reviews and recovery', () => {
     expect(mocks.reserved).not.toHaveBeenCalled()
     expect(text(renderer)).toContain('pending amount changed')
     expect(text(renderer)).toContain('BBB')
+  })
+
+  it('invalidates a verified destination while another distribution remains pending', async () => {
+    const optionsKey = ['distributionOptions', 'reserved', CHAINS, ACCOUNT]
+    const homeKey = ['projectDisplay', 6, 1, '17', 'currentRuleset']
+    const peerKey = ['projectDisplay', 6, 8453, '303', 'currentRuleset']
+    for (const key of [optionsKey, homeKey, peerKey]) queryClient.setQueryData(key, 'before distribution')
+    const calls = distributionBatchCalls([reserved(1), reserved(8453)])
+    const saved = { id: 'partial-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    mocks.load.mockReturnValue(saved)
+    mocks.verify.mockReturnValue(100n * 10n ** 18n)
+    mocks.run.mockImplementation(async ({ verifyCompletion }) => {
+      await verifyCompletion(calls[0], { status: 'success', logs: [] })
+      return { ...saved, completedIds: [calls[0].id] }
+    })
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    await vi.waitFor(() => {
+      expect(queryClient.getQueryState(optionsKey)?.isInvalidated).toBe(true)
+      expect(queryClient.getQueryState(homeKey)?.isInvalidated).toBe(true)
+    })
+    expect(queryClient.getQueryState(peerKey)?.isInvalidated).toBe(false)
+    expect(text(renderer)).toContain('Resume saved distributions')
+  })
+
+  it('does not invalidate display evidence when a receipt fails distribution verification', async () => {
+    const optionsKey = ['distributionOptions', 'reserved', CHAINS, ACCOUNT]
+    const displayKey = ['projectDisplay', 6, 1, '17', 'currentRuleset']
+    for (const key of [optionsKey, displayKey]) queryClient.setQueryData(key, 'before distribution')
+    const calls = distributionBatchCalls([reserved(1)])
+    const saved = { id: 'unverified-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    mocks.load.mockReturnValue(saved)
+    mocks.verify.mockImplementation(() => { throw new Error('A split was not paid.') })
+    mocks.run.mockImplementation(async ({ verifyCompletion }) => {
+      await verifyCompletion(calls[0], { status: 'success', logs: [] })
+      return saved
+    })
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    expect(queryClient.getQueryState(optionsKey)?.isInvalidated).toBe(false)
+    expect(queryClient.getQueryState(displayKey)?.isInvalidated).toBe(false)
+    expect(text(renderer)).toContain('A split was not paid.')
   })
 
   it("keeps the batch's own line when it comes back pending, so a scan still reading says so", async () => {

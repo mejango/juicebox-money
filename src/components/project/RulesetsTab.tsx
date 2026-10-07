@@ -1,29 +1,31 @@
 "use client";
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
 import {
-  JB_CHAINS,
+  accountingContextSymbolsQuery,
+  allRulesetsQuery,
+  currentRulesetQuery,
+  upcomingRulesetQuery,
+} from '@/lib/project-display-queries'
+import {
   USD_CURRENCY_ID,
   jbFundAccessLimitsAbi,
   jbSplitsAbi,
-  jbTokensAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
   decode721RulesetMetadata,
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
-  getUpcomingRuleset,
   payoutSplitGroupId,
   tokenCurrencyId,
   v6Address,
   type JBRulesetWithMetadata,
 } from "@bananapus/nana-sdk-core/v6";
 import { getPublicClient } from "@wagmi/core";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
-import { erc20Abi, zeroAddress, type PublicClient } from "viem";
+import { zeroAddress, type PublicClient } from "viem";
 import { SplitRecipient } from "@/components/project/SplitRecipient";
 import { usePublicClient } from "wagmi";
 import { ChainIcon } from "@/components/ChainIcon";
@@ -42,10 +44,9 @@ import {
   truncateAddress,
 } from "@/lib/format";
 import type { RawSplit } from "@/lib/splits-types";
-import { tokenSymbol } from "@/lib/token-symbol";
+import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { chainName } from "@/lib/urn";
 import { wagmiConfig } from "@/providers/Providers";
-import { PERSIST } from '@/lib/query-persist';
 import { ConceptTerm } from "@/components/project/ConceptTerm";
 import { PROTOCOL_CONCEPTS } from "@/lib/protocol-concepts";
 import Link from "next/link";
@@ -667,8 +668,9 @@ export function RulesetsTab({
   projectId: number;
   chains: readonly [number, number][];
 }) {
+  const queryClient = useQueryClient();
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
-  const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
+  const [selectedRulesetId, setSelectedRulesetId] = useState<number | null>(null);
 
   const projectChains = useMemo(() => {
     const source = chains.length ? chains : [[chainId, projectId]];
@@ -678,113 +680,44 @@ export function RulesetsTab({
       ).values(),
     );
   }, [chainId, chains, projectId]);
-  const projectChainsKey = projectChains
-    .map(([id, pid]) => `${id}:${pid}`)
-    .join("|");
-
-  const chainMeta = JB_CHAINS[chainId];
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? "ETH";
-
-  const {
-    data: rulesets,
-    isLoading,
-    isError,
-  } = useQuery({
-    queryKey: ["rulesetsTab", chainId, projectId],
-    meta: PERSIST,
+  const args = { chainId, projectId: BigInt(projectId) };
+  const currentQuery = useQuery({
+    ...currentRulesetQuery(publicClient!, args),
     enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const args = { chainId, projectId: BigInt(projectId) };
-      const [current, upcoming, all] = await Promise.all([
-        getCurrentRuleset(publicClient!, args),
-        getUpcomingRuleset(publicClient!, args).catch(() => null),
-        // One paged read covers past cycles too — cheap, so include them.
-        getAllRulesets(publicClient!, { ...args, size: 50n }).catch(
-          () => [] as readonly JBRulesetWithMetadata[],
-        ),
-      ]);
-      return { current, upcoming, all };
-    },
   });
-
+  const upcomingQuery = useQuery({
+    ...upcomingRulesetQuery(publicClient!, args),
+    enabled: !!publicClient,
+  });
+  const historyQuery = useQuery({
+    ...allRulesetsQuery(publicClient!, { ...args, size: 50n }),
+    enabled: !!publicClient,
+  });
   const { data: contexts } = useQuery({
-    queryKey: ["rulesetsTabContexts", chainId, projectId],
-    meta: PERSIST,
+    ...accountingContextSymbolsQuery(publicClient!, queryClient, args),
     enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<AccountingContext[]> => {
-      const raw = await getAccountingContexts(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      }).catch(() => []);
-      return Promise.all(
-        raw.map(async (ctx) => ({
-          ...ctx,
-          symbol: await tokenSymbol(publicClient!, ctx.token, { nativeSymbol }),
-        })),
-      );
-    },
   });
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId);
+  const sym = projectToken?.symbol ?? "tokens";
+  const isLoading = currentQuery.isLoading;
+  const isError = currentQuery.isError;
+  const rulesets = useMemo(() => currentQuery.data ? ({
+    current: currentQuery.data,
+    upcoming: upcomingQuery.data,
+    all: historyQuery.data ?? [],
+  }) : undefined, [currentQuery.data, upcomingQuery.data, historyQuery.data]);
 
-  const { data: projectTokenSymbol } = useQuery({
-    queryKey: ["rulesetsTabTokenSymbol", chainId, projectId],
-    meta: PERSIST,
-    enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const token = await publicClient!.readContract({
-        address: v6Address("JBTokens", chainId),
-        abi: jbTokensAbi,
-        functionName: "tokenOf",
-        args: [BigInt(projectId)],
-      });
-      if (!token || token === zeroAddress) return null;
-      return publicClient!
-        .readContract({ address: token, abi: erc20Abi, functionName: "symbol" })
-        .catch(() => null);
-    },
-  });
-  const sym = projectTokenSymbol ?? "tokens";
-
-  const { data: chainRulesets, isLoading: chainRulesetsLoading } = useQuery({
-    queryKey: ["rulesetsTabCrossChain", projectChainsKey],
-    meta: PERSIST,
-    enabled: projectChains.length > 1,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: async (): Promise<ChainRulesetSnapshot[]> =>
-      Promise.all(
-        projectChains.map(async ([snapshotChainId, snapshotProjectId]) => {
-          try {
-            const client = getPublicClient(wagmiConfig, {
-              chainId: snapshotChainId,
-            }) as PublicClient | undefined;
-            if (!client) throw new Error("No public client");
-            const ruleset = await getCurrentRuleset(client, {
-              chainId: snapshotChainId,
-              projectId: BigInt(snapshotProjectId),
-            });
-            return {
-              chainId: snapshotChainId,
-              projectId: snapshotProjectId,
-              ruleset: ruleset.ruleset.id === 0 ? null : ruleset,
-              error: ruleset.ruleset.id === 0,
-            };
-          } catch {
-            return {
-              chainId: snapshotChainId,
-              projectId: snapshotProjectId,
-              ruleset: null,
-              error: true,
-            };
-          }
-        }),
-      ),
-  });
+  const chainQueries = useQueries({ queries: projectChains.map(([id, pid]) => {
+    const client = getPublicClient(wagmiConfig, { chainId: id }) as PublicClient | undefined;
+    return { ...currentRulesetQuery(client!, { chainId: id, projectId: BigInt(pid) }), enabled: !!client && projectChains.length > 1 };
+  }) });
+  const chainRulesets: ChainRulesetSnapshot[] = projectChains.map(([id, pid], index) => ({
+    chainId: id,
+    projectId: pid,
+    ruleset: chainQueries[index].data?.ruleset.id ? chainQueries[index].data! : null,
+    error: chainQueries[index].isError,
+  }));
+  const chainRulesetsLoading = chainQueries.some(query => query.isLoading);
 
   const entries = useMemo((): Entry[] => {
     if (!rulesets || rulesets.current.ruleset.id === 0) return [];
@@ -810,10 +743,8 @@ export function RulesetsTab({
   }, [rulesets]);
 
   const currentIdx = entries.findIndex((e) => e.tag === "Current");
-  const idx =
-    selectedIdx !== null && selectedIdx >= 0 && selectedIdx < entries.length
-      ? selectedIdx
-      : currentIdx;
+  const selectedIdx = entries.findIndex(entry => entry.data.ruleset.id === selectedRulesetId);
+  const idx = selectedIdx >= 0 ? selectedIdx : currentIdx;
   const selected = idx >= 0 ? entries[idx] : undefined;
   const current = currentIdx >= 0 ? entries[currentIdx] : undefined;
   const upcoming = entries.find((e) => e.tag === "Upcoming");
@@ -822,11 +753,9 @@ export function RulesetsTab({
 
   const { data: fundsAccess, isError: fundsFailed } = useQuery({
     queryKey: [
-      "rulesetsTabFunds",
-      chainId,
-      projectId,
+      ...projectDisplayKey(args, "rulesetFunds"),
       rulesetId,
-      contexts?.length ?? -1,
+      contexts?.map(ctx => [ctx.token, ctx.currency, ctx.decimals]) ?? null,
     ],
     enabled: !!publicClient && !!contexts && rulesetId > 0,
     staleTime: 60_000,
@@ -924,6 +853,8 @@ export function RulesetsTab({
           Glossary
         </Link>
       </p>
+      {historyQuery.isLoading || upcomingQuery.isLoading ? <p role="status" className="text-sm text-smoke-500">Loading past and upcoming rules…</p> : null}
+      {historyQuery.isError || upcomingQuery.isError ? <p className="text-sm text-smoke-700">Some past or upcoming rules could not be loaded. <button className="underline" onClick={() => { void historyQuery.refetch(); void upcomingQuery.refetch(); }}>Retry</button></p> : null}
       {/* Constant, and not dead: this tab is only mounted for non-revnets (revnets get Terms
           instead), and the flag is the flow's own assertion that it must never offer to queue
           a ruleset for a revnet, whose stages are immutable. */}
@@ -943,7 +874,7 @@ export function RulesetsTab({
           <ArrowButton
             direction="prev"
             disabled={idx <= 0}
-            onClick={() => setSelectedIdx(idx - 1)}
+            onClick={() => setSelectedRulesetId(entries[idx - 1].data.ruleset.id)}
           />
           <div className="text-center">
             <h2 className="font-agrandir text-xl font-medium">
@@ -956,7 +887,7 @@ export function RulesetsTab({
           <ArrowButton
             direction="next"
             disabled={idx >= entries.length - 1}
-            onClick={() => setSelectedIdx(idx + 1)}
+            onClick={() => setSelectedRulesetId(entries[idx + 1].data.ruleset.id)}
           />
         </div>
         <p className="mt-2 text-center text-sm text-smoke-700">

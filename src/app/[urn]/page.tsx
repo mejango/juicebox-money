@@ -5,28 +5,24 @@ import {
 } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
-import Image from "next/image";
 import { notFound, redirect } from "next/navigation";
-import { cache } from "react";
+import { connection } from "next/server";
+import { cache, Suspense } from "react";
 import { isAddressEqual, type Address } from "viem";
-import { ActivityList } from "@/components/ActivityList";
+import { ActionRowsSkeleton, ActivityRows, OverviewTabSkeleton, ProjectHeaderSkeleton, ProjectPayPanelSkeleton, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
+import { ProjectHeader, ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice } from "@/app/[urn]/ProjectMetadataSections";
+import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
 import { PendingPayments } from "@/components/project/PendingPayments";
 import { ChainIcon } from "@/components/ChainIcon";
-import { TreasuryCard } from "@/components/TreasuryCard";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
-import { ProjectLink } from "@/components/ProjectLink";
 import { AddressLink } from "@/components/ui/AddressLink";
-import { OverviewTab } from "@/components/project/OverviewTab";
-import { ProjectStats } from "@/components/project/ProjectStats";
 import { ProjectDataStatus } from "@/components/project/ProjectDataStatus";
 import { ProjectTabs } from "@/components/project/Tabs";
 import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
 import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
-import { ProjectRouteSync } from "@/providers/ProjectRouteContext";
+import { ProjectRouteBoundary } from "@/providers/ProjectRouteContext";
 import {
-  BackOfficeTab,
-  ExtrasTab,
   FundsTab,
   OwnersTab,
   RulesetsTab,
@@ -34,52 +30,36 @@ import {
   TermsTab,
 } from "@/components/project/LazyProjectTabs";
 import {
-  BsActivityEvent,
   BsProject,
-  getProjectActivity,
-  getProjectActivityByProject,
-  getRevnetOperator,
   getRevnetOperatorCandidates,
-  getSuckerGroupProjects,
   projectGroupPaymentsCount,
   projectGroupIsIncomplete,
   resolveProjectDeployments,
   suckerGroupAccountingToken,
 } from "@/lib/bendystraw";
-import {
-  getProjectPageData,
-  projectAuthorityMatchesMainnet,
-  readLiveProjectAuthorityContext,
-  revnetOperatorFromPermissionHistory,
-} from "@/lib/project-fallback";
+import { getProjectPageData as getPageDataCached, getIndexedProjectDisplay, getProjectSiblings, getProjectMetadata as fetchProjectMetadata } from "@/lib/project-server-data";
+import type { ProjectPageData } from "@/lib/project-fallback";
 import {
   getProjectLinkPreview,
   previewVersion,
   projectPreviewSlogan,
 } from "@/lib/project-link-preview";
-import { formatDate, ipfsUrl, projectLogoUrl } from "@/lib/format";
 import {
-  lookupProjectHandleTarget,
   lookupVerifiedProjectHandle,
 } from "@/lib/ens";
 import {
   canonicalHandleOf,
-  decodeProjectRouteSegment,
-  projectHandleFromRoute,
-  verifyProjectHandleAuthorityWithFallback,
 } from "@/lib/project-handles";
-import { chainName, legacyHref, parseUrn, toUrn } from "@/lib/urn";
-import { SUPPORTED_CHAINS } from "@/lib/chains";
+import { chainName, legacyHref, toUrn } from "@/lib/urn";
+import { resolveProjectRouteCached, projectRouteSnapshot, type ResolvedProjectRoute } from "@/lib/project-route.server";
 
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
 
-// getProjectPageData is backed by a POST, which Next's fetch cache doesn't
-// dedupe — memoize per request so generateMetadata + page share one call.
-const getPageDataCached = cache(getProjectPageData);
-const getRevnetOperatorCached = cache(getRevnetOperator);
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
-const getSuckerGroupProjectsCached = cache(getSuckerGroupProjects);
+const getRevnetOperatorCached = cache(async (chainId: number, projectId: number) =>
+  (await getRevnetOperatorCandidatesCached(chainId, projectId))[0] ?? null,
+);
 
 /**
  * The verified handle names the PROJECT, so it is the canonical URL for every
@@ -102,9 +82,10 @@ const lookupCanonicalHandleCached = cache(
       if (!authority) return null;
       const deployments: [number, number][] = [[chainId, projectId]];
       if (project.suckerGroupId) {
-        const siblings = await getSuckerGroupProjectsCached(
-          project.suckerGroupId,
+        const siblings = await getProjectSiblings(
           chainId,
+          projectId,
+          project.suckerGroupId,
         ).catch(() => [] as BsProject[]);
         for (const sibling of siblings) {
           if (
@@ -134,220 +115,14 @@ const lookupCanonicalHandleCached = cache(
   ),
 );
 
-type ResolvedProjectRoute = {
-  chainId: JBChainId;
-  projectId: number;
-  handle: string | null;
-  verifiedAuthority: Address | null;
-  verifiedIsRevnet: boolean | null;
-};
-
-/**
- * Resolve either the normal chain/project URN or the bidirectionally verified
- * `/@handle` form. ENS supplies the forward pointer; JBProjectHandles must
- * independently confirm that the project's current effective authority made
- * the matching reverse claim.
- */
-const resolveProjectRouteCached = cache(
-  async (segment: string): Promise<ResolvedProjectRoute | null> => {
-    // Depending on the Next runtime, a dynamic segment containing `@` can
-    // arrive as either `@handle` or `%40handle`. Decode exactly once so a
-    // double-encoded input never gains route syntax by accident.
-    const decodedSegment = decodeProjectRouteSegment(segment);
-    if (!decodedSegment) return null;
-    const urn = parseUrn(decodedSegment);
-    if (urn) {
-      return {
-        ...urn,
-        handle: null,
-        verifiedAuthority: null,
-        verifiedIsRevnet: null,
-      };
-    }
-
-    const requestedHandle = projectHandleFromRoute(decodedSegment);
-    if (!requestedHandle) return null;
-    const target = await lookupProjectHandleTarget(requestedHandle.handle);
-    if (!target) return null;
-    if (!SUPPORTED_CHAINS.some((chain) => chain.id === target.chainId)) {
-      return null;
-    }
-
-    const result = await getPageDataCached(target.chainId, target.projectId);
-    if (!result) return null;
-    // Bendystraw supplies a candidate only. Live NFT ownership below decides
-    // whether this is a revnet, and REVOwner then verifies the candidate.
-    const indexedCandidates = await getRevnetOperatorCandidatesCached(
-      target.chainId,
-      target.projectId,
-    ).catch(() => []);
-    const initialAuthorityContext = await readLiveProjectAuthorityContext({
-      chainId: target.chainId,
-      projectId: target.projectId,
-      revnetOperatorCandidates: indexedCandidates,
-    });
-    // Bendystraw is the fast discovery path only. Enumerate authoritative
-    // REVOwner-scoped JBPermissions history when no live candidate was found,
-    // never when a known live authority simply has a different reverse claim.
-    const authorityContext = await verifyProjectHandleAuthorityWithFallback({
-      requestedHandle: requestedHandle.handle,
-      authorityContext: initialAuthorityContext,
-      lookupHandle: setter =>
-        lookupVerifiedProjectHandle({
-          chainId: target.chainId,
-          projectId: target.projectId,
-          setter,
-        }),
-      recoverAuthority: async () => {
-        const permissionOperator = await revnetOperatorFromPermissionHistory({
-          chainId: target.chainId,
-          projectId: target.projectId,
-        });
-        return permissionOperator
-          ? readLiveProjectAuthorityContext({
-              chainId: target.chainId,
-              projectId: target.projectId,
-              revnetOperatorCandidates: [permissionOperator],
-            })
-          : null;
-      },
-    });
-    if (!authorityContext) return null;
-    if (
-      !(await projectAuthorityMatchesMainnet({
-        chainId: target.chainId,
-        authority: authorityContext.authority,
-      }))
-    ) {
-      return null;
-    }
-
-    return {
-      chainId: target.chainId as JBChainId,
-      projectId: target.projectId,
-      handle: requestedHandle.handle,
-      verifiedAuthority: authorityContext.authority,
-      verifiedIsRevnet: authorityContext.isRevnet,
-    };
-  },
-);
-
-type ProjectMetadata = {
-  name?: string;
-  projectTagline?: string;
-  description?: string;
-  logoUri?: string;
-  coverImageUri?: string;
-  payDisclosure?: string;
-  infoUri?: string;
-  twitter?: string;
-  discord?: string;
-  telegram?: string;
-  whatsapp?: string;
-  instagram?: string;
-};
-
-async function fetchProjectMetadata(
-  metadataUri: string | null,
-): Promise<ProjectMetadata | null> {
-  const url = ipfsUrl(metadataUri);
-  if (!url) return null;
-  try {
-    const res = await fetch(url, {
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as unknown;
-    return typeof json === "object" && json !== null
-      ? (json as ProjectMetadata)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Escaped, hydration-safe fallback while the browser sanitizer initializes. */
-function toParagraphs(text: string): string[] {
-  return text
-    .replace(/<\/(p|div|li|h[1-6])>/gi, "\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&nbsp;/g, " ")
-    .split(/\n+/)
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .slice(0, 40);
-}
-
-function httpsOnly(url: string | undefined): string | null {
-  if (!url) return null;
-  const withScheme = /^https?:\/\//i.test(url) ? url : `https://${url}`;
-  try {
-    const parsed = new URL(withScheme);
-    return parsed.protocol === "https:" || parsed.protocol === "http:"
-      ? parsed.toString()
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Machine-readable identity for search engines and agents, which otherwise have to
- * infer a project from rendered markup.
- */
-function ProjectJsonLd({
-  name,
-  description,
-  logoUri,
-  path,
-  identifier,
-}: {
-  name: string;
-  description: string | null;
-  logoUri: string | null | undefined;
-  path: string;
-  identifier: string;
-}) {
-  const siteOrigin =
-    process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3001";
-  const logo = projectLogoUrl(logoUri);
-  const data = {
-    "@context": "https://schema.org",
-    "@type": "Organization",
-    name,
-    url: new URL(path, siteOrigin).href,
-    identifier,
-    ...(description ? { description } : {}),
-    ...(logo
-      ? { logo: logo.startsWith("/") ? new URL(logo, siteOrigin).href : logo }
-      : {}),
-  };
-  return (
-    <script
-      type="application/ld+json"
-      // The name and tagline are untrusted project metadata: escaping `<` keeps a
-      // crafted value from closing this script tag.
-      dangerouslySetInnerHTML={{
-        __html: JSON.stringify(data).replace(/</gu, "\\u003c"),
-      }}
-    />
-  );
-}
 
 export async function generateMetadata({
   params,
 }: {
   params: Promise<{ urn: string }>;
 }): Promise<Metadata> {
-  // Resolve here (not just in the page) so the redirect/404 status is set
-  // before streaming starts — metadata is awaited ahead of the response shell.
+  // Resolve here as well as in the page so metadata preserves the same
+  // redirect/404 identity decisions when Next streams metadata separately.
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
   // Anything that isn't a V6 project route belongs to the V1–V5 app now
@@ -503,7 +278,7 @@ async function DegradedProjectShell({
           </div>
         </div>
       </header>
-      <ProjectDataStatus deployments={[{ chainId: route.chainId, projectId: route.projectId, version: project.version, operator: authority }]} notice={reason} />
+      <ProjectDataStatus deployments={[{ chainId: route.chainId, projectId: route.projectId, version: project.version, operator: authority, suckerGroupId: project.suckerGroupId }]} notice={reason} />
       <ProjectTabs
         sidebar={null}
         activity={notice}
@@ -538,40 +313,64 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ urn: string }>;
 }) {
+  // Process-local display cache hits must never turn this route into a static
+  // response whose lifetime outlasts the bounded data reads.
+  await connection();
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
   if (!urn) redirect(legacyHref(`/${segment}`));
 
-  const result = await getPageDataCached(urn.chainId, urn.projectId);
+  const pending = getPageDataCached(urn.chainId, urn.projectId);
+  // An indexed identity can paint while the current onchain metadata pointer
+  // is reconciled. Missing/error identities retain the original fallback/404 path.
+  const indexed = await getIndexedProjectDisplay(urn.chainId, urn.projectId).catch(() => null);
+  if (!indexed) {
+    const result = await pending;
+    if (!result) notFound();
+    return (
+      <ProjectRouteBoundary snapshot={projectRouteSnapshot(urn)}>
+        <ProjectPageContents urn={urn} result={result} />
+      </ProjectRouteBoundary>
+    );
+  }
+  return (
+    <ProjectRouteBoundary snapshot={projectRouteSnapshot(urn)}>
+    <Suspense fallback={<ProjectPageSkeleton hint={{
+      name: indexed.name?.trim() || `Project ${indexed.projectId}`,
+      logoUri: indexed.logoUri,
+      tagline: indexed.projectTagline,
+    }} />}>
+      <ProjectPageContents urn={urn} result={pending} />
+    </Suspense>
+    </ProjectRouteBoundary>
+  );
+}
+
+async function ProjectPageContents({ urn, result: pending }: {
+  urn: ResolvedProjectRoute;
+  result: ProjectPageData | null | Promise<ProjectPageData | null>;
+}) {
+  const result = await pending;
   if (!result) notFound();
   if (result.degraded) {
     return (
-      <>
-        <ProjectRouteSync route={urn} />
         <DegradedProjectShell
           route={urn}
           project={result.project}
           reason={result.reason}
         />
-      </>
     );
   }
   const project = result.project;
 
   const isRevnet = urn.verifiedIsRevnet ?? !!project.isRevnet;
-  const [metadata, activityResult, siblings, operator] = await Promise.all([
-    fetchProjectMetadata(project.metadataUri),
-    (project.suckerGroupId
-      ? getProjectActivity(project.suckerGroupId, 250, urn.chainId)
-      : getProjectActivityByProject(urn.chainId, project.projectId, 250)
-    )
-      .then(page => ({ events: page.items, total: page.totalCount, error: false }))
-      .catch(() => ({ events: [] as BsActivityEvent[], total: 0, error: true })),
+  const metadata = fetchProjectMetadata(project.metadataUri);
+  const [siblings, operator] = await Promise.all([
     // An indexer failure here used to read as "this project is on one chain": the page
     // rendered fully, but cross-chain stats, per-chain tabs and authorities all silently
     // shrank to the home chain. Carry the failure so the UI can say so instead.
     (project.suckerGroupId
-      ? getSuckerGroupProjects(project.suckerGroupId, urn.chainId, { policy: 'no-store' })
+      ? getProjectSiblings(urn.chainId, project.projectId, project.suckerGroupId)
       : Promise.resolve([] as BsProject[])
     )
       .then(projects => ({ projects, error: projectGroupIsIncomplete(project, projects) }))
@@ -587,43 +386,10 @@ export default async function ProjectPage({
           )
       : Promise.resolve(null),
   ]);
-  const activity = activityResult.events;
   const siblingProjects = siblings.projects;
 
-  const name =
-    metadata?.name?.trim() || project.name || `Project ${project.projectId}`;
-  const tagline =
-    metadata?.projectTagline?.trim() || project.projectTagline || null;
-  const logoUri = metadata?.logoUri?.trim() || project.logoUri;
   const chains = resolveProjectDeployments(project, siblingProjects);
   const accountingToken = suckerGroupAccountingToken(chains);
-  const description = metadata?.description?.trim() ?? "";
-  const descriptionFallback = description ? toParagraphs(description) : [];
-  const infoUri = httpsOnly(metadata?.infoUri);
-  const twitterHandle = metadata?.twitter?.replace(/^@/, "").trim();
-  const twitter =
-    twitterHandle && /^\w{1,15}$/.test(twitterHandle)
-      ? `https://x.com/${twitterHandle}`
-      : null;
-  const igHandle = metadata?.instagram?.replace(/^@/, "").trim();
-  const instagram =
-    igHandle && /^[\w.]{1,30}$/.test(igHandle)
-      ? `https://instagram.com/${igHandle}`
-      : null;
-  const httpsLink = (value: string | undefined) =>
-    value?.startsWith("https://") ? httpsOnly(value) : null;
-  const discord = httpsLink(metadata?.discord);
-  const telegram = httpsLink(metadata?.telegram);
-  const whatsapp = httpsLink(metadata?.whatsapp);
-  const coverImage = ipfsUrl(metadata?.coverImageUri ?? null);
-  const socialLinks: [string, string | null][] = [
-    ["Website", infoUri],
-    ["X", twitter],
-    ["Discord", discord],
-    ["Telegram", telegram],
-    ["WhatsApp", whatsapp],
-    ["Instagram", instagram],
-  ];
 
   const authority =
     urn.verifiedAuthority ?? (isRevnet ? operator : project.owner);
@@ -670,12 +436,13 @@ export default async function ProjectPage({
     chainId: row.chainId,
     projectId: row.projectId,
     version: row.version,
+    suckerGroupId: row.suckerGroupId,
     operator: authorities.find(([id]) => id === row.chainId)?.[1],
   }));
-  const indexedHandleOperatorCandidates = await getRevnetOperatorCandidatesCached(
+  const indexedHandleOperatorCandidates = isRevnet ? await getRevnetOperatorCandidatesCached(
     urn.chainId,
     project.projectId,
-  ).catch(() => []);
+  ).catch(() => []) : [];
   const handleOperatorCandidates = Array.from(
     new Set([
       ...indexedHandleOperatorCandidates,
@@ -693,213 +460,56 @@ export default async function ProjectPage({
   return (
     <ShopCartProvider>
     <SafeBatchProvider deployments={authorityDeployments} isRevnet={isRevnet}>
-      <ProjectRouteSync route={urn} />
-      <ProjectJsonLd
-        name={name}
-        description={tagline}
-        logoUri={logoUri}
-        path={
-          urn.handle
-            ? `/@${encodeURIComponent(urn.handle)}`
-            : `/${toUrn(urn.chainId, urn.projectId)}`
-        }
-        identifier={toUrn(urn.chainId, urn.projectId)}
-      />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
-        {coverImage ? (
-          <div className="relative mb-6 h-32 w-full overflow-hidden rounded-xl border border-smoke-200 sm:h-44">
-            <Image
-              src={coverImage}
-              alt=""
-              fill
-              priority
-              sizes="(min-width: 1152px) 1152px, calc(100vw - 2rem)"
-              className="object-cover"
-            />
-          </div>
-        ) : null}
-        {/* Header */}
-        <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
-          <ProjectLogoWithFallback
-            name={name}
-            logoUri={logoUri}
-            size={112}
-            className="rounded-xl"
-          />
-          <div className="min-w-0">
-            <h1 className="font-agrandir text-3xl font-medium sm:text-4xl">
-              {name}
-            </h1>
-            {tagline ? (
-              <p className="mt-1.5 text-base text-smoke-700 sm:text-lg">
-                {tagline}
-              </p>
-            ) : null}
-            <ProjectStats
-              totalRaisedUsd={totalRaisedUsd}
-              raisedByChain={chains.map((row) => ({
-                chainId: row.chainId,
-                usd: row.volumeUsd || "0",
-              }))}
-              paymentsCount={paymentsCount}
-              suckerGroupId={project.suckerGroupId}
-              chains={chainPairs}
-              isRevnet={isRevnet}
-            />
-            <div className="mt-2 text-sm text-smoke-700">
-              <div className="space-y-1 md:hidden">
-                <div className="flex items-center">
-                  <span>
-                    <span className="text-smoke-500">Flavor:</span>{" "}
-                    <span className="font-medium text-ink">
-                      {isRevnet ? "Revnet" : "Project"}
-                    </span>
-                  </span>
-                  {authority ? (
-                    <>
-                      <span aria-hidden className="mx-2.5 text-smoke-300">
-                        |
-                      </span>
-                      <span>
-                        <span className="text-smoke-500">
-                          {isRevnet ? "Operator:" : "Owner:"}
-                        </span>{" "}
-                        <AddressLink
-                          showSafe
-                          address={authority}
-                          chainId={urn.chainId}
-                          className="text-smoke-700"
-                        />
-                      </span>
-                    </>
-                  ) : null}
-                </div>
-                <div className="flex items-center">
-                  <span>
-                    <span className="text-smoke-500">Created:</span>{" "}
-                    {formatDate(project.createdAt)}
-                  </span>
-                  <span aria-hidden className="mx-2.5 text-smoke-300">
-                    |
-                  </span>
-                  <span className="inline-flex items-baseline gap-1.5">
-                    <span className="text-smoke-500">On:</span>
-                    {chains.map((p) => (
-                      <ProjectLink
-                        key={p.chainId}
-                        href={`/${toUrn(p.chainId, p.projectId)}`}
-                        projectHint={{ name, logoUri, tagline }}
-                        className="inline-flex translate-y-[2px] transition-opacity hover:opacity-70"
-                      >
-                        <ChainIcon chainId={p.chainId} standalone />
-                      </ProjectLink>
-                    ))}
-                  </span>
-                </div>
-              </div>
-
-              <div
-                data-project-metadata-inline
-                className="hidden items-center whitespace-nowrap md:flex"
-              >
-                <span>
-                  <span className="text-smoke-500">Flavor:</span>{" "}
-                  <span className="font-medium text-ink">
-                    {isRevnet ? "Revnet" : "Project"}
-                  </span>
-                </span>
-                {authority ? (
-                  <>
-                    <span aria-hidden className="mx-2.5 text-smoke-300">
-                      |
-                    </span>
-                    <span>
-                      <span className="text-smoke-500">
-                        {isRevnet ? "Operator:" : "Owner:"}
-                      </span>{" "}
-                      <AddressLink
-                        showSafe
-                        address={authority}
-                        chainId={urn.chainId}
-                        className="text-smoke-700"
-                      />
-                    </span>
-                  </>
-                ) : null}
-                <span aria-hidden className="mx-2.5 text-smoke-300">
-                  |
-                </span>
-                <span>
-                  <span className="text-smoke-500">Created:</span>{" "}
-                  {formatDate(project.createdAt)}
-                </span>
-                <span aria-hidden className="mx-2.5 text-smoke-300">
-                  |
-                </span>
-                <span className="inline-flex items-baseline gap-1.5">
-                  <span className="text-smoke-500">On:</span>
-                  {chains.map((p) => (
-                    <ProjectLink
-                      key={p.chainId}
-                      href={`/${toUrn(p.chainId, p.projectId)}`}
-                      projectHint={{ name, logoUri, tagline }}
-                      className="inline-flex translate-y-[2px] transition-opacity hover:opacity-70"
-                    >
-                      <ChainIcon chainId={p.chainId} standalone />
-                    </ProjectLink>
-                  ))}
-                </span>
-              </div>
-            </div>
-          </div>
-        </header>
-        {siblings.error || activityResult.error || operator === undefined ? (
+        <Suspense fallback={<ProjectHeaderSkeleton hint={{ name: project.name?.trim() || `Project ${project.projectId}`, logoUri: project.logoUri, tagline: project.projectTagline }} />}>
+        <ProjectHeader project={project} metadata={metadata} urn={urn} chains={chains} chainPairs={chainPairs} isRevnet={isRevnet} authority={authority} totalRaisedUsd={totalRaisedUsd} paymentsCount={paymentsCount} />
+        </Suspense>
+        {siblings.error || operator === undefined ? (
           <ProjectDataStatus deployments={diagnosticDeployments} notice="partial" />
         ) : null}
 
         {/* Content + pay card */}
         <ProjectTabs
           sidebar={
-            <TreasuryCard
+            <Suspense fallback={<div role="status" aria-label="Loading payment details"><ProjectPayPanelSkeleton /></div>}>
+              <ProjectTreasury project={project} metadata={metadata}
               chainId={urn.chainId}
               projectId={project.projectId}
-              projectName={name}
               isRevnet={isRevnet}
               chains={chainPairs}
-              payDisclosure={metadata?.payDisclosure}
-            />
+              />
+            </Suspense>
           }
           activity={
             <section className="min-[801px]:mt-8">
               <PendingPayments key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
-              <ActivityList
-                events={activity}
-                total={activityResult.total}
-                error={activityResult.error}
+              <Suspense fallback={<div role="status" aria-label="Loading activity"><ActivityRows /></div>}>
+              <ProjectActivity
                 chainId={urn.chainId}
                 projectId={project.projectId}
                 suckerGroupId={project.suckerGroupId}
                 accountingToken={accountingToken}
                 isRevnet={isRevnet}
+                deployments={diagnosticDeployments}
               />
+              </Suspense>
             </section>
           }
           tabs={[
             {
               label: "Overview",
               content: (
-                <OverviewTab
+                <Suspense fallback={<div role="status" aria-label="Loading overview"><OverviewTabSkeleton /></div>}>
+                  <ProjectOverview project={project} metadata={metadata}
                   chainId={urn.chainId}
                   projectId={project.projectId}
-                  description={description}
-                  descriptionFallback={descriptionFallback}
-                  socialLinks={socialLinks}
                   isRevnet={isRevnet}
                   authority={authority ?? null}
                   authorities={authorities}
                   chains={chainPairs}
                   suckerGroupId={project.suckerGroupId}
                 />
+                </Suspense>
               ),
             },
             isRevnet
@@ -962,33 +572,23 @@ export default async function ProjectPage({
             {
               label: "Extras",
               content: (
-                <ExtrasTab
+                <Suspense fallback={<ActionRowsSkeleton label="Loading extras" />}>
+                  <ProjectExtras project={project} metadata={metadata}
                   chainId={urn.chainId}
                   projectId={project.projectId}
                   isRevnet={isRevnet}
                   chains={chainPairs}
                   authorities={authorities}
                   deploymentCheck={<ProjectDataStatus deployments={diagnosticDeployments} />}
-                  profile={{
-                    name: metadata?.name ?? name,
-                    tagline:
-                      metadata?.projectTagline ?? project.projectTagline ?? "",
-                    description: metadata?.description ?? "",
-                    payNotice: metadata?.payDisclosure ?? "",
-                    infoUri: metadata?.infoUri,
-                    twitter: metadata?.twitter,
-                    discord: metadata?.discord,
-                    telegram: metadata?.telegram,
-                    whatsapp: metadata?.whatsapp,
-                    instagram: metadata?.instagram,
-                  }}
                 />
+                </Suspense>
               ),
             },
             {
               label: isRevnet ? "Operator" : "Owner",
               content: (
-                <BackOfficeTab
+                <Suspense fallback={<ActionRowsSkeleton label="Loading back office" />}>
+                  <ProjectBackOffice project={project} metadata={metadata} suckerGroupId={project.suckerGroupId}
                   chainId={urn.chainId}
                   projectId={project.projectId}
                   isRevnet={isRevnet}
@@ -996,22 +596,8 @@ export default async function ProjectPage({
                   operator={operator ?? null}
                   deployments={authorityDeployments}
                   revnetOperatorCandidates={handleOperatorCandidates as Address[]}
-                  profile={{
-                    name: metadata?.name ?? name,
-                    tagline:
-                      metadata?.projectTagline ?? project.projectTagline ?? "",
-                    description: metadata?.description ?? "",
-                    logoUri: metadata?.logoUri ?? project.logoUri ?? null,
-                    infoUri: metadata?.infoUri,
-                    twitter: metadata?.twitter,
-                    discord: metadata?.discord,
-                    telegram: metadata?.telegram,
-                    whatsapp: metadata?.whatsapp,
-                    instagram: metadata?.instagram,
-                    coverImageUri: metadata?.coverImageUri,
-                    payDisclosure: metadata?.payDisclosure,
-                  }}
                 />
+                </Suspense>
               ),
             },
           ]}

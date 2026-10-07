@@ -37,6 +37,7 @@ import {
   truncateAddress,
 } from '@/lib/format'
 import { minimumDropNotice } from '@/lib/cashOut'
+import { invalidatePreparationQueries, preparationStaleTime } from '@/lib/preparation-query'
 import { chainName } from '@/lib/urn'
 
 export type RedeemableShopItem = {
@@ -147,12 +148,13 @@ export function RedeemShopItemsModal({
       selectedChainId,
       target.projectId,
       target.hook,
+      target.idTarget,
       address,
       tokenIdsKey,
     ],
     enabled: !!address && selectedTokenIds.length > 0,
     retry: false,
-    staleTime: 0,
+    staleTime: preparationStaleTime,
     queryFn: async (): Promise<ItemCashOutQuote> => {
       if (!address || selectedTokenIds.length === 0) {
         throw new Error('Select at least one item.')
@@ -288,6 +290,7 @@ export function RedeemShopItemsModal({
     if (tx.phase !== 'success') return
     queryClient.invalidateQueries({ queryKey: ['shop-owned-items'] })
     queryClient.invalidateQueries({ queryKey: ['shop-redeemable-items'] })
+    invalidatePreparationQueries(queryClient, ['shop-item-cash-out-quote'])
   }, [queryClient, tx.phase])
 
   const toggle = (tokenId: string) => {

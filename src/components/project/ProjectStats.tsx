@@ -8,8 +8,7 @@ import {
   jbTerminalStoreAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import {
   useEffect,
   useId,
@@ -32,6 +31,7 @@ import {
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { Revalidating } from '@/components/ui/Revalidating'
 
 type TreasuryRow = {
@@ -63,6 +63,7 @@ async function fetchParticipants(query: string): Promise<ParticipantPage> {
 async function readChainTreasury(
   config: ReturnType<typeof useConfig>,
   [rawChainId, rawProjectId]: [number, number],
+  queryClient: Pick<QueryClient, 'fetchQuery'>,
 ): Promise<ChainTreasury> {
   const chainId = rawChainId as JBChainId
   const client = getPublicClient(config, { chainId }) as
@@ -84,10 +85,7 @@ async function readChainTreasury(
 
   try {
     const projectId = BigInt(rawProjectId)
-    const contexts = await getAccountingContexts(client, {
-      chainId,
-      projectId,
-    })
+    const contexts = await queryClient.fetchQuery(accountingContextsQuery(client, { chainId, projectId }))
     const rows = await Promise.all(
       contexts.map(async (context): Promise<TreasuryRow> => {
         const [balance, symbol] = await Promise.all([
@@ -272,16 +270,18 @@ export function ProjectStats({
   isRevnet: boolean
 }) {
   const config = useConfig()
+  const queryClient = useQueryClient()
   const raisedTooltipId = useId()
   const treasuryTooltipId = useId()
-  const { data, isLoading, isFetching: treasuryFetching } = useQuery({
+  const { data, isLoading, isFetching: treasuryFetching } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 30000,
     queryKey: ['projectTreasuryUsd', chains],
     meta: PERSIST,
-    staleTime: 30_000,
+
     retry: 1,
-    queryFn: async () => {
+    queryFn: async (reader) => {
       const chainResults = await Promise.all(
-        chains.map(pair => readChainTreasury(config, pair)),
+        chains.map(pair => readChainTreasury(config, pair, reader)),
       )
       const rows = chainResults.flatMap(result => result.rows)
       const failedChainIds = chainResults
@@ -301,7 +301,7 @@ export function ProjectStats({
         totalUsd: fullyPriced ? pricedTotal : null,
       }
     },
-  })
+  }))
 
   const {
     data: participantData,

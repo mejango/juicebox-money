@@ -1,5 +1,6 @@
 'use client'
 
+import { projectDisplayQuery } from '@/lib/project-display-queries'
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -19,7 +20,7 @@ import {
   uniswapV4Deployment,
   uniswapV4SwapDirection,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
@@ -103,6 +104,7 @@ export function CashOutPanel({
 }) {
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const tx = useSafeTx(chainId)
   const approveTx = useSafeTx(chainId)
 
@@ -225,14 +227,15 @@ export function CashOutPanel({
   // Claimed project tokens can be sold directly into the buyback pool. This
   // bypasses the terminal fee, so compare its protected output against the
   // hook-aware terminal route and offer it only when it is strictly better.
-  const { data: market } = useQuery({
+  const { data: market } = useQuery(projectDisplayQuery(queryClient, {
+    staleTime: 30000,
     queryKey: ['cashOutMarket', chainId, projectId],
     enabled: !!publicClient && !!projectToken,
-    staleTime: 30_000,
+
     retry: false,
-    queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
-  })
+    queryFn: (reader) =>
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
+  }))
   const directSellDirection =
     market?.status === 'pool' && projectToken && context
       ? uniswapV4SwapDirection({

@@ -2,12 +2,10 @@
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
-  getAllRulesets,
   getAmountToAutoIssue,
-  getTokenAddress,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { erc20Abi, type Address, type PublicClient } from 'viem'
+import { type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AutoIssueAcrossChains, AutoIssueAllocation } from '@/components/project/ProjectTokenBatchFlow'
@@ -20,6 +18,8 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
+import { allRulesetsQuery } from '@/lib/project-display-queries'
+import { projectTokenQuery } from '@/lib/project-token-query'
 
 /** One auto-issuance allocation on a specific chain, deduped by
  *  (chain, stageId, beneficiary). */
@@ -59,28 +59,13 @@ export function AutoIssuanceSection({
   // The project's OWN token symbol (the passed prop is bendystraw's ACCOUNTING
   // symbol, e.g. "ETH" — the amounts are project tokens, e.g. MARKEE). Same
   // everywhere (omnichain ERC-20), so resolve it once on the primary chain.
-  const { data: resolvedSym } = useQuery({
-    queryKey: ['autoIssueSymbol', chains[0]?.join(':')],
-    meta: PERSIST,
+  const { data: resolvedToken } = useQuery({
+    ...projectTokenQuery(primaryClient!, chains[0]?.[0] as JBChainId, chains[0]?.[1] ?? 0),
     enabled: !!primaryClient && chains.length > 0,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async (): Promise<string | null> => {
-      const token = await getTokenAddress(primaryClient!, {
-        chainId: chains[0][0] as JBChainId,
-        projectId: BigInt(chains[0][1]),
-      })
-      if (!token) return null
-      return (await primaryClient!.readContract({
-        address: token,
-        abi: erc20Abi,
-        functionName: 'symbol',
-      })) as string
-    },
   })
   // Blank rather than bendystraw's accounting symbol — labeling a project-token
   // mint "ETH" is worse than labeling it with nothing.
-  const sym = resolvedSym || ''
+  const sym = resolvedToken?.symbol || ''
 
   const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['autoIssuancesAll', chains.map(c => c.join(':')).join(',')],
@@ -205,17 +190,9 @@ function AutoIssueRow({
   // The stage this allocation belongs to (for the stage number + unlock date),
   // matched by stored stageId against the chain's queued rulesets.
   const { data: stage } = useQuery({
-    queryKey: ['autoIssueStage', chainId, projectId, row.stageId],
-    meta: PERSIST,
+    ...allRulesetsQuery(publicClient!, { chainId, projectId: BigInt(projectId), size: 50n }),
     enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: async () => {
-      const all = await getAllRulesets(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-        size: 50n,
-      })
+    select: all => {
       const sorted = [...all].sort((a, b) => a.ruleset.start - b.ruleset.start)
       const idx = sorted.findIndex(
         s => String(s.ruleset.id) === String(row.stageId),

@@ -32,6 +32,7 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { isStickyHook } from '@/lib/sticky'
+import { ACTIVITY_PAGE_SIZE, PROJECT_ACTIVITY_FRESHNESS_MS } from '@/lib/project-activity'
 import { StickyRecipient } from '@/components/project/StickyRecipient'
 import { ActorLink } from './ActorLink'
 import {
@@ -43,10 +44,6 @@ import {
   type ActivityHeadline,
 } from './ActivityMeta'
 import { ProjectTabIcon } from './project/ProjectTabIcon'
-
-const ACTIVITY_POLL_MS = 15_000
-/** Rows per page. The server renders the first one; "Load more" appends the rest. */
-const ACTIVITY_PAGE = 250
 
 export type ActivityCategory =
   | 'pay'
@@ -1109,6 +1106,7 @@ export function ActivityList({
   isRevnet,
   error = false,
   total,
+  initialEventsUpdatedAt,
 }: {
   events: BsActivityEvent[]
   chainId: JBChainId
@@ -1125,6 +1123,8 @@ export function ActivityList({
   /** Rows matching the feed's filter, of which `events` is the newest page. Category filters
    *  apply only to what is LOADED, so without this a populated category renders as empty. */
   total?: number
+  /** Successful server read time (epoch ms), including a verified empty page. */
+  initialEventsUpdatedAt?: number
 }) {
   const [liveEvents, setLiveEvents] = useState(events)
   const [liveError, setLiveError] = useState(error)
@@ -1145,23 +1145,41 @@ export function ActivityList({
   useEffect(() => {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
     let stopped = false
+    let refreshing = false
+    let updatedAt = error ? undefined : initialEventsUpdatedAt
+    let timer: number | undefined
     // The poll's reads stop with it.
     const polling = new AbortController()
     const { signal } = polling
 
+    const schedule = (delay: number) => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => void refresh(), delay)
+    }
+
     const refresh = async () => {
-      if (document.visibilityState === 'hidden') return
+      if (stopped || refreshing || document.visibilityState === 'hidden') return
+      const age = updatedAt === undefined ? Infinity : Date.now() - updatedAt
+      if (age >= 0 && age < PROJECT_ACTIVITY_FRESHNESS_MS) {
+        schedule(PROJECT_ACTIVITY_FRESHNESS_MS - age)
+        return
+      }
+      refreshing = true
       try {
         const incoming = await (suckerGroupId
-          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, 0, { signal })
-          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE, 0, { signal }))
+          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, 0, { signal })
+          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE_SIZE, 0, { signal }))
         if (stopped) return
+        updatedAt = Date.now()
         // Poll the newest page only; merging keeps whatever "Load more" has already pulled in.
         setLiveEvents(current => mergeActivityEvents(current, incoming.items))
         setLiveTotal(incoming.totalCount)
         setLiveError(false)
       } catch {
         // Keep the last known-good feed; the next poll retries.
+      } finally {
+        refreshing = false
+        if (!stopped) schedule(PROJECT_ACTIVITY_FRESHNESS_MS)
       }
     }
 
@@ -1169,15 +1187,14 @@ export function ActivityList({
       if (document.visibilityState === 'visible') void refresh()
     }
     void refresh()
-    const timer = window.setInterval(() => void refresh(), ACTIVITY_POLL_MS)
     document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       stopped = true
       polling.abort()
-      window.clearInterval(timer)
+      window.clearTimeout(timer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
     }
-  }, [chainId, projectId, suckerGroupId])
+  }, [chainId, projectId, suckerGroupId, error, initialEventsUpdatedAt])
 
   const loadMore = async () => {
     setLoadingMore(true)
@@ -1185,11 +1202,11 @@ export function ActivityList({
     try {
       const signal = listSignal()
       const page = await (suckerGroupId
-        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE, chainId, liveEvents.length, { signal })
+        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, liveEvents.length, { signal })
         : getProjectActivityByProject(
             chainId,
             projectId,
-            ACTIVITY_PAGE,
+            ACTIVITY_PAGE_SIZE,
             liveEvents.length,
             { signal },
           ))

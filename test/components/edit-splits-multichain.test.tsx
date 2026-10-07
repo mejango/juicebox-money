@@ -430,16 +430,26 @@ describe('split replacement recovery', () => {
     expect(restored).not.toBeNull()
     const completed = vi.fn()
     const discarded = vi.fn()
+    const failed = vi.fn()
     let renderer!: ReactTestRenderer
     await act(async () => {
-      renderer = create(<SplitRecovery journal={restored} onComplete={completed} onDiscard={discarded} />)
+      renderer = create(<SplitRecovery journal={restored} onComplete={completed} onDiscard={discarded} onError={failed} />)
     })
     renderers.push(renderer)
-    return { journal, restored, renderer, completed, discarded }
+    return { journal, restored, renderer, completed, discarded, failed }
   }
 
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
+
+  it('notifies the query owner after a failed recovery without claiming completion or discarding it', async () => {
+    const { renderer, completed, failed } = await mountSaved()
+    mocks.runAuthorityCalls.mockRejectedValue(new Error('The next destination is unavailable.'))
+    await act(async () => { await button(renderer, 'Resume split update').props.onClick() })
+    expect(failed).toHaveBeenCalledOnce()
+    expect(completed).not.toHaveBeenCalled()
+    expect(storage.size).toBe(2)
+  })
 
   it('offers Discard, with its one line, beside resuming once the earlier signature may already have run, and keeps the saved review', async () => {
     mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid', records: [], discardable: 'ran' })

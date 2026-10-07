@@ -1,5 +1,14 @@
 'use client'
 
+import { projectDisplayKey } from '@/lib/project-display-cache'
+
+import {
+  accountingContextsQuery,
+  accountingContextSymbolsQuery,
+  allRulesetsQuery,
+  currentRulesetQuery,
+  projectDisplayQuery,
+} from '@/lib/project-display-queries'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -9,19 +18,14 @@ import {
   JB_CHAINS,
   jbDirectoryAbi,
   jbTerminalStoreAbi,
-  jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import {
   erc20Abi,
-  zeroAddress,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -59,9 +63,9 @@ import {
   type PricePoint,
 } from '@/lib/price-series'
 import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
-import { cachedQuery, immutableQuery } from '@/lib/query-persist'
+import { cachedQuery, PERSIST } from '@/lib/query-persist'
 import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
-import { tokenSymbol } from '@/lib/token-symbol'
+import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 
 const PRICE_REFRESH_MS = 15_000
 
@@ -92,90 +96,44 @@ export function RevnetPriceCard({
   chains: [number, number][]
   suckerGroupId: string | null
 }) {
+  const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
 
-  // A revnet's stage schedule is queued once at deployFor and no revnet actor
-  // holds QUEUE_RULESETS, so every stage — past, current and future — is fixed
-  // for the project's lifetime. Read it once, ever.
-  const { data: allRulesets, isPending: stagesPending } = useQuery(
-    immutableQuery({
-      queryKey: ['revnetStages', chainId, projectId],
-      enabled: !!publicClient,
-      retry: 1,
-      queryFn: () =>
-        getAllRulesets(publicClient!, {
-          chainId,
-          projectId: BigInt(projectId),
-          size: 50n,
-        }),
-    }),
-  )
-
-  const { data, isPending: metaPending } = useQuery(
-    cachedQuery({
-      queryKey: ['revnetPriceMeta', chainId, projectId],
-      enabled: !!publicClient,
-      staleTime: 60_000,
-      retry: 1,
-      queryFn: async () => {
-      const args = { chainId, projectId: BigInt(projectId) }
-      const [contexts, projectSymbol] = await Promise.all([
-        getAccountingContexts(publicClient!, args).catch(() => [] as const),
-        (async () => {
-          const token = (await publicClient!.readContract({
-            abi: jbTokensAbi,
-            address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
-            functionName: 'tokenOf',
-            args: [BigInt(projectId)],
-          })) as `0x${string}`
-          if (!token || token === zeroAddress) return null
-          return (await publicClient!.readContract({
-            address: token,
-            abi: erc20Abi,
-            functionName: 'symbol',
-          })) as string
-        })().catch(() => null),
-      ])
-      // Resolve token-keyed base currencies (uint32(uint160(token))) to their
-      // real symbols so a DAI/USDC-based revnet isn't mislabeled.
-      const contextSymbols = await Promise.all(
-        contexts.map(async ctx => ({
-          currency: ctx.currency,
-          symbol: await tokenSymbol(publicClient!, ctx.token, { nativeSymbol }),
-        })),
-      )
-      return { contexts, contextSymbols, projectSymbol }
-      },
-    }),
-  )
-
+  const args = { chainId, projectId: BigInt(projectId) }
+  const { data: allRulesets, isPending } = useQuery({
+    ...allRulesetsQuery(publicClient!, { ...args, size: 50n }),
+    enabled: !!publicClient,
+  })
+  const { data: contexts } = useQuery({
+    ...accountingContextSymbolsQuery(publicClient!, queryClient, args),
+    enabled: !!publicClient,
+  })
+  const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
+  const data = useMemo(() => ({ contexts: contexts ?? [], contextSymbols: contexts ?? [], projectSymbol: projectToken?.symbol }), [contexts, projectToken?.symbol])
   const all = useMemo(() => allRulesets ?? [], [allRulesets])
-  const isPending = stagesPending || metaPending
 
   // The axis unit, straight from the immutable stage data the axis LABEL is
   // built from further down. Both must read the same source or the lines and
   // the label describe different currencies.
   const axisBaseCurrency = all[0]?.metadata.baseCurrency ?? null
 
-  const { data: references, isFetching: referencesFetching } = useQuery(
-    cachedQuery({
+  const { data: references, isFetching: referencesFetching } = useQuery(projectDisplayQuery(queryClient, {
+    meta: PERSIST,
     queryKey: [
-      'revnetPriceReferences',
-      chainId,
-      projectId,
+      ...projectDisplayKey(args, 'priceReferences'),
       chains,
       axisBaseCurrency,
     ],
     enabled: !!publicClient && axisBaseCurrency !== null,
-    staleTime: 60_000,
+
     refetchInterval: PRICE_REFRESH_MS,
     refetchOnWindowFocus: true,
     retry: 1,
-    queryFn: async () => {
+    queryFn: async (reader) => {
       const [market, floor] = await Promise.all([
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol).catch(
+        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader).catch(
           () => null,
         ),
         (async () => {
@@ -201,14 +159,14 @@ export function RevnetPriceCard({
 
               const pid = BigInt(rawProjectId)
               const [contexts, currentRuleset, controller] = await Promise.all([
-                getAccountingContexts(client, {
+                reader.fetchQuery(accountingContextsQuery(client, {
                   chainId: rowChainId,
                   projectId: pid,
-                }),
-                getCurrentRuleset(client, {
+                })),
+                reader.fetchQuery(currentRulesetQuery(client, {
                   chainId: rowChainId,
                   projectId: pid,
-                }),
+                })),
                 client.readContract({
                   address: directory,
                   abi: jbDirectoryAbi,
@@ -367,8 +325,7 @@ export function RevnetPriceCard({
         pool: market?.status === 'pool' ? market : null,
       }
     },
-    }),
-  )
+    }))
 
   // Same key as MarketSection's query so the two share one read of the pool.
   const pool = references?.pool ?? null

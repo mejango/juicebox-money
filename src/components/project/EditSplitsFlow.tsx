@@ -18,7 +18,7 @@ import {
   getTokenAddress,
   type JBSplit,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -53,6 +53,7 @@ import {
 import { lpSplitHookGeneration } from '@/lib/launch'
 import { isKnownController } from '@/lib/manage'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
+import { invalidateConfirmedPreparation, invalidatePreparationQueries, invalidateProjectPreparation, preparationStaleTime } from '@/lib/preparation-query'
 import type { RawSplit } from '@/lib/splits-types'
 import { draftSplitRecipient } from '@/lib/split-recipient'
 import {
@@ -150,6 +151,7 @@ function draftToSplit(row: DraftSplit, chainId: number): JBSplit {
 
 /** The ruleset JBSplits falls back to when a group is empty. */
 const FALLBACK_RULESET_ID = 0n
+const SPLIT_PREPARATION_KEYS = ['editSplitsLive', 'editSplitsFallback', 'editSplitsDestinations']
 
 /**
  * The project's ruleset-0 group for the group being edited. Clearing a group
@@ -444,7 +446,7 @@ export async function submitSplitReview(plan: SplitReview, onProgress: (message:
  * editor's draft: reviewed again it signs afresh, and the recheck refuses it
  * if the recipients changed.
  */
-export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: SplitJournal; onComplete: () => void; onDiscard: () => void }) {
+export function SplitRecovery({ journal, onComplete, onDiscard, onError }: { journal: SplitJournal; onComplete: (result: AuthorityResult) => void; onDiscard: () => void; onError?: () => void }) {
   const { address } = useWallet()
   // Leaving ends a Safe app proposal's wait for its execution.
   const flowSignal = useUnmountSignal()
@@ -458,17 +460,18 @@ export function SplitRecovery({ journal, onComplete, onDiscard }: { journal: Spl
     setBusy(true); setError(null)
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('Connect the wallet that reviewed this split update.')
-      await withSplitLocks(journal.review.destinations, async () => {
+      const result = await withSplitLocks(journal.review.destinations, async () => {
         for (const destination of journal.review.destinations) {
           const alias = readSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))
           if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
         }
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-        await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal() })
+        const result = await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal() })
         clearSplitJournal(journal)
+        return result
       })
-      onComplete()
-    } catch (err) { setError(err instanceof Error ? err.message : 'Could not resume the split update.') }
+      onComplete(result)
+    } catch (err) { onError?.(); setError(err instanceof Error ? err.message : 'Could not resume the split update.') }
     finally { setBusy(false) }
   }
   if (session?.discardable) {
@@ -526,6 +529,7 @@ export function EditSplitsFlow({
   chains?: readonly (readonly [number, number])[]
 }) {
   const { isConnected, address } = useWallet()
+  const queryClient = useQueryClient()
 
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
@@ -623,12 +627,17 @@ export function EditSplitsFlow({
   const { data: pending, refetch: refreshPending } = useQuery({
     queryKey: ['editSplitsRecovery', chainId, projectId, groupId.toString(), address],
     enabled: mounted && !!address,
+    // Local journal rechecks have no network cost and must not reuse a leased result.
     staleTime: 0,
     queryFn: () => readSplitJournal(splitJournalKey(chainId, projectId, groupId)),
   })
   const [recovered, setRecovered] = useState(false)
-  if (pending) return <SplitRecovery journal={pending} onComplete={() => { setRecovered(true); void refreshPending() }}
-    onDiscard={() => void refreshPending()} />
+  if (pending) return <SplitRecovery journal={pending} onComplete={result => {
+    invalidateConfirmedPreparation(queryClient, result, pending.review.destinations.map(item => item.chainId), SPLIT_PREPARATION_KEYS)
+    setRecovered(true); void refreshPending()
+  }}
+    onDiscard={() => void refreshPending()}
+    onError={() => invalidateProjectPreparation(queryClient, pending.review.destinations.map(item => item.chainId), SPLIT_PREPARATION_KEYS)} />
   if (recovered) return <p className="mt-3 text-sm text-smoke-700">The saved split update is confirmed on every destination. Reload to see the recipients.</p>
 
   if (
@@ -676,6 +685,7 @@ function EditSplitsModal({
   onPending: () => void
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
 
   const [open, setOpen] = useState(false)
   const [drafts, setDrafts] = useState<DraftSplit[]>([])
@@ -714,7 +724,6 @@ function EditSplitsModal({
   const destinationsQuery = useQuery({
     queryKey: ['editSplitsDestinations', projectChains.map(([id, pid]) => `${id}:${pid}`).join('|'), rulesetId.toString(), groupId.toString(), address],
     enabled: open && isReserved && !!address && projectChains.length > 1,
-    staleTime: 0,
     queryFn: ({ signal }) => Promise.all(projectChains.map(async ([id, pid]) => {
       try {
         const snapshot = await readSplitDestination({ chainId: id, projectId: pid, groupId, account: address!, signal, ...(id === chainId ? { rulesetId } : {}) })
@@ -723,6 +732,7 @@ function EditSplitsModal({
         return { chainId: id, snapshot: null, error: err instanceof Error ? err.message : 'Could not verify this chain.' }
       }
     })),
+    staleTime: query => preparationStaleTime(query, query.state.data?.some(row => !!row.error)),
   })
   const primarySnapshot = destinationsQuery.data?.find(row => row.chainId === chainId)?.snapshot
   const primaryRelayable = !!primarySnapshot?.relayable && addressOnlySplits(primarySnapshot.currentSplits, lockSnapshotAt ?? Math.floor(Date.now() / 1000))
@@ -753,7 +763,7 @@ function EditSplitsModal({
   } = useQuery({
     queryKey: ['editSplitsLive', chainId, projectId, rulesetId.toString(), groupId.toString()],
     enabled: open && !!publicClient,
-    staleTime: 0,
+    staleTime: preparationStaleTime,
     retry: 1,
     queryFn: async () =>
       (await publicClient!.readContract({
@@ -769,7 +779,7 @@ function EditSplitsModal({
   const { data: fallbackRows, isFetching: fallbackFetching } = useQuery({
     queryKey: ['editSplitsFallback', chainId, projectId, groupId.toString()],
     enabled: open && !!publicClient && rulesetId !== FALLBACK_RULESET_ID,
-    staleTime: 0,
+    staleTime: preparationStaleTime,
     retry: 1,
     queryFn: async () =>
       (await publicClient!.readContract({
@@ -885,6 +895,7 @@ function EditSplitsModal({
       })
       setPlan({ account: address, title, destinations })
     } catch (err) {
+      invalidatePreparationQueries(queryClient, SPLIT_PREPARATION_KEYS)
       setFlowError(err instanceof Error ? err.message : 'Could not review the split recipients.')
     } finally { setBusy(false) }
   }
@@ -897,9 +908,11 @@ function EditSplitsModal({
     setFlowError(null); setBusy(true); setStatus('Rechecking the split recipients…')
     try {
       const result = await submitSplitReview(plan, setStatus, flowSignal())
+      invalidateConfirmedPreparation(queryClient, result, plan.destinations.map(item => item.chainId), SPLIT_PREPARATION_KEYS)
       setStatus(safeOutcomeMessage(result, `${title} updated. This page picks it up in about a minute.`))
       setSuccess(true)
     } catch (err) {
+      invalidateProjectPreparation(queryClient, plan.destinations.map(item => item.chainId), SPLIT_PREPARATION_KEYS)
       setFlowError(err instanceof Error ? err.message : 'Could not save the splits.')
       if (pendingSplitJournal(splitJournalKey(chainId, projectId, groupId))) onPending()
     } finally { setBusy(false) }

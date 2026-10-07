@@ -26,6 +26,7 @@ import { ErrorNote } from "@/components/ui/TxError";
 import { useRelayrDiscard } from "@/components/RelayrDiscard";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { replaceTabHash } from "@/components/project/Tabs";
+import { invalidateProjectRoute } from "@/providers/ProjectRouteContext";
 import {
   clientFor,
   readAuthorityOf,
@@ -670,6 +671,9 @@ export function TransferAuthorityFlow({
           if (index >= 0) setStep(index);
         },
       });
+      // Invalidate the browsing lease only; the existing outcome still distinguishes
+      // an executed transfer from a proposal awaiting Safe execution.
+      invalidateProjectRoute();
       setStatus(
         safeOutcomeMessage(
           result,

@@ -11,6 +11,8 @@ import { TxError } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { chainName } from '@/lib/urn'
 import { formatTokenAmount } from '@/lib/format'
+import { invalidatePreparationQueries, preparationStaleTime } from '@/lib/preparation-query'
+import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { isStickyHook, stickyRecipientLabel } from '@/lib/sticky'
 import { distributionCall, distributionProjects, matchingPayoutToken, readPayoutOptions, reviewPayout, reviewReserved, reverifyDistribution, verifyDistributionCompletion, type Distribution, type PayoutOptions } from '@/lib/project-distributions'
 import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -97,7 +99,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   const options = useQuery({
     queryKey: ['distributionOptions', kind, projectState.projects, address, open],
     enabled: open && !!address && !batch && !projectState.error,
-    staleTime: 0,
+    staleTime: query => preparationStaleTime(query, query.state.data?.some(row => !!row.error)),
     retry: 1,
     queryFn: () => Promise.all(projectState.projects.map(async project => {
       try {
@@ -157,6 +159,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
     // The batch's last line says why it is still pending, such as a scan still reading.
     const reported = { line: null as string | null }
     const sent: Record<number, bigint> = {}
+    const verifiedChains = new Set<number>()
     try {
       const result = await runProjectBatch({ scope, action, account: address,
         ...(batch ? { calls: batch.calls, expectedBatchId: batch.id } : { calls: distributionBatchCalls(review!), title: kind === 'payouts' ? 'Distribute payouts' : 'Distribute reserved tokens' }),
@@ -164,13 +167,24 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
         verifyCompletion: async (call, receipt) => {
           const count = verifyDistributionCompletion(call.context as Distribution, receipt)
           if (count !== null) sent[call.chainId] = count
+          invalidatePreparationQueries(queryClient, ['distributionOptions'])
+          void invalidateProjectDisplayQueries(queryClient, call.chainId)
+          verifiedChains.add(call.chainId)
         },
         signal: flowSignal(),
         onProgress: progress => { reported.line = progress.message; setStatus(progress.message) },
       })
       setBatch(result)
       setDistributed(previous => ({ ...previous, ...sent }))
-      if (result.status === 'complete') { setComplete(true); setStatus('All selected distributions are confirmed.'); void queryClient.invalidateQueries({ queryKey: ['readContract'] }); onDone?.() }
+      if (result.status === 'complete') {
+        setComplete(true); setStatus('All selected distributions are confirmed.')
+        void queryClient.invalidateQueries({ queryKey: ['readContract'] })
+        invalidatePreparationQueries(queryClient, ['distributionOptions'])
+        for (const call of result.calls) {
+          if (!verifiedChains.has(call.chainId)) void invalidateProjectDisplayQueries(queryClient, call.chainId)
+        }
+        onDone?.()
+      }
       else setStatus(reported.line ?? 'Some distributions are still pending. Resume this saved review to check them.')
     } catch (err) {
       const saved = loadProjectBatch(scope)

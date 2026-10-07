@@ -9,15 +9,13 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   buildRepayLoanTx,
-  getAccountingContexts,
-  getTokenAddress,
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
-import { usePublicClient, useReadContract } from 'wagmi'
+import { usePublicClient } from 'wagmi'
 import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -33,6 +31,8 @@ import {
 import type { BsLoan } from '@/lib/loans-queries'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { PERSIST } from '@/lib/query-persist'
+import { accountingContextsQuery } from '@/lib/project-display-queries'
+import { projectTokenQuery } from '@/lib/project-token-query'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { explorerTokenUrl } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
@@ -86,15 +86,8 @@ export function LoansSection({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
   const { data: contexts } = useQuery({
-    queryKey: ['accountingContexts', chainId, projectId],
+    ...accountingContextsQuery(publicClient!, { chainId, projectId: BigInt(projectId) }),
     enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () =>
-      getAccountingContexts(publicClient!, {
-        chainId,
-        projectId: BigInt(projectId),
-      }),
   })
 
   // Resolved here rather than at render, because reading `symbol()` is async and `tokenMeta`
@@ -118,22 +111,10 @@ export function LoansSection({
 
   // The project token symbol, for the collateral copy.
   const { data: collateralToken } = useQuery({
-    queryKey: ['projectToken', chainId, projectId],
-    meta: PERSIST,
+    ...projectTokenQuery(publicClient!, chainId, projectId),
     enabled: !!publicClient,
-    staleTime: 5 * 60_000,
-    retry: 1,
-    queryFn: () =>
-      getTokenAddress(publicClient!, { chainId, projectId: BigInt(projectId) }),
   })
-  const { data: collateralSymbolRaw } = useReadContract({
-    abi: erc20Abi,
-    address: collateralToken ?? undefined,
-    functionName: 'symbol',
-    chainId,
-    query: { enabled: !!collateralToken, staleTime: 5 * 60_000 },
-  })
-  const collateralSymbol = collateralSymbolRaw ?? 'tokens'
+  const collateralSymbol = collateralToken?.symbol ?? 'tokens'
 
   return (
     <div className="space-y-5">

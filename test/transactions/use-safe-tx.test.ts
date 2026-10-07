@@ -1,3 +1,4 @@
+import { QueryClient } from '@tanstack/react-query'
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import {
@@ -10,6 +11,12 @@ import {
 } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const displayQueries = new QueryClient()
+vi.mock('@tanstack/react-query', async importOriginal => ({
+  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
+  useQueryClient: () => displayQueries,
+}))
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
@@ -110,6 +117,7 @@ async function renderHook() {
 }
 
 beforeEach(() => {
+  displayQueries.clear()
   mocks.account = ALICE
   mocks.centerWallet = false
   mocks.connected = true
@@ -342,6 +350,21 @@ describe('useSafeTx', () => {
 
     expect(hook.ref.current!.error).toMatch(/account changed/i)
     expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('invalidates only the confirmed chain display evidence after a successful receipt', async () => {
+    const key = ['projectDisplay', 6, 10, '1', 'currentRuleset']
+    const other = ['projectDisplay', 6, 1, '1', 'currentRuleset']
+    displayQueries.setQueryData(key, { marker: true })
+    displayQueries.setQueryData(other, { marker: true })
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(false)
+    mocks.receipt = { data: { status: 'success', transactionHash: hook.ref.current!.hash! }, isError: false }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(true)
+    expect(displayQueries.getQueryState(other)?.isInvalidated).toBe(false)
+    await act(async () => hook.renderer.unmount())
   })
 
   it('keeps a receipt RPC error pending and prevents a duplicate send', async () => {

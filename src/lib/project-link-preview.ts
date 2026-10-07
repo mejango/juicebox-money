@@ -1,19 +1,11 @@
 import { cache } from 'react'
 import {
-  getSuckerGroupProjects,
   projectGroupPaymentsCount,
   resolveProjectDeployments,
   type BsProject,
 } from '@/lib/bendystraw'
-import { formatTokenAmount, ipfsUrl } from '@/lib/format'
-import { getProjectPageData } from '@/lib/project-fallback'
-
-type ProjectLinkPreviewMetadata = {
-  name?: string
-  projectTagline?: string
-  description?: string
-  logoUri?: string
-}
+import { formatTokenAmount } from '@/lib/format'
+import { getProjectPageData, getProjectSiblings, getProjectMetadata } from '@/lib/project-server-data'
 
 type ProjectLinkPreview = {
   name: string
@@ -21,26 +13,6 @@ type ProjectLinkPreview = {
   logoUri: string | null
   balance: string
   paymentsCount: number
-}
-
-async function fetchProjectLinkPreviewMetadata(
-  metadataUri: string | null,
-): Promise<ProjectLinkPreviewMetadata | null> {
-  const url = ipfsUrl(metadataUri)
-  if (!url) return null
-  try {
-    const response = await fetch(url, {
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!response.ok) return null
-    const value = (await response.json()) as unknown
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-      ? (value as ProjectLinkPreviewMetadata)
-      : null
-  } catch {
-    return null
-  }
 }
 
 type BalanceBucket = {
@@ -109,9 +81,9 @@ export const getProjectLinkPreview = cache(
 
     const project = result.project
     const [metadata, siblings] = await Promise.all([
-      fetchProjectLinkPreviewMetadata(project.metadataUri),
+      getProjectMetadata(project.metadataUri),
       !result.degraded && project.suckerGroupId
-        ? getSuckerGroupProjects(project.suckerGroupId, chainId).catch(() => [])
+        ? getProjectSiblings(chainId, projectId, project.suckerGroupId).catch(() => [])
         : Promise.resolve([]),
     ])
     const deployments = resolveProjectDeployments(project, siblings)
