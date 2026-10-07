@@ -1,5 +1,6 @@
 "use client";
 
+import { accountingContextsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   bytes32ToCidV0,
@@ -19,8 +20,6 @@ import {
   buildPermit2ApproveTx,
   buildPayTx,
   effectiveTierPrice,
-  getAccountingContexts,
-  getCurrentRuleset,
   getProject721Shop,
   previewPay,
   tokenCurrencyId,
@@ -362,8 +361,8 @@ export function PayPanel({
       const multiTerminal =
         jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
       const [contexts, ruleset, terminalsRaw] = await Promise.all([
-        getAccountingContexts(client, args),
-        getCurrentRuleset(client, args),
+        accountingContextsQuery(client, args).queryFn(),
+        currentRulesetQuery(client, args).queryFn(),
         client
           .readContract({
             address: directory,

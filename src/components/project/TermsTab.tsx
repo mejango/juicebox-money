@@ -1,5 +1,6 @@
 'use client'
 
+import { accountingContextsQuery, allRulesetsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
 import {
   JB_CHAINS,
   NATIVE_TOKEN,
@@ -7,9 +8,6 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
@@ -70,9 +68,9 @@ export function TermsTab({
     queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) }
       const [all, current, contexts] = await Promise.all([
-        getAllRulesets(publicClient!, { ...args, size: 50n }),
-        getCurrentRuleset(publicClient!, args).catch(() => null),
-        getAccountingContexts(publicClient!, args).catch(
+        allRulesetsQuery(publicClient!, { ...args, size: 50n }).queryFn(),
+        currentRulesetQuery(publicClient!, args).queryFn().catch(() => null),
+        accountingContextsQuery(publicClient!, args).queryFn().catch(
           () => [] as const,
         ),
       ])

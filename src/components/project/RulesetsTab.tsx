@@ -1,5 +1,6 @@
 "use client";
 
+import { accountingContextsQuery, allRulesetsQuery, currentRulesetQuery, upcomingRulesetQuery } from '@/lib/project-display-queries'
 import {
   JB_CHAINS,
   USD_CURRENCY_ID,
@@ -11,10 +12,6 @@ import {
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
   decode721RulesetMetadata,
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
-  getUpcomingRuleset,
   payoutSplitGroupId,
   tokenCurrencyId,
   v6Address,
@@ -698,10 +695,10 @@ export function RulesetsTab({
     queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) };
       const [current, upcoming, all] = await Promise.all([
-        getCurrentRuleset(publicClient!, args),
-        getUpcomingRuleset(publicClient!, args).catch(() => null),
+        currentRulesetQuery(publicClient!, args).queryFn(),
+        upcomingRulesetQuery(publicClient!, args).queryFn().catch(() => null),
         // One paged read covers past cycles too — cheap, so include them.
-        getAllRulesets(publicClient!, { ...args, size: 50n }).catch(
+        allRulesetsQuery(publicClient!, { ...args, size: 50n }).queryFn().catch(
           () => [] as readonly JBRulesetWithMetadata[],
         ),
       ]);
@@ -716,10 +713,10 @@ export function RulesetsTab({
     staleTime: 5 * 60_000,
     retry: 1,
     queryFn: async (): Promise<AccountingContext[]> => {
-      const raw = await getAccountingContexts(publicClient!, {
+      const raw = await accountingContextsQuery(publicClient!, {
         chainId,
         projectId: BigInt(projectId),
-      }).catch(() => []);
+      }).queryFn().catch(() => []);
       return Promise.all(
         raw.map(async (ctx) => ({
           ...ctx,
@@ -764,10 +761,10 @@ export function RulesetsTab({
               chainId: snapshotChainId,
             }) as PublicClient | undefined;
             if (!client) throw new Error("No public client");
-            const ruleset = await getCurrentRuleset(client, {
+            const ruleset = await currentRulesetQuery(client, {
               chainId: snapshotChainId,
               projectId: BigInt(snapshotProjectId),
-            });
+            }).queryFn();
             return {
               chainId: snapshotChainId,
               projectId: snapshotProjectId,

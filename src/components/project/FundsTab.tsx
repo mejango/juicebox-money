@@ -1,5 +1,6 @@
 'use client'
 
+import { accountingContextsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -16,7 +17,6 @@ import {
 import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
-  getAccountingContexts,
   getCurrentRuleset,
   payoutSplitGroupId,
   type JBAccountingContext,
@@ -175,8 +175,8 @@ async function readChainFunds(
   try {
     const pid = BigInt(projectId)
     const [contexts, current] = await Promise.all([
-      getAccountingContexts(client, { chainId, projectId: pid }),
-      getCurrentRuleset(client, { chainId, projectId: pid }),
+      accountingContextsQuery(client, { chainId, projectId: pid }).queryFn(),
+      currentRulesetQuery(client, { chainId, projectId: pid }).queryFn(),
     ])
     const candidates = await Promise.all(
       contexts.map(async ctx => ({
@@ -407,10 +407,10 @@ export function FundsTab({
         | PublicClient
         | undefined
       if (!homeClient) throw new Error('No public client')
-      const homeContexts = await getAccountingContexts(homeClient, {
+      const homeContexts = await accountingContextsQuery(homeClient, {
         chainId,
         projectId: BigInt(projectId),
-      })
+      }).queryFn()
       const descriptors = await Promise.all(
         homeContexts.map(async ctx => {
           const symbol = await tokenSymbol(homeClient, ctx.token, { chainId })

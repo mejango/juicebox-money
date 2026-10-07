@@ -1,5 +1,6 @@
 'use client'
 
+import { accountingContextsQuery, allRulesetsQuery, currentRulesetQuery } from '@/lib/project-display-queries'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -13,9 +14,6 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  getAccountingContexts,
-  getAllRulesets,
-  getCurrentRuleset,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useMemo } from 'react'
@@ -105,11 +103,11 @@ export function RevnetPriceCard({
       enabled: !!publicClient,
       retry: 1,
       queryFn: () =>
-        getAllRulesets(publicClient!, {
+        allRulesetsQuery(publicClient!, {
           chainId,
           projectId: BigInt(projectId),
           size: 50n,
-        }),
+        }).queryFn(),
     }),
   )
 
@@ -122,7 +120,7 @@ export function RevnetPriceCard({
       queryFn: async () => {
       const args = { chainId, projectId: BigInt(projectId) }
       const [contexts, projectSymbol] = await Promise.all([
-        getAccountingContexts(publicClient!, args).catch(() => [] as const),
+        accountingContextsQuery(publicClient!, args).queryFn().catch(() => [] as const),
         (async () => {
           const token = (await publicClient!.readContract({
             abi: jbTokensAbi,
@@ -201,14 +199,14 @@ export function RevnetPriceCard({
 
               const pid = BigInt(rawProjectId)
               const [contexts, currentRuleset, controller] = await Promise.all([
-                getAccountingContexts(client, {
+                accountingContextsQuery(client, {
                   chainId: rowChainId,
                   projectId: pid,
-                }),
-                getCurrentRuleset(client, {
+                }).queryFn(),
+                currentRulesetQuery(client, {
                   chainId: rowChainId,
                   projectId: pid,
-                }),
+                }).queryFn(),
                 client.readContract({
                   address: directory,
                   abi: jbDirectoryAbi,
