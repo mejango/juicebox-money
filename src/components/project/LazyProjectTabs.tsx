@@ -53,7 +53,7 @@ export const ShopTab = dynamic(() =>
   { loading: () => <ShopTabSkeleton /> },
 );
 export const TermsTab = dynamic(() =>
-  import("@/components/project/DeferredProjectTabs").then(
+  import("@/components/project/TermsTab").then(
     (module) => module.TermsTab,
   ),
   { loading: () => <TermsTabSkeleton /> },
