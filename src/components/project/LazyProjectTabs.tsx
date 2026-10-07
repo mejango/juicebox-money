@@ -1,6 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import {
+  ActionRowsSkeleton,
+  FundsTabSkeleton,
+  HolderDistributionSkeleton,
+  RulesetsTabSkeleton,
+  ShopTabSkeleton,
+  TermsTabSkeleton,
+} from "@/components/LoadingSkeletons";
 
 // ProjectTabs only mounts a panel after the user selects it. Declaring these
 // boundaries in a Client Component lets Next emit real on-demand chunks for
@@ -12,41 +20,41 @@ export const BackOfficeTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.BackOfficeTab,
   ),
-  { loading: () => null },
+  { loading: () => <ActionRowsSkeleton label="Loading back office" /> },
 );
 export const ExtrasTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.ExtrasTab,
   ),
-  { loading: () => null },
+  { loading: () => <ActionRowsSkeleton label="Loading extras" /> },
 );
 export const FundsTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.FundsTab,
   ),
-  { loading: () => null },
+  { loading: () => <FundsTabSkeleton /> },
 );
 export const OwnersTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.OwnersTab,
   ),
-  { loading: () => null },
+  { loading: () => <HolderDistributionSkeleton /> },
 );
 export const RulesetsTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.RulesetsTab,
   ),
-  { loading: () => null },
+  { loading: () => <RulesetsTabSkeleton /> },
 );
 export const ShopTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.ShopTab,
   ),
-  { loading: () => null },
+  { loading: () => <ShopTabSkeleton /> },
 );
 export const TermsTab = dynamic(() =>
   import("@/components/project/DeferredProjectTabs").then(
     (module) => module.TermsTab,
   ),
-  { loading: () => null },
+  { loading: () => <TermsTabSkeleton /> },
 );
