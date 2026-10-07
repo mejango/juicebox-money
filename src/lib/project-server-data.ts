@@ -102,17 +102,20 @@ export const getProjectActivityDisplay = cache((
   PROJECT_ACTIVITY_FRESHNESS_MS,
 ))
 
-/** Also evict sibling snapshots that contain a locally changed deployment. */
-export async function invalidateProjectDisplay(chainId: number, projectId: number): Promise<void> {
+/**
+ * Evict exact reads, known group reads and snapshots containing this deployment.
+ * Unknown peer groups and other server processes retain their bounded 30s lease;
+ * public Retry must not cancel unrelated visitors' in-flight reads.
+ */
+export async function invalidateProjectDisplay(chainId: number, projectId: number, suckerGroupId?: string | null): Promise<void> {
   const filters = {
     predicate: (query: import('@tanstack/react-query').Query) => query.queryKey[0] === 'project-display' && (
       (query.queryKey[2] === chainId && query.queryKey[3] === projectId) ||
+      (!!suckerGroupId && query.queryKey[4] === suckerGroupId) ||
       (query.queryKey[1] === 'siblings' &&
-        // An in-flight group's membership is unknown: it may contain this
-        // deployment, so it cannot finish by installing a pre-edit snapshot.
-        (!query.state.data || (query.state.data as { value: BsProject[] }).value.some(
+        !!(query.state.data as { value: BsProject[] } | undefined)?.value.some(
           project => project.chainId === chainId && project.projectId === projectId,
-        )))
+        ))
     ),
   }
   await displayQueries.cancelQueries(filters)

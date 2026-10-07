@@ -14,7 +14,7 @@ import type { ResolvedProjectRoute } from '@/lib/project-route.server'
 import { formatDate, ipfsUrl, projectLogoUrl } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 
-type MetadataSectionProps = { project: BsProject; metadata: ProjectMetadata | null }
+type MetadataSectionProps = { project: BsProject; metadata: ProjectMetadata | null | Promise<ProjectMetadata | null> }
 /** Escaped, hydration-safe fallback while the browser sanitizer initializes. */
 function toParagraphs(text: string): string[] {
   return text
@@ -123,13 +123,25 @@ function projectMetadataView(project: BsProject, metadata: ProjectMetadata | nul
     ["Instagram", instagram],
   ];
 
-  return { name, tagline, logoUri, description, descriptionFallback, socialLinks, coverImage }
+  const profile = {
+    name: metadata?.name ?? name,
+    tagline: metadata?.projectTagline ?? project.projectTagline ?? "",
+    description: metadata?.description ?? "",
+    infoUri: metadata?.infoUri,
+    twitter: metadata?.twitter,
+    discord: metadata?.discord,
+    telegram: metadata?.telegram,
+    whatsapp: metadata?.whatsapp,
+    instagram: metadata?.instagram,
+  }
+  return { name, tagline, logoUri, description, descriptionFallback, socialLinks, coverImage, profile }
 }
 
-export function ProjectHeader({ project, metadata, urn, chains, chainPairs, isRevnet, authority, totalRaisedUsd, paymentsCount }: MetadataSectionProps & {
+export async function ProjectHeader({ project, metadata: pending, urn, chains, chainPairs, isRevnet, authority, totalRaisedUsd, paymentsCount }: MetadataSectionProps & {
   urn: ResolvedProjectRoute; chains: BsProject[]; chainPairs: [number, number][];
   isRevnet: boolean; authority: string | null | undefined; totalRaisedUsd: string; paymentsCount: number;
 }) {
+  const metadata = await pending
   const { name, tagline, logoUri, coverImage } = projectMetadataView(project, metadata)
   return <>
       <ProjectJsonLd
@@ -294,64 +306,44 @@ export function ProjectHeader({ project, metadata, urn, chains, chainPairs, isRe
   </>
 }
 
-export function ProjectTreasury({ project, metadata, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof TreasuryCard>, "projectName" | "payDisclosure">) {
+export async function ProjectTreasury({ project, metadata: pending, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof TreasuryCard>, "projectName" | "payDisclosure">) {
+  const metadata = await pending
   const { name } = projectMetadataView(project, metadata)
   return (
     <TreasuryCard
       {...props}
       projectName={name}
       payDisclosure={metadata?.payDisclosure}
-            />
+    />
   )
 }
 
-export function ProjectOverview({ project, metadata, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof OverviewTab>, "description" | "descriptionFallback" | "socialLinks">) {
+export async function ProjectOverview({ project, metadata: pending, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof OverviewTab>, "description" | "descriptionFallback" | "socialLinks">) {
+  const metadata = await pending
   const { description, descriptionFallback, socialLinks } = projectMetadataView(project, metadata)
   return (
     <OverviewTab {...props} description={description} descriptionFallback={descriptionFallback} socialLinks={socialLinks} />
   )
 }
 
-export function ProjectExtras({ project, metadata, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof ExtrasTab>, "profile">) {
-  const { name } = projectMetadataView(project, metadata)
-  return (
-    <ExtrasTab {...props}
-      profile={{
-                    name: metadata?.name ?? name,
-                    tagline:
-                      metadata?.projectTagline ?? project.projectTagline ?? "",
-                    description: metadata?.description ?? "",
-                    payNotice: metadata?.payDisclosure ?? "",
-                    infoUri: metadata?.infoUri,
-                    twitter: metadata?.twitter,
-                    discord: metadata?.discord,
-                    telegram: metadata?.telegram,
-                    whatsapp: metadata?.whatsapp,
-                    instagram: metadata?.instagram,
-                  }}
-                />
-  )
+export async function ProjectExtras({ project, metadata: pending, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof ExtrasTab>, "profile">) {
+  const metadata = await pending
+  const { profile } = projectMetadataView(project, metadata)
+  return <ExtrasTab {...props} profile={{ ...profile, payNotice: metadata?.payDisclosure ?? "" }} />
 }
 
-export function ProjectBackOffice({ project, metadata, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof BackOfficeTab>, "profile">) {
-  const { name } = projectMetadataView(project, metadata)
+export async function ProjectBackOffice({ project, metadata: pending, ...props }: MetadataSectionProps & Omit<ComponentProps<typeof BackOfficeTab>, "profile">) {
+  const metadata = await pending
+  const { profile } = projectMetadataView(project, metadata)
   return (
-    <BackOfficeTab {...props}
+    <BackOfficeTab
+      {...props}
       profile={{
-                    name: metadata?.name ?? name,
-                    tagline:
-                      metadata?.projectTagline ?? project.projectTagline ?? "",
-                    description: metadata?.description ?? "",
-                    logoUri: metadata?.logoUri ?? project.logoUri ?? null,
-                    infoUri: metadata?.infoUri,
-                    twitter: metadata?.twitter,
-                    discord: metadata?.discord,
-                    telegram: metadata?.telegram,
-                    whatsapp: metadata?.whatsapp,
-                    instagram: metadata?.instagram,
-                    coverImageUri: metadata?.coverImageUri,
-                    payDisclosure: metadata?.payDisclosure,
-                  }}
-                />
+        ...profile,
+        logoUri: metadata?.logoUri ?? project.logoUri ?? null,
+        coverImageUri: metadata?.coverImageUri,
+        payDisclosure: metadata?.payDisclosure,
+      }}
+    />
   )
 }

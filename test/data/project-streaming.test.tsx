@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReactNode } from 'react'
 import type { BsProject } from '@/lib/bendystraw'
 
-const reads = vi.hoisted(() => ({ indexed: vi.fn(), project: vi.fn(), activity: vi.fn(), metadata: vi.fn(), siblings: vi.fn() }))
+const reads = vi.hoisted(() => ({ indexed: vi.fn(), project: vi.fn(), activity: vi.fn(), metadata: vi.fn(), siblings: vi.fn(), connection: vi.fn() }))
+vi.mock('next/server', () => ({ connection: reads.connection }))
 vi.mock('@/lib/project-server-data', () => ({
   getIndexedProjectDisplay: reads.indexed, getProjectPageData: reads.project,
   getProjectActivityDisplay: reads.activity, getProjectMetadata: reads.metadata,
@@ -19,25 +20,29 @@ vi.mock('@/lib/bendystraw', async original => ({
 vi.mock('@/components/LoadingSkeletons', () => ({
   ProjectPageSkeleton: ({ hint }: { hint: { name: string } }) => <h1>{hint.name}</h1>,
   ActivityRows: () => <p>Activity loading</p>,
+  ProjectHeaderSkeleton: ({ hint }: { hint: { name: string } }) => <h1>{hint.name}</h1>,
+  ProjectPayPanelSkeleton: () => <p>Payment details loading</p>,
+  OverviewTabSkeleton: () => <p>Overview loading</p>,
+  ActionRowsSkeleton: ({ label }: { label: string }) => <p>{label}</p>,
 }))
 vi.mock('@/components/ProjectLogoWithFallback', () => ({ ProjectLogoWithFallback: () => null }))
 vi.mock('@/components/ProjectLink', () => ({ ProjectLink: ({ children }: { children: ReactNode }) => <span>{children}</span> }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
-vi.mock('@/components/TreasuryCard', () => ({ TreasuryCard: () => <p>Payment panel</p> }))
+vi.mock('@/components/TreasuryCard', () => ({ TreasuryCard: ({ payDisclosure }: { payDisclosure?: string }) => <p>Payment panel {payDisclosure}</p> }))
 vi.mock('@/components/project/ProjectStats', () => ({ ProjectStats: () => null }))
 vi.mock('@/components/project/ProjectHandleCard', () => ({ ProjectHandleCard: () => null }))
 vi.mock('@/components/project/ProjectDataStatus', () => ({ ProjectDataStatus: () => <p>Some project details are unavailable</p> }))
 vi.mock('@/components/project/PendingPayments', () => ({ PendingPayments: () => null }))
 vi.mock('@/components/project/OverviewTab', () => ({ OverviewTab: () => <p>Overview ready</p> }))
 vi.mock('@/components/project/LazyProjectTabs', () => ({
-  BackOfficeTab: () => null, ExtrasTab: () => null, FundsTab: () => null, OwnersTab: () => null,
-  RulesetsTab: () => null, ShopTab: () => null, TermsTab: () => null,
+  BackOfficeTab: () => <p>Metadata editor ready</p>, ExtrasTab: () => null, FundsTab: () => null, OwnersTab: () => <p>Owners ready</p>,
+  RulesetsTab: () => <p>Rulesets ready</p>, ShopTab: () => null, TermsTab: () => null,
 }))
 vi.mock('@/components/project/SafeBatchProvider', () => ({ SafeBatchProvider: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/components/project/ShopCartProvider', () => ({ ShopCartProvider: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/providers/ProjectRouteContext', () => ({ ProjectRouteSync: () => null }))
-vi.mock('@/components/project/Tabs', () => ({ ProjectTabs: ({ activity, sidebar }: { activity: ReactNode; sidebar: ReactNode }) => <main><nav>Project tabs ready</nav>{sidebar}{activity}</main> }))
+vi.mock('@/components/project/Tabs', () => ({ ProjectTabs: ({ activity, sidebar, tabs }: { activity: ReactNode; sidebar: ReactNode; tabs: { label: string; content: ReactNode }[] }) => <main><nav>Project tabs ready</nav>{sidebar}{activity}{tabs.map(tab => <section key={tab.label}>{tab.content}</section>)}</main> }))
 vi.mock('@/components/ActivityList', () => ({ ActivityList: ({ error, initialEventsUpdatedAt }: { error: boolean; initialEventsUpdatedAt?: number }) => <p data-updated-at={initialEventsUpdatedAt}>{error ? 'Activity unavailable' : 'Activity ready'}</p> }))
 
 import ProjectPage from '@/app/[urn]/page'
@@ -59,6 +64,8 @@ function stream() {
 }
 
 beforeEach(() => {
+  reads.connection.mockResolvedValue(undefined)
+  reads.activity.mockResolvedValue({ value: { items: [], totalCount: 0 }, updatedAt: 1234 })
   reads.indexed.mockResolvedValue(project)
   reads.project.mockResolvedValue({ project, degraded: false })
   reads.metadata.mockResolvedValue({ name: 'Current identity' })
@@ -82,6 +89,38 @@ describe('project server streaming', () => {
       completeActivity({ value: { items: [], totalCount: 0 }, updatedAt: 1234 })
       await vi.waitFor(() => expect(rendered.html()).toContain('Activity ready'))
       expect(rendered.html()).toContain('data-updated-at="1234"')
+      expect(rendered.errors).toEqual([])
+    } finally { rendered.abort() }
+  })
+
+  it('keeps metadata-independent tabs ready while withholding payment and editors until the actual disclosure resolves', async () => {
+    let finishMetadata!: (value: unknown) => void
+    reads.metadata.mockReturnValue(new Promise(resolve => { finishMetadata = resolve }))
+    const rendered = stream()
+    try {
+      await vi.waitFor(() => expect(rendered.html()).toContain('Rulesets ready'))
+      expect(rendered.html()).toContain('Owners ready')
+      expect(rendered.html()).toContain('Overview loading')
+      expect(rendered.html()).toContain('Payment details loading')
+      expect(rendered.html()).not.toContain('Payment panel')
+      expect(rendered.html()).not.toContain('Metadata editor ready')
+      expect(reads.connection).toHaveBeenCalled()
+      finishMetadata({ name: 'Fresh metadata name', payDisclosure: 'Required payment notice' })
+      await vi.waitFor(() => expect(rendered.html()).toContain('Payment panel'))
+      expect(rendered.html()).toContain('Fresh metadata name')
+      expect(rendered.html()).toContain('Required payment notice')
+      expect(rendered.html()).toContain('Metadata editor ready')
+      expect(rendered.errors).toEqual([])
+    } finally { rendered.abort() }
+  })
+
+  it('preserves the existing indexed fallback after a failed metadata read completes', async () => {
+    reads.metadata.mockResolvedValue(null)
+    const rendered = stream()
+    try {
+      await vi.waitFor(() => expect(rendered.html()).toContain('Payment panel'))
+      expect(rendered.html()).toContain('Indexed identity')
+      expect(rendered.html()).toContain('Rulesets ready')
       expect(rendered.errors).toEqual([])
     } finally { rendered.abort() }
   })

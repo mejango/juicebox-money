@@ -173,11 +173,13 @@ function outcomeMessage(
 }
 
 export function AuthorityEditsCard({
+  suckerGroupId,
   deployments,
   isRevnet,
   profile,
 }: {
   deployments: AuthorityDeployment[]
+  suckerGroupId?: string | null
   isRevnet: boolean
   profile: AuthorityEditProfile
 }) {
@@ -236,6 +238,7 @@ export function AuthorityEditsCard({
                 rows={rows}
                 isRevnet={isRevnet}
                 initial={profile}
+                suckerGroupId={suckerGroupId}
                 onCancel={() => setOpen(null)}
                 onDone={() => query.refetch()}
               />
@@ -629,6 +632,7 @@ function metadataJsonKey(value: unknown): string {
 }
 
 export function MetadataEditor({
+  suckerGroupId,
   rows,
   isRevnet = false,
   initial,
@@ -636,6 +640,7 @@ export function MetadataEditor({
   onDone,
 }: {
   rows: EditChainState[]
+  suckerGroupId?: string | null
   isRevnet?: boolean
   initial: AuthorityEditProfile
   onCancel: () => void
@@ -878,7 +883,7 @@ export function MetadataEditor({
         setDone(true)
         // Display refresh failure cannot change the completed transaction outcome.
         await Promise.all(frozen.destinations.map(destination =>
-          refreshProjectDisplay(destination.chainId, destination.projectId),
+          refreshProjectDisplay(destination.chainId, destination.projectId, suckerGroupId),
         )).catch(() => undefined)
         onDone()
       })

@@ -15,7 +15,7 @@ vi.mock('next/dynamic', async () => {
 
 import { ProjectDataStatus } from '@/components/project/ProjectDataStatus'
 import ProjectError from '@/app/[urn]/error'
-const deployments = [{ chainId: 84532, projectId: 45, version: 6 }, { chainId: 1, projectId: 9, version: 6 }]
+const deployments = [{ chainId: 84532, projectId: 45, version: 6, suckerGroupId: 'known-group' }, { chainId: 1, projectId: 9, version: 6 }]
 const report = (id = '45') => ({
   checkedAt: '2026-10-04T12:00:00.000Z',
   deployment: {
@@ -75,7 +75,7 @@ describe('project data status and deployment checks', () => {
     expect(text(tree!.root)).not.toMatch(/catching up|just launched|finished indexing/)
     await act(async () => button('Retry').props.onClick())
     expect(mocks.invalidate).toHaveBeenCalledOnce()
-    expect(mocks.refreshDisplay.mock.calls).toEqual([[84532, 45], [1, 9]])
+    expect(mocks.refreshDisplay.mock.calls).toEqual([[84532, 45, 'known-group'], [1, 9, undefined]])
     expect(mocks.refresh).toHaveBeenCalledOnce()
     expect(fetch).not.toHaveBeenCalled()
   })

@@ -9,7 +9,7 @@ import dynamic from 'next/dynamic'
 import type { ProjectDiagnosticReport } from '@/lib/project-diagnostics'
 import { refreshProjectDisplay } from '@/app/actions/project-display'
 
-export type Deployment = { chainId: number; projectId: number; version: number; operator?: string | null }
+export type Deployment = { chainId: number; projectId: number; version: number; operator?: string | null; suckerGroupId?: string | null }
 const ProjectDeploymentDialog = dynamic(() => import('./ProjectDeploymentDialog'), {
   loading: () => <p role="status">Opening deployment check…</p>,
 })
@@ -103,7 +103,7 @@ function ProjectDataStatusContents({
             disabled={refreshing}
             onClick={() => startRefresh(async () => {
               await Promise.all(deployments.map(deployment =>
-                refreshProjectDisplay(deployment.chainId, deployment.projectId),
+                refreshProjectDisplay(deployment.chainId, deployment.projectId, deployment.suckerGroupId),
               )).catch(() => undefined)
               await queryClient.invalidateQueries()
               router.refresh()

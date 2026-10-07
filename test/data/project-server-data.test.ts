@@ -42,7 +42,7 @@ beforeEach(async () => {
 })
 
 describe('bounded server project display reads', () => {
-  it('shares concurrent body and preview identity reads and expires successful evidence after30 seconds', async () => {
+  it('shares concurrent body and preview identity reads and expires successful evidence after 30 seconds', async () => {
     const preview = await import('@/lib/project-link-preview')
     await Promise.all([data.getProjectPageData(1, 7), preview.getProjectLinkPreview(1, 7)])
     expect(reads.project).toHaveBeenCalledTimes(1)
@@ -72,7 +72,7 @@ describe('bounded server project display reads', () => {
     expect(reads.shell).toHaveBeenCalledTimes(2)
   })
 
-  it('returns a404 candidate only on a current negative read and immediately retries it', async () => {
+  it('returns a 404 candidate only on a current negative read and immediately retries it', async () => {
     reads.project.mockResolvedValueOnce(null)
     reads.shell.mockResolvedValueOnce(null)
     expect(await data.getProjectPageData(1, 7)).toBeNull()
@@ -130,7 +130,7 @@ describe('bounded server project display reads', () => {
     expect(reads.project).toHaveBeenCalledTimes(2)
   })
 
-  it('retains actual activity completion age and refetches only after its15 second window', async () => {
+  it('retains actual activity completion age and refetches only after its 15 second window', async () => {
     const first = await data.getProjectActivityDisplay(1, 7, 'group')
     expect(first.value).toEqual({ items: [], totalCount: 0 })
     expect(reads.activity).toHaveBeenCalledWith('group', 250, 1, 0, { policy: 'no-store' })
@@ -142,17 +142,31 @@ describe('bounded server project display reads', () => {
     expect(reads.activity).toHaveBeenCalledTimes(2)
   })
 
-  it('evicts an in-flight group with unknown membership after a peer deployment changes', async () => {
+  it('evicts a known in-flight group after a peer deployment changes', async () => {
     let finish!: (projects: BsProject[]) => void
     reads.siblings.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
     const original = data.getProjectSiblings(1, 7, 'group').catch(() => null)
-    await data.invalidateProjectDisplay(10, 8)
+    await data.invalidateProjectDisplay(10, 8, 'group')
     const changed = [project(), { ...project(10, 8), name: 'New peer' }]
     reads.siblings.mockResolvedValue(changed)
     expect(await data.getProjectSiblings(1, 7, 'group')).toEqual(changed)
     finish([project(), project(10, 8)])
     await original
     expect(await data.getProjectSiblings(1, 7, 'group')).toEqual(changed)
+    expect(reads.siblings).toHaveBeenCalledTimes(2)
+  })
+
+  it('leaves unrelated pending groups and unknown peers alone, with the regular 30s freshness bound', async () => {
+    let finish!: (projects: BsProject[]) => void
+    reads.siblings.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+    const original = data.getProjectSiblings(1, 7, 'group')
+    await data.invalidateProjectDisplay(10, 8, 'other-group')
+    finish([project(), project(10, 8)])
+    expect(await original).toEqual([project(), project(10, 8)])
+    await data.getProjectSiblings(1, 7, 'group')
+    expect(reads.siblings).toHaveBeenCalledTimes(1)
+    vi.setSystemTime(Date.now() + 30_000)
+    await data.getProjectSiblings(1, 7, 'group')
     expect(reads.siblings).toHaveBeenCalledTimes(2)
   })
 

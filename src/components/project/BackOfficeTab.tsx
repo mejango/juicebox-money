@@ -28,10 +28,12 @@ export function BackOfficeTab({
   isRevnet,
   deployments,
   revnetOperatorCandidates,
+  suckerGroupId,
   profile,
 }: {
   chainId: JBChainId
   projectId: number
+  suckerGroupId?: string | null
   isRevnet: boolean
   /** Owner per bendystraw (custom projects); can lag a transfer. */
   owner: string | null
@@ -67,6 +69,7 @@ export function BackOfficeTab({
               deployments={deployments}
               isRevnet={isRevnet}
               profile={profile}
+              suckerGroupId={suckerGroupId}
             />
             {!isRevnet ? (
               <AuthorityPowersCard deployments={deployments} />

@@ -225,13 +225,14 @@ function customBox(renderer: TestRenderer.ReactTestRenderer) {
     .find(area => area.props['aria-label'] === 'Custom properties (JSON)')!
 }
 
-async function renderEditor(rows = ROWS, onDone = vi.fn(), isRevnet = false) {
+async function renderEditor(rows = ROWS, onDone = vi.fn(), isRevnet = false, suckerGroupId?: string) {
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
     renderer = TestRenderer.create(
       createElement(MetadataEditor, {
         rows,
         isRevnet,
+        suckerGroupId,
         initial: INITIAL,
         onCancel: () => {},
         onDone,
@@ -347,14 +348,14 @@ describe('metadata editor custom properties', () => {
   })
 
   it('keeps untouched custom properties verbatim through a save', async () => {
-    const renderer = await renderEditor()
+    const renderer = await renderEditor(ROWS, vi.fn(), false, 'known-group')
     const pinned = await saveAndReadPin(renderer)
     expect(pinned.leagueID).toBe(42)
     expect(pinned.extensions).toEqual({
       scoreboard: { url: 'https://scores.example' },
     })
     expect(pinned.tags).toEqual(['games'])
-    expect(mocks.refreshProjectDisplay.mock.calls).toEqual(ROWS.map(row => [row.chainId, row.projectId]))
+    expect(mocks.refreshProjectDisplay.mock.calls).toEqual(ROWS.map(row => [row.chainId, row.projectId, 'known-group']))
   })
 
   it('preserves a completed save when display invalidation is unavailable', async () => {

@@ -6,9 +6,10 @@ import {
 import type { Metadata } from "next";
 import { unstable_cache } from "next/cache";
 import { notFound, redirect } from "next/navigation";
+import { connection } from "next/server";
 import { cache, Suspense } from "react";
 import { isAddressEqual, type Address } from "viem";
-import { ActivityRows, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
+import { ActionRowsSkeleton, ActivityRows, OverviewTabSkeleton, ProjectHeaderSkeleton, ProjectPayPanelSkeleton, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
 import { ProjectHeader, ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice } from "@/app/[urn]/ProjectMetadataSections";
 import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
 import { PendingPayments } from "@/components/project/PendingPayments";
@@ -120,8 +121,8 @@ export async function generateMetadata({
 }: {
   params: Promise<{ urn: string }>;
 }): Promise<Metadata> {
-  // Resolve here (not just in the page) so the redirect/404 status is set
-  // before streaming starts — metadata is awaited ahead of the response shell.
+  // Resolve here as well as in the page so metadata preserves the same
+  // redirect/404 identity decisions when Next streams metadata separately.
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
   // Anything that isn't a V6 project route belongs to the V1–V5 app now
@@ -277,7 +278,7 @@ async function DegradedProjectShell({
           </div>
         </div>
       </header>
-      <ProjectDataStatus deployments={[{ chainId: route.chainId, projectId: route.projectId, version: project.version, operator: authority }]} notice={reason} />
+      <ProjectDataStatus deployments={[{ chainId: route.chainId, projectId: route.projectId, version: project.version, operator: authority, suckerGroupId: project.suckerGroupId }]} notice={reason} />
       <ProjectTabs
         sidebar={null}
         activity={notice}
@@ -312,6 +313,9 @@ export default async function ProjectPage({
 }: {
   params: Promise<{ urn: string }>;
 }) {
+  // Process-local display cache hits must never turn this route into a static
+  // response whose lifetime outlasts the bounded data reads.
+  await connection();
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
   if (!urn) redirect(legacyHref(`/${segment}`));
@@ -353,8 +357,8 @@ async function ProjectPageContents({ urn, result: pending }: {
   const project = result.project;
 
   const isRevnet = urn.verifiedIsRevnet ?? !!project.isRevnet;
-  const [metadata, siblings, operator] = await Promise.all([
-    fetchProjectMetadata(project.metadataUri),
+  const metadata = fetchProjectMetadata(project.metadataUri);
+  const [siblings, operator] = await Promise.all([
     // An indexer failure here used to read as "this project is on one chain": the page
     // rendered fully, but cross-chain stats, per-chain tabs and authorities all silently
     // shrank to the home chain. Carry the failure so the UI can say so instead.
@@ -425,6 +429,7 @@ async function ProjectPageContents({ urn, result: pending }: {
     chainId: row.chainId,
     projectId: row.projectId,
     version: row.version,
+    suckerGroupId: row.suckerGroupId,
     operator: authorities.find(([id]) => id === row.chainId)?.[1],
   }));
   const indexedHandleOperatorCandidates = isRevnet ? await getRevnetOperatorCandidatesCached(
@@ -450,7 +455,9 @@ async function ProjectPageContents({ urn, result: pending }: {
     <SafeBatchProvider deployments={authorityDeployments} isRevnet={isRevnet}>
       <ProjectRouteSync route={urn} />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 sm:py-12">
+        <Suspense fallback={<ProjectHeaderSkeleton hint={{ name: project.name?.trim() || `Project ${project.projectId}`, logoUri: project.logoUri, tagline: project.projectTagline }} />}>
         <ProjectHeader project={project} metadata={metadata} urn={urn} chains={chains} chainPairs={chainPairs} isRevnet={isRevnet} authority={authority} totalRaisedUsd={totalRaisedUsd} paymentsCount={paymentsCount} />
+        </Suspense>
         {siblings.error || operator === undefined ? (
           <ProjectDataStatus deployments={diagnosticDeployments} notice="partial" />
         ) : null}
@@ -458,12 +465,14 @@ async function ProjectPageContents({ urn, result: pending }: {
         {/* Content + pay card */}
         <ProjectTabs
           sidebar={
-            <ProjectTreasury project={project} metadata={metadata}
+            <Suspense fallback={<div role="status" aria-label="Loading payment details"><ProjectPayPanelSkeleton /></div>}>
+              <ProjectTreasury project={project} metadata={metadata}
               chainId={urn.chainId}
               projectId={project.projectId}
               isRevnet={isRevnet}
               chains={chainPairs}
-            />
+              />
+            </Suspense>
           }
           activity={
             <section className="min-[801px]:mt-8">
@@ -484,7 +493,8 @@ async function ProjectPageContents({ urn, result: pending }: {
             {
               label: "Overview",
               content: (
-                <ProjectOverview project={project} metadata={metadata}
+                <Suspense fallback={<div role="status" aria-label="Loading overview"><OverviewTabSkeleton /></div>}>
+                  <ProjectOverview project={project} metadata={metadata}
                   chainId={urn.chainId}
                   projectId={project.projectId}
                   isRevnet={isRevnet}
@@ -493,6 +503,7 @@ async function ProjectPageContents({ urn, result: pending }: {
                   chains={chainPairs}
                   suckerGroupId={project.suckerGroupId}
                 />
+                </Suspense>
               ),
             },
             isRevnet
@@ -555,7 +566,8 @@ async function ProjectPageContents({ urn, result: pending }: {
             {
               label: "Extras",
               content: (
-                <ProjectExtras project={project} metadata={metadata}
+                <Suspense fallback={<ActionRowsSkeleton label="Loading extras" />}>
+                  <ProjectExtras project={project} metadata={metadata}
                   chainId={urn.chainId}
                   projectId={project.projectId}
                   isRevnet={isRevnet}
@@ -563,12 +575,14 @@ async function ProjectPageContents({ urn, result: pending }: {
                   authorities={authorities}
                   deploymentCheck={<ProjectDataStatus deployments={diagnosticDeployments} />}
                 />
+                </Suspense>
               ),
             },
             {
               label: isRevnet ? "Operator" : "Owner",
               content: (
-                <ProjectBackOffice project={project} metadata={metadata}
+                <Suspense fallback={<ActionRowsSkeleton label="Loading back office" />}>
+                  <ProjectBackOffice project={project} metadata={metadata} suckerGroupId={project.suckerGroupId}
                   chainId={urn.chainId}
                   projectId={project.projectId}
                   isRevnet={isRevnet}
@@ -577,6 +591,7 @@ async function ProjectPageContents({ urn, result: pending }: {
                   deployments={authorityDeployments}
                   revnetOperatorCandidates={handleOperatorCandidates as Address[]}
                 />
+                </Suspense>
               ),
             },
           ]}
