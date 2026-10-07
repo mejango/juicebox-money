@@ -11,7 +11,10 @@ vi.mock('@/lib/project-server-data', () => ({
   getProjectActivityDisplay: reads.activity, getProjectMetadata: reads.metadata,
   getProjectSiblings: reads.siblings,
 }))
-vi.mock('@/lib/project-route.server', () => ({ resolveProjectRouteCached: async () => ({ chainId: 1, projectId: 7, handle: null, verifiedAuthority: null, verifiedIsRevnet: null }) }))
+vi.mock('@/lib/project-route.server', () => ({
+  resolveProjectRouteCached: async () => ({ chainId: 1, projectId: 7, handle: null, verifiedAuthority: null, verifiedIsRevnet: null }),
+  projectRouteSnapshot: (route: unknown) => route,
+}))
 vi.mock('@/lib/project-link-preview', () => ({ getProjectLinkPreview: vi.fn(), projectPreviewSlogan: vi.fn(), previewVersion: vi.fn() }))
 vi.mock('@/lib/bendystraw', async original => ({
   ...await original<typeof import('@/lib/bendystraw')>(),
@@ -41,7 +44,7 @@ vi.mock('@/components/project/LazyProjectTabs', () => ({
 }))
 vi.mock('@/components/project/SafeBatchProvider', () => ({ SafeBatchProvider: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/components/project/ShopCartProvider', () => ({ ShopCartProvider: ({ children }: { children: ReactNode }) => children }))
-vi.mock('@/providers/ProjectRouteContext', () => ({ ProjectRouteSync: () => null }))
+vi.mock('@/providers/ProjectRouteContext', () => ({ ProjectRouteBoundary: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/components/project/Tabs', () => ({ ProjectTabs: ({ activity, sidebar, tabs }: { activity: ReactNode; sidebar: ReactNode; tabs: { label: string; content: ReactNode }[] }) => <main><nav>Project tabs ready</nav>{sidebar}{activity}{tabs.map(tab => <section key={tab.label}>{tab.content}</section>)}</main> }))
 vi.mock('@/components/ActivityList', () => ({ ActivityList: ({ error, initialEventsUpdatedAt }: { error: boolean; initialEventsUpdatedAt?: number }) => <p data-updated-at={initialEventsUpdatedAt}>{error ? 'Activity unavailable' : 'Activity ready'}</p> }))
 
@@ -73,6 +76,13 @@ beforeEach(() => {
 })
 
 describe('project server streaming', () => {
+  it('rejects a confirmed missing project before returning a streaming boundary', async () => {
+    reads.indexed.mockResolvedValue(null)
+    reads.project.mockResolvedValue(null)
+    await expect(ProjectPage({ params: Promise.resolve({ urn: 'eth:7' }) }))
+      .rejects.toThrow('NEXT_HTTP_ERROR_FALLBACK;404')
+  })
+
   it('paints indexed identity before onchain reconciliation and makes tabs usable while activity is pending', async () => {
     let completeProject!: (result: { project: BsProject; degraded: false }) => void
     let completeActivity!: (result: unknown) => void
