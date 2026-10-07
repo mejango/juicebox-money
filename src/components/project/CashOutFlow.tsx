@@ -19,7 +19,7 @@ import {
   uniswapV4Deployment,
   uniswapV4SwapDirection,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import {
   erc20Abi,
@@ -103,6 +103,7 @@ export function CashOutPanel({
 }) {
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const tx = useSafeTx(chainId)
   const approveTx = useSafeTx(chainId)
 
@@ -231,7 +232,7 @@ export function CashOutPanel({
     staleTime: 30_000,
     retry: false,
     queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, queryClient),
   })
   const directSellDirection =
     market?.status === 'pool' && projectToken && context

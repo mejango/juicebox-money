@@ -5,7 +5,7 @@ import {
   readUniswapV4PositionFees,
 } from '@bananapus/nana-sdk-core/v6'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useState } from 'react'
 import ReactDOM from 'react-dom'
 import { decodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
@@ -67,6 +67,7 @@ export function useUserLpSummary(
   holder: Address | undefined,
 ): UserLpSummary {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const positionManager = POSITION_MANAGER_BY_CHAIN[chainId] ?? null
 
@@ -76,7 +77,7 @@ export function useUserLpSummary(
     enabled: !!client,
     staleTime: 60_000,
     retry: 1,
-    queryFn: () => resolveMarket(client!, chainId, projectId, nativeSymbol),
+    queryFn: () => resolveMarket(client!, chainId, projectId, nativeSymbol, queryClient),
   })
   const pool: Pool | null =
     market.data?.status === 'pool' ? (market.data as Pool) : null

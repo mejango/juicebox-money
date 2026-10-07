@@ -245,6 +245,7 @@ export function AddLiquidityFlow({
   showHeading?: boolean
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const chainMeta = JB_CHAINS[chainId]
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
@@ -256,7 +257,7 @@ export function AddLiquidityFlow({
     staleTime: 60_000,
     retry: 1,
     queryFn: () =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, queryClient),
   })
   const pool = market?.status === 'pool' ? market : null
 

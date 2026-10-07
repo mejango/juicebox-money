@@ -16,7 +16,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
   type Address,
@@ -228,6 +228,7 @@ export async function resolveMarket(
   chainId: JBChainId,
   projectId: number,
   nativeSymbol: string,
+  _queryClient?: QueryClient,
 ): Promise<MarketResult> {
   const pid = BigInt(projectId)
 
@@ -915,6 +916,7 @@ export function MarketSection({
   suckerGroupId: string | null
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const queryClient = useQueryClient()
   const chainMeta = JB_CHAINS[chainId]
   const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
@@ -939,7 +941,7 @@ export function MarketSection({
       refetchOnWindowFocus: true,
       retry: 1,
       queryFn: () =>
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol),
+        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, queryClient),
     }),
   )
 
