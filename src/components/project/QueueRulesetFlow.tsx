@@ -27,7 +27,7 @@ import {
   type JBAccountingContext,
   type JBRulesetConfig,
 } from "@bananapus/nana-sdk-core/v6";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import {
   formatUnits,
@@ -57,6 +57,7 @@ import {
   toLocalDateTimeInput,
 } from "@/lib/format";
 import { safeAccountQueryOptions } from "@/lib/safe-account-query";
+import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
@@ -84,6 +85,7 @@ const UNLIMITED_PAYOUT = 2n ** 224n - 1n;
 /** ETH base currency id. */
 const BASE_ETH = 1;
 const BASE_USD = 2;
+const QUEUE_PREPARATION_KEYS = ["queueRulesetPrefill", "queueRulesetDestinations"];
 /** uint16 max — the ceiling for reservedPercent / cashOutTaxRate. */
 const PERCENT_OUT_OF_10000_MAX = 10_000;
 
@@ -339,6 +341,7 @@ export function QueueRulesetFlow({
   isRevnet: boolean;
   chains?: readonly (readonly [number, number])[];
 }) {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const { address } = useViewedAccount();
@@ -430,6 +433,7 @@ export function QueueRulesetFlow({
   const { data: pendingScope, refetch: refreshRecovery } = useQuery({
     queryKey: ["queueRulesetRecovery", chainId, projectId, open],
     enabled: !isRevnet && !!address,
+    // Local journal rechecks have no network cost and must not reuse a leased result.
     staleTime: 0,
     queryFn: () => readQueueJournal(recoveryKey),
   });
@@ -439,10 +443,12 @@ export function QueueRulesetFlow({
 
   let body: ReactNode;
   if (pendingScope) {
-    body = <QueueRecovery journal={pendingScope} onComplete={() => {
+    body = <QueueRecovery journal={pendingScope} onComplete={result => {
+      invalidateConfirmedPreparation(queryClient, result, pendingScope.review.destinations.map(item => item.chainId), QUEUE_PREPARATION_KEYS);
       setRecovered(true);
       void refreshRecovery();
-    }} onDiscard={() => void refreshRecovery()} />;
+    }} onDiscard={() => void refreshRecovery()}
+      onError={() => invalidateProjectPreparation(queryClient, pendingScope.review.destinations.map(item => item.chainId), QUEUE_PREPARATION_KEYS)} />;
   } else if (recovered) {
     body = <p className="text-sm text-smoke-700">The saved ruleset update is confirmed on every destination. Reload the project to see the new queue.</p>;
   } else if (!knownController) {
@@ -743,7 +749,7 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
  * editor's draft: reviewed again it signs afresh, and the recheck refuses it
  * if the queue changed.
  */
-export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: QueueRecoveryJournal; onComplete: () => void; onDiscard: () => void }) {
+export function QueueRecovery({ journal, onComplete, onDiscard, onError }: { journal: QueueRecoveryJournal; onComplete: (result: AuthorityResult) => void; onDiscard: () => void; onError?: () => void }) {
   const { address } = useWallet();
   // Leaving ends a Safe app proposal's wait for its execution.
   const flowSignal = useUnmountSignal();
@@ -758,10 +764,10 @@ export function QueueRecovery({ journal, onComplete, onDiscard }: { journal: Que
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
       // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-      await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
+      const result = await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
       clearQueueJournal(journal);
-      onComplete();
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
+      onComplete(result);
+    } catch (err) { onError?.(); setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
     finally { setBusy(false); }
   };
   if (session?.discardable) {
@@ -1054,6 +1060,7 @@ function RulesetEditorForm({
   onPending: () => void;
 }) {
   const { isConnected, address, openSignIn } = useWallet();
+  const queryClient = useQueryClient();
   // Leaving ends a Safe app proposal's wait for its execution.
   const flowSignal = useUnmountSignal();
 
@@ -1317,10 +1324,12 @@ function RulesetEditorForm({
     try {
       if (pendingQueueScope(recoveryKey)) { onPending(); return; }
       const result = await submitQueueReview(review, action, setStatus, flowSignal());
+      invalidateConfirmedPreparation(queryClient, result, review.destinations.map(item => item.chainId), QUEUE_PREPARATION_KEYS);
       setTxHash(result.directResults[0] ?? null);
       setStatus(safeOutcomeMessage(result, queueSuccessCopy(action, review.configs[0].mustStartAtOrAfter)));
       setSuccess(true);
     } catch (err) {
+      invalidateProjectPreparation(queryClient, review.destinations.map(item => item.chainId), QUEUE_PREPARATION_KEYS);
       setStatus(null); setFlowError(err instanceof Error ? err.message : "Could not queue the rules.");
       if (pendingQueueScope(recoveryKey)) onPending();
     } finally { setBusy(false); }

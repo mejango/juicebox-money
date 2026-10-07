@@ -159,6 +159,40 @@ describe('distribution batch reviews and recovery', () => {
     expect(text(renderer)).toContain('BBB')
   })
 
+  it('invalidates a verified destination while another distribution remains pending', async () => {
+    const calls = distributionBatchCalls([reserved(1), reserved(8453)])
+    const saved = { id: 'partial-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    mocks.load.mockReturnValue(saved)
+    mocks.verify.mockReturnValue(100n * 10n ** 18n)
+    mocks.run.mockImplementation(async ({ verifyCompletion }) => {
+      await verifyCompletion(calls[0], { status: 'success', logs: [] })
+      return { ...saved, completedIds: [calls[0].id] }
+    })
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['distributionOptions'], refetchType: 'none' })
+    const displayFilter = mocks.invalidate.mock.calls.find(([filter]) => filter.predicate)?.[0].predicate
+    expect(displayFilter).toBeDefined()
+    expect(displayFilter({ queryKey: ['projectDisplay', 6, 1, '17', 'currentRuleset'] })).toBe(true)
+    expect(displayFilter({ queryKey: ['projectDisplay', 6, 8453, '303', 'currentRuleset'] })).toBe(false)
+    expect(text(renderer)).toContain('Resume saved distributions')
+  })
+
+  it('does not invalidate display evidence when a receipt fails distribution verification', async () => {
+    const calls = distributionBatchCalls([reserved(1)])
+    const saved = { id: 'unverified-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
+    mocks.load.mockReturnValue(saved)
+    mocks.verify.mockImplementation(() => { throw new Error('A split was not paid.') })
+    mocks.run.mockImplementation(async ({ verifyCompletion }) => {
+      await verifyCompletion(calls[0], { status: 'success', logs: [] })
+      return saved
+    })
+    const renderer = await mount('reserved')
+    await click(renderer, 'Confirm test distributions')
+    expect(mocks.invalidate).not.toHaveBeenCalled()
+    expect(text(renderer)).toContain('A split was not paid.')
+  })
+
   it("keeps the batch's own line when it comes back pending, so a scan still reading says so", async () => {
     const calls = distributionBatchCalls([reserved(1)])
     const saved = { id: 'scanning-review', status: 'pending', account: ACCOUNT, calls, completedIds: [] }
