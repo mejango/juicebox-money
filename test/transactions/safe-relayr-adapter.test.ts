@@ -131,10 +131,48 @@ describe('Safe Relayr journal adapter', () => {
     expect(mocks.save).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { paymentHash: HASH },
+    { paymentUnmatched: true as const },
+    { payments: [payment(HASH)] },
+    { paymentStatus: 'sending' as const },
+  ])('preserves legacy funding evidence beside a stale unfunded shared journal: %j', evidence => {
+    mocks.saved = {
+      ...legacy(), paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      safeLifecycle: { ...session(), paymentStatus: 'unfunded', reservationKeys: [`1:${SAFE}:1`] },
+      ...evidence,
+    }
+    expect(safeRelayrSession(SCOPE)).toMatchObject({ fundingObserved: true, paymentStatus: 'unfunded' })
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it('does not infer funding from a modern rejected-wallet chain choice and preserves independent status records', () => {
+    const savedRecord = { chain: 1, tx_uuid: BUNDLE, status: { state: 'executing' } }
+    const currentRecord = { chain: 10, tx_uuid: BUNDLE, status: { state: 'pending' } }
+    mocks.saved = {
+      ...legacy(), paymentHash: null, paymentChainId: 1, paymentStatus: 'unpaid',
+      records: [savedRecord],
+      safeLifecycle: { ...session(), paymentStatus: 'unfunded', reservationKeys: [`1:${SAFE}:1`], records: [currentRecord] },
+    }
+    const restored = safeRelayrSession(SCOPE)!
+    expect(restored.fundingObserved).not.toBe(true)
+    expect(restored.records).toEqual([currentRecord, savedRecord])
+    expect(adapter().options.store.scope).toBe('single-session')
+  })
+
   it('refuses a malformed shared lifecycle record without overwriting its legacy receipt', () => {
     mocks.saved = { ...legacy(), safeLifecycle: { id: 'broken' } as SafeRelayrSession }
     expect(() => safeRelayrSession(SCOPE)).toThrow(/incomplete/)
     expect(mocks.saved.paymentHash).toBe(HASH)
+    expect(mocks.save).not.toHaveBeenCalled()
+  })
+
+  it.each([null, {}, 'pending'])('refuses malformed nested records rather than making them an empty unfunded history: %j', records => {
+    mocks.saved = {
+      ...legacy(), paymentHash: null, paymentChainId: null, paymentStatus: 'unpaid',
+      safeLifecycle: { ...session(), paymentStatus: 'unfunded', reservationKeys: [`1:${SAFE}:1`], records } as SafeRelayrSession,
+    }
+    expect(() => safeRelayrSession(SCOPE)).toThrow(/incomplete/)
     expect(mocks.save).not.toHaveBeenCalled()
   })
 

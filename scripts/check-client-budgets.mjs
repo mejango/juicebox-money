@@ -29,7 +29,10 @@ const budgets = {
     // refusals and bundle guard) brings home from 434.4 to 435.1 KiB on the same
     // toolchain; taking it in place of jbm's copies, with the Safe wait and Bendystraw
     // read signals, measures 435.3. Round up to the next KiB.
-    '/page': 436 * KIB,
+    // On the final locked graph, ac8430c + official SDK 2.24.1 measures home
+    // 447,505 B and create 517,401 B. SDK 2.24.2 plus the Safe changes is 4/2 B
+    // smaller; round those existing baseline costs up to 438/506 KiB.
+    '/page': 438 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -51,7 +54,7 @@ const budgets = {
     // SDK 2.21.0 brings create from 502.1 to 503.0 KiB on the same toolchain (the same
     // SDK modules as home); taking it in place of jbm's copies, with the launch's Safe
     // wait signals, measures 503.3. Round up to the next KiB.
-    '/create/page': 504 * KIB,
+    '/create/page': 506 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB

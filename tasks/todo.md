@@ -246,3 +246,40 @@ Plan review: current quote/create/reload/fund path must retain its original jour
 Review: opening a saved bundle clears stale errors and immediately checks its saved account. A payable saved quote still requires explicit call review; journal replacement or removal cannot open the wallet. The shared SDK supplies missing-quote explanations and canonical nonce results, and consumed-nonce release refreshes the queue without claiming successful execution or payment expiry. Recovery rows retain the saved transaction identity. Complete legacy proofs keep exact reservations; partial funding evidence remains unresolved and malformed financial history fails closed before normalization. Real browser-storage caller tests reproduce the legacy account error and cover fresh four-chain quote identity through reload/funding/recovery; fresh preparation alone did not reproduce the reported automatic error. Focused caller/transaction tests, full types, changed-file lint, source invariants, transaction inventory and diff checks pass. Isolated production builds with identical SDK dependencies measure 2518.4 KiB on HEAD versus 2519.2 KiB with the fix (+770 bytes); 2520 KiB is the minimum rounded aggregate ceiling. All route, largest-chunk, style and lazy-loading gates pass unchanged. No wallet transaction, commit or push.
 
 Published-package verification: both apps now pin SDK2.24.1; all745 installed SDK dist files match the tested preview. Removed temporary vendor files. Final346 focused JBM tests, full typecheck, source/transaction gates and whitespace checks pass; the full2617-test suite passed before the final targeted regressions. The final missing-ID button label passes46 modal tests. No wallet transaction or client push performed.
+
+## 2026-10-06 — Replace unused Safe quotes with the current selection
+- [x] Use the SDK's quote-replacement decision for the queue entry point and single-slot persistence.
+- [x] Preserve contradictory legacy funding evidence and persist SDK retirement before replacement.
+- [x] Exercise actual storage through lost quote, changed selection, new review, new quote and one explicit payment.
+- [x] Verify cancellation, ambiguous funding, stale tabs, source boundaries and client checks.
+
+Plan review: quote publication is not a wallet funding attempt. The SDK owns replacement eligibility and retirement under the existing Safe lock, after the current selection passes validation and review. The app normalizes legacy evidence, persists retirement before replacement, and renders the shared decision. Existing or ambiguous funding remains recoverable.
+
+Review: the normal Execute action now handles an unused quote, including a lost response, through the shared SDK classifier. The SDK's single-session store mode protects the existing Safe-scoped journal while reviewing a changed selection. Legacy hashes, payment history, unresolved sends and execution records remain visible to that classifier; malformed nested record containers fail closed. Real-storage tests replace received/lost four-chain quotes with the current three-chain calls, then explicitly fund the new bundle once. Cancellation preserves the original journal, and funding recorded by another tab during review blocks replacement. All 2,639 unit tests across 192 files pass, including 359 focused Safe/Relayr tests. Full types and lint, source invariants, transaction inventory and whitespace checks pass. No wallet transaction or app publication performed.
+
+Published-package verification: SDK 2.24.2 is installed from the registry and all 745 distribution files match the verified preview. Repeated the full checks after the locked dependency installation: all 2,639 tests, full types and lint, source invariants, transaction inventory and whitespace checks pass. No further app source changes were needed.
+
+## Browser verification repair for Safe quote release (2026-10-07)
+
+## Plan refinement
+
+- **Objective:** Complete the full production browser gate against the existing destination-owned pending-payment inventory and retained disabled actions while checks run.
+- **System fit:** PendingPayments already owns live inventory and readiness; this changes only browser expectations and the deterministic read fixture, preserving application execution and funding authority.
+- **Reuse and simplicity:** Reuse the current browser gate, existing verification latch and strict fixture matcher; replace the stale hidden-panel assertion and source-project fixture query with the current contract.
+- **Evidence and unknowns:** The first full run passed 55/57 tests; both failures expected an absent panel during checks, and teardown rejected the new destination query. Baseline ac8430c already implements the visible inventory and destination query.
+- **Verification:** Assert all 3 rows visible and all 4 routing controls disabled before releasing verification, preserve retry/finalization/cooldown assertions afterward, then rerun the full 57-test browser suite and fixture audit using the existing isolated production build.
+- **Resource budget:** Two test-only edits, one full suite rerun; no new build for fixture-only changes, no app changes, wallet sends, dependency changes or relaxed fixture acceptance.
+
+- [x] Update browser pending inventory assertion and destination fixture.
+- [x] Rerun full browser suite and fixture audit; record source hashes and result.
+
+Review: isolated production build passed with Node 26.7.0 / npm 12.0.1 / sharp 0.35.5 and the final preview SDK dist. Unchanged budget gate passed at 2,548,919 gzip bytes (2489.2KiB); all 57 browser tests plus strict fixture audit passed after the two test-only corrections. Relevant-file ESLint passed; source and installed SDK hashes remained unchanged through verification. Evidence: `/tmp/safe-quote-replacement-builds.Cs0JWc/juicebox-{source-manifest,browser-source-manifest,sdk-manifest,final-hash-diff,runtime,sizes}.json` and `juicebox-{build,budget,browser}.log`. SDK metadata is 2.24.1 until the parent matches final published 2.24.2 dist bytes. No budget or production code edits, commits, pushes or wallet actions.
+
+
+### Published dependency graph verification
+
+The official SDK 2.24.2 and sharp 0.35.5 installation changed the installed dependency graph, so fresh isolated production and full browser gates were rerun: build passed; all 57 browser checks plus fixture audit passed. All 1,116 installed package manifests, the installed lockfile, and all 745 SDK dist files stayed unchanged through verification. Only concurrent task notes changed.
+
+The unchanged budget gate measured home 447,501 B and create 517,399 B above the old 436/504 KiB caps. A controlled ac8430c baseline used the same final dependencies with only the official SDK 2.24.1 override, whose tarball SHA512 matched the committed lockfile. Baseline home/create were 447,505/517,401 B, so the current change is 4/2 B smaller. The release owner approved only the minimum 438/506 KiB caps; aggregate 2520, project 570, largest chunk 450, CSS 20 KiB and all lazy-loading checks remain unchanged. Current aggregate is 2,580,108 B, 50 B below the controlled baseline.
+
+Evidence: `/tmp/safe-quote-replacement-builds.Cs0JWc/published-juicebox-*`, `baseline-juicebox-*`, and `official-sdk-2.24.1-proof.json`. The old SDK backup differed from the verified archive and was not used. No wallet action, commit or push occurred in verification.

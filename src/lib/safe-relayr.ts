@@ -52,10 +52,18 @@ export function safeRelayrSession(scope: string): SafeRelayrSession | null {
     const session = saved.safeLifecycle
     if (typeof session.id !== 'string' || !session.id || !isAddress(session.account) ||
         !Array.isArray(session.executions) || !Array.isArray(session.payments) ||
+        (session.records !== undefined && !Array.isArray(session.records)) ||
         (!session.executions.length && !session.reservationKeys?.length)) {
       throw new Error('The saved Safe bundle is incomplete. Keep it pending and check its original receipt.')
     }
-    return session
+    // Older writers kept evidence beside the shared journal. A stale nested
+    // unpaid state must not hide a known hash, payment history or pending send.
+    // A chain choice alone can remain after a definite wallet rejection.
+    const fundingObserved = session.fundingObserved || (session.paymentStatus === 'unfunded' && (
+      saved.paymentHash !== null || saved.paymentUnmatched === true || !!saved.payments?.length || saved.paymentStatus !== 'unpaid'
+    ))
+    const records = [...new Map([...(session.records ?? []), ...saved.records].map(record => [JSON.stringify(record), record])).values()]
+    return { ...session, ...(fundingObserved ? { fundingObserved: true } : {}), records }
   }
   const executions = (saved.expectedEntries ?? []).flatMap(entry => {
     const proof = saved.expectedSafeExecutions?.find(item => item.chainId === entry.chain)
@@ -103,6 +111,7 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
   let fundingChainId: number | undefined
   return createSafeRelayrController({
     store: {
+      scope: 'single-session',
       list: async () => {
         const saved = safeRelayrSession(scope)
         return saved ? [saved] : []

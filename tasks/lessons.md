@@ -34,3 +34,6 @@ A two-worker chain-check limit makes unrelated chains wait for slow responses. P
 
 ## 2026-10-06 — Exercise persisted recovery through the actual caller
 Mocked journal storage cannot verify serialization or reload identity. Cover quote creation, modal reopening, funding and recovery with the real writer/reader. Safe-scoped status checks use the saved funding identity; connecting a different wallet must not prevent read-only reconciliation or authorize that wallet to fund. Reproduce the reported click sequence before attributing an automatic error to a payment click.
+
+## 2026-10-06 — An unused Safe quote must not block the current transaction set
+A lost quote response is not a submitted wallet payment. Use the shared Safe lifecycle's funding-evidence decision to let users review and quote the currently ready set again, including changed chain selections. Preserve real or ambiguous funding and verify the complete user journey through an explicit payment, rather than stopping at recovery diagnostics.

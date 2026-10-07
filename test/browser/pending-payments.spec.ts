@@ -110,7 +110,15 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
     await expect.poll(() => blockReads).toBeGreaterThan(0)
     const panel = page.getByRole('region', { name: 'Payments awaiting routing', exact: true })
-    await expect(panel).toHaveCount(0)
+    await expect(panel).toBeVisible()
+    await expect(panel.getByRole('listitem')).toHaveCount(payments.length)
+    for (const [index, payment] of payments.entries()) {
+      await expect(panel.getByRole('listitem').nth(index)).toContainText(`${payment.amount} base units`)
+    }
+    await expect(panel.getByRole('status')).toHaveText('Found 3 payments. Checking current status…')
+    const uncheckedControls = panel.getByRole('button')
+    await expect(uncheckedControls).toHaveCount(payments.length + 1)
+    for (const control of await uncheckedControls.all()) await expect(control).toBeDisabled()
     expect(writes).toEqual([])
     releaseVerification()
 

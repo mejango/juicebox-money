@@ -512,16 +512,16 @@ const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
 const graphqlFixtures = [
   {
     name: 'pendingPayments',
-    query: `query PendingPayments($chainId: Int!, $sourceProjectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
+    query: `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
       routerPendingCalls(
-        where: { AND: [{ chainId: $chainId }, { sourceProjectId: $sourceProjectId }, { gateway: $gateway }, { version: 6 }, { retainedAmount_gt: "0" }, { status_in: [queued, retried] }] }
+        where: { AND: [{ chainId: $chainId }, { projectId: $projectId }, { gateway: $gateway }, { version: 6 }, { retainedAmount_gt: "0" }, { status_in: [queued, retried] }] }
         orderBy: "pendingCallId", orderDirection: "asc", limit: $limit, offset: $offset
       ) {
         totalCount
         items { chainId version gateway pendingCallId projectId sourceProjectId token amount retainedAmount preferAddToBalance shouldReturnHeldFees beneficiary refundTo memo metadata callCommitment status }
       }
     }`,
-    variables: { chainId: 1, sourceProjectId: 1, gateway: '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901', limit: 100, offset: 0 },
+    variables: { chainId: 1, projectId: 1, gateway: '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901', limit: 100, offset: 0 },
     data: { routerPendingCalls: { items: [], totalCount: 0 } },
   },
   {

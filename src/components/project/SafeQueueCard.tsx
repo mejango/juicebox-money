@@ -4,7 +4,7 @@ import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/s
 export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 
 import { createProjectSafeRelayr, legacySafeRelayrBindings, safeRelayrSession } from '@/lib/safe-relayr'
-import { SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
+import { canReplaceSafeRelayrQuote, SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
@@ -857,6 +857,15 @@ export function SafeQueueCard({
   );
   const [pendingSession, setPendingSession] =
     useState<RelayrPendingSession | null>(null);
+  const requiresBundleRecovery = useMemo(() => {
+    if (!pendingSession) return false;
+    try {
+      const saved = safeRelayrSession(pendingScope);
+      return !saved || !canReplaceSafeRelayrQuote(saved);
+    } catch {
+      return true;
+    }
+  }, [pendingSession, pendingScope]);
   const resumedScopeRef = useRef<string | null>(null);
 
   const query = useQuery({
@@ -1587,7 +1596,7 @@ export function SafeQueueCard({
             </p>
           ) : null}
         </div>
-        {pendingSession && (!pendingSession.safeLifecycle?.quote || pendingSession.safeLifecycle.paymentStatus !== "unfunded") ? (
+        {requiresBundleRecovery ? (
           <button
             type="button"
             onClick={openPaidBundle}
