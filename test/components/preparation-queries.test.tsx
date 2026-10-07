@@ -232,7 +232,7 @@ it('reuses distribution options by exact destinations/account, expires them, and
   expect(m.payout).toHaveBeenCalledTimes(failedReads + 2)
 })
 
-it('invalidates completed authority evidence without treating a queued Safe proposal as execution', () => {
+it('invalidates completed authority evidence without treating a queued Safe proposal as execution', async () => {
   const preparationKeys = ['editSplitsLive', 'queueRulesetPrefill']
   for (const key of preparationKeys) client.setQueryData([key, 1, 17], 'draft')
   client.setQueryData(['projectDisplay', 6, 1, '17', 'currentRuleset'], 'home')
@@ -247,9 +247,13 @@ it('invalidates completed authority evidence without treating a queued Safe prop
   invalidateConfirmedPreparation(client, result, [1, 8453], preparationKeys)
   expect(client.getQueryState(['editSplitsLive', 1, 17])?.isInvalidated).toBe(true)
   expect(client.getQueryState(['queueRulesetPrefill', 1, 17])?.isInvalidated).toBe(true)
-  expect(client.getQueryState(['projectDisplay', 6, 8453, '303', 'currentRuleset'])?.isInvalidated).toBe(true)
+  await vi.waitFor(() => {
+    expect(client.getQueryState(['projectDisplay', 6, 8453, '303', 'currentRuleset'])?.isInvalidated).toBe(true)
+  })
   expect(client.getQueryState(['projectDisplay', 6, 1, '17', 'currentRuleset'])?.isInvalidated).toBe(false)
   result.safeResults[0].status = 'executed'
   invalidateConfirmedPreparation(client, result, [1], preparationKeys)
-  expect(client.getQueryState(['projectDisplay', 6, 1, '17', 'currentRuleset'])?.isInvalidated).toBe(true)
+  await vi.waitFor(() => {
+    expect(client.getQueryState(['projectDisplay', 6, 1, '17', 'currentRuleset'])?.isInvalidated).toBe(true)
+  })
 })
