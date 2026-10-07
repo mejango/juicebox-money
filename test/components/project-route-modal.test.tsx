@@ -7,6 +7,8 @@ import { ProjectRouteBoundary, ProjectRouteProvider } from '@/providers/ProjectR
 import { ModalShell } from '@/components/ui/ModalShell'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { topLayerDialogs } from '../dialog-shim'
+vi.mock('next/navigation', () => ({ useRouter: () => router }))
+const router = { refresh: vi.fn() }
 
 it('releases native modal blocking for failed-proof Retry and preserves same-project form state on recovery', async () => {
   vi.useFakeTimers()

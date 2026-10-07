@@ -3,10 +3,13 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
-  ProjectRouteBoundary, ProjectRouteProvider, useProjectReviewScope, type ProjectReviewScope,
+  ProjectRouteBoundary, ProjectRouteProvider, useProjectReviewScope, invalidateProjectRoute, type ProjectReviewScope,
 } from '@/providers/ProjectRouteContext'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import type { ProjectRouteSnapshot } from '@/lib/project-route'
+
+const mocks = vi.hoisted(() => ({ router: { refresh: vi.fn() } }))
+vi.mock('next/navigation', () => ({ useRouter: () => mocks.router }))
 
 const authority = `0x${'12'.repeat(20)}`
 function snapshot(overrides: Partial<ProjectRouteSnapshot> = {}): ProjectRouteSnapshot {
@@ -103,6 +106,23 @@ describe('verified client-local alias navigation', () => {
     expect(win.location.reload).not.toHaveBeenCalled()
   })
 
+  it('discards an in-flight proof when a project mutation invalidates the lease', async () => {
+    vi.useFakeTimers()
+    const { win, blocked } = await setup()
+    await act(async () => { vi.advanceTimersByTime(5_001) })
+    const replies: ((value: Response) => void)[] = []
+    vi.mocked(fetch).mockImplementation(() => new Promise(resolve => { replies.push(resolve) }))
+    await act(async () => replaceProjectTabHash('#owners'))
+    await act(async () => invalidateProjectRoute())
+    expect(replies).toHaveLength(2)
+    await act(async () => replies[0](response(snapshot())))
+    expect(blocked()).toBe(true)
+    expect(win.location.hash).toBe('')
+    await act(async () => replies[1](response(snapshot({ projectId: '8' }))))
+    expect(blocked()).toBe(true)
+    expect(win.location.reload).toHaveBeenCalledOnce()
+  })
+
   it.each([
     { projectId: '8' },
     { authority: `0x${'34'.repeat(20)}` },
@@ -140,6 +160,57 @@ describe('verified client-local alias navigation', () => {
     await act(async () => finish(response(snapshot({ projectId: '8' }))))
     expect(blocked()).toBe(false)
     expect(win.location.hash).toBe('')
+    expect(win.location.reload).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { projectId: '8' },
+    { authority: `0x${'34'.repeat(20)}` },
+  ])('retains the prior alias identity when a refreshed server snapshot changes %j', async changed => {
+    vi.useFakeTimers()
+    const { win, blocked, update, scope } = await setup()
+    const originalScope = scope()!
+    await act(async () => { vi.advanceTimersByTime(5_001) })
+    let finish!: (value: Response) => void
+    vi.mocked(fetch).mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    await update(snapshot(changed))
+    expect(blocked()).toBe(true)
+    expect(scope()).toBeNull()
+    expect(win.location.reload).not.toHaveBeenCalled()
+    await act(async () => finish(response(snapshot(changed))))
+    expect(blocked()).toBe(true)
+    expect(win.location.reload).toHaveBeenCalledOnce()
+    expect(await originalScope.verify()).toBe(false)
+  })
+
+  it('keeps an unverified changed server snapshot blocked without a document reload', async () => {
+    vi.useFakeTimers()
+    const { win, blocked, update, tree } = await setup()
+    await act(async () => { vi.advanceTimersByTime(5_001) })
+    vi.mocked(fetch).mockResolvedValue(new Response('', { status: 503 }))
+    await update(snapshot({ projectId: '8' }))
+    expect(blocked()).toBe(true)
+    expect(win.location.reload).not.toHaveBeenCalled()
+    expect(tree.root.findAllByType('button').some(node => node.children.join('') === 'Try again')).toBe(true)
+  })
+
+  it('recovers a stale mismatched server subtree by refreshing it only on explicit Retry', async () => {
+    vi.useFakeTimers()
+    const { win, blocked, update, tree, scope } = await setup()
+    const originalScope = scope()!
+    await act(async () => { vi.advanceTimersByTime(5_001) })
+    vi.mocked(fetch).mockImplementation(async () => response(snapshot()))
+    await update(snapshot({ projectId: '8' }))
+    expect(blocked()).toBe(true)
+    expect(win.location.reload).not.toHaveBeenCalled()
+    expect(mocks.router.refresh).not.toHaveBeenCalled()
+    expect(await originalScope.verify()).toBe(false)
+    await act(async () => tree.root.findAllByType('button').find(node => node.children.join('') === 'Try again')!.props.onClick())
+    expect(mocks.router.refresh).toHaveBeenCalledOnce()
+    expect(blocked()).toBe(true)
+    await update(snapshot())
+    expect(blocked()).toBe(false)
+    expect(scope()?.identity).toBe(originalScope.identity)
     expect(win.location.reload).not.toHaveBeenCalled()
   })
 

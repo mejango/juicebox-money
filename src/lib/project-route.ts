@@ -27,7 +27,7 @@ export function projectRouteIsFresh(route: ProjectRouteSnapshot, now = Date.now(
 }
 
 /** Convert server age conservatively to this browser's clock, including request transit time. */
-export function localProjectRouteSnapshot(route: ProjectRouteSnapshot, requestStartedAt: number): ProjectRouteSnapshot {
+function localProjectRouteSnapshot(route: ProjectRouteSnapshot, requestStartedAt: number): ProjectRouteSnapshot {
   return { ...route, checkedAt: requestStartedAt - Math.max(0, route.serverNow - route.checkedAt), serverNow: requestStartedAt }
 }
 

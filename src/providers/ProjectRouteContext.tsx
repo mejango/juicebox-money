@@ -5,6 +5,7 @@ import {
   useRef, useState, type PropsWithChildren,
 } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { useRouter } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handles'
 import {
@@ -12,13 +13,13 @@ import {
   readProjectRouteSnapshot, type ProjectRouteSnapshot,
 } from '@/lib/project-route'
 
-export type ResolvedProjectRoute = { chainId: JBChainId; projectId: number; handle: string | null }
+type ResolvedProjectRoute = { chainId: JBChainId; projectId: number; handle: string | null }
 const NAVIGATE = 'project-route-navigate'
 const INVALIDATE = 'project-route-invalidated'
 
 export type ProjectReviewScope = { identity: string; verify: () => Promise<boolean> }
 
-type NavigationState = 'ready' | 'checking' | 'replacing' | 'error'
+type NavigationState = 'ready' | 'checking' | 'mismatched' | 'replacing' | 'error'
 type ProjectRouteContextValue = {
   route: ResolvedProjectRoute | null
   scope: ProjectReviewScope | null
@@ -50,10 +51,12 @@ function currentHandle() {
 /** Owns the alias lease above the router cache; only interactions cause revalidation. */
 export function ProjectRouteProvider({ children }: PropsWithChildren) {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const [snapshot, setSnapshot] = useState<ProjectRouteSnapshot | null>(null)
   const [state, setState] = useState<NavigationState>('ready')
   const [error, setError] = useState<string | null>(null)
   const rendered = useRef<ProjectRouteSnapshot | null>(null)
+  const serverIdentity = useRef<string | null>(null)
   const replacingDocument = useRef(false)
   const generation = useRef(0)
   const registration = useRef(0)
@@ -114,11 +117,12 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
     const invalidated = queryClient.getQueryState(queryKey)?.isInvalidated
     if (!force && !invalidated && cached && projectRouteIsFresh(cached) &&
       rendered.current?.handle === handle &&
-      projectRouteIdentity(cached) === projectRouteIdentity(rendered.current)) {
+      projectRouteIdentity(cached) === projectRouteIdentity(rendered.current) &&
+      serverIdentity.current === projectRouteIdentity(cached)) {
       complete()
       return
     }
-    setState('checking')
+    setState(rendered.current && serverIdentity.current !== projectRouteIdentity(rendered.current) ? 'mismatched' : 'checking')
     setError(null)
     try {
       const result = await readVerified(handle, force)
@@ -129,6 +133,9 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
       // Absence of a page is not evidence of a changed alias binding.
       if (!displayed || displayed.handle !== handle) return
       if (projectRouteIdentity(result) === projectRouteIdentity(displayed)) {
+        if (serverIdentity.current !== projectRouteIdentity(result)) {
+          throw new Error('The project page and verified link disagree. Try again to update the page.')
+        }
         rendered.current = result
         setSnapshot(result)
         complete()
@@ -163,16 +170,21 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
       ? cached : { ...serverSnapshot, checkedAt: 0, serverNow: 0 }
     const owner = ++registration.current
     const previous = rendered.current
+    serverIdentity.current = projectRouteIdentity(next)
+    const sameAliasChanged = !!next.handle && previous?.handle === next.handle &&
+      projectRouteIdentity(previous) !== serverIdentity.current
     if (previous && next.handle !== previous.handle) {
       generation.current++
       pendingCommit.current = undefined
       complete()
     }
-    rendered.current = next
-    setSnapshot(next)
-    if (next.handle && !projectRouteIsFresh(next)) {
+    // A same-alias server refresh is a candidate, not permission to replace
+    // the identity whose actions this document already prepared.
+    rendered.current = sameAliasChanged ? previous : next
+    setSnapshot(rendered.current)
+    if (sameAliasChanged || (next.handle && !projectRouteIsFresh(next))) {
       void verify()
-    } else if (!previous || previous.handle !== next.handle) {
+    } else {
       generation.current++
       complete()
     }
@@ -220,13 +232,13 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
   }, [queryClient, verify])
 
   const scope = useMemo<ProjectReviewScope | null>(() => {
-    if (!snapshot || state === 'error' || state === 'replacing') return null
+    if (!snapshot || state === 'error' || state === 'replacing' || state === 'mismatched') return null
     const identity = projectRouteIdentity(snapshot)
     return {
       identity,
       verify: async () => {
         const proofGeneration = generation.current
-        const matches = () => !replacingDocument.current && rendered.current && projectRouteIdentity(rendered.current) === identity && currentHandle() === snapshot.handle
+        const matches = () => !replacingDocument.current && rendered.current && projectRouteIdentity(rendered.current) === identity && serverIdentity.current === identity && currentHandle() === snapshot.handle
         if (!matches()) return false
         if (!snapshot.handle) return true
         try {
@@ -254,8 +266,11 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
     route: state === 'ready' && snapshot ? {
       chainId: snapshot.chainId, projectId: Number(snapshot.projectId), handle: snapshot.handle,
     } : null,
-    scope, state, error, register, retry: () => { void verify(undefined, true) },
-  }), [error, register, scope, snapshot, state, verify])
+    scope, state, error, register, retry: () => {
+      if (rendered.current && serverIdentity.current !== projectRouteIdentity(rendered.current)) router.refresh()
+      void verify(undefined, true)
+    },
+  }), [error, register, router, scope, snapshot, state, verify])
   return <ProjectRouteContext.Provider value={value}>{children}</ProjectRouteContext.Provider>
 }
 
@@ -273,9 +288,9 @@ export function useProjectRouteBlocked() {
 
 /** Preserve same-project UI while verifying; withhold actions until evidence recovers. */
 export function ProjectRouteBoundary({ snapshot, children }: PropsWithChildren<{ snapshot: ProjectRouteSnapshot }>) {
-  const { state, error, register, retry } = useContext(ProjectRouteContext)
+  const { state, error, register, retry, scope } = useContext(ProjectRouteContext)
   useLayoutEffect(() => register(snapshot), [register, snapshot])
-  const blocked = state !== 'ready'
+  const blocked = state !== 'ready' || !!(snapshot.handle && scope && scope.identity !== projectRouteIdentity(snapshot))
   return <>
     {blocked && <div className="mx-auto max-w-6xl px-4 py-8" role="status">
       <p>{error ?? 'Checking the project link…'}</p>
