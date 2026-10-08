@@ -739,3 +739,17 @@ The existing dynamic-route loader separately filters deployment-query chunk name
 Review: normalization extractionb1c8a22 preserves all four proof-accounting cases. Applying that owner to the dynamic project loader makes the fifth regression pass after its preserved failure. Corrected matched totals are649,377B baseline and648,889B rebuilt (−488B), both above the old570KiB limit; the change exposes an existing gate gap rather than creating64KiB of new JavaScript. Every wallet/review/diagnostic lazy assertion passes on both artifacts. Home/create/aggregate values remain as recorded above. Five real-checker cases, scoped ESLint and whitespace pass; prior TypeScript check passes with the new budget test. Corrected raw logs are /private/tmp/jb-entry-20261008/{baseline-corrected-budget,images-corrected-budget,budget-versioned-project-before,budget-versioned-project-after,budget-versioned-project-lint}.log. Root owns the explicit evidence-based project-cap decision; no runtime or build changed.
 
 Root’s measured-cap decision: use634KiB for the currently verified633.7KiB project payload, preserving the corrected634.2KiB baseline failure in evidence. This enforces the smaller final payload and records the previously omitted deployment-query chunks explicitly. Any later runtime change requires exact remeasurement against these caps; no aggregate or lazy-boundary exception is added.
+
+
+## Plan refinement
+
+- **Objective:** Keep lazy images sharp during actual pinch zoom, where the visual viewport enlarges pixels without changing devicePixelRatio.
+- **System fit:** The shared responsive-image observer already owns physical pixel demand, source fallback and event cleanup. Extend that owner with visualViewport scale/resize; preserve critical originals, cover/contain rules and all media authority.
+- **Reuse and simplicity:** Multiply the existing demand by scale clamped to at least1 and subscribe the existing check to the browser's native resize event; no polling, alternate renderer or custom srcset.
+- **Evidence and unknowns:** Actual browser QA saw a visible128px derivative at CSS128/DPR1/visualViewport.scale2 despite a4096px original. The owning root design's Zoom acceptance refinement and gate approve this minimal correction; final proof requires the rebuilt browser artifact.
+- **Verification:** Simulate visual viewport resize at scale2, assert original fallback only once and symmetric event cleanup; run focused observer/component cases and scoped lint. QA owns the real pinch regression and root owns the serialized rebuild.
+- **Resource budget:** One shared helper change plus one owning regression and this note; no other runtime edits or full-suite/build duplication.
+
+- [x] Account for native pinch scale and prove fallback/listener cleanup before the final rebuild.
+
+Review: physical-width demand now includes visualViewport scale clamped to1, and the existing fidelity check subscribes/unsubscribes to its native resize event. The regression proves a128CSS-pixel image at DPR1 falls back to the4096px original when scale reaches2, retains that original once at scale3 and removes its callback on cleanup. All28focused observer/component cases plus scoped ESLint, plan and whitespace checks pass. Logs: `/private/tmp/jbm-images-pinch-{tests,lint}.log`. The shared cover/contain and original lifecycle rules are unchanged; the rebuilt browser pinch proof remains root/QA-owned.

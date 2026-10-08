@@ -139,6 +139,32 @@ describe('responsive project image delivery', () => {
     expect(disconnect).toHaveBeenCalledOnce()
   })
 
+  it('preserves sharpness on native pinch zoom and removes the visual viewport listener', () => {
+    vi.stubGlobal('devicePixelRatio', 1)
+    const viewport = Object.assign(new EventTarget(), { scale: 1 })
+    vi.stubGlobal('visualViewport', viewport)
+    const add = vi.spyOn(viewport, 'addEventListener')
+    const remove = vi.spyOn(viewport, 'removeEventListener')
+    const image = loadedImage({ width: 128, height: 128, requestedWidth: 128, sourceWidth: 4096, sourceHeight: 4096 })
+    const onOriginal = vi.fn()
+    const cleanup = observeResponsiveImage(image, onOriginal)
+    expect(image.dataset.originalFallback).toBeUndefined()
+    viewport.scale = 2
+    viewport.dispatchEvent(new Event('resize'))
+    expect(image.src).toBe(original)
+    expect(image.dataset.originalFallback).toBe('true')
+    expect(image.srcset).toBe('')
+    expect(onOriginal).toHaveBeenCalledOnce()
+    viewport.scale = 3
+    viewport.dispatchEvent(new Event('resize'))
+    expect(onOriginal).toHaveBeenCalledOnce()
+    cleanup()
+    expect(remove).toHaveBeenCalledWith('resize', add.mock.calls[0][1])
+    image.style.visibility = 'hidden'
+    viewport.dispatchEvent(new Event('resize'))
+    expect(image.style.visibility).toBe('hidden')
+  })
+
   it('rechecks DPR changes even when the viewport dimensions do not change', () => {
     vi.stubGlobal('devicePixelRatio', 1)
     const media = new EventTarget()
