@@ -2,7 +2,7 @@
 
 import createDOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import { appIpfsUrl } from '@/lib/image-source'
 import { observeResponsiveImage, responsiveImageProps, retryOriginalImage } from '@/lib/responsive-image'
@@ -129,7 +129,7 @@ export function sanitizeRichContent(value: string, imageSizes = '100vw'): string
     if (delivery.sizes) image.setAttribute('sizes', delivery.sizes)
     if (delivery['data-original-src']) {
       image.setAttribute('data-original-src', delivery['data-original-src'])
-      image.style.visibility = 'hidden'
+      image.style.objectFit = 'contain'
     }
     image.setAttribute('src', delivery.src)
     image.setAttribute('loading', 'lazy')
@@ -175,10 +175,10 @@ export function RichContent({
     setSanitized({ source: html, html: sanitizeRichContent(html, imageSizes) })
   }, [html, imageSizes])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cleanups = Array.from(ref.current?.querySelectorAll('img') ?? [], image => observeResponsiveImage(image))
     return () => cleanups.forEach(cleanup => cleanup())
-  }, [sanitizedHtml])
+  }, [sanitizedHtml, className])
 
   if (sanitizedHtml === null) {
     return (

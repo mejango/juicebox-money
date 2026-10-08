@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ImgHTMLAttributes } from 'react'
+import { useLayoutEffect, useRef, useState, type ImgHTMLAttributes } from 'react'
 import { observeResponsiveImage, responsiveImageProps, retryOriginalImage } from '@/lib/responsive-image'
 
 type ResponsiveImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'srcSet' | 'sizes' | 'alt'> & {
@@ -9,15 +9,14 @@ type ResponsiveImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 's
   alt: string
 }
 
-/** Native layout, responsive delivery, and a single original-source retry. */
-export function ResponsiveImage({ src, sizes, alt, loading, fetchPriority, onError, style, ...props }: ResponsiveImageProps) {
+/** Native priority/layout, sized delivery, and terminal original-source recovery. */
+export function ResponsiveImage({ src, sizes, alt, onError, style, ...props }: ResponsiveImageProps) {
   const ref = useRef<HTMLImageElement>(null)
-  const [originalSrc, setOriginalSrc] = useState<string | null>(null)
-  // Critical images must paint before hydration. Their originals also retain
-  // full fidelity when the source aspect ratio is not known on the server.
-  const eager = loading !== 'lazy' || fetchPriority === 'high'
-  const delivery = eager ? { src, style: undefined } : responsiveImageProps(src, sizes, originalSrc === src)
-  useEffect(() => ref.current ? observeResponsiveImage(ref.current, () => setOriginalSrc(src)) : undefined, [src, eager])
+  const [selection, setSelection] = useState<{ source: string; selected: string } | null>(null)
+  const delivery = responsiveImageProps(src, sizes, selection?.source === src ? selection.selected : undefined, style?.objectFit)
+  // Requalify a changed CSS/inline fit before paint, even when its box is unchanged.
+  useLayoutEffect(() => ref.current ? observeResponsiveImage(ref.current, selected => setSelection({ source: src, selected })) : undefined,
+    [src, sizes, style?.objectFit, props.className])
   return (
     // Delivery uses Next's supported getImageProps API; layout stays with callers.
     // eslint-disable-next-line @next/next/no-img-element
@@ -25,13 +24,11 @@ export function ResponsiveImage({ src, sizes, alt, loading, fetchPriority, onErr
       {...props}
       {...delivery}
       alt={alt}
-      loading={loading}
-      fetchPriority={fetchPriority}
       key={src}
       ref={ref}
       style={{ ...style, ...delivery.style }}
       onError={event => {
-        if (retryOriginalImage(event.currentTarget)) setOriginalSrc(src)
+        if (retryOriginalImage(event.currentTarget)) setSelection({ source: src, selected: src })
         else onError?.(event)
       }}
     />

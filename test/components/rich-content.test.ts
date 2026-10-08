@@ -95,14 +95,16 @@ describe('sanitizeRichContent', () => {
   it('replaces injected delivery/fallback attributes only with app-generated values', () => {
     const root = document.createElement('div')
     root.innerHTML = sanitizeRichContent(
-      '<img src="ipfs://QmPhoto" srcset="https://evil.example/low 9999w" sizes="1px" data-original-src="https://evil.example/fallback" style="display:none" onload="alert(1)">' +
+      '<img src="ipfs://QmPhoto" srcset="https://evil.example/low 9999w" sizes="1px" data-original-src="https://evil.example/fallback" data-image-fit="cover" style="display:none" onload="alert(1)">' +
       '<img src="https://example.com/image.png" data-original-src="https://evil.example/fallback" srcset="https://evil.example/low 9999w">',
       '640px',
     )
     const images = root.querySelectorAll('img')
     expect(images[0].dataset.originalSrc).toBe('https://juicebox.center/ipfs/QmPhoto')
     expect(images[0].sizes).toBe('640px')
-    expect(images[0].style.visibility).toBe('hidden')
+    expect(images[0].dataset.imageFit).toBeUndefined()
+    expect(images[0].style.objectFit).toBe('contain')
+    expect(images[0].style.visibility).toBe('')
     expect(root.innerHTML).not.toContain('evil.example')
     expect(root.innerHTML).not.toContain('onload')
     expect(images[1].dataset.originalSrc).toBeUndefined()
