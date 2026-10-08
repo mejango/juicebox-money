@@ -160,7 +160,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
     >
       <div className="callout callout-info text-xs">
         {isConnected
-          ? 'Choose destination chains, then review each shop’s items. Eligible chains use Relayr with one funding transaction; Safe and unsupported chains proceed in separate rounds.'
+          ? 'Choose destination chains, then review each shop’s items. Eligible chains share one funding transaction; Safe and unsupported chains proceed in separate rounds.'
           : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
       </div>
 

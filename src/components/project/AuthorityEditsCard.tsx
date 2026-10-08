@@ -212,7 +212,7 @@ export function AuthorityEditsCard({
       <span className="field-label">Edits</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         Everyday owner/operator changes. Review exactly which chains will
-        change; EOAs sign per-chain requests and pay Relayr once, while Safe
+        change; EOAs sign per-chain requests and pay once, while Safe
         signers propose the same calls to each multisig.
       </p>
 

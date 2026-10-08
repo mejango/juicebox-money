@@ -429,7 +429,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         }
         allRemainingRetryable = false
         status(signed.chainId, { phase: 'uncertain', ...named,
-          error: unproven instanceof Error ? unproven.message : 'Waiting for the original Relayr destination transaction.' })
+          error: unproven instanceof Error ? unproven.message : 'Waiting for the original destination transaction.' })
       }
       if (allDone) return true
       // Every outstanding request is dead and one may have run: only cancelling ends the launch.

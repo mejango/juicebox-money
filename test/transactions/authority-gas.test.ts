@@ -336,7 +336,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     try {
       await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Selection canceled')
       mocks.requireReview.mockImplementation(async review => {
-        if (review.title === 'Review Relayr payment') changed = true
+        if (review.title === 'Review execution payment') changed = true
       })
       await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('The original queue changed during review')
       expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
@@ -1104,7 +1104,7 @@ describe('Authority calls a parent review already covered', () => {
     expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
       'Review relayed transaction',
       'Review relayed transaction',
-      'Review Relayr payment',
+      'Review execution payment',
     ])
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })
@@ -1205,7 +1205,7 @@ describe('One safety-check review per project batch', () => {
       'Review project actions',
       'Review relayed transaction',
       'Review relayed transaction',
-      'Review Relayr payment',
+      'Review execution payment',
     ])
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })

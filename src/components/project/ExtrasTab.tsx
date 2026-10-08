@@ -1,5 +1,6 @@
 'use client'
 
+import { transactionMessage } from '@/lib/transaction-message'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -285,10 +286,10 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                     ) : outcome.hash && explorerTxUrl(outcome.chainId, outcome.hash) ? (
                       <a href={explorerTxUrl(outcome.chainId, outcome.hash)!} target="_blank" rel="noreferrer" className="mt-2 inline-flex text-xs underline">View original transaction</a>
                     ) : <p className="mt-1 text-xs text-smoke-700">{outcome.safeProposalHash ? `Safe proposal ${outcome.safeProposalHash}` : outcome.state === 'sending' ? 'The wallet may have submitted this deployment. Its hash is unavailable.' : 'This address has not been verified yet.'}</p>}
-                    {outcome.error ? <p className="mt-1 text-xs text-red-700">{outcome.error}</p> : null}
+                    {outcome.error ? <p className="mt-1 text-xs text-red-700">{transactionMessage(outcome.error)}</p> : null}
                   </div>
                 ))}
-                {session.quote ? <p className="mt-3 break-all text-xs text-smoke-700">Relayr bundle {session.quote.bundle_uuid}</p> : null}
+                {session.quote ? <p className="mt-3 break-all text-xs text-smoke-700">Bundle {session.quote.bundle_uuid}</p> : null}
                 {!complete ? <button type="button" disabled={busy} onClick={() => void run(session)} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">
                   {busy ? 'Checking deployments…' : session.phase === 'quoted' || session.phase === 'reviewed' ? 'Continue saved deployment' : 'Check deployment status'}
                 </button> : null}
@@ -327,7 +328,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                     <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)} · project #{pid}
                   </label>)}
                 </fieldset>
-                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one Relayr payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
+                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
                 <button onClick={handleReview} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
               </>
             )}
@@ -351,7 +352,7 @@ function payerReviewRows(review: PayerDeploymentSession): TxConfirmRow[] {
   const rows: TxConfirmRow[] = [
     { label: 'Behavior', value: settings.addToBalance ? 'Add to balance' : 'Pay', strong: true },
     ...review.calls.map(call => ({ label: chainName(call.chainId), value: `Project #${call.projectId}` })),
-    { label: 'Execution', value: review.transport === 'relayr' ? 'One Relayr payment; choose where to pay next' : 'Confirm each chain in sequence' },
+    { label: 'Execution', value: review.transport === 'relayr' ? 'One payment; choose where to pay next' : 'Confirm each chain in sequence' },
   ]
   if (!settings.addToBalance) rows.push({ label: 'Tokens go to', value: settings.beneficiary === zeroAddress ? 'Whoever sends the ETH' : settings.beneficiary })
   if (settings.memo) rows.push({ label: 'Memo', value: settings.memo })

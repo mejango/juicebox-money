@@ -181,7 +181,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
     >
       <div className="space-y-5">
         <div className="callout callout-info text-xs">
-          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. All other original metadata fields carry over. Eligible chains use Relayr with one funding transaction; Safe and unsupported chains proceed in separate rounds.
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. All other original metadata fields carry over. Eligible chains share one funding transaction; Safe and unsupported chains proceed in separate rounds.
         </div>
         <label className="block">
           <span className="field-label">New media</span>

@@ -130,7 +130,7 @@ export function AuthorityPowersCard({
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         What each chain’s current rules let the owner do. Enabled powers can be
         used here; disabled ones need a ruleset change. Chain differences stay
-        visible and every write follows the same Safe/Relayr path.
+        visible and every write follows the same review and confirmation flow.
       </p>
 
       {query.isLoading ? (

@@ -38,9 +38,9 @@ for (const environment of environments) {
     await page.goto('/create')
     const dialog = page.getByRole('dialog', { name: 'Confirm launch' })
     await expect(dialog).toBeVisible()
-    await expect(dialog.getByText("Sign each chain's launch request, then review the Relayr quote and pay once.")).toBeVisible()
+    await expect(dialog.getByText("Sign each chain's launch request, then review the quote and pay once.")).toBeVisible()
     await expect(dialog.getByRole('combobox')).toHaveCount(0)
-    await expect(dialog.getByText(/Checking the saved Relayr payment/)).toHaveCount(0)
+    await expect(dialog.getByText(/Checking the saved payment/)).toHaveCount(0)
   })
 
   test(`restores the chosen ${environment.name} funding chain and protects a published launch`, async ({ page }) => {
@@ -70,7 +70,7 @@ for (const environment of environments) {
     await page.goto('/create')
     const dialog = page.getByRole('dialog', { name: 'Confirm launch' })
     await expect(dialog.getByRole('combobox')).toHaveCount(0)
-    await expect(dialog.getByText(`Checking the saved Relayr payment on ${environment.paymentChainName}.`)).toBeVisible()
+    await expect(dialog.getByText(`Checking the saved payment on ${environment.paymentChainName}.`)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Check again', exact: true })).toBeVisible()
     await expect(dialog.getByRole('button', { name: 'Cancel deployment' })).toHaveCount(0)
     await expect(dialog.getByText('This launch has published authorizations that may still execute.', { exact: false })).toBeVisible()

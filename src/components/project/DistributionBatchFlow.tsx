@@ -201,7 +201,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   return <div className="mt-4 space-y-3">
     <button type="button" className="btn-secondary min-h-[40px] px-4 text-sm" disabled={busy} onClick={begin}>{batch?.status === 'pending' ? 'Resume saved distributions' : title}</button>
     {open && !reviewed ? <div className="space-y-4 rounded-xl border border-smoke-200 p-4">
-      <p className="text-sm text-smoke-700">Choose the destination chains. Eligible independent calls share one Relayr payment; Safe and testnet calls continue as separate transactions.</p>
+      <p className="text-sm text-smoke-700">Choose the destination chains. Eligible independent calls share one payment; Safe and testnet calls continue as separate transactions.</p>
       {projectState.projects.map(project => {
         const option = options.data?.find(item => item.project.chainId === project.chainId)
         const payout = option?.payout

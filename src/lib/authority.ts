@@ -509,13 +509,13 @@ export async function runAuthorityCalls({
     if (progress.phase === 'signing') {
       message = `Review and sign ${progress.current}/${progress.total} chain requests…`
     } else if (progress.phase === 'quoting') {
-      message = 'Requesting a Relayr quote…'
+      message = 'Getting payment options…'
     } else if (progress.phase === 'paying') {
-      message = 'Review and confirm one Relayr payment…'
+      message = 'Review and confirm one payment…'
     } else if (progress.phase === 'payment-submitted') {
-      message = `Relayr payment submitted (${progress.paymentHash.slice(0, 10)}…) | bundle ${progress.bundleUuid}. Do not pay again.`
+      message = `Payment submitted (${progress.paymentHash.slice(0, 10)}…) | bundle ${progress.bundleUuid}. Do not pay again.`
     } else if (progress.phase === 'payment-confirmed') {
-      message = `Relayr payment confirmed | bundle ${progress.bundleUuid}. Waiting for destination chains…`
+      message = `Payment confirmed | bundle ${progress.bundleUuid}. Waiting for destination chains…`
     } else {
       const states = progress.records.map((record, index) => {
         const chainId = relayrRecordChain(record)
@@ -526,7 +526,7 @@ export async function runAuthorityCalls({
         const state = record.status?.state || 'Pending'
         return `${chain}: ${state}`
       })
-      message = `Relayr bundle ${progress.bundleUuid} | Relayr reports ${progress.done}/${progress.total} complete; checking onchain${
+      message = `Bundle ${progress.bundleUuid} | Reported status: ${progress.done}/${progress.total} complete; checking onchain${
         states.length ? ` | ${states.join(' | ')}` : ''
       }`
     }

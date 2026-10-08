@@ -964,7 +964,7 @@ async function signForwardedRequest(
     title: 'Review relayed transaction',
     description: [
       context?.description,
-      'Your signature authorizes Relayr to submit this exact destination call onchain. The Raw view includes the full ERC-2771 request. The separate Relayr payment is reviewed before it is sent.',
+      'Your signature authorizes submission of this exact destination call onchain. The Raw view includes the full ERC-2771 request. The separate payment is reviewed before it is sent.',
     ].filter(Boolean).join('\n\n'),
     confirmLabel: 'Agree & sign relay request',
     authorization: {
@@ -1144,11 +1144,11 @@ export async function relayrPay({
   await requireRelayrPaymentRuntime(client)
 
   await requireTransactionReview({
-    title: 'Review Relayr payment',
+    title: 'Review execution payment',
     description: [note,
-      'This payment funds the Relayr bundle. Review its exact chain, destination, native value, and calldata before opening your wallet.',
+      'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
     ].filter(Boolean).join(' '),
-    confirmLabel: 'Agree & pay Relayr',
+    confirmLabel: 'Pay',
     calls: [
       {
         chainId,
@@ -1158,7 +1158,7 @@ export async function relayrPay({
         gas: RELAYR_PAYMENT_GAS,
         data: reviewed.calldata,
         label: 'Pay for relayed transactions',
-        contractName: 'Relayr prepaid payment',
+        contractName: 'Prepaid payment',
       },
     ],
   })

@@ -1,5 +1,6 @@
 'use client'
 
+import { transactionMessage } from '@/lib/transaction-message'
 import { useState } from 'react'
 import type { RelayrDiscardReason } from '@bananapus/nana-sdk-core/review/relayr'
 import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError } from '@/lib/relayr'
@@ -40,7 +41,7 @@ export function RelayrDiscard({ scope, reason, paymentUnmatched, onDiscarded }: 
       >
         {busy ? 'Discarding…' : 'Discard'}
       </button>
-      {error ? <p className="text-xs text-red-700">{error}</p> : null}
+      {error ? <p className="text-xs text-red-700">{transactionMessage(error)}</p> : null}
     </div>
   )
 }

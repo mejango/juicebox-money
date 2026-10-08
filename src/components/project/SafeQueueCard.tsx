@@ -1,5 +1,6 @@
 "use client";
 
+import { transactionMessage } from '@/lib/transaction-message'
 import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 
@@ -799,9 +800,10 @@ function initialPaymentIndex(payments: readonly RelayrPayment[]): number {
 
 const PHASE_LABELS: Record<SafeRelayrPhase, string> = {
   reviewing: 'Review the Safe executions…',
-  quoting: 'Requesting Relayr quote…',
-  'payment-review': 'Review the Relayr payment…',
-  'payment-submitting': 'Confirm the Relayr payment in your wallet…',
+  quoting: 'Getting payment options…',
+  'payment-review': 'Preparing payment…',
+  'payment-checking': 'Checking before payment…',
+  'payment-submitting': 'Confirm the payment in your wallet…',
   'payment-confirming': 'Confirming payment…',
   executing: 'Waiting for the Safe executions to confirm…',
   complete: 'All Safe executions confirmed.',
@@ -1482,9 +1484,12 @@ export function SafeQueueCard({
     const state = paidRecord(chainId)?.status?.state;
     if (relayrStateIsFailed(state)) return "Failed";
     if (relayrStateIsSuccess(state) || (paidRecord(chainId) && relayrDestinationHash(paidRecord(chainId)!))) return "Confirming…";
-    return pendingSession.paymentStatus === "confirmed"
-      ? "Executing…"
-      : "Waiting for payment";
+    if (pendingSession.paymentStatus === "confirmed") return "Executing…";
+    if (pendingSession.paymentStatus === "sending" || pendingSession.paymentStatus === "submitted" ||
+        pendingSession.paymentHash || pendingSession.safeLifecycle?.fundingObserved || recovery?.fundingObserved) {
+      return "Checking payment status…";
+    }
+    return "Waiting for payment";
   };
 
   const payment = batchReview?.payments[paymentIndex];
@@ -1492,7 +1497,7 @@ export function SafeQueueCard({
   const executeAllDialog = (
     <ModalShell
       title={`Execute ${batchRows.length} Safe transactions`}
-      subtitle="One Relayr payment runs each chain's next confirmed transaction. Later nonces need a new review after these land."
+      subtitle="One payment executes each chain's next fully signed transaction. Later nonces need a new review after these land."
       busy={busy === "execute-all"}
       onClose={closeExecuteAll}
       footer={
@@ -1556,7 +1561,7 @@ export function SafeQueueCard({
                 ? "Executing…"
                 : busy === "quote-all"
                   ? "Checking…"
-                  : `Pay once and execute ${batchRows.length}`}
+                  : "Pay"}
             </button>
           </div>
         )
@@ -1614,10 +1619,10 @@ export function SafeQueueCard({
           rel="noreferrer"
           className="mt-3 inline-flex text-xs text-bluebs-600 underline"
         >
-          Relayr payment on {chainName(pendingSession.paymentChainId)} ↗
+          Payment on {chainName(pendingSession.paymentChainId)} ↗
         </a>
       ) : null}
-      {notice && !preparingBatch ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {notice && !preparingBatch ? <p className="mt-3 text-sm text-smoke-700">{transactionMessage(notice)}</p> : null}
       {recoveryResult?.recovery ? (
         <ul className="mt-3 space-y-1 text-sm">
           {batchRows.map(row => {
@@ -1737,7 +1742,7 @@ export function SafeQueueCard({
 
                 {chain.error ? (
                   <div className="px-4 py-4 text-sm">
-                    <p className="text-red-700">{chain.error}</p>
+                    <p className="text-red-700">{transactionMessage(chain.error)}</p>
                     <button type="button" className="btn-secondary mt-3 px-3 py-2" disabled={query.isFetching || !!busy}
                       onClick={() => void query.refetch()}>
                       {query.isFetching ? "Retrying…" : `Retry ${chain.name}`}
@@ -1905,7 +1910,7 @@ export function SafeQueueCard({
           })}
         </div>
 
-      {!batchOpen && notice ? <p className="mt-3 text-sm text-smoke-700">{notice}</p> : null}
+      {!batchOpen && notice ? <p className="mt-3 text-sm text-smoke-700">{transactionMessage(notice)}</p> : null}
       {!batchOpen ? <TxError error={error} /> : null}
     </section>
   );
