@@ -4,10 +4,11 @@
     "public/examples/*.mjs",
     "scripts/check-browser-build-data.ts",
     "scripts/check-deployment-env.d.mts",
+    "scripts/prepare-image-optimizer.d.mts",
     "scripts/start-production.mjs",
     "scripts/verify-cash-out.ts",
     "scripts/verify-manage.ts",
-    "src/app/**/page.browsertest.tsx",
+    "src/app/**/{page,route}.browsertest.tsx",
     "src/vendor/HeartbeatWorker.js",
     "test/browser/fail-fast-service.mjs"
   ],
