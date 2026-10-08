@@ -84,6 +84,24 @@ describe('responsive project image delivery', () => {
     cleanup()
   })
 
+  it('ignores an old observer after React switches the element to an eager original', () => {
+    const image = loadedImage()
+    const onError = vi.fn()
+    image.addEventListener('error', onError)
+    const cleanup = observeResponsiveImage(image)
+    delete image.dataset.originalSrc
+    image.removeAttribute('srcset')
+    image.src = original
+    image.dispatchEvent(new Event('load'))
+    expect(onError).not.toHaveBeenCalled()
+    expect(image.style.visibility).toBe('')
+    Object.defineProperty(image, 'complete', { value: false })
+    window.dispatchEvent(new Event('resize'))
+    expect(image.style.visibility).toBe('')
+    expect(onError).not.toHaveBeenCalled()
+    cleanup()
+  })
+
   it('retries a failed request that completed before hydration, then reports final failure once', () => {
     const image = loadedImage({ sourceWidth: 0, sourceHeight: 0 })
     const onOriginal = vi.fn()
