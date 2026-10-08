@@ -39,7 +39,11 @@ const budgets = {
     // 448,954 -> 449,991 B after separating image URLs from numeric formatting.
     // Keep the new shared fidelity policy; round its measured total only.
     '/page': 440 * KIB,
-    '/[urn]/page': 570 * KIB,
+    // The old loader omitted ?dpl-suffixed client-manifest chunks. Correct
+    // accounting measures baseline 649,377 B and current 648,889 B (-488 B).
+    // Round the smaller current payload to 634 KiB; the 634.2 KiB baseline
+    // failure remains recorded rather than misattributed to responsive images.
+    '/[urn]/page': 634 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
     // It shares home's chunks, so SDK 2.12.1 and the shop-read split land here too
