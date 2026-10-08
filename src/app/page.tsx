@@ -369,7 +369,6 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
               name={card.name}
               logoUri={card.logoUri}
               size={40}
-              eager={index < 4}
             />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
@@ -419,7 +418,6 @@ function NewProjectRows({ projects }: { projects: NewProject[] }) {
               name={project.name}
               logoUri={project.logoUri}
               size={40}
-              eager={index < 4}
             />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">

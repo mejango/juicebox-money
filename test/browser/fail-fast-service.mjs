@@ -546,6 +546,27 @@ const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
   },
 }))
 
+// Feed-specific logos expose hidden eager requests without changing project-page data.
+const homepageLogo = feed => `ipfs://QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR/homepage-${feed}`
+const homepageTopGroups = [20, 21, 22, 23, 24].map((projectId, index) => {
+  const id = `browser-top-${projectId}`
+  return {
+    id,
+    balance: '100000000',
+    volume: '100000000',
+    projects: {
+      items: [{
+        ...project,
+        projectId,
+        name: `Browser Top ${index + 1}`,
+        logoUri: homepageLogo(`top-${index + 1}`),
+        balance: '100000000',
+        suckerGroupId: id,
+      }],
+    },
+  }
+})
+
 const graphqlFixtures = [
   {
     name: 'pendingPayments',
@@ -757,7 +778,41 @@ const graphqlFixtures = [
       }
     }`,
     variables: { limit: 250, offset: 0 },
-    data: { suckerGroups: { items: [], totalCount: 0 } },
+    data: { suckerGroups: { items: homepageTopGroups, totalCount: homepageTopGroups.length } },
+  },
+  {
+    name: 'homepageGroupHistory',
+    query: `query($suckerGroupId: String!, $limit: Int!, $offset: Int!) {
+  suckerGroupMoments(
+    where: { suckerGroupId: $suckerGroupId, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp balance volume volumeUsd balanceUsd tokenSupply accountingTokenUsdRate }
+    totalCount
+  }
+}`,
+    variables: homepageTopGroups.map(group => ({ suckerGroupId: group.id, limit: 1000, offset: 0 })),
+    data: { suckerGroupMoments: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageProjectHistory',
+    query: `query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {
+  projectMoments(
+    where: { projectId: $projectId, chainId: $chainId, version: $version }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp balance }
+    totalCount
+  }
+}`,
+    variables: homepageTopGroups.map(group => ({ projectId: group.projects.items[0].projectId, chainId: CHAIN_ID, version: 6, limit: 1000, offset: 0 })),
+    data: { projectMoments: { items: [], totalCount: 0 } },
   },
   {
     name: 'homepageAddToBalanceInflows',
@@ -798,7 +853,7 @@ const graphqlFixtures = [
             projectId: project.projectId,
             chainId: project.chainId,
             name: project.name,
-            logoUri: project.logoUri,
+            logoUri: homepageLogo('new'),
             metadataUri: project.metadataUri,
             projectTagline: project.projectTagline,
             createdAt: project.createdAt,
@@ -844,7 +899,7 @@ const graphqlFixtures = [
                   projectId: PROJECT_ID,
                   chainId: CHAIN_ID,
                   name: 'Browser Fixture Project',
-                  logoUri: null,
+                  logoUri: homepageLogo('trending'),
                   metadataUri: null,
                   projectTagline: 'Deterministic V6 trending card.',
                   tokenSymbol: 'USDC',
@@ -905,7 +960,7 @@ const graphqlFixtures = [
             from: '0x2222222222222222222222222222222222222222',
             project: {
               name: 'Browser Fixture Project',
-              logoUri: null,
+              logoUri: homepageLogo('activity'),
               metadataUri: null,
               tokenSymbol: 'USDC',
               decimals: 6,

@@ -1,3 +1,4 @@
+import { fulfillHomepageImage } from './homepage-images'
 import AxeBuilder from '@axe-core/playwright'
 import {
   expect,
@@ -39,6 +40,7 @@ function isLocalHostname(hostname: string) {
 async function blockExternalTraffic(context: BrowserContext) {
   const attempts = { http: [] as string[], webSockets: [] as string[] }
   await context.route(/^https?:\/\//, async route => {
+    if (await fulfillHomepageImage(route)) return
     const url = route.request().url()
     if (isLocalHostname(new URL(url).hostname)) {
       await route.continue()
@@ -543,8 +545,8 @@ for (const viewport of viewports) {
             name: 'Open Browser Fixture Project',
             exact: true,
           })
-          // The responsive discovery layout starts on Latest (phones) or Top
-          // (tablet/desktop). Select Trending when it is not concurrently
+          // The responsive discovery layout starts on Top at every width.
+          // Select Trending when it is not concurrently
           // visible at the xl layout before asserting its fixture card.
           if (viewport.width < 1280) {
             const label = viewport.width < 640

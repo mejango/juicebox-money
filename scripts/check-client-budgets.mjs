@@ -38,7 +38,10 @@ const budgets = {
     // Responsive delivery adds 1,037 B on the matching physical install:
     // 448,954 -> 449,991 B after separating image URLs from numeric formatting.
     // Keep the new shared fidelity policy; round its measured total only.
-    '/page': 440 * KIB,
+    // Hidden-feed polling visibility/abort/resume adds 367 B on the same
+    // locked graph: 450,424 -> 450,791 B. Round only this route's cost;
+    // retain every other budget and the existing lazy-loading assertions.
+    '/page': 441 * KIB,
     // The old loader omitted ?dpl-suffixed client-manifest chunks. Correct
     // accounting measures baseline 649,377 B and current 648,889 B (-488 B).
     // Round the smaller current payload to 634 KiB; the 634.2 KiB baseline

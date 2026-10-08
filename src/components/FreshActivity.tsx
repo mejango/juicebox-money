@@ -1,7 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
@@ -37,21 +37,40 @@ export function FreshActivity({
   initialEvents: BsFreshActivityEvent[]
   initialHasMore: boolean
 }) {
+  const listRef = useRef<HTMLUListElement>(null)
   const [events, setEvents] = useState(initialEvents)
   const [hasMore, setHasMore] = useState(initialHasMore)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const isVisible = () =>
+      document.visibilityState !== 'hidden' && list.getClientRects().length > 0
+    let active = isVisible()
     let stopped = false
+    let timer: ReturnType<typeof setInterval> | undefined
+    let inFlight: AbortController | undefined
+    let refreshOnResume = false
+
     const tick = async () => {
-      if (document.visibilityState === 'hidden') return
+      if (stopped || !active || inFlight) return
+      if (!isVisible()) {
+        updateVisibility()
+        return
+      }
+      refreshOnResume = false
+      const controller = new AbortController()
+      inFlight = controller
       try {
-        const res = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=0`)
+        const res = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=0`, {
+          signal: controller.signal,
+        })
         if (!res.ok) return
         const json = (await res.json()) as {
           events?: BsFreshActivityEvent[]
         }
-        if (!stopped && json.events?.length) {
+        if (!stopped && !controller.signal.aborted && isVisible() && json.events?.length) {
           setEvents(current => [
             ...json.events!,
             ...current.filter(
@@ -60,13 +79,51 @@ export function FreshActivity({
           ])
         }
       } catch {
-        // Transient — the next tick retries.
+        // Transient — the next visible tick retries.
+      } finally {
+        inFlight = undefined
+        // A reveal may have happened while an aborted request was still settling.
+        if (refreshOnResume && !stopped && active) void tick()
       }
     }
-    const t = setInterval(tick, POLL_MS)
+    function updateVisibility() {
+      if (stopped) return
+      const visible = isVisible()
+      if (visible === active) return
+      active = visible
+      clearInterval(timer)
+      refreshOnResume = visible
+      if (visible) {
+        timer = setInterval(tick, POLL_MS)
+        void tick()
+      } else {
+        inFlight?.abort()
+      }
+    }
+
+    // Preserve server rows without an immediate duplicate fetch on initial display.
+    if (active) timer = setInterval(tick, POLL_MS)
+    const observer = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(updateVisibility)
+    observer?.observe(list)
+    // Older browsers still detect hidden ancestor classes and viewport changes.
+    const fallback = !observer && typeof MutationObserver !== 'undefined'
+      ? new MutationObserver(updateVisibility)
+      : undefined
+    for (let node: HTMLElement | null = list; fallback && node; node = node.parentElement) {
+      fallback.observe(node, { attributes: true, attributeFilter: ['class', 'style', 'hidden'] })
+    }
+    if (!observer) window.addEventListener('resize', updateVisibility)
+    document.addEventListener('visibilitychange', updateVisibility)
     return () => {
       stopped = true
-      clearInterval(t)
+      clearInterval(timer)
+      inFlight?.abort()
+      observer?.disconnect()
+      fallback?.disconnect()
+      if (!observer) window.removeEventListener('resize', updateVisibility)
+      document.removeEventListener('visibilitychange', updateVisibility)
     }
   }, [])
 
@@ -99,15 +156,15 @@ export function FreshActivity({
   const markerRef = useInfiniteScroll({ hasMore, loading, loadMore })
 
   return (
-    <ul className="min-h-[420px] divide-y divide-smoke-100">
+    <ul ref={listRef} className="min-h-[420px] divide-y divide-smoke-100">
       {events.length === 0 ? (
         <li className="flex min-h-[420px] items-center justify-center px-6 text-center text-sm text-smoke-600">
           No recent activity yet.
         </li>
       ) : (
         <>
-          {groupSameTxEvents(events).map((group, index) => (
-            <Row key={group[0].id} group={group} eagerLogo={index < 4} />
+          {groupSameTxEvents(events).map(group => (
+            <Row key={group[0].id} group={group} />
           ))}
           {(hasMore || loading) && (
             <li
@@ -126,13 +183,7 @@ export function FreshActivity({
   )
 }
 
-function Row({
-  group,
-  eagerLogo,
-}: {
-  group: BsFreshActivityEvent[]
-  eagerLogo: boolean
-}) {
+function Row({ group }: { group: BsFreshActivityEvent[] }) {
   const event = group[0]
   const name = event.project?.name ?? `Project ${event.projectId}`
   const href = `/${toUrn(event.chainId, event.projectId)}`
@@ -180,7 +231,6 @@ function Row({
             name={name}
             logoUri={event.project?.logoUri ?? null}
             size={46}
-            eager={eagerLogo}
           />
         </ProjectLink>
         <div className="min-w-0 flex-1">

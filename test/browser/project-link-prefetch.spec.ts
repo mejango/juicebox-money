@@ -1,3 +1,4 @@
+import { fulfillHomepageImage } from './homepage-images'
 import { expect, test, type Page } from '@playwright/test'
 
 // Next re-requests a prefetch without end once more than four links to a
@@ -39,6 +40,7 @@ test('home settles with more than four project links in view', async ({
   page,
 }) => {
   await context.route(/^https?:\/\//, async route => {
+    if (await fulfillHomepageImage(route)) return
     const { hostname } = new URL(route.request().url())
     if (['127.0.0.1', 'localhost', '::1'].includes(hostname)) {
       await route.continue()
