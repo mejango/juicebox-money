@@ -1,10 +1,12 @@
 import sharp from 'sharp'
-import { animatedAvifBase64 } from '../../../../test/fixtures/image-optimizer-animated'
+import { animatedAvifBase64 } from '../../../../../test/fixtures/image-optimizer-animated'
 
 // Deterministic-browser-only originals for real Next optimizer integration.
 // No arbitrary source/dimensions; pageExtensions excludes this route on release.
 export async function GET(request: Request) {
-  const kind = new URL(request.url).searchParams.get('kind') ?? 'raster'
+  const match = new URL(request.url).pathname.split('/').at(-1)?.match(/^(raster|panorama|alpha|svg|gif|avif|avis)(?:-[0-9]+)?$/)
+  const kind = match?.[1]
+  if (!kind) return new Response('Unknown fixture', { status: 404 })
   if (kind === 'avif' || kind === 'avis') {
     const bytes = Buffer.from(animatedAvifBase64, 'base64')
     if (kind === 'avis') bytes.write('avis', 8, 'ascii')

@@ -27,7 +27,7 @@ async function fixture(browser: Browser, baseURL: string, width: number, density
       // Only fixture CIDs are remapped. The app emits its real allowlisted URL;
       // Next receives a deterministic internal original and does the actual work.
       // This proves router/decoder/rendering integration, not live gateway latency.
-      const source = `/image-proof/source?kind=${kind === 'recover' ? 'raster' : kind}`
+      const source = `/image-proof/source/${kind === 'recover' ? 'raster' : kind}`
       const target = new URL(optimized ? '/_next/image' : source, baseURL)
       if (optimized) {
         target.search = requested.search
@@ -150,7 +150,7 @@ test('resize and density changes keep source detail; failures and animations rec
       const image = await loaded(page, `${kind} animation`)
       if (kind === 'avis') await expect(image).toHaveAttribute('data-original-fallback', 'true')
       const selected = deliveries.get(await image.evaluate((element: HTMLImageElement) => element.currentSrc))!
-      const original = await context.request.get(`${baseURL}/image-proof/source?kind=${kind}`)
+      const original = await context.request.get(`${baseURL}/image-proof/source/${kind}`)
       expect(selected.bytes.equals(await original.body()), `${kind} bytes must remain untouched`).toBe(true)
     }
     const gif = await loaded(page, 'gif animation')
@@ -173,7 +173,7 @@ test('eager project imagery paints the original before hydration', async ({ brow
 })
 
 test('the real optimizer transforms a cold raster and reuses identical cached bytes', async ({ request }, testInfo) => {
-  const source = `/image-proof/source?kind=raster&probe=${Date.now()}`
+  const source = `/image-proof/source/raster-${Date.now()}`
   const url = `/_next/image?${new URLSearchParams({ url: source, w: '128', q: '90' })}`
   const original = await request.get(source)
   expect(original.ok()).toBe(true)
