@@ -75,6 +75,8 @@ async function displayedPixels(page: Page, alt: string, deliveries: Map<string, 
 
 async function originalDifference(page: Page, alt: string) {
   const image = await loaded(page, alt)
+  await expect(image).not.toHaveAttribute('data-original-fallback', 'true')
+  expect(await image.evaluate((element: HTMLImageElement) => element.currentSrc)).toContain('/_next/image?')
   const optimized = await image.screenshot()
   await image.evaluate((element: HTMLImageElement) => {
     const original = element.dataset.originalSrc!
@@ -149,6 +151,10 @@ test('resize and density changes keep source detail; failures and animations rec
     for (const kind of ['gif', 'avif', 'avis']) {
       const image = await loaded(page, `${kind} animation`)
       if (kind === 'avis') await expect(image).toHaveAttribute('data-original-fallback', 'true')
+      else {
+        await expect(image).not.toHaveAttribute('data-original-fallback', 'true')
+        expect(await image.evaluate((element: HTMLImageElement) => element.currentSrc)).toContain('/_next/image?')
+      }
       const selected = deliveries.get(await image.evaluate((element: HTMLImageElement) => element.currentSrc))!
       const original = await context.request.get(`${baseURL}/image-proof/source/${kind}`)
       expect(selected.bytes.equals(await original.body()), `${kind} bytes must remain untouched`).toBe(true)
