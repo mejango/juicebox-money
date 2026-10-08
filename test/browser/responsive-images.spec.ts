@@ -70,8 +70,8 @@ async function loaded(page: Page, alt: string) {
   return image
 }
 
-async function displayedPixels(page: Page, alt: string, deliveries: Map<string, Delivery>, waitForLoad = true) {
-  const image = waitForLoad ? await loaded(page, alt) : imageLocator(page, alt)
+async function displayedPixels(page: Page, alt: string, deliveries: Map<string, Delivery>) {
+  const image = await loaded(page, alt)
   const display = await image.evaluate((element: HTMLImageElement) => {
     const box = element.getBoundingClientRect()
     return { src: element.currentSrc, width: box.width, height: box.height, fit: getComputedStyle(element).objectFit, density: window.devicePixelRatio, scale: Math.max(1, window.visualViewport?.scale ?? 1), original: element.dataset.originalFallback === 'true' || !element.currentSrc.includes('/_next/image') }
@@ -100,12 +100,16 @@ async function originalDifference(page: Page, alt: string) {
   })
   await loaded(page, alt)
   const original = await image.screenshot()
-  const a = await sharp(optimized).ensureAlpha().raw().toBuffer()
-  const b = await sharp(original).ensureAlpha().raw().toBuffer()
+  return { difference: await channelDifference(optimized, original), optimized, original }
+}
+
+async function channelDifference(first: Buffer, second: Buffer) {
+  const a = await sharp(first).ensureAlpha().raw().toBuffer()
+  const b = await sharp(second).ensureAlpha().raw().toBuffer()
   expect(a.length).toBe(b.length)
   let difference = 0
   for (let index = 0; index < a.length; index += 1) difference += Math.abs(a[index] - b[index])
-  return { difference: difference / a.length, optimized, original }
+  return difference / a.length
 }
 
 // Revnet's suite repeats tests at five viewports; this test supplies its own
@@ -270,10 +274,26 @@ test('a delayed larger crop stays visibly contained until enough pixels arrive',
     await image.scrollIntoViewIfNeeded()
     await expect(image).toHaveCSS('object-fit', 'contain')
     await expect(image).toHaveCSS('visibility', 'visible')
-    const pending = await displayedPixels(page, 'Critical inline cover', deliveries, false)
-    expect(pending.original).toBe(false)
-    expect(pending.decodedWidth).toBe(128)
-    await testInfo.attach('cover-delayed-contained', { body: await image.screenshot(), contentType: 'image/png' })
+    // Chromium clears currentSrc/naturalWidth while replacing srcset with src,
+    // although it still paints the prior bitmap. Verify that bitmap directly
+    // against the captured decoded response before unblocking the larger body.
+    const pending = await image.evaluate((element: HTMLImageElement) => ({
+      currentSrc: element.currentSrc, src: element.src, complete: element.complete,
+      naturalWidth: element.naturalWidth, naturalHeight: element.naturalHeight,
+      fit: getComputedStyle(element).objectFit, visibility: getComputedStyle(element).visibility,
+      width: element.getBoundingClientRect().width, height: element.getBoundingClientRect().height,
+    }))
+    const retained = [...deliveries].find(([src]) => new URL(src).searchParams.get('url') === `${sourcePrefix}transition` && new URL(src).searchParams.get('w') === '128')
+    expect(retained, 'The initial response must have completed before the upgrade').toBeDefined()
+    expect(retained![1].width).toBe(128)
+    expect(retained![1].height).toBe(16)
+    const screenshot = await image.screenshot()
+    const reference = await sharp(retained![1].bytes).resize({ width: pending.width, height: pending.height, fit: 'contain', background: '#fff' }).png().toBuffer()
+    const difference = await channelDifference(screenshot, reference)
+    expect(difference, 'Pending paint must retain the actual sharp contained bitmap').toBeLessThan(1)
+    const retainedBitmap = { src: retained![0], decodedWidth: retained![1].width, decodedHeight: retained![1].height, bytes: retained![1].bytes.length, difference }
+    await testInfo.attach('cover-delayed-contained', { body: screenshot, contentType: 'image/png' })
+    await testInfo.attach('cover-delayed-known-body-reference', { body: reference, contentType: 'image/png' })
     releaseCover()
     await expect(image).toHaveCSS('object-fit', 'cover')
     const final = await displayedPixels(page, 'Critical inline cover', deliveries)
@@ -281,6 +301,6 @@ test('a delayed larger crop stays visibly contained until enough pixels arrive',
     expect(final.decodedWidth).toBeGreaterThanOrEqual(final.required)
     expect(final.decodedWidth).toBe(1080)
     await testInfo.attach('cover-delayed-restored', { body: await image.screenshot(), contentType: 'image/png' })
-    await testInfo.attach('cover-transition-delivery', { body: JSON.stringify({ pending, final }, null, 2), contentType: 'application/json' })
+    await testInfo.attach('cover-transition-delivery', { body: JSON.stringify({ pending, retainedBitmap, final }, null, 2), contentType: 'application/json' })
   } finally { releaseCover(); await context.close() }
 })
