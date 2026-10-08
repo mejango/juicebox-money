@@ -604,7 +604,7 @@ Verification: the complete affected launch spec runs against the preserved, sour
 
 - [x] Inventory existing image owners and consumers; read pinned Ponytail, refinement requirements, lessons and installed Next image docs.
 - [x] Receive accepted MIME/quality policy and implement shared delivery plus all relevant consumers.
-- [ ] Run focused and repository checks; preserve evidence and hand exact commits to root for production/browser review.
+- [x] Run focused and repository checks; preserve evidence and hand exact commits to root for production/browser review.
 
 ### Review
 
@@ -620,7 +620,7 @@ Root still owns integrated entry changes, production build/budgets, real-browser
 - [x] Isolate guide/create speculation in a matched, three-run mobile control.
 - [x] Add the browser regression and preserve its failure against the unchanged artifact.
 - [x] Disable only the four measured guide/create Link prefetches; run focused static checks and prepare the separate commit.
-- [ ] Integrate through the owning image worktree, then qualify the actual combined production artifact and repeat matched timing.
+- [x] Integrate through the owning image worktree, then qualify the actual combined production artifact and repeat matched timing.
 
 ## Plan refinement
 
@@ -671,7 +671,7 @@ Review: only the existing deterministic APP_ROUTES branch gains image-proof, cov
 - [x] Extract the unchanged image URL rules from numeric formatting and migrate every caller.
 - [x] Verify exact extracted bytes plus owning URL, component and metadata checks; commit separately.
 - [x] Reuse Revnet's proof-route budget exclusion, retaining all shared/runtime assets; compare the same baseline and add a regression.
-- [ ] Rebuild once through root, then judge the new route/aggregate totals and final performance evidence.
+- [x] Rebuild once through root, then judge the new route/aggregate totals and final performance evidence.
 
 ## Plan refinement
 
@@ -753,3 +753,12 @@ Root’s measured-cap decision: use634KiB for the currently verified633.7KiB pro
 - [x] Account for native pinch scale and prove fallback/listener cleanup before the final rebuild.
 
 Review: physical-width demand now includes visualViewport scale clamped to1, and the existing fidelity check subscribes/unsubscribes to its native resize event. The regression proves a128CSS-pixel image at DPR1 falls back to the4096px original when scale reaches2, retains that original once at scale3 and removes its callback on cleanup. All28focused observer/component cases plus scoped ESLint, plan and whitespace checks pass. Logs: `/private/tmp/jbm-images-pinch-{tests,lint}.log`. The shared cover/contain and original lifecycle rules are unchanged; the rebuilt browser pinch proof remains root/QA-owned.
+
+
+### Coordinator final verification — 2026-10-08
+
+Responsive lazy images preserve original metadata and use full-source fallback for insufficient crop, density or pinch-zoom detail. Eager originals paint before hydration. All 2,813 unit/coverage tests, 69 full browser tests, five image-quality cases, source/type/lint/dependency/advisory/protocol checks and corrected bundle budgets pass. The full browser rerun had no retries; the earlier contended failure and interrupted coverage run remain in the workspace evidence.
+
+The clean Linux ARM64 OCI build at `4b3a9602c734cabf62b032832422a409dfce2fb0` passed non-root/read-only health and revision checks, actual quality-75/90 image decoding, exclusion of both proof routes, and the pinned runtime optimizer hash. Final application source is unchanged by this task-note commit. No push, merge or deployment was performed.
+
+The matched entry journey removes eight speculative guide/create requests and 60,543 script-response bytes. Mobile medians were 2376.5 → 1716.8 ms; another workspace build overlapped baseline sampling, so this is an observed local result, not an isolated or live latency claim. Full evidence, source/artifact provenance and retained failures are in the workspace root at `docs/performance/2026-10-08-website-images/` and the owning implementation plan.
