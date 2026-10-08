@@ -12,4 +12,9 @@
 !public/**
 !scripts/
 !scripts/**
+!test/
+test/*
+!test/fixtures/
+test/fixtures/*
+!test/fixtures/image-optimizer-animated.ts
 .env*
