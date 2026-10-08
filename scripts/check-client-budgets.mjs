@@ -35,7 +35,11 @@ const budgets = {
     // Bounded alias navigation adds its shared identity gate. On matching
     // physical locked installs, 096540c/f5e293f measure 447,195/448,951 B.
     // Heavy read/controller imports were separated before rounding this cost.
-    '/page': 439 * KIB,
+    // SDK 2.25.0 reconciliation on matched physical Node26.7/npm12 builds:
+    // 6a0598d -> 7e39b80 measures home 448,960 -> 449,801 B (+841 B).
+    // Per-component persisted-query hydration and final wallet guards stay
+    // eager where needed. Round only this measured route cost to 440 KiB.
+    '/page': 440 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -61,7 +65,12 @@ const budgets = {
     // Service-neutral status/error presentation measures 518,999 -> 519,278 B
     // (+279 B) on the matching physical locked graph. Its import-free formatter
     // stays in create's existing chunk; round only this measured route cost.
-    '/create/page': 508 * KIB,
+    // The same comparison measures create 519,284 -> 521,420 B (+2,136 B).
+    // Exact saved-call recovery and final wallet checks are required. The
+    // failure-only SDK proof is already lazy; its 327 B local adapter appears
+    // once here, not on home. Independent review rejected another recovery
+    // chunk that adds loading/compression cost without solving aggregate growth.
+    '/create/page': 510 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -190,7 +199,13 @@ const budgets = {
   // Webpack emits the small formatter in create and an existing shared lazy
   // chunk; all 185 chunks and initial-route file counts remain unchanged.
   // Round this cost; home/project/largest/style/lazy limits stay fixed.
-  allScripts: 2535 * KIB,
+  // Shared SDK 2.25.0 rules, hydration and durable wallet recovery measure
+  // 2,595,769 -> 2,597,812 B (+2,043 B) on that matched physical graph.
+  // Both builds emit 185 chunks; largest chunk (429,344 B), styles (18,872 B)
+  // and every lazy wallet/dialog boundary are unchanged. Independent review
+  // accepts rounding only this measured aggregate to 2537 KiB (76 B headroom).
+  // First hosted failure: CI37724379008; exact comparison is in tasks/todo.md.
+  allScripts: 2537 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

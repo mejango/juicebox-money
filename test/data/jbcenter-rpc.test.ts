@@ -107,7 +107,7 @@ describe('Juicebox Center RPC transport', () => {
       })),
     }
     vi.stubGlobal('window', browserWindow)
-    const chains = [1, 10, 8453, 42161]
+    const chains = Array.from({ length: 12 }, (_, index) => [1, 10, 8453, 42161][index % 4])
     const requests = chains.map(chainId =>
       createPublicClient({ transport: transport(chainId) }).getChainId(),
     )
@@ -117,8 +117,37 @@ describe('Juicebox Center RPC transport', () => {
     expect(browserWindow.fetch).toHaveBeenCalledTimes(3)
     await vi.advanceTimersByTimeAsync(1)
     expect(browserWindow.fetch).toHaveBeenCalledTimes(4)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(browserWindow.fetch).toHaveBeenCalledTimes(12)
     releases.reverse().forEach(release => release())
     await expect(Promise.all(requests)).resolves.toEqual(chains)
   })
 
+
+  it('waits through a 60-second browser cooldown before starting request timeouts', async () => {
+    vi.useFakeTimers()
+    vi.resetModules()
+    const { jbCenterRpcTransport: transport } = await import('@/lib/jbcenter-rpc')
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.signal?.aborted) throw init.signal.reason
+      if (fetchMock.mock.calls.length === 1) {
+        return Response.json({}, { status: 429, headers: { 'Retry-After': '60' } })
+      }
+      const { id } = JSON.parse(String(init?.body)) as { id: number }
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id, result: '0x1' }), {
+        headers: { 'content-type': 'application/json' },
+      })
+    })
+    vi.stubGlobal('window', { fetch: fetchMock })
+    const outcomes: unknown[] = []
+    const requests = [1, 1].map(() => createPublicClient({ transport: transport(1) }).getChainId()
+      .then(result => { outcomes.push(result) }, error => { outcomes.push(error) }))
+    await vi.advanceTimersByTimeAsync(59_999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(outcomes).toEqual([])
+    await vi.advanceTimersByTimeAsync(1_001)
+    await Promise.all(requests)
+    expect(outcomes).toEqual([1, 1])
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
 })

@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JBCoreContracts,
   JBSuckerContracts,
@@ -23,7 +25,7 @@ import {
   suckerBytes32ToAddress,
   suckerTimestampSeconds,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   encodeFunctionData,
@@ -386,7 +388,7 @@ export function GossipCard({
     })
   }, [])
 
-  const { data, isLoading, isError, isFetching, refetch } = useQuery(projectDisplayQuery(queryClient, {
+  const { data, isLoading, isError, isFetching, refetch } = useKeptQuery(projectDisplayQuery(queryClient, {
     staleTime: 30000,
     queryKey: ['gossip', chains],
     meta: PERSIST,

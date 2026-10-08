@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JBCoreContracts,
   USD_CURRENCY_ID,
@@ -273,7 +275,7 @@ export function ProjectStats({
   const queryClient = useQueryClient()
   const raisedTooltipId = useId()
   const treasuryTooltipId = useId()
-  const { data, isLoading, isFetching: treasuryFetching } = useQuery(projectDisplayQuery(queryClient, {
+  const { data, isLoading, isFetching: treasuryFetching } = useKeptQuery(projectDisplayQuery(queryClient, {
     staleTime: 30000,
     queryKey: ['projectTreasuryUsd', chains],
     meta: PERSIST,

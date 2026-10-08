@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
+  chainId: 1,
+  connectorUid: 'wallet-a',
   client: {
     call: vi.fn(),
     request: vi.fn(),
@@ -15,13 +17,13 @@ const mocks = vi.hoisted(() => ({
     getBlockNumber: vi.fn(),
     getCode: vi.fn(),
   },
-  wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
+  wallet: { chain: { id: 1 }, signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
   requireReview: vi.fn(),
   chooseFunding: vi.fn(),
   runSafeCalls: vi.fn(),
-  listPendingSafeTransactions: vi.fn(),
+  findPendingSafeAppProposal: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readMatchingAuthorityIdentities: vi.fn(),
   isSafeConnection: vi.fn(),
@@ -52,10 +54,6 @@ vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
   runSafeCalls: mocks.runSafeCalls,
 }))
-vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
-  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
-  listPendingSafeTransactions: mocks.listPendingSafeTransactions,
-}))
 vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/cross-chain-authority')>()),
   readMatchingAuthorityIdentities: mocks.readMatchingAuthorityIdentities,
@@ -63,12 +61,11 @@ vi.mock('@/lib/cross-chain-authority', async importOriginal => ({
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readAuthorityIdentity: mocks.readAuthorityIdentity,
-  // The Safe's onchain nonce, as the pending-proposal lookup reads it.
-  readBoundedSafeNonce: async () => 7n,
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
   isSafeConnection: mocks.isSafeConnection,
+  findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
   SAFE_NONCE_GUIDANCE: 'Choose the correct Safe nonce.',
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
 }))
@@ -78,6 +75,7 @@ import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { clearViewAs, setViewAs } from '@/lib/viewAs'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
 import { buildQueueRulesetsAuthorityCall } from '@/lib/transaction-builders'
@@ -128,20 +126,25 @@ beforeEach(() => {
     get length() { return storage.size },
   } })
   vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+  clearViewAs()
   mocks.account = ALICE
+  mocks.chainId = 1
+  mocks.connectorUid = 'wallet-a'
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
-    chainId: 1,
+    chainId: mocks.chainId,
+    connector: { uid: mocks.connectorUid },
   }))
-  mocks.connectedWallet.mockResolvedValue({
-    wallet: mocks.wallet,
-    account: ALICE,
+  mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+    mocks.chainId = chainId
+    mocks.wallet.chain = { id: chainId }
+    return { wallet: mocks.wallet, account: ALICE }
   })
   mocks.requireReview.mockResolvedValue(undefined)
   mocks.chooseFunding.mockResolvedValue(1)
   mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'eoa' })
   mocks.isSafeConnection.mockReturnValue(false)
-  mocks.listPendingSafeTransactions.mockResolvedValue([])
+  mocks.findPendingSafeAppProposal.mockResolvedValue(null)
   mocks.waitForSafeExecutionHash.mockResolvedValue(DESTINATION_HASH)
   mocks.readMatchingAuthorityIdentities.mockResolvedValue({
     source: { kind: 'eoa' },
@@ -819,7 +822,10 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       refundReceiver: '0x0000000000000000000000000000000000000000' as Address,
       nonce: 7,
     }
-    mocks.listPendingSafeTransactions.mockResolvedValue([pending])
+    mocks.findPendingSafeAppProposal.mockResolvedValue({
+      tx: pending, proposalHash: canonicalSafeTxHash(1, SAFE, pending),
+      call: { to: TARGET, data: '0x1234', value: 0n },
+    })
 
     const result = await runAuthorityCalls({
       signal: flow,
@@ -833,10 +839,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       ],
     })
 
-    expect(mocks.listPendingSafeTransactions).toHaveBeenCalledWith(
+    expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledWith(
+      mocks.client,
       1,
       SAFE,
-      7,
+      { to: TARGET, data: '0x1234', value: undefined },
       expect.objectContaining({ fetch: expect.any(Function) }),
     )
     expect(result.safeResults).toEqual([
@@ -1209,4 +1216,43 @@ describe('One safety-check review per project batch', () => {
     ])
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })
+})
+
+
+describe('authority final wallet context', () => {
+  it('passes the selected chain explicitly and preserves ambiguous wallet failures', async () => {
+    const onBeforeSubmissionAborted = vi.fn()
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('Wallet response lost'))
+    await expect(runAuthorityCalls({ signal: flow, calls: [{ chainId: 10, authority: ALICE, target: TARGET, data: '0x1234', onBeforeSubmissionAborted }] })).rejects.toThrow('Wallet response lost')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chain: { id: 10 }, account: ALICE }))
+    expect(onBeforeSubmissionAborted).not.toHaveBeenCalled()
+  })
+
+  for (const viaSafe of [false, true]) {
+    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`refuses %s drift while ${viaSafe ? 'Safe' : 'direct'} persistence waits`, async drift => {
+      const account = viaSafe ? SAFE : ALICE
+      mocks.account = account
+      mocks.isSafeConnection.mockReturnValue(viaSafe)
+      if (viaSafe) mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
+      mocks.connectedWallet.mockResolvedValue({ wallet: mocks.wallet, account })
+      mocks.client.estimateGas.mockResolvedValue(21_000n)
+      let release!: () => void
+      const onSending = vi.fn(() => new Promise<void>(resolve => { release = resolve }))
+      const onBeforeSubmissionAborted = vi.fn().mockResolvedValue(undefined)
+      const run = runAuthorityCalls({ signal: flow, calls: [{ chainId: 1, authority: account, target: TARGET, data: '0x1234', onSending, onBeforeSubmissionAborted }] })
+      const refused = expect(run).rejects.toThrow()
+      await vi.waitFor(() => expect(onSending).toHaveBeenCalledOnce())
+      if (drift === 'account') mocks.account = TARGET
+      if (drift === 'chain') mocks.chainId = 10
+      if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+      if (drift === 'view-as') setViewAs(TARGET)
+      if (drift === 'route') mocks.isSafeConnection.mockReturnValue(!viaSafe)
+      release()
+      try {
+        await refused
+        expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+        expect(onBeforeSubmissionAborted).toHaveBeenCalledOnce()
+      } finally { clearViewAs() }
+    })
+  }
 })

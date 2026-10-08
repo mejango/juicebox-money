@@ -18,6 +18,7 @@ const BUNDLE = '12345678-1234-1234-1234-123456789abc'
 const mocks = vi.hoisted(() => ({
   address: '' as Address,
   chainId: 1,
+  connectorUid: 'wallet-a',
   safe: false,
   getTransaction: vi.fn(), getReceipt: vi.fn(), getBlock: vi.fn(), getCode: vi.fn(), readContract: vi.fn(),
   getBlockNumber: vi.fn(), getLogs: vi.fn(),
@@ -25,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   post: vi.fn(), pay: vi.fn(), poll: vi.fn(), funding: vi.fn(), paymentSent: vi.fn(),
 }))
 
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }) }))
 vi.mock('@/providers/Providers', async () => {
   const chains = await import('viem/chains')
   return { wagmiConfig: {}, SUPPORTED_CHAINS: [chains.mainnet, chains.optimism, chains.base, chains.arbitrum,
@@ -42,8 +43,10 @@ vi.mock('@/lib/wallet-core', () => ({
     getBytecode: (args: unknown) => mocks.getCode(chain, args),
     waitForTransactionReceipt: (args: unknown) => mocks.waitReceipt(chain, args),
   }),
-  connectedWallet: async (chain: number) => ({ account: mocks.address,
-    wallet: { sendTransaction: (request: unknown) => mocks.send(chain, request) } }),
+  connectedWallet: async (chain: number) => {
+    mocks.chainId = chain
+    return { account: mocks.address, wallet: { chain: { id: chain }, sendTransaction: (request: unknown) => mocks.send(chain, request) } }
+  },
 }))
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe-connector')>()),
@@ -70,6 +73,7 @@ import { isExpiredUnfundedRawQuote } from '@/lib/raw-relayr-lifecycle'
 import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
+import { clearViewAs, setViewAs } from '@/lib/viewAs'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
@@ -124,6 +128,8 @@ function receipt(chain: number) {
 
 beforeEach(() => {
   projectId += 10
+  clearViewAs()
+  mocks.connectorUid = 'wallet-a'
   mocks.address = ALICE
   mocks.chainId = 1
   mocks.safe = false
@@ -895,4 +901,34 @@ it('shared raw lifecycle rechecks the owner before publishing and again before f
   })
   expect(reverify).toHaveBeenCalledTimes(2)
   expect(mocks.paymentSent).toHaveBeenCalledOnce()
+})
+
+
+describe('payer final wallet context', () => {
+  for (const viaSafe of [false, true]) {
+    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`restores the ready intent after %s changes in ${viaSafe ? 'Safe' : 'direct'} persistence`, async drift => {
+      mocks.safe = viaSafe
+      review = makeReview([1])
+      let changed = false
+      const update = (session: PayerDeploymentSession) => {
+        if (changed || session.outcomes[0].state !== 'sending') return
+        changed = true
+        if (drift === 'account') mocks.address = ADMIN
+        if (drift === 'chain') mocks.chainId = 10
+        if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+        if (drift === 'view-as') setViewAs(ADMIN)
+        if (drift === 'route') mocks.safe = !viaSafe
+      }
+      try {
+        await expect(runPayerDeployments(review, update, flow)).rejects.toThrow()
+        expect(changed).toBe(true)
+        expect(mocks.send).not.toHaveBeenCalled()
+        const saved = loadPayerDeployment(review.scope)!
+        expect(saved.outcomes[0].state).toBe('ready')
+        mocks.address = ALICE; mocks.chainId = 1; mocks.connectorUid = 'wallet-a'; mocks.safe = viaSafe; clearViewAs()
+        await expect(runPayerDeployments(saved, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
+        expect(mocks.send).toHaveBeenCalledExactlyOnceWith(1, expect.objectContaining({ chain: { id: 1 } }))
+      } finally { clearViewAs() }
+    })
+  }
 })

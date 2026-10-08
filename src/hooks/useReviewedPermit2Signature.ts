@@ -10,6 +10,7 @@ import {
 import { assertReviewedAccountConnected } from '@/lib/contract-write'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { captureWalletContext } from '@/lib/wallet-context'
 import type { Address } from 'viem'
 
 export function useReviewedPermit2Signature(options?: {
@@ -29,6 +30,10 @@ export function useReviewedPermit2Signature(options?: {
     }) => {
       assertNoViewAs()
       assertReviewedAccountConnected(expectedAccount, getAccount(config).address)
+      const assertWalletContext = captureWalletContext(config, {
+        account: expectedAccount, chainId: authorization.chainId,
+        message: 'Wallet account, network or connection changed. Review the payment again.',
+      })
       const typedData = permit2TypedData(authorization)
       if (!options?.reviewedInParent) {
         await requireTransactionReview({
@@ -54,7 +59,7 @@ export function useReviewedPermit2Signature(options?: {
       ) {
         throw new Error('Wallet account or network changed. Review the payment again.')
       }
-      assertNoViewAs()
+      assertWalletContext()
       const signature = await signTypedDataAsync({
         account: expectedAccount,
         ...typedData,
@@ -68,6 +73,7 @@ export function useReviewedPermit2Signature(options?: {
       ) {
         throw new Error('Wallet account or network changed after signing. Nothing was sent.')
       }
+      assertWalletContext()
       return signature
     },
     [config, options?.reviewedInParent, signTypedDataAsync, switchChainAsync],

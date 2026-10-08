@@ -22,6 +22,10 @@ vi.mock('@/hooks/useWallet', () => ({
 vi.mock('next/navigation', () => ({
   usePathname: () => '/',
 }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@wagmi/core', () => ({
+  getAccount: () => ({ address: mocks.connectedAddress, chainId: 1 }),
+}))
 vi.mock('wagmi', () => ({
   useAccount: () => ({ chainId: 1 }),
   useBalance: () => ({ data: undefined }),

@@ -22,6 +22,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
+import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
 import {
   gasWithinCap,
@@ -88,6 +89,8 @@ export type AuthorityCall = {
   reverifyAuthority?: () => Promise<void>
   /** Persist recovery information before exposing a wallet submission. */
   onSending?: (kind: 'direct' | 'safe-connector') => Promise<void>
+  /** Remove only the hashless intent when the final guard proves no wallet call occurred. */
+  onBeforeSubmissionAborted?: () => Promise<void>
   onSubmitted?: (hash: Hex, kind: 'direct' | 'safe-connector') => Promise<void>
   onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
 }
@@ -300,6 +303,9 @@ export async function runAuthorityCalls({
   if (!calls.length) throw new Error('Choose at least one chain.')
   const { address: connected, chainId: startChainId } = getAccount(wagmiConfig)
   if (!connected) throw new Error('Connect a wallet first.')
+  const walletGuards = new Map(calls.map(call => [call, captureWalletContext(wagmiConfig, {
+    account: call.authority, chainId: call.chainId,
+  })]))
 
   const groups = new Map<string, AuthorityCall[]>()
   for (const call of calls) {
@@ -711,7 +717,15 @@ export async function runAuthorityCalls({
         message: 'Continue in Safe, then execute the proposal…',
       })
       await call.onSending?.('safe-connector')
+      try {
+        walletGuards.get(call)!()
+        if (!isSafeConnection(wagmiConfig)) throw new Error('Safe connection changed. Review this project action again.')
+      } catch (error) {
+        await call.onBeforeSubmissionAborted?.()
+        throw error
+      }
       const safeTxHash = await wallet.sendTransaction({
+        chain: wallet.chain,
         account,
         to: call.target,
         data: call.data,
@@ -812,14 +826,17 @@ export async function runAuthorityCalls({
           gas: call.gas,
         })
         await call.reverifyAuthority?.()
-        const live = getAccount(wagmiConfig).address
-        if (!live || live.toLowerCase() !== call.authority.toLowerCase()) {
-          throw new Error(
-            'Connected account changed. Review this project action again.',
-          )
-        }
+        walletGuards.get(call)!()
         await call.onSending?.('direct')
+        try {
+          walletGuards.get(call)!()
+          if (isSafeConnection(wagmiConfig)) throw new Error('Connected wallet changed. Review this project action again.')
+        } catch (error) {
+          await call.onBeforeSubmissionAborted?.()
+          throw error
+        }
         const hash = await wallet.sendTransaction({
+          chain: wallet.chain,
           account,
           to: call.target,
           data: call.data,

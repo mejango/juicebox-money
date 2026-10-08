@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { projectDisplayKey } from '@/lib/project-display-cache'
 
 import {
@@ -875,7 +877,7 @@ function AllHoldersCard({
   const refs = chains.length ? chains : [[chainId, projectId] as [number, number]]
   const refsParam = refs.map(([cid, pid]) => `${cid}:${pid}`).join(',')
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useKeptQuery({
     queryKey: ['participants', refsParam, suckerGroupId],
     meta: PERSIST,
     staleTime: 60_000,
@@ -1149,7 +1151,7 @@ function ReservedCard({
     data: stageData,
     isLoading: rulesetLoading,
     isError: rulesetError,
-  } = useQuery(projectDisplayQuery(queryClient, {
+  } = useKeptQuery(projectDisplayQuery(queryClient, {
     queryKey: [...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'splitStages')],
     meta: PERSIST,
     enabled: !!publicClient,
@@ -1376,7 +1378,7 @@ function ChainSplitsBlock({
     data: chainRows,
     isLoading: chainRowsLoading,
     isError: chainRowsError,
-  } = useQuery(projectDisplayQuery(queryClient, {
+  } = useKeptQuery(projectDisplayQuery(queryClient, {
     queryKey: [...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'chainStageSplits'), stageIndex, isCurrentStage],
     meta: PERSIST,
     enabled: homeRows === null && !!publicClient,

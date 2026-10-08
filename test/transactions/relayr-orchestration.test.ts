@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
+  chainId: 1,
+  connectorUid: 'ordinary-wallet',
   /** The status the chain mines a payment with, unless `paymentStatuses` names its hash. */
   paymentStatus: 'success' as 'success' | 'reverted',
   paymentStatuses: new Map<string, 'success' | 'reverted'>(),
@@ -65,12 +67,14 @@ import {
   RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_SELECTOR,
   relayrPaymentDetails,
+  relayrPaymentAttemptOutcome,
   relayrPaymentOptions,
   sentRelayrPayment,
   type RelayrEntry,
   type RelayrPayment,
   type RelayrSentPayment,
 } from '@bananapus/nana-sdk-core/review/relayr'
+import * as relayrCore from '@bananapus/nana-sdk-core/review/relayr'
 import {
   buildForwardedTx,
   relayrPay,
@@ -205,6 +209,20 @@ function pay(option: RelayrPayment, destinationChainIds: readonly number[], opti
   return relayrPay({ payment: option, account: ALICE, bundleUuid: BUNDLE_UUID, destinationChainIds, ...options })
 }
 
+function deferred() {
+  let resolve!: () => void
+  const promise = new Promise<void>(done => { resolve = done })
+  return { promise, resolve }
+}
+const WALLET_CHANGES = ['account', 'chain', 'connector', 'safe', 'view-as'] as const
+function changeWallet(change: typeof WALLET_CHANGES[number]) {
+  if (change === 'account') mocks.account = BOB
+  if (change === 'chain') mocks.chainId = 10
+  if (change === 'connector') mocks.connectorUid = 'replacement-wallet'
+  if (change === 'safe') mocks.isSafeConnection.mockReturnValue(true)
+  if (change === 'view-as') setViewAs(BOB)
+}
+
 /** Relayr quotes `payments`, or `payments(n)` for its nth quote from 0, and runs every bundle. */
 function installSuccessfulBundle(payments: RelayrPayment[] | ((post: number) => RelayrPayment[]) = [payment]) {
   const posts: RelayrEntry[][] = []
@@ -250,17 +268,21 @@ function localStorageWindow() {
 }
 
 beforeEach(() => {
+  clearViewAs()
   for (const scope of listRelayrPendingScopes()) clearRelayrPendingSession(scope)
   mocks.clientOn = null
   vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, execute: (lock: object) => Promise<unknown>) => execute({}) } })
   mocks.account = ALICE
+  mocks.chainId = 1
+  mocks.connectorUid = 'ordinary-wallet'
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
-    chainId: 1,
+    chainId: mocks.chainId,
+    connector: { uid: mocks.connectorUid },
   }))
-  mocks.connectedWallet.mockResolvedValue({
-    wallet: mocks.wallet,
-    account: ALICE,
+  mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+    mocks.chainId = chainId
+    return { wallet: mocks.wallet, account: ALICE }
   })
   mocks.requireReview.mockResolvedValue(undefined)
   mocks.requireFundingChainSelection.mockResolvedValue(1)
@@ -293,6 +315,97 @@ beforeEach(() => {
 })
 
 describe('Relayr quote and payment boundaries', () => {
+  it.each(WALLET_CHANGES)('refuses a %s change while the final bundle check is pending', async change => {
+    const entered = deferred(), release = deferred()
+    const onSending = vi.fn()
+    const result = pay(payment, [1], { reverifyBeforeSendOnly: true, onSending, reverify: async () => {
+      entered.resolve(); await release.promise
+    } }).catch(error => error)
+    await entered.promise
+    changeWallet(change); release.resolve()
+    const error = await result
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toBe(change === 'view-as' ? VIEW_AS_WRITE_BLOCKED : 'Connected wallet changed. Review the relayed transaction again.')
+    expect(onSending).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each(WALLET_CHANGES)('marks a %s change during saved-attempt persistence as proven not sent', async change => {
+    const entered = deferred(), release = deferred()
+    const result = pay(payment, [1], { onSending: async () => { entered.resolve(); await release.promise } }).catch(error => error)
+    await entered.promise
+    changeWallet(change); release.resolve()
+    const error = await result
+    expect(error).toMatchObject({ name: 'RelayrPaymentNotSentError', cause: expect.any(Error) })
+    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
+    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: true })).toBe('reverted')
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each(WALLET_CHANGES)('refuses a %s change while preparing the forwarded-signature wallet', async change => {
+    const entered = deferred(), release = deferred()
+    mocks.connectedWallet.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return { wallet: mocks.wallet, account: ALICE } })
+    const result = buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ALICE).catch(error => error)
+    await entered.promise
+    changeWallet(change); release.resolve()
+    expect(await result).toBeInstanceOf(Error)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the live wallet after awaiting prior-payment retry proof', async () => {
+    const entered = deferred(), release = deferred()
+    mocks.client.getTransaction.mockResolvedValue({ hash: HASH, chainId: 1, from: ALICE, to: RELAYR_PAYMENT_ADDRESS,
+      input: payment.calldata, value: 100n, blockHash: BLOCK_HASH, blockNumber: 100n })
+    mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH, to: RELAYR_PAYMENT_ADDRESS,
+      blockHash: BLOCK_HASH, blockNumber: 100n, status: 'reverted', logs: [] })
+    vi.mocked(fetch).mockImplementationOnce(async () => {
+      entered.resolve(); await release.promise
+      return response({ bundle_uuid: BUNDLE_UUID, payment_received: false, transactions: [{ status: { state: 'pending' } }] })
+    })
+    const sent = [sentRelayrPayment(relayrPaymentDetails(payment, { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] }), HASH)]
+    const onSending = vi.fn()
+    const result = pay(payment, [1], { sent, onSending }).catch(error => error)
+    await entered.promise
+    changeWallet('connector'); release.resolve()
+    expect(await result).toBeInstanceOf(Error)
+    expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: HASH })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(onSending).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each(['changed amount', 'expired deadline'] as const)('rechecks a quote with %s after persisting its attempt', async change => {
+    const entered = deferred(), release = deferred()
+    const offered = paymentFor()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    const result = pay(offered, [1], { onSending: async () => { entered.resolve(); await release.promise } }).catch(error => error)
+    await entered.promise
+    if (change === 'changed amount') offered.amount = '101'
+    else now.mockReturnValue((PAYMENT_DEADLINE + 1) * 1000)
+    release.resolve()
+    expect(await result).toMatchObject({ name: 'RelayrPaymentNotSentError', cause: expect.any(Error) })
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['transport error', new Error('wallet transport disconnected')],
+    ['nested rejection code', Object.assign(new Error('wallet claims rejection'), { code: 4001 })],
+  ])('never propagates an invoked wallet\'s pre-send-abort claim with %s', async (_label, cause) => {
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new relayrCore.RelayrPaymentNotSentError(cause))
+    const error = await pay(payment, [1], { onSending: () => {} }).catch(error => error)
+    expect(error).toMatchObject({ name: 'RelayrPaymentSendingError' })
+    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBeNull()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+  })
+
+  it('preserves an ordinary explicit wallet rejection and its releasable attempt', async () => {
+    const rejection = { code: 4001, message: 'User rejected the payment' }
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(rejection)
+    const error = await pay(payment, [1], { onSending: () => {} }).catch(error => error)
+    expect(error).toBe(rejection)
+    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+  })
   it('reviews prerequisite deployment calls alongside the exact forwarded authorization without adding a wallet prompt', async () => {
     const prerequisite = { chainId: 1, to: BOB, data: '0xabcd' as Hex, value: 0n,
       label: 'Create owner multisig' }
@@ -333,6 +446,7 @@ describe('Relayr quote and payment boundaries', () => {
     }))
     expect(mocks.client.getCode).toHaveBeenCalledWith({ address: RELAYR_PAYMENT_ADDRESS, blockTag: 'latest' })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ chain: expect.objectContaining({ id: chain }) }))
   })
 
   it.each([
@@ -491,6 +605,7 @@ describe('Relayr quote and payment boundaries', () => {
       ],
     })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith({
+      chain: expect.objectContaining({ id: 1 }),
       account: ALICE,
       to: RELAYR_PAYMENT_ADDRESS,
       value: 100n,
@@ -1476,6 +1591,21 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('restores the saved unpaid publication when the final wallet gate aborts after its marker', async () => {
+    const storage = localStorageWindow()
+    vi.stubGlobal('window', storage.window)
+    const store = storage.window.localStorage.setItem
+    vi.spyOn(storage.window.localStorage, 'setItem').mockImplementation((key, value) => {
+      store(key, value)
+      if (JSON.parse(value).paymentStatus === 'sending') queueMicrotask(() => { mocks.account = BOB })
+    })
+    installSuccessfulBundle()
+    const options = { calls, account: ALICE, pendingScope: 'final-gate-abort' }
+    await expect(runRelayrCalls(options)).rejects.toMatchObject({ name: 'RelayrPaymentNotSentError' })
+    expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'unpaid', paymentHash: null, bundleUuid: BUNDLE_UUID })
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
   it('retains a no-hash payment attempt and never signs or pays again while proof is unavailable', async () => {

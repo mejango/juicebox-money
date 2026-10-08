@@ -29,6 +29,7 @@ import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { captureWalletContext } from '@/lib/wallet-context'
 import {
   gasWithHeadroom,
   isTransactionReceiptUnavailableError,
@@ -155,6 +156,8 @@ export function MintShopItemModal({
     setMessage(null)
     try {
       setPhase('checking')
+      const assertOriginalWallet = captureWalletContext(config, { account: address, chainId })
+      const viaSafe = isSafeConnection(config)
       const client = getPublicClient(config, {
         chainId: chainId as SupportedChainId,
       }) as PublicClient | undefined
@@ -178,7 +181,6 @@ export function MintShopItemModal({
       setPhase('sending')
       // Read once: the review, the sent gas and the tracking must agree on
       // whether a Safe proposes this mint.
-      const viaSafe = isSafeConnection(config)
       let submitted = await submitReviewedContractWrite({
         request,
         expectedAccount: address,
@@ -226,17 +228,19 @@ export function MintShopItemModal({
           ])
           return {
             ...simulated,
+            chainId: reviewed.chainId,
             gas: viaSafe ? 0n : gasWithHeadroom(estimate),
           }
         },
-        write: simulated => {
+        beforeSend: () => {
+          assertOriginalWallet()
           if (isSafeConnection(config) !== viaSafe) {
-            throw new Error('Wallet connection changed. Review the free mint again.')
+            throw new Error('Wallet connection changed. Review the transaction again.')
           }
-          return writeContractAsync(
-            simulated as Parameters<typeof writeContractAsync>[0],
-          )
         },
+        write: simulated => writeContractAsync(
+          simulated as Parameters<typeof writeContractAsync>[0],
+        ),
         accountChangedError:
           'Connected account changed. Review the free mint again.',
       })

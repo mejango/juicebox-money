@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { projectDisplayQuery } from '@/lib/project-display-queries'
 import {
   buildCollectUniswapV4FeesTx,
@@ -72,7 +74,7 @@ export function useUserLpSummary(
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const positionManager = POSITION_MANAGER_BY_CHAIN[chainId] ?? null
 
-  const market = useQuery(projectDisplayQuery(queryClient, {
+  const market = useKeptQuery(projectDisplayQuery(queryClient, {
     staleTime: 60000,
     queryKey: ['market', chainId, projectId],
     meta: PERSIST,

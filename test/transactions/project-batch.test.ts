@@ -10,7 +10,7 @@ const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   safe: false,
   relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
-  releaseRaw: vi.fn(), readRecord: vi.fn(), beforeLock: vi.fn(),
+  releaseRaw: vi.fn(), reportedExecution: vi.fn(), beforeLock: vi.fn(),
   client: { getTransaction: vi.fn(), getTransactionReceipt: vi.fn(), getBlock: vi.fn(),
     getBlockNumber: vi.fn(), getLogs: vi.fn() },
   pending: new Map<string, unknown>(),
@@ -28,10 +28,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   isSafeConnection: () => mocks.safe,
   SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.',
   waitForSafeExecutionHash: mocks.waitForExecution,
-}))
-vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
-  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
-  readSafeTransaction: mocks.readRecord,
+  reportedSafeExecution: mocks.reportedExecution,
 }))
 vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
@@ -96,6 +93,7 @@ beforeEach(() => {
   } })
   vi.stubGlobal('navigator', { locks: {} })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
+  mocks.reportedExecution.mockResolvedValue(null)
   mocks.client.getBlock.mockResolvedValue({ hash: BLOCK })
   mocks.client.getBlockNumber.mockResolvedValue(10n)
   mocks.client.getLogs.mockResolvedValue([])
@@ -344,6 +342,7 @@ describe('durable project batches', () => {
     delete legacy.relayrChainIds
     window.localStorage.setItem(key, JSON.stringify(legacy))
     mocks.identity.mockResolvedValue({ kind: 'eoa' })
+  mocks.reportedExecution.mockResolvedValue(null)
 
     const completed = await run()
     expect(completed.status).toBe('complete')
@@ -436,6 +435,29 @@ describe('durable project batches', () => {
     expect(loadProjectBatch(scope)?.submissions[call().id].hash).toBe(HASH)
     expect((await run()).status).toBe('complete')
     expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
+  it.each(['direct', 'safe-connector'] as const)('releases only a proven pre-wallet %s marker so the reviewed action can retry', async kind => {
+    mocks.authority.mockImplementationOnce(async ({ calls: [first] }) => {
+      await first.onSending(kind)
+      await first.onBeforeSubmissionAborted()
+      throw new Error('Connected wallet changed before sending')
+    })
+    await expect(run([call()])).rejects.toThrow('changed before sending')
+    expect(loadProjectBatch(scope)).toBeNull()
+    expect((await run([call()])).status).toBe('complete')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
+  it('never clears a saved hash when a stale pre-wallet cleanup arrives', async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls: [first] }) => {
+      await first.onSending('direct')
+      await first.onSubmitted(HASH, 'direct')
+      await first.onBeforeSubmissionAborted()
+      throw new Error('late cleanup')
+    })
+    await expect(run([call()])).rejects.toThrow('late cleanup')
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'direct', hash: HASH })
   })
 
   it('blocks unknown wallet submissions across reload instead of retrying them', async () => {
@@ -710,23 +732,30 @@ describe('durable project batches', () => {
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
     ['cannot be read as an execution', () => executedBy(HASH, '0xdeadbeef', [executionSuccess(SAFE_TX, HASH)]),
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
-    ['ran the call, and it failed', () => executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)]),
-      FAILED],
     ['reverted', () => {
       executedBy(HASH, execTransaction(), [])
       mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
         blockHash: BLOCK, blockNumber: 10n, status: 'reverted', logs: [] })
-    }, FAILED],
-  ] as const)('releases a saved call whose execution %s, so it never holds the batch', async (_, executed, line) => {
+    }, 'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'],
+  ] as const)('retains a saved call whose execution %s across repeated recovery', async (_, executed, line) => {
     await interruptedConnectorCall(HASH)
     mocks.waitForExecution.mockResolvedValue(HASH)
     executed()
     await expect(run()).rejects.toThrow(line)
-    // The call is no longer held as submitted: with nothing else in flight,
-    // no saved batch holds it, in this tab or after a reload.
-    expect(loadProjectBatch(scope)).toBeNull()
+    const original = loadProjectBatch(scope)!
+    expect(original.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: HASH })
+    await expect(run()).rejects.toThrow(line)
+    expect(loadProjectBatch(scope)?.id).toBe(original.id)
+    expect(loadProjectBatch(scope)?.submissions[call().id]).toMatchObject({ kind: 'safe-connector', hash: HASH })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
 
-    // Once Safe has been checked, the same call can be reviewed and sent again.
+  it('releases an at-once saved call only after its authenticated inner failure', async () => {
+    await interruptedConnectorCall(HASH)
+    mocks.waitForExecution.mockResolvedValue(HASH)
+    executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
+    await expect(run()).rejects.toThrow(FAILED)
+    expect(loadProjectBatch(scope)).toBeNull()
     mocks.client.getTransaction.mockResolvedValue({ hash: HASH, chainId: 1, from: ACCOUNT,
       to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK })
     mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
@@ -752,18 +781,18 @@ describe('durable project batches', () => {
     mocks.waitForExecution.mockRejectedValue(
       new Error('Safe executed the proposal, but the onchain transaction failed.'),
     )
-    mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+    mocks.reportedExecution.mockResolvedValue(HASH)
     executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
     await expect(run()).rejects.toThrow(FAILED)
-    expect(mocks.readRecord).toHaveBeenCalledWith(1, ACCOUNT, SAFE_TX, expect.anything())
+    expect(mocks.reportedExecution).toHaveBeenCalledWith(expect.any(Error), 1, ACCOUNT, SAFE_TX, expect.objectContaining({ fetch: expect.any(Function) }))
     expect(loadProjectBatch(scope)).toBeNull()
   })
 
   it.each([
-    ['names no transaction', () => mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true })],
-    ['cannot be read', () => mocks.readRecord.mockRejectedValue(new Error('Safe service unavailable'))],
+    ['names no transaction', () => mocks.reportedExecution.mockResolvedValue(null)],
+    ['cannot be read', () => mocks.reportedExecution.mockResolvedValue(null)],
     ['names a receipt that is not canonical', () => {
-      mocks.readRecord.mockResolvedValue({ safeTxHash: SAFE_TX, isExecuted: true, transactionHash: HASH })
+      mocks.reportedExecution.mockResolvedValue(HASH)
       executedBy(HASH, execTransaction(), [executionFailure(SAFE_TX, HASH)])
       mocks.client.getBlock.mockResolvedValue({ hash: `0x${'99'.repeat(32)}` })
     }],
@@ -800,12 +829,10 @@ describe('durable project batches', () => {
     await expect(run(calls)).rejects.toThrow('Safe service unavailable')
     expect(loadProjectBatch(scope)?.completedIds).toEqual(['1:a'])
 
-    // The Safe app's proposal turns out to have run another call.
+    // Only this call's authenticated inner failure releases its submission.
     mocks.waitForExecution.mockResolvedValue(SAFE_TX)
-    executedBy(SAFE_TX, execTransaction('0xdead'), [executionSuccess(SAFE_TX, SAFE_TX)], 10)
-    await expect(run()).rejects.toThrow(
-      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
-    )
+    executedBy(SAFE_TX, execTransaction(), [executionFailure(SAFE_TX, SAFE_TX)], 10)
+    await expect(run()).rejects.toThrow(FAILED)
     expect(loadProjectBatch(scope)).toMatchObject({ status: 'pending', completedIds: ['1:a'] })
     expect(loadProjectBatch(scope)?.submissions['10:b']).toBeUndefined()
     expect(loadProjectBatch(scope)?.submissions['1:a']).toBeDefined()

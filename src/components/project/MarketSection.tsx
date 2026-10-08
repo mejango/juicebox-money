@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JB_CHAINS,
   JBBuybackHookContracts,
@@ -16,7 +18,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
-import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
   type Address,
@@ -933,7 +935,7 @@ export function MarketSection({
     isLoading,
     isError,
     isFetching: marketFetching,
-  } = useQuery(projectDisplayQuery(queryClient, {
+  } = useKeptQuery(projectDisplayQuery(queryClient, {
       meta: PERSIST,
     staleTime: 60000,
     queryKey: ['market', chainId, projectId],
@@ -959,7 +961,7 @@ export function MarketSection({
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
-  } = useQuery(
+  } = useKeptQuery(
     cachedQuery({
       // The positions are priced from the captured `market` snapshot, and the
       // market refreshes 4× faster than this cache. Without the pool identity

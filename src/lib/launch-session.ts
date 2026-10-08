@@ -16,7 +16,7 @@
  */
 
 import type { LaunchPlan } from '@/lib/launch'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
 import { DRAFT_KEY } from '@/lib/draft'
 import { validateLaunchMultisigs } from '@/lib/launch-multisig'
@@ -36,6 +36,8 @@ export type LaunchChainStatus = {
   phase: (typeof PHASES)[number]
   txHash?: `0x${string}`
   safeProposalHash?: `0x${string}`
+  /** Exact reviewed Safe launch, including the original dynamic fee and sending Safe. */
+  directSafeCall?: { safe: Address; to: Address; data: Hex; value: bigint }
   projectId?: number
   /**
    * Restored from `signing`: a wallet may have broadcast after the page reloaded, so this
@@ -111,7 +113,7 @@ export function saveLaunchSession(session: LaunchSession): boolean {
 /**
  * The persisted session, shape-checked and coerced to a resume-safe view: a
  * chain interrupted mid-signature (no transaction hash to wait on) resumes
- * as `pending` so it re-sends; a submitted transaction keeps its hash so
+ * as `pending` with an explicit unverified-send hold; a submitted transaction keeps its hash so
  * the resume waits on it instead of sending again. Safe setup retains its
  * own exact phase and hashes for its separate recovery path.
  */
@@ -218,6 +220,14 @@ export function canAbandonRelayrLaunch(session: LaunchSession): boolean {
 function coerceStatus(value: unknown): LaunchChainStatus {
   if (typeof value !== 'object' || value === null) return { phase: 'pending' }
   const status = value as Partial<LaunchChainStatus>
+  const directSafeCall = status.directSafeCall
+  if (directSafeCall !== undefined && (
+    !directSafeCall || typeof directSafeCall !== 'object' || Array.isArray(directSafeCall) ||
+    !/^0x[0-9a-fA-F]{40}$/u.test(directSafeCall.safe) ||
+    !/^0x[0-9a-fA-F]{40}$/u.test(directSafeCall.to) ||
+    !/^0x(?:[0-9a-fA-F]{2})*$/u.test(directSafeCall.data) ||
+    typeof directSafeCall.value !== 'bigint' || directSafeCall.value < 0n
+  )) throw new Error('Invalid saved Safe launch call.')
   const multisigSetup = status.multisigSetup === undefined
     ? undefined
     : readMultisigSetup(status.multisigSetup)
@@ -233,7 +243,7 @@ function coerceStatus(value: unknown): LaunchChainStatus {
   let phase = PHASES.includes(status.phase as (typeof PHASES)[number])
     ? (status.phase as LaunchChainStatus['phase'])
     : 'pending'
-  // Nothing provably submitted — the resume must re-send.
+  // Missing hashes cannot establish that a wallet request was never submitted.
   //
   // `signing` is the dangerous one: a mobile/WalletConnect wallet can broadcast AFTER the
   // dapp reloads, so there is no hash here even though a launch may be in flight. Re-sending
@@ -246,7 +256,8 @@ function coerceStatus(value: unknown): LaunchChainStatus {
   return {
     phase,
     ...(multisigSetup ? { multisigSetup } : {}),
-    ...(wasSigning ? { unverifiedSend: true as const } : {}),
+    ...(directSafeCall ? { directSafeCall } : {}),
+    ...(wasSigning || status.unverifiedSend === true ? { unverifiedSend: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
     ...(typeof status.projectId === 'number'
@@ -279,11 +290,12 @@ function readMultisigSetup(value: unknown): NonNullable<LaunchChainStatus['multi
 export function recordLaunchChainStatus(
   chainId: number,
   status: LaunchChainStatus,
-): void {
+  expectedSalt?: Hex,
+): boolean {
   const session = loadLaunchSession()
-  if (!session || !session.chains.includes(chainId)) return
+  if (!session || (expectedSalt && session.salt !== expectedSalt) || !session.chains.includes(chainId)) return false
   const multisigSetup = status.multisigSetup ?? session.statuses[chainId]?.multisigSetup
-  saveLaunchSession({
+  return saveLaunchSession({
     ...session,
     statuses: {
       ...session.statuses,
@@ -314,6 +326,18 @@ export function completeLaunchSession(expectedSalt?: `0x${string}`): boolean {
   }
 }
 
+/** Unresolved direct wallet requests and Safe proposals must keep their recovery record. */
+export function canAbandonDirectLaunch(session: LaunchSession): boolean {
+  return session.chains.every(chainId => {
+    const status = session.statuses[chainId]
+    const setup = status?.multisigSetup
+    return status && !status.unverifiedSend &&
+      !['signing', 'confirming', 'uncertain'].includes(status.phase) &&
+      ((!status.txHash && !status.safeProposalHash) || status.phase === 'done') &&
+      setup?.phase !== 'signing' && setup?.phase !== 'confirming'
+  })
+}
+
 /**
  * Give up on a failed launch WITHOUT marking it complete: drop the pinned
  * session (its salt and plans will never be reused) but KEEP the saved form
@@ -324,7 +348,9 @@ export function completeLaunchSession(expectedSalt?: `0x${string}`): boolean {
 export function abandonLaunchSession(expectedSalt?: `0x${string}`): boolean {
   if (typeof window === 'undefined') return false
   try {
-    if (expectedSalt && loadLaunchSession()?.salt !== expectedSalt) return false
+    const session = loadLaunchSession({ strict: true })
+    if (expectedSalt && session?.salt !== expectedSalt) return false
+    if (session && session.transport !== 'relayr' && !canAbandonDirectLaunch(session)) return false
     window.localStorage.removeItem(LAUNCH_SESSION_KEY)
     return true
   } catch {

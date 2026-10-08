@@ -27,8 +27,9 @@ import {
   simulateStateChangingTransaction,
   TRANSACTION_SIMULATION_GAS,
 } from '@bananapus/nana-sdk-core/review'
-import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
+import { isSafeConnection, readSafeAppExecution, SAFE_NONCE_GUIDANCE, SAFE_PROPOSAL_UNCONFIRMED, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
+import { captureWalletContext } from '@/lib/wallet-context'
 
 type Setup = NonNullable<LaunchChainStatus['multisigSetup']>
 type LaunchMultisigSetupRequest = ReturnType<typeof buildSafeDeploymentTx> & {
@@ -85,6 +86,8 @@ function requireSession(chainId: number, salt: Hex): LaunchSession {
 /** Keep Safe creation separate from the launch so direct calls retain their original sender. */
 export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<void> {
   if (!options.plan.multisigs?.length) return
+  const assertWalletContext = captureWalletContext(wagmiConfig, { account: options.account, chainId: options.chainId })
+  const safe = isSafeConnection(wagmiConfig)
   return withLaunchLock(async () => {
     const { chainId, salt, account, onProgress, onSetup } = options
     const plan = structuredClone(options.plan)
@@ -125,6 +128,9 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
 
     let hash = prior?.phase === 'confirming' ? prior.txHash : undefined
     let proposal = prior?.phase === 'confirming' ? prior.safeProposalHash : undefined
+    if (prior?.phase === 'confirming' && prior.safe && !proposal) {
+      throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
+    }
     if (!hash && !proposal) {
       if (await verifySafeDeployments(client, plan.multisigs!, { allowMissing: true })) {
         persist({ phase: 'done' })
@@ -137,7 +143,6 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
         throw new Error('The previously created Safe could not be verified. Check the original setup transaction before continuing.')
       }
       const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
-      const safe = isSafeConnection(wagmiConfig)
       let walletInvoked = false
       try {
         onProgress('Review Safe creation')
@@ -173,17 +178,19 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
             }
             const estimate = await client.estimateGas({ account, to: reviewed.address, data, value: reviewed.value, gas: TRANSACTION_SIMULATION_GAS })
             const gas = gasWithHeadroom(estimate)
-            return { ...reviewed, account, gas: safe ? 0n : gas > TRANSACTION_SIMULATION_GAS ? TRANSACTION_SIMULATION_GAS : gas }
+            return { ...reviewed, chainId, account, gas: safe ? 0n : gas > TRANSACTION_SIMULATION_GAS ? TRANSACTION_SIMULATION_GAS : gas }
           },
-          write: async simulated => {
+          beforeSend: () => {
+            assertWalletContext()
+            if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
+          },
+          beforeWrite: () => {
             read()
-            if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Connected wallet changed. Review Safe creation again.')
             persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
-            // Persist immediately before crossing the wallet boundary. A reload
-            // or an ambiguous wallet error now requires explicit recovery.
-            if (!getAccount(wagmiConfig).address || !isAddressEqual(getAccount(wagmiConfig).address!, account)) {
-              throw new Error('Connected account changed. Review Safe creation again.')
-            }
+          },
+          write: simulated => {
+            // The shared synchronous guard runs after the durable marker and
+            // its callbacks, immediately before this wallet invocation.
             walletInvoked = true
             return options.writeContract(simulated)
           },
@@ -202,11 +209,23 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
     if (proposal) {
       onProgress('Waiting for Safe owners to approve creation')
       hash = await waitForSafeExecutionHash(chainId, proposal, { signal: options.signal })
-      persist({ phase: 'confirming', txHash: hash, safe: true })
+      persist({ phase: 'confirming', txHash: hash, safe: true, safeProposalHash: proposal })
     }
     onProgress('Confirming Safe creation')
     const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: hash! })
-    if (receipt.status !== 'success') {
+    if (proposal) {
+      const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
+      const { status } = await readSafeAppExecution({
+        client, receipt, safe: account, proposalHash: proposal,
+        calls: [{ to: request.address, data: encodeFunctionData(request), value: request.value }],
+        batch: false,
+      })
+      if (status === 'failed') {
+        persist({ phase: 'failed', txHash: hash })
+        throw new Error('Safe creation failed inside the Safe. Review the setup before trying again.')
+      }
+      if (status !== 'success') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
+    } else if (receipt.status !== 'success') {
       persist({ phase: 'failed', txHash: hash })
       throw new Error('Safe creation reverted. Review the setup before trying again.')
     }

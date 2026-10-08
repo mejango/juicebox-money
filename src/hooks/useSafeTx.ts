@@ -21,6 +21,7 @@ import {
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { captureWalletContext } from '@/lib/wallet-context'
 import { gasWithHeadroom, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
@@ -91,7 +92,7 @@ export type TxSendOptions = {
   reverify?: (request: TxRequest) => Promise<unknown>
   /** Persist an unknown-submission marker immediately before the wallet write. */
   beforeWrite?: () => unknown | Promise<unknown>
-  /** Called if the final account gate aborts a persisted intent before the wallet write. */
+  /** Called if the final wallet gate aborts a persisted intent before the wallet write. */
   onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
   onWriteRejected?: () => unknown | Promise<unknown>
@@ -167,9 +168,9 @@ type ProposalPhase =
   /** Executed: its receipt is being read. */
   | 'executing'
   /**
-   * Executed, and not confirmed yet: its receipt still missing (held until it
-   * arrives, or an hour after the execution was seen), or its transaction not
-   * yet shown by a node behind its receipt.
+   * Executed, and not confirmed yet: its receipt is still missing within the
+   * confirmation horizon, or its transaction is not yet shown by a node behind
+   * its receipt. A known proposal remains held after that horizon.
    */
   | 'confirming'
   | 'success'
@@ -225,6 +226,7 @@ type SafeProposal = {
  * answers for what it holds.
  */
 const proposals = new Map<string, SafeProposal>()
+const followingProposals = new Set<string>()
 const proposalListeners = new Set<() => void>()
 
 function subscribeProposals(listener: () => void): () => void {
@@ -248,6 +250,23 @@ function updateProposal(key: string, next: Partial<SafeProposal>): void {
   if (!current) return
   proposals.set(key, { ...current, ...next })
   notifyProposals()
+}
+
+/** A distinct execution hash cannot make the original Safe proposal safe to repeat. */
+function unconfirmedProposal(key: string, message = SAFE_PROPOSAL_UNCONFIRMED): Partial<SafeProposal> {
+  const proposal = proposals.get(key)
+  const knownProposal = proposal?.executionHash &&
+    proposal.executionHash.toLowerCase() !== proposal.proposalHash.toLowerCase()
+  return { phase: knownProposal ? 'awaiting' : 'unproven', message }
+}
+
+/** Rechecks use the same follower; concurrent flows never start a second one. */
+function startFollowingProposal(key: string, client: FollowClient, reply: boolean): void {
+  if (followingProposals.has(key)) return
+  followingProposals.add(key)
+  void followProposal(key, client, reply)
+    .catch(() => updateProposal(key, unconfirmedProposal(key)))
+    .finally(() => followingProposals.delete(key))
 }
 
 /**
@@ -299,8 +318,9 @@ async function awaitExecution(
 
 /**
  * Follow a proposal to its result, whatever becomes of the flow that made it.
- * It ends unproven only on the chain's last word ({@link chainAnswer}): a
- * node that can't answer keeps it held, and is asked again a minute later.
+ * A node that cannot answer keeps the proposal held and is asked again a
+ * minute later ({@link chainAnswer}). A known proposal with uncertain execution
+ * evidence stays awaiting an explicit recheck, without another wallet send.
  */
 async function followProposal(key: string, client: FollowClient, reply: boolean): Promise<void> {
   const proposal = proposals.get(key)
@@ -322,7 +342,7 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     ) {
       executionHash = proposalHash
     } else {
-      updateProposal(key, awaited)
+      updateProposal(key, awaited.phase === 'unproven' ? unconfirmedProposal(key, awaited.message) : awaited)
       return
     }
   }
@@ -338,7 +358,7 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
       const hash = executionHash
       receipt = await chainAnswer(() => client.getTransactionReceipt({ hash }))
       if (!receipt) {
-        updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED })
+        updateProposal(key, unconfirmedProposal(key))
         return
       }
       break
@@ -346,7 +366,12 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     updateProposal(key, { phase: 'confirming' })
   }
   if (receipt.status !== 'success') {
-    updateProposal(key, { phase: 'failed', receipt, message: failed })
+    updateProposal(key, {
+      ...(executionHash.toLowerCase() === proposalHash.toLowerCase()
+        ? { phase: 'failed' as const, message: failed }
+        : unconfirmedProposal(key)),
+      receipt,
+    })
     return
   }
   // Only the Safe's own event for this proposal decides it, and an execution
@@ -377,9 +402,9 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     key,
     status === 'success'
       ? { phase: 'success', receipt }
-      : status === 'unproven'
-        ? { phase: 'unproven', receipt, message: SAFE_PROPOSAL_UNCONFIRMED }
-        : { phase: 'failed', receipt, message: failed },
+      : status === 'failed'
+        ? { phase: 'failed', receipt, message: failed }
+        : { ...unconfirmedProposal(key), receipt },
   )
 }
 
@@ -398,10 +423,7 @@ function recordProposal(
     message: null,
   })
   notifyProposals()
-  // A follow that fails in any other way leaves the proposal unproven, never stuck.
-  void followProposal(key, client, reply).catch(() =>
-    updateProposal(key, { phase: 'unproven', message: SAFE_PROPOSAL_UNCONFIRMED }),
-  )
+  startFollowingProposal(key, client, reply)
   return key
 }
 
@@ -505,7 +527,7 @@ export function useSafeTx(chainId: number) {
         : phase
   const notice =
     proposal?.phase === 'awaiting'
-      ? SAFE_PROPOSAL_AWAITING
+      ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
       : proposal?.phase === 'confirming'
         ? SAFE_EXECUTION_CONFIRMING
         : proposal?.phase === 'unproven'
@@ -569,6 +591,7 @@ export function useSafeTx(chainId: number) {
       // agree on whether a Safe proposes this call.
       const viaSafe = isSafeConnection(wagmiConfig)
       const account = options.reviewedAccount
+      const assertOriginalWallet = captureWalletContext(wagmiConfig, { account, chainId: request.chainId })
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
         let sentCall = callOf(request)
@@ -587,6 +610,8 @@ export function useSafeTx(chainId: number) {
             if (queued) {
               const { proposalHash, call } = queued
               recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
+            } else if (held?.phase === 'awaiting') {
+              startFollowingProposal(key, publicClient, false)
             }
             inFlightRef.current = false
             setShownKey(key)
@@ -657,18 +682,17 @@ export function useSafeTx(chainId: number) {
             ])
             return {
               ...simulated,
+              chainId: reviewed.chainId,
               gas: viaSafe ? 0n : gasWithHeadroom(estimate),
             }
           },
-          write: async simulated => {
-            // A WalletConnect peer read can land mid-flow and change the answer.
+          beforeSend: () => {
+            assertOriginalWallet()
             if (isSafeConnection(wagmiConfig) !== viaSafe) {
-              // Nothing reaches the wallet, so a marker written for this write is withdrawn.
-              if (options.beforeWrite) await options.onBeforeWriteAborted?.()
               throw new Error('Wallet connection changed. Review the transaction again.')
             }
-            return writeContractAsync(simulated)
           },
+          write: simulated => writeContractAsync(simulated),
           onPhase: setPhase,
         })
         if (viaSafe) {
@@ -748,7 +772,7 @@ export function useSafeTx(chainId: number) {
     receipt: shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: shownKey
-      ? proposal?.phase === 'unproven'
+      ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
       : phase === 'pending' && receipt.isError && !receiptData,
     send,
     reset,

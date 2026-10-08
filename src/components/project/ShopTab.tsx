@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JB_CHAINS,
   JBCoreContracts,
@@ -272,7 +274,7 @@ export function ShopTab({
   const {
     data: writeTargets,
     isLoading: writeTargetsLoading,
-  } = useQuery({
+  } = useKeptQuery({
     queryKey: ['shop721WriteTargets', chains, isRevnet],
     meta: PERSIST,
     enabled: (addItemsOpen || replaceTierId != null) && !!shop,
@@ -724,7 +726,7 @@ function ShopCustomers({
     [mediaById, primaryShop.tiers],
   )
 
-  const purchases = useQuery({
+  const purchases = useKeptQuery({
     queryKey: ['shop-purchases', projectKey],
     meta: PERSIST,
     staleTime: 15_000,
@@ -1556,7 +1558,7 @@ function TierDetailModal({
     }
   }, [onClose])
 
-  const supply = useQuery({
+  const supply = useKeptQuery({
     queryKey: ['shopTierSupply', chains, isRevnet, tier.id],
     meta: PERSIST,
     staleTime: 30_000,

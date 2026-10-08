@@ -226,7 +226,7 @@ function persist(batch: ProjectBatch, attach = false): void {
 
 function identity(calls: ProjectBatchCall[]): string {
   return encode(calls.map(({ reverifyAuthority: _verify, onSending: _sending,
-    onSubmitted: _submitted, onSafePrepared: _safe, gas: _gas, ...call }) => call))
+    onSubmitted: _submitted, onSafePrepared: _safe, onBeforeSubmissionAborted: _aborted, gas: _gas, ...call }) => call))
 }
 
 /** A later call on the same chain waits for the earlier call's canonical receipt. */
@@ -250,13 +250,12 @@ async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Pr
 }
 
 /**
- * The Safe ran a saved proposal's execution and it failed, or ran something
- * this app can't prove is that proposal: the result is final, so the call is
- * no longer held as submitted.
+ * An authenticated inner failure consumed the saved proposal's nonce, so its
+ * call can be released. Outer reverts and missing proof keep the journal held.
  */
 class SafeSubmissionSettled extends Error {}
 
-/** A saved Safe proposal the Safe ran without effect: its call failed, or its execution reverted. */
+/** A saved Safe proposal whose authenticated inner call failed. */
 const SAFE_SUBMISSION_FAILED = 'The saved Safe proposal failed onchain. Review it again.'
 
 async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, acceptReverted = false): Promise<TransactionReceipt> {
@@ -274,8 +273,6 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
     throw new Error('The original project receipt is no longer canonical. Check it again before continuing.')
   }
   if (safeHash) {
-    // An execution that reverted ran nothing; the Safe's result decides anything else.
-    if (receipt.status !== 'success') throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
     const execution = await readSafeAppExecution({
       client: { getTransaction: async () => tx },
       receipt,
@@ -283,9 +280,8 @@ async function verifyReceipt(call: ProjectBatchCall, hash: Hex, safeHash?: Hex, 
       proposalHash: safeHash,
       calls: [{ to: call.target, data: call.data, value: call.value }],
     })
-    if (execution.status !== 'success') {
-      throw new SafeSubmissionSettled(execution.status === 'unproven' ? SAFE_PROPOSAL_UNCONFIRMED : SAFE_SUBMISSION_FAILED)
-    }
+    if (execution.status === 'failed') throw new SafeSubmissionSettled(SAFE_SUBMISSION_FAILED)
+    if (execution.status !== 'success') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
     return receipt
   }
   if (receipt.status !== 'success' && !(acceptReverted && receipt.status === 'reverted')) {
@@ -453,8 +449,8 @@ export async function runProjectBatch({
     if (journal.completedIds.length === journal.calls.length) { complete([]); return journal }
     const report = (message: string, round: number) => onProgress?.({ message,
       completed: journal.completedIds.length, total: journal.calls.length, round: round + 1, rounds: journal.rounds.length })
-    // A Safe submission whose result is final but not this call's success never
-    // holds the batch: the call is released, and the next resume reviews it again.
+    // Only an authenticated inner failure releases a saved Safe submission.
+    // Uncertain execution evidence keeps the original call held across resume.
     const verifySubmitted = async (call: ProjectBatchCall, execution: Hex, safeHash?: Hex) => {
       try {
         return await verifyReceipt(call, execution, safeHash, acceptRevertedTransactions)
@@ -627,10 +623,20 @@ export async function runProjectBatch({
         // can execute between that lookup and the prepared callback.
         const fromBlock = saved?.fromBlock ?? await clientFor(call.chainId).getBlockNumber()
         let result
+        let sending: CallSubmission | undefined
         try {
           result = await runAuthorityCalls({ calls: [{ ...call,
           reverifyAuthority: async () => { checkAccount(); await reverify?.(call) },
-          onSending: async kind => { journal.submissions[call.id] = { kind, fromBlock }; persist(journal) },
+          onSending: async kind => {
+            sending = { kind, fromBlock }
+            journal.submissions[call.id] = sending
+            persist(journal)
+          },
+          onBeforeSubmissionAborted: async () => {
+            if (!sending || journal.submissions[call.id] !== sending || sending.hash) return
+            delete journal.submissions[call.id]
+            persist(journal)
+          },
           onSubmitted: async (hash, kind) => { journal.submissions[call.id] = { kind, hash, fromBlock }; persist(journal) },
           onSafePrepared: async tx => {
             const hash = canonicalSafeTxHash(call.chainId, call.authority, tx)

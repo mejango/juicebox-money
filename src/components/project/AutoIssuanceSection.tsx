@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   getAmountToAutoIssue,
@@ -59,7 +61,7 @@ export function AutoIssuanceSection({
   // The project's OWN token symbol (the passed prop is bendystraw's ACCOUNTING
   // symbol, e.g. "ETH" — the amounts are project tokens, e.g. MARKEE). Same
   // everywhere (omnichain ERC-20), so resolve it once on the primary chain.
-  const { data: resolvedToken } = useQuery({
+  const { data: resolvedToken } = useKeptQuery({
     ...projectTokenQuery(primaryClient!, chains[0]?.[0] as JBChainId, chains[0]?.[1] ?? 0),
     enabled: !!primaryClient && chains.length > 0,
   })
@@ -67,7 +69,7 @@ export function AutoIssuanceSection({
   // mint "ETH" is worse than labeling it with nothing.
   const sym = resolvedToken?.symbol || ''
 
-  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useKeptQuery({
     queryKey: ['autoIssuancesAll', chains.map(c => c.join(':')).join(',')],
     meta: PERSIST,
     staleTime: 60_000,

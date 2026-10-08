@@ -1,7 +1,8 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
-import { useQuery } from '@tanstack/react-query'
 import type { Address, PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { PERSIST } from '@/lib/query-persist'
@@ -85,7 +86,7 @@ export type TierMedia = {
 export function useShop721(chainId: JBChainId, projectId: number, isRevnet: boolean) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
-  return useQuery({
+  return useKeptQuery({
     queryKey: ['shop721', chainId, projectId, isRevnet],
     meta: PERSIST,
     enabled: !!publicClient,
@@ -109,7 +110,7 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
   const mediaTierKey = (shop?.tiers ?? [])
     .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
     .join(',')
-  return useQuery({
+  return useKeptQuery({
     queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
     meta: PERSIST,
     enabled: !!shop && shop.tiers.length > 0,

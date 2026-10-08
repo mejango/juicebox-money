@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // requests are classified before the editor rechecks the project.
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111' as `0x${string}`,
+  chainId: 1,
   clients: new Map<number, unknown>(),
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   connectedWallet: vi.fn(),
@@ -23,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@wagmi/core', async importOriginal => ({
   ...await importOriginal<typeof import('@wagmi/core')>(),
-  getAccount: () => ({ address: mocks.account, chainId: 1 }),
+  getAccount: () => ({ address: mocks.account, chainId: mocks.chainId }),
   getPublicClient: (_config: unknown, { chainId }: { chainId: number }) => mocks.clients.get(chainId),
 }))
 vi.mock('@/providers/Providers', () => ({
@@ -176,7 +177,11 @@ beforeEach(() => {
   live.clear()
   mocks.clients.clear()
   for (const chainId of CHAINS) mocks.clients.set(chainId, chainClient(chainId))
-  mocks.connectedWallet.mockResolvedValue({ wallet: mocks.wallet, account: ALICE })
+  mocks.chainId = 1
+  mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+    mocks.chainId = chainId
+    return { wallet: mocks.wallet, account: ALICE }
+  })
   mocks.requireReview.mockResolvedValue(undefined)
   mocks.chooseFunding.mockRejectedValue(new Error('Funding chain selection cancelled. Nothing was sent.'))
   mocks.identity.mockResolvedValue({ kind: 'eoa' })

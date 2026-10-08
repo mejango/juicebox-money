@@ -13,6 +13,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
 import {
+  encodeFunctionData,
   parseUnits,
   type Address,
   type PublicClient,
@@ -29,9 +30,12 @@ import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
-import { gasWithHeadroom } from "@bananapus/nana-sdk-core/review";
+import { captureWalletContext } from "@/lib/wallet-context";
+import { gasWithHeadroom, isDefiniteWalletRejection } from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
+  readSafeAppExecution,
+  SAFE_PROPOSAL_UNCONFIRMED,
   SAFE_NONCE_GUIDANCE,
   useSafeConnection,
   waitForSafeExecutionHash,
@@ -58,6 +62,7 @@ import {
 import {
   abandonLaunchSession,
   canAbandonRelayrLaunch,
+  canAbandonDirectLaunch,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -81,6 +86,7 @@ import {
   launchAcceptsAnyToken,
   nativeBridgeViable,
   projectIdFromReceipt,
+  requireFinalizedLaunchFailure,
   routesAllFunds,
   type ApprovalDeadline,
   type LaunchPlan,
@@ -931,14 +937,16 @@ export function CreateForm() {
     };
     statusesRef.current = { ...statusesRef.current, [chainId]: next };
     setStatuses(statusesRef.current);
-    recordLaunchChainStatus(chainId, {
+    const persisted = recordLaunchChainStatus(chainId, {
       phase: next.phase,
       ...(next.txHash ? { txHash: next.txHash } : {}),
       ...(next.safeProposalHash
         ? { safeProposalHash: next.safeProposalHash }
         : {}),
+      ...(next.directSafeCall ? { directSafeCall: next.directSafeCall } : {}),
       ...(next.projectId !== undefined ? { projectId: next.projectId } : {}),
-    });
+    }, pinnedRef.current?.salt ?? restoredSessionRef.current?.salt);
+    if (!persisted) throw new Error("Launch progress could not be saved. Restore browser storage before continuing.");
   };
 
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
@@ -1506,29 +1514,33 @@ export function CreateForm() {
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
       if (priorStatus?.phase === "done") continue;
-      let hash =
-        priorStatus?.phase === "confirming" ||
-        priorStatus?.phase === "uncertain"
-          ? priorStatus.txHash
-          : undefined;
-      const priorSafeProposalHash = priorStatus?.safeProposalHash;
+      let hash = priorStatus?.txHash ?? priorStatus?.safeProposalHash;
+      let proposal = priorStatus?.safeProposalHash;
+      let directSafeCall = priorStatus?.directSafeCall;
       let provenReverted = false;
+      let walletInvoked = false;
+      const assertWalletContext = captureWalletContext(config, { account: address, chainId });
+      const viaSafe = isSafeConnection(config);
       try {
         const client = getPublicClient(config, {
           chainId: chainId as SupportedChainId,
         }) as PublicClient;
+        if (priorStatus?.unverifiedSend || priorStatus?.phase === "signing" ||
+            (priorStatus?.phase === "uncertain" && !hash)) {
+          throw new Error("This launch may already have been submitted. Recover the original wallet request before trying again.");
+        }
         if (hash) {
           updateStatus(chainId, { phase: "confirming", error: undefined });
-          if (priorSafeProposalHash) {
+          if (proposal) {
             hash = await waitForSafeExecutionHash(
               chainId,
-              priorSafeProposalHash,
+              proposal,
               { signal },
             );
             updateStatus(chainId, {
               phase: "confirming",
               txHash: hash,
-              safeProposalHash: undefined,
+              safeProposalHash: proposal,
             });
           }
         } else {
@@ -1546,7 +1558,6 @@ export function CreateForm() {
               signal,
             });
           }
-          updateStatus(chainId, { phase: "signing", error: undefined });
           // Fees are dynamic and must match msg.value EXACTLY — re-read right
           // before sending, never reuse across chains.
           const creationFee = await getProjectCreationFee(
@@ -1563,6 +1574,7 @@ export function CreateForm() {
             plan: pinned.plans[chainId],
             salt: pinned.salt,
           });
+          directSafeCall = viaSafe ? { safe: address!, to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n } : undefined;
           hash = await submitReviewedContractWrite({
             request,
             expectedAccount: address,
@@ -1572,12 +1584,12 @@ export function CreateForm() {
                   ...reviewed,
                   account: address,
                   // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-                  ...(isSafeConnection(config) ? { safeTxGas: 0n } : {}),
+                  ...(viaSafe ? { safeTxGas: 0n } : {}),
                 },
                 {
                   title: `Review launch on ${chainName(chainId)}`,
                   label: "Launch project",
-                  ...(isSafeConnection(config)
+                  ...(viaSafe
                     ? {
                         description: SAFE_NONCE_GUIDANCE,
                         confirmLabel: "Agree & continue to Safe",
@@ -1611,28 +1623,56 @@ export function CreateForm() {
               ]);
               return {
                 ...simulated,
-                gas: isSafeConnection(config) ? 0n : gasWithHeadroom(estimate),
+                chainId,
+                gas: viaSafe ? 0n : gasWithHeadroom(estimate),
               };
             },
-            write: (simulated) =>
-              writeContractAsync(
+            beforeSend: () => {
+              assertWalletContext();
+              if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
+            },
+            beforeWrite: () => {
+              const saved = loadLaunchSession({ strict: true });
+              const status = saved?.statuses[chainId];
+              if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
+                  status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
+                  ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
+                throw new Error("The saved launch changed. Recover the original launch before continuing.");
+              }
+              const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
+              if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
+                throw new Error("The saved launch changed. Review the original launch before continuing.");
+              }
+              updateStatus(chainId, { phase: "signing", directSafeCall, txHash: undefined, safeProposalHash: undefined });
+            },
+            onBeforeWriteAborted: () => {
+              const saved = loadLaunchSession({ strict: true });
+              const status = saved?.statuses[chainId];
+              if (saved?.salt === pinned.salt && status?.unverifiedSend && !status.txHash && !status.safeProposalHash) {
+                updateStatus(chainId, { phase: "failed", unverifiedSend: undefined });
+              }
+            },
+            write: (simulated) => {
+              walletInvoked = true;
+              return writeContractAsync(
                 simulated as Parameters<typeof writeContractAsync>[0],
-              ),
+              );
+            },
             accountChangedError:
               "Connected account changed. Review the launch again.",
           });
-          updateStatus(chainId, { phase: "confirming", txHash: hash });
-          if (isSafeConnection(config)) {
+          if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
+            hash = undefined;
+            throw new Error("The wallet returned no valid launch hash. Recover the original wallet request before trying again.");
+          }
+          proposal = viaSafe ? hash : undefined;
+          updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: proposal });
+          if (proposal) {
+            hash = await waitForSafeExecutionHash(chainId, proposal, { signal });
             updateStatus(chainId, {
               phase: "confirming",
               txHash: hash,
-              safeProposalHash: hash,
-            });
-            hash = await waitForSafeExecutionHash(chainId, hash, { signal });
-            updateStatus(chainId, {
-              phase: "confirming",
-              txHash: hash,
-              safeProposalHash: undefined,
+              safeProposalHash: proposal,
             });
           }
         }
@@ -1640,11 +1680,31 @@ export function CreateForm() {
           hash: hash!,
           chainId: chainId as SupportedChainId,
         });
-        if (receipt.status !== "success") {
+        if (proposal) {
+          if (!directSafeCall) throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
+          const { safe, ...call } = directSafeCall;
+          const { status } = await readSafeAppExecution({
+            client, receipt, safe, proposalHash: proposal, calls: [call], batch: false,
+          });
+          if (status === "failed") {
+            await requireFinalizedLaunchFailure(client, receipt, hash!);
+            provenReverted = true;
+            proposal = undefined;
+            updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined });
+            throw new Error(`Launch failed inside the Safe on ${chainName(chainId)}.`);
+          }
+          if (status !== "success") throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
+        } else if (receipt.status !== "success") {
+          const saved = loadLaunchSession({ strict: true });
+          if (!saved?.account) throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
+          await requireFinalizedLaunchFailure(client, receipt, hash!, {
+            account: saved.account, chainId: chainId as JBChainId, projectUri: pinned.projectUri,
+            plan: pinned.plans[chainId], salt: pinned.salt,
+          });
           provenReverted = true;
           updateStatus(chainId, {
             phase: "failed",
-            txHash: hash,
+            txHash: undefined,
             error: `Transaction ${hash} reverted on ${chainName(chainId)}.`,
           });
           throw new Error(`Transaction failed on ${chainName(chainId)}.`);
@@ -1663,22 +1723,51 @@ export function CreateForm() {
           setPhase("failed");
           return;
         }
-        updateStatus(chainId, { phase: "done", projectId });
+        updateStatus(chainId, { phase: "done", projectId, safeProposalHash: undefined });
       } catch (e) {
-        updateStatus(
-          chainId,
-          hash && !provenReverted
-            ? {
-                phase: "uncertain",
-                txHash: hash,
-                error: `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
-              }
-            : {
-                phase: "failed",
-                txHash: provenReverted ? hash : undefined,
-                error: friendlyError(e),
-              },
-        );
+        // A competing tab can save a wallet request while this tab reviews.
+        // A rejected preparation must never clear that other request's hold.
+        const saved = loadLaunchSession();
+        const live = saved?.statuses[chainId];
+        if (saved && saved.salt !== pinned.salt) {
+          setLaunchError("The saved launch changed. Recover the original launch before continuing.");
+          setPhase("failed");
+          return;
+        }
+        if (!walletInvoked && !hash && saved?.salt === pinned.salt && live &&
+            (live.unverifiedSend || live.txHash || live.safeProposalHash || ["confirming", "uncertain", "done"].includes(live.phase))) {
+          statusesRef.current = saved.statuses;
+          setStatuses(saved.statuses);
+          setLaunchError(friendlyError(e));
+          setPhase("failed");
+          return;
+        }
+        const unknownSend = (!hash && walletInvoked && !isDefiniteWalletRejection(e)) ||
+          priorStatus?.unverifiedSend || priorStatus?.phase === "signing" ||
+          (priorStatus?.phase === "uncertain" && !hash);
+        try {
+          updateStatus(
+            chainId,
+            unknownSend
+              ? { phase: "signing", unverifiedSend: true, error: friendlyError(e) }
+              : hash && !provenReverted
+              ? {
+                  phase: "uncertain",
+                  txHash: hash,
+                  safeProposalHash: proposal,
+                  error: `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
+                }
+              : {
+                  phase: "failed",
+                  txHash: undefined,
+                  safeProposalHash: proposal,
+                  unverifiedSend: undefined,
+                  error: friendlyError(e),
+                },
+          );
+        } catch (storageError) {
+          setLaunchError(friendlyError(storageError));
+        }
         setPhase("failed");
         return; // Stop here — retry checks a submitted hash before sending.
       } finally {
@@ -1897,6 +1986,9 @@ export function CreateForm() {
       }
       if (session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
         throw new Error("This launch still has published authorizations. Check the original bundle before starting another launch.");
+      }
+      if (session && session.transport !== "relayr" && !canAbandonDirectLaunch(session)) {
+        throw new Error("This launch has a wallet request that may still execute. Recover it before starting another launch.");
       }
       if (!abandonLaunchSession(session?.salt)) {
         throw new Error("Could not cancel this deployment. Restore browser storage and try again.");
@@ -2368,14 +2460,16 @@ export function CreateForm() {
     : [];
   const relayrFundingStarted = activeLaunchSession?.relayr &&
     ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
-  const mayAbandonLaunch = !usesRelayr || !activeLaunchSession ||
-    canAbandonRelayrLaunch(activeLaunchSession);
+  const mayAbandonLaunch = !activeLaunchSession || (usesRelayr
+    ? canAbandonRelayrLaunch(activeLaunchSession)
+    : canAbandonDirectLaunch(activeLaunchSession));
   const launchCancellation = (
     <>
       {phase === "failed" && !mayAbandonLaunch ? (
         <p className="text-sm text-smoke-700">
-          This launch has published authorizations that may still execute.
-          Check the saved bundle to continue; starting over could create duplicate projects.
+          {usesRelayr
+            ? "This launch has published authorizations that may still execute. Check the saved bundle to continue; starting over could create duplicate projects."
+            : "This launch has a wallet request that may still execute. Recover the saved launch to continue; starting over could create duplicate projects."}
         </p>
       ) : null}
       {phase === "failed" && mayAbandonLaunch ? (

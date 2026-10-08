@@ -6,6 +6,7 @@ import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDep
 import { decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctionData, isAddress, isAddressEqual, zeroAddress, type Address, type Hex } from 'viem'
 import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
 import { connectedWallet, publicClient } from '@/lib/wallet-core'
+import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
@@ -367,6 +368,7 @@ export const SAFE_PAYER_PENDING = 'The Safe proposal is still pending. Execute i
  */
 export async function runPayerDeployments(review: PayerDeploymentSession, onUpdate: (session: PayerDeploymentSession) => void, signal: AbortSignal): Promise<PayerDeploymentSession> {
   const startChainId = getAccount(wagmiConfig).chainId
+  const walletGuards = review.calls.map(call => captureWalletContext(wagmiConfig, { account: review.account, chainId: call.chainId }))
   return locked(aliases(review), async () => {
     if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('This browser cannot coordinate payer deployments across tabs. Use a browser with Web Locks support.')
     const original = readJournal(review.id)
@@ -484,7 +486,15 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         outcome = session.outcomes[index] = { chainId: call.chainId, state: 'sending', failedHashes: beforeSend.failedHashes, fromBlock }
         persist(true)
         try {
-          const hash = await wallet.sendTransaction({ account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
+          walletGuards[index]()
+          assertAccount(session)
+        } catch (error) {
+          session.outcomes[index] = beforeSend
+          persist()
+          throw error
+        }
+        try {
+          const hash = await wallet.sendTransaction({ chain: wallet.chain, account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
           outcome = session.outcomes[index] = session.transport === 'safe'
             ? { ...outcome, state: 'submitted', safeProposalHash: hash }
             : { ...outcome, state: 'submitted', hash }

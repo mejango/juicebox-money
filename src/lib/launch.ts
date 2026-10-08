@@ -30,7 +30,7 @@ import {
   type JBAccountingContext,
   type JBFeedPair,
 } from '@bananapus/nana-sdk-core/v6'
-import { zeroAddress, type Address, type TransactionReceipt } from 'viem'
+import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import type { SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { chainName } from '@/lib/urn'
 
@@ -1204,4 +1204,37 @@ export function projectIdFromReceipt(
     return null
   }
   return Number(projectId)
+}
+
+
+/** Release a failed non-idempotent launch only after its receipt is finalized
+ * and canonical. Without Safe inner-failure proof, authenticate the original
+ * direct wallet call too: old journals may have discarded a Safe proposal hash. */
+export async function requireFinalizedLaunchFailure(
+  client: Pick<PublicClient, 'getTransaction' | 'getBlock'>,
+  receipt: Pick<TransactionReceipt, 'status' | 'transactionHash' | 'blockNumber' | 'blockHash'>,
+  hash: Hex,
+  direct?: Omit<Parameters<typeof buildLaunchRequest>[0], 'creationFee' | 'owner'> & { account: Address },
+): Promise<void> {
+  const held = 'The original launch failure is not yet verified and finalized. Keep its saved request and check again.'
+  if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw new Error(held)
+  if (direct) {
+    const tx = await client.getTransaction({ hash })
+    const expected = buildLaunchRequest({ ...direct, owner: direct.account, creationFee: tx.value })
+    if (receipt.status !== 'reverted' || tx.hash.toLowerCase() !== hash.toLowerCase() ||
+        tx.chainId !== direct.chainId || tx.blockHash !== receipt.blockHash ||
+        tx.from.toLowerCase() !== direct.account.toLowerCase() ||
+        tx.to?.toLowerCase() !== expected.address.toLowerCase() ||
+        tx.input.toLowerCase() !== encodeFunctionData(expected as Parameters<typeof encodeFunctionData>[0]).toLowerCase()) {
+      throw new Error(held)
+    }
+  }
+  // Load the existing finalized-block proof only when a failed launch needs a retry.
+  const { atCanonicalFinalizedBlock } = await import('@bananapus/nana-sdk-core/review/relayr')
+  const proof = await atCanonicalFinalizedBlock(client, async finalized => {
+    if (finalized < receipt.blockNumber) return false
+    const block = await client.getBlock({ blockNumber: receipt.blockNumber })
+    return Boolean(block.hash && block.hash.toLowerCase() === receipt.blockHash.toLowerCase())
+  })
+  if (!proof?.value) throw new Error(held)
 }
