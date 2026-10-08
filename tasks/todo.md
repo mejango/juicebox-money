@@ -670,7 +670,7 @@ Review: only the existing deterministic APP_ROUTES branch gains image-proof, cov
 
 - [x] Extract the unchanged image URL rules from numeric formatting and migrate every caller.
 - [x] Verify exact extracted bytes plus owning URL, component and metadata checks; commit separately.
-- [ ] Reuse Revnet's proof-route budget exclusion, retaining all shared/runtime assets; compare the same baseline and add a regression.
+- [x] Reuse Revnet's proof-route budget exclusion, retaining all shared/runtime assets; compare the same baseline and add a regression.
 - [ ] Rebuild once through root, then judge the new route/aggregate totals and final performance evidence.
 
 ## Plan refinement
@@ -711,3 +711,17 @@ Docker-context review: the single existing synthetic AVIF fixture is now explici
 - [x] Align the standalone check path and prove both selected-artifact success and drift rejection.
 
 Review: the standalone CLI resolves NEXT_DIST_DIR with the same .next fallback as Juicebox configuration/startup. All4compatibility cases pass, including the real CLI selecting a patched alternate tree over an invalid default decoy and rejecting subsequent corruption of that selected tree. Scoped ESLint, plan and whitespace checks pass. Logs: `/private/tmp/jbm-images-alternate-dist-{tests,lint}.log`. No runtime optimizer bytes, Next artifact, dependency or Revnet source changed; a production rebuild is unnecessary for this script-only correction.
+
+
+## Plan refinement
+
+- **Objective:** Finish the measured image bundle gate with production-only chunk accounting and minimally rounded home/create limits, preserving the aggregate and lazy-loading ceilings.
+- **System fit:** Root’s production rebuild confirms the unchanged image-source extraction reduces create from510.3to508.1KiB; home439.4KiB retains the new shared image policy. The existing budget script owns enforcement; application runtime and authority remain unchanged.
+- **Reuse and simplicity:** Match Revnet’s dedicated proof-directory exclusion, including nested browser-only source route stubs, but retain every shared chunk and any asset referenced by a shipped route. Round only measured home/create limits to440/509KiB; do not raise aggregate.
+- **Evidence and unknowns:** Both artifacts use the verified matching physical dependency graph. The first proof-manifest pass missed query-suffixed assets; normalize deployment queries before extension checks and regress that case. Final matched entry timing remains a separate root-scheduled check.
+- **Verification:** Exercise dedicated proof page/source exclusion, shared chunks and references from nonbudgeted shipped routes; run the same final checker on preserved baseline and rebuilt image artifact, scoped lint/types and whitespace. Record exact bytes plus exclusion totals.
+- **Resource budget:** One script/test commit after the completed extraction commit234b880, no application rebuild or concurrent timing. Coordinate shared task-note appends and hand the gate to root for final integration.
+
+Review: final same-policy baseline/rebuilt totals are home448,954→449,991B (+1,037), create519,277→520,318B (+1,041), and aggregate2,589,293→2,588,005B (−1,288). The exact unchanged extraction removes2,261B from the earlier create image build (522,579→520,318). Home/create caps round minimally to440/509KiB; aggregate stays2535KiB. Dedicated proof exclusions are6,485B baseline and11,273B rebuilt, including the nested source stub; all shared chunks remain counted. Four real-checker regressions pass with deployment queries: dedicated page exclusion, unreferenced source stub exclusion, shared chunk retention and a reference from a shipped route outside the three initial-route budgets. Scoped ESLint passes. Evidence: /private/tmp/jb-entry-20261008/{baseline-filtered-budget-final,images-extracted-filtered-budget-final,proof-budget-tests-final,proof-budget-lint-final}.log.
+
+The existing dynamic-route loader separately filters deployment-query chunk names before normalization, undercounting the project route. Root authorized a separate gate-correctness commit and matched rerun; the168.5KiB legacy output is not evidence of the complete project payload. No runtime rebuild is required for these checker-only changes. Final actual entry timing remains pending.

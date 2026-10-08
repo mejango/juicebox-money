@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { gzipSync } from 'node:zlib'
 
@@ -35,7 +35,10 @@ const budgets = {
     // Bounded alias navigation adds its shared identity gate. On matching
     // physical locked installs, 096540c/f5e293f measure 447,195/448,951 B.
     // Heavy read/controller imports were separated before rounding this cost.
-    '/page': 439 * KIB,
+    // Responsive delivery adds 1,037 B on the matching physical install:
+    // 448,954 -> 449,991 B after separating image URLs from numeric formatting.
+    // Keep the new shared fidelity policy; round its measured total only.
+    '/page': 440 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -61,9 +64,12 @@ const budgets = {
     // Service-neutral status/error presentation measures 518,999 -> 519,278 B
     // (+279 B) on the matching physical locked graph. Its import-free formatter
     // stays in create's existing chunk; round only this measured route cost.
-    '/create/page': 508 * KIB,
+    // The same image-source extraction removes the extra format/chain copy:
+    // responsive delivery measures 519,277 -> 520,318 B (508.1 KiB).
+    '/create/page': 509 * KIB,
   },
-  // Counts every emitted chunk, including ones a visitor may never download.
+  // Counts every deployable chunk, including ones a visitor may never download.
+  // Dedicated browser-proof route chunks are excluded; shared chunks still count.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK here; the per-route budgets above and the
   // per-SDK lazy-load assertions below are what actually protect first paint.
@@ -287,6 +293,35 @@ if (!Object.keys(pages).length) {
 }
 const layoutFiles = pages['/layout'] ?? []
 
+// Match Revnet's budget policy: proof routes never ship, but every shared
+// chunk still counts, even when only a browser proof currently references it.
+const appDirectory = resolve('src/app')
+const proofRoutes = new Set(
+  filesBelow(appDirectory)
+    .filter(file => file.endsWith(`${sep}page.browsertest.tsx`))
+    .map(file => `/${relative(appDirectory, dirname(file)).split(sep).join('/')}`),
+)
+const shippedAssets = new Set(Object.values(pages).flat())
+for (const manifestPath of filesBelow(join(distDir, 'server/app')).filter(file => file.endsWith('_client-reference-manifest.js'))) {
+  const context = { globalThis: {} }
+  runInNewContext(readFileSync(manifestPath, 'utf8'), context, { filename: manifestPath, timeout: 1_000 })
+  for (const [appPath, manifest] of Object.entries(context.globalThis.__RSC_MANIFEST ?? {})) {
+    const route = appPath.replace(/\/page$/, '')
+    const files = Object.values(manifest.clientModules ?? {})
+      .flatMap(module => module.chunks ?? [])
+      .filter(file => typeof file === 'string')
+      .map(file => decodeURIComponent(file.split('?')[0]))
+      .filter(file => file.endsWith('.js'))
+    if (!proofRoutes.has(route)) for (const file of files) shippedAssets.add(file)
+  }
+}
+const proofOnlyAssets = new Set(
+  filesBelow(join(distDir, 'static/chunks/app'))
+    .filter(file => file.endsWith('.js'))
+    .map(file => relative(distDir, file).split(sep).join('/'))
+    .filter(file => [...proofRoutes].some(route => file.startsWith(`static/chunks/app${route}/`)) && !shippedAssets.has(file)),
+)
+
 process.stdout.write('Client JavaScript budgets\n')
 for (const [route, limit] of Object.entries(budgets.routes)) {
   if (!pages[route]) {
@@ -312,7 +347,7 @@ for (const [route, limit] of Object.entries(budgets.routes)) {
 }
 
 const chunks = filesBelow(join(distDir, 'static', 'chunks')).filter(path =>
-  path.endsWith('.js'),
+  path.endsWith('.js') && !proofOnlyAssets.has(relative(distDir, path).split(sep).join('/')),
 )
 if (!chunks.length) {
   fail('no client JavaScript chunks were found')
