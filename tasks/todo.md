@@ -651,3 +651,17 @@ The28focused SSR/lifecycle/metadata cases pass, including all three critical mod
 
 
 Final observer review: the shared check now rechecks its ownership marker on every event, so a lazy-to-eager React commit cannot let the old passive observer hide or reject a newly native original before cleanup. The regression simulates both completed-load and incomplete-resize events after removing the marker;27focused image/lifecycle cases and scoped ESLint pass. Evidence: `/private/tmp/jbm-images-observer-ownership.log` and `jbm-images-observer-lint.log`. Root retains final integrated build/browser gates.
+
+
+## Plan refinement
+
+- **Objective:** Make the deterministic image proof page and its nested media source reachable for actual browser verification while preserving production legacy redirects.
+- **System fit:** The browser build includes proof routes through its existing extension gate, but Juicebox proxy independently reserves first path segments. The existing deterministic-only route list is the owning admission rule; root rebuilds and reruns browser qualification.
+- **Reuse and simplicity:** Add only image-proof beside the existing ipfs-proof/project-diagnostics-proof entries; one first-segment entry covers its nested source. No renderer, production allowlist, route matcher or configuration change.
+- **Evidence and unknowns:** Actual browser proof encountered307 to old.juicebox.money for page/source despite emitted manifests. Installed Next proxy documentation and source show the first-segment gate precedes routing; the previous browser failures provide reachability evidence, not image evidence.
+- **Verification:** Extend the existing proxy test to cover page and nested source admitted only with the deterministic environment enabled and redirected in ordinary production; run that focused suite, scoped lint and whitespace before commit.
+- **Resource budget:** One tiny routing correction and regression, no image-runtime edits or repeated full tests. Root owns the necessary rebuild and actual browser rerun.
+
+- [x] Admit the proof segment only in deterministic builds and verify both paths plus production exclusion.
+
+Review: only the existing deterministic APP_ROUTES branch gains image-proof, covering both the page and nested source through the first-segment owner. All5proxy cases pass; the new parameterized regression proves both paths bypass legacy redirects with the flag true and retain307pluspath/query in false or unset production environments. Scoped ESLint and whitespace pass. Logs: `/private/tmp/jbm-images-proof-proxy-{tests,lint}.log`. The prior307browser evidence is preserved; root must rebuild and rerun the actual proof before claiming image behavior verified.

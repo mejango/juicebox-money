@@ -20,7 +20,7 @@ const APP_ROUTES = new Set([
   'learn',
   'modal-proof',
   ...(process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
-    ? ['ipfs-proof', 'project-diagnostics-proof']
+    ? ['ipfs-proof', 'image-proof', 'project-diagnostics-proof']
     : []),
 ])
 
