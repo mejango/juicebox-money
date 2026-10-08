@@ -32,7 +32,11 @@
     "test:browser:report": "playwright show-report",
     "budget": "node scripts/check-client-budgets.mjs",
     "check": "npm run deps:check && npm run dead-code:check && npm run audit:prod && npm run container:check && npm run lint && npm run ts:check && npm run source:check && npm run protocol:check && npm run schema:check && npm run transaction:check && npm run test:ci && npm run build:browser && npm run budget && npm run test:browser",
-    "check:deploy": "npm run check && npm run env:check:all"
+    "check:deploy": "npm run check && npm run env:check:all",
+    "predev": "node scripts/prepare-image-optimizer.mjs",
+    "prebuild": "node scripts/prepare-image-optimizer.mjs",
+    "postbuild": "node scripts/prepare-image-optimizer.mjs --check-standalone",
+    "postbuild:browser": "node scripts/prepare-image-optimizer.mjs --check-standalone"
   },
   "dependencies": {
     "@bananapus/nana-sdk-core": "2.24.5",
