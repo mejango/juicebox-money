@@ -70,7 +70,7 @@ and the check fails on a missing marker.
 | Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
-| Submit a reviewed direct write | reviewed-account check → review → chain/account check → simulate → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
+| Submit a reviewed direct write | SDK review → switch → reverify → simulate → persist → final wallet context → exact simulated write | **P** | `transactions/contract-write.test.ts`, `transactions/use-safe-tx.test.ts` |
 | Submit a one-chain project-owner/operator action | exact review → account/chain recheck → fresh simulation → direct receipt | **P/E** | transaction inventory + authority boundary |
 | Propose/confirm/execute a Safe tx | EIP-712 + `execTransaction` | **P/E** | `transactions/safe.test.ts`, `transactions/safe-orchestration.test.ts` |
 | Relay a multichain bundle | EIP-2771 + prepaid Relayr payment | **P/E** | `transactions/relayr.test.ts`, `transactions/relayr-orchestration.test.ts`, `transactions/relayr-editor-rechecks.test.ts` |
@@ -81,6 +81,22 @@ and the check fails on a missing marker.
 
 ## Data and recovery invariants
 
+- Final wallet checks bind the original account, target chain, connector uid
+  and View-as state after every awaited precondition and intent write. A
+  proven pre-wallet refusal can clear only its original hashless intent;
+  ambiguous errors from an invoked wallet retain recovery evidence. Shared
+  SDK Relayr classification distinguishes these cases even if a wallet error
+  falsely claims that payment was never sent.
+- Known Safe proposals retain their original hash through outer reverts,
+  unrelated receipts, unavailable services, dismissal and remount. Exact inner
+  execution evidence controls settlement; an outer revert does not prove that
+  the Safe nonce was consumed. Project batches retain unproven submissions.
+- Direct launch recovery saves the reviewed Safe call and keeps unknown EOA,
+  Safe and legacy submissions held. Releasing a failed non-idempotent launch
+  requires exact call/transaction binding plus finalized canonical evidence;
+  missing proof never authorizes a retry. `transactions/launch-failure.test.ts`,
+  `transactions/launch-session.test.ts` and the launch browser journey cover
+  this boundary and stale-tab session identity.
 - Inline Safe creation freezes one signer policy and predicted address across
   the selected launch chains. Existing drafts retain their address-based
   authority, and disabled controls do not create a Safe. Relayr batches setup

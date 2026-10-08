@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   safe: false,
+  connectorUid: 'reviewed-wallet',
   review: vi.fn(),
   write: vi.fn(),
   waitSafe: vi.fn(),
@@ -28,8 +29,9 @@ vi.mock('wagmi', () => ({
   useSwitchChain: () => ({ switchChainAsync: vi.fn() }),
   useWriteContract: () => ({ writeContractAsync: mocks.write }),
 }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: ACCOUNT, chainId: 1, connector: { uid: mocks.connectorUid } }) }))
 vi.mock('wagmi/actions', () => ({
-  getAccount: () => ({ address: ACCOUNT, chainId: 1 }),
+  getAccount: () => ({ address: ACCOUNT, chainId: 1, connector: { uid: mocks.connectorUid } }),
   getPublicClient: () => mocks.client,
 }))
 vi.mock('@tanstack/react-query', () => ({
@@ -101,6 +103,7 @@ async function mint() {
 
 beforeEach(() => {
   mocks.safe = false
+  mocks.connectorUid = 'reviewed-wallet'
   mocks.review.mockReset().mockResolvedValue(undefined)
   mocks.write.mockReset().mockResolvedValue(PROPOSAL)
   mocks.waitSafe.mockReset().mockResolvedValue(PROPOSAL)
@@ -236,6 +239,20 @@ describe('free mint gas', () => {
     renderer = create(<p />)
   })
 
+  it('refuses a connector replacement during the final mint eligibility read', async () => {
+    const read = mocks.client.readContract.getMockImplementation()!
+    let owners = 0
+    mocks.client.readContract.mockImplementation(async request => {
+      const result = await read(request)
+      if (request.functionName === 'owner' && ++owners === 2) mocks.connectorUid = 'replacement-wallet'
+      return result
+    })
+    await mint()
+    expect(owners).toBeGreaterThanOrEqual(2)
+    expect(mocks.write).not.toHaveBeenCalled()
+    expect(text()).toContain('Connected wallet changed')
+  })
+
   it('stops before the wallet when the Safe connection changes after review', async () => {
     mocks.review.mockImplementation(async () => {
       // A WalletConnect peer read lands mid-flow: the reviewed call was not a Safe proposal.
@@ -243,7 +260,7 @@ describe('free mint gas', () => {
     })
     await mint()
     expect(mocks.write).not.toHaveBeenCalled()
-    expect(text()).toContain('Wallet connection changed. Review the free mint again.')
+    expect(text()).toContain('Wallet connection changed. Review the transaction again.')
   })
 })
 

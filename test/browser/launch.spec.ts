@@ -199,7 +199,7 @@ test('keeps a failed deployment locked when its saved session cannot be removed'
   await expect(page.getByRole('button', { name: 'Try again', exact: true })).toBeVisible()
 })
 
-test('shows the submitted transaction warning beside cancellation on the form', async ({ page }) => {
+test('keeps a submitted transaction locked across dialog dismissal and reload', async ({ page }) => {
   await page.route('**/api/project-ready?chainId=10&projectId=1', route => route.fulfill({ json: { found: false } }))
   await page.addInitScript(({ account, salt }) => {
     localStorage.setItem('jbm-create-draft', JSON.stringify({
@@ -225,10 +225,43 @@ test('shows the submitted transaction warning beside cancellation on the form', 
   await expect(dialog).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Cancel deployment', exact: true })).toBeVisible()
-  const warning = page.getByText(/Cancelling stops this run\. The project already launched on Optimism is kept/)
+  await expect(page.getByRole('button', { name: 'Cancel deployment', exact: true })).toHaveCount(0)
+  const warning = page.getByText('This launch has a wallet request that may still execute.', { exact: false })
   await expect(warning).toBeVisible()
-  await expect(warning).toContainText('A launch on Base may also still confirm')
-  await expect(warning).toContainText('launching again would create a duplicate project there')
+  await expect(warning).toContainText('starting over could create duplicate projects')
+  await page.reload()
+  await expect(page.getByRole('dialog', { name: 'Confirm launch' }).getByRole('button', { name: 'Cancel deployment', exact: true })).toHaveCount(0)
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('jbm-launch-pending-v1')!).statuses[8453].txHash)).toBe(`0x${'ab'.repeat(32)}`)
 })
+
+
+for (const atOnce of [false, true]) {
+  test(`retains an unresolved Safe launch after reload with ${atOnce ? 'at-once' : 'distinct'} execution hash`, async ({ page }) => {
+    const proposal = `0x${'ab'.repeat(32)}`
+    const execution = atOnce ? proposal : `0x${'cd'.repeat(32)}`
+    await page.addInitScript(({ account, salt, proposal, execution }) => {
+      if (localStorage.getItem('jbm-launch-pending-v1')) return
+      localStorage.setItem('jbm-launch-pending-v1', JSON.stringify({
+        account, salt, transport: 'direct', projectUri: 'ipfs://QmSafeLaunch',
+        store: { name: 'Safe collection' }, plans: { 8453: { projectName: 'Safe project' } },
+        chains: [8453], createdAt: 1_800_000_000_000,
+        statuses: { 8453: {
+          phase: 'uncertain', txHash: execution, safeProposalHash: proposal,
+          directSafeCall: { safe: account, to: account, data: '0x1234', value: '100#bigint' },
+        } },
+      }))
+    }, { account, salt, proposal, execution })
+    await page.goto('/create')
+    const dialog = page.getByRole('dialog', { name: 'Confirm launch' })
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Cancel deployment', exact: true })).toHaveCount(0)
+    const saved = await page.evaluate(() => localStorage.getItem('jbm-launch-pending-v1'))
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('button', { name: 'Cancel deployment', exact: true })).toHaveCount(0)
+    await expect(page.getByText('This launch has a wallet request that may still execute.', { exact: false })).toBeVisible()
+    await page.reload()
+    await expect(dialog).toBeVisible()
+    await expect(dialog.getByRole('button', { name: 'Cancel deployment', exact: true })).toHaveCount(0)
+    expect(await page.evaluate(() => localStorage.getItem('jbm-launch-pending-v1'))).toBe(saved)
+  })
+}

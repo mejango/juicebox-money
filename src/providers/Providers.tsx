@@ -100,10 +100,9 @@ export function Providers({ children }: PropsWithChildren) {
     })
     return client
   })
-  // Last session's values are, by definition, values the server did not render, and
-  // streamed segments keep hydrating after this effect fires. Seeding the cache before
-  // the document settles re-renders a tree React is still matching against the server's
-  // HTML, which it reports as a hydration failure.
+  // Keep restoration off the document's initial load. A component may still hydrate
+  // later: persisted reads use useKeptQuery to match their own server render before
+  // showing browser data, independently of this provider's lifecycle.
   useEffect(() => {
     let teardown: (() => void) | undefined
     const restore = () => {

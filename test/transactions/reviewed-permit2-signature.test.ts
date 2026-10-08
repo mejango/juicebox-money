@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   chainId: 8453,
+  connectorUid: 'reviewed-wallet',
   getAccount: vi.fn(),
   review: vi.fn(),
   sign: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@wagmi/core', () => ({ getAccount: mocks.getAccount }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('wagmi', () => ({
   useConfig: () => ({}),
   useSignTypedData: () => ({ signTypedDataAsync: mocks.sign }),
@@ -62,7 +64,8 @@ async function signer(props: { reviewedInParent?: boolean } = {}) {
 beforeEach(() => {
   mocks.account = ALICE
   mocks.chainId = 8453
-  mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId }))
+  mocks.connectorUid = 'reviewed-wallet'
+  mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }))
   mocks.review.mockResolvedValue(undefined)
   mocks.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { mocks.chainId = chainId })
   mocks.sign.mockResolvedValue(SIGNATURE)
@@ -137,6 +140,25 @@ describe('reviewed Permit2 signature', () => {
     const { signPermit2Async } = await signer()
     await expect(signPermit2Async({ authorization, expectedAccount: ALICE })).rejects.toThrow(REVIEWED_ACCOUNT_CHANGED)
     expect(mocks.sign).not.toHaveBeenCalled()
+  })
+
+  it.each(['review', 'switch', 'signature'] as const)('refuses a replacement connector after the awaited %s', async stage => {
+    let release!: () => void
+    const paused = new Promise<void>(resolve => { release = resolve })
+    if (stage === 'review') mocks.review.mockImplementationOnce(() => paused)
+    if (stage === 'switch') {
+      mocks.chainId = 1
+      mocks.switchChain.mockImplementationOnce(async () => { await paused; mocks.chainId = 8453 })
+    }
+    if (stage === 'signature') mocks.sign.mockImplementationOnce(async () => { await paused; return SIGNATURE })
+    const { signPermit2Async } = await signer()
+    const signing = signPermit2Async({ authorization, expectedAccount: ALICE })
+    await vi.waitFor(() => expect(stage === 'review' ? mocks.review : stage === 'switch' ? mocks.switchChain : mocks.sign).toHaveBeenCalled())
+    mocks.connectorUid = 'replacement-wallet'
+    const refused = expect(signing).rejects.toThrow(/changed/)
+    release()
+    await refused
+    expect(mocks.sign).toHaveBeenCalledTimes(stage === 'signature' ? 1 : 0)
   })
 
   it('discards a signature when the wallet changes account or chain while signing', async () => {

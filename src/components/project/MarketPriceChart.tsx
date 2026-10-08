@@ -1,6 +1,7 @@
 'use client'
 
-import { useQuery } from '@tanstack/react-query'
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { useMemo, useState } from 'react'
 import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
 import { cachedQuery } from '@/lib/query-persist'
@@ -81,7 +82,7 @@ export function MarketPriceChart({
   const [hover, setHover] = useState<{ index: number; x: number } | null>(null)
 
   // Shares the Overview chart's query — one fetch per project, not two.
-  const { data: history, isPending } = useQuery(
+  const { data: history, isPending } = useKeptQuery(
     cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,

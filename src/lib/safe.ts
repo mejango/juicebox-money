@@ -17,6 +17,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { captureWalletContext } from '@/lib/wallet-context'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
@@ -339,6 +340,8 @@ async function signSafeTx(
   >,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<Hex> {
+  const assertWallet = captureWalletContext(wagmiConfig, { account: signer, chainId })
+  const viaSafe = isSafeConnection(wagmiConfig)
   const activeAccount = getAccount(wagmiConfig).address
   if (!activeAccount || activeAccount.toLowerCase() !== signer.toLowerCase()) {
     throw new Error('Connected account changed. Review the Safe transaction again.')
@@ -391,6 +394,8 @@ async function signSafeTx(
   if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
     throw new Error('The queued Safe transaction changed during review.')
   }
+  assertWallet()
+  if (isSafeConnection(wagmiConfig) !== viaSafe) throw new Error('Connected wallet changed. Review the Safe transaction again.')
   const signature = await wallet.signTypedData({
     account: signer,
     domain,
@@ -406,10 +411,8 @@ async function signSafeTx(
   if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
     throw new Error('The queued Safe transaction changed while signing.')
   }
-  const signedAccount = getAccount(wagmiConfig).address
-  if (!signedAccount || signedAccount.toLowerCase() !== signer.toLowerCase()) {
-    throw new Error('Connected account changed. Review the Safe transaction again.')
-  }
+  assertWallet()
+  if (isSafeConnection(wagmiConfig) !== viaSafe) throw new Error('Connected wallet changed. Review the Safe transaction again.')
   return signature
 }
 
@@ -614,6 +617,8 @@ async function sendContractAndConfirm({
   signal: AbortSignal
 }): Promise<ConfirmedContractWrite> {
   assertNoViewAs()
+  const assertWallet = captureWalletContext(wagmiConfig, { account: expectedAccount, chainId })
+  const viaSafe = isSafeConnection(wagmiConfig)
   await reverifyAuthority?.()
   const reviewAccount = getAccount(wagmiConfig).address
   if (
@@ -626,7 +631,6 @@ async function sendContractAndConfirm({
   const data = encodeFunctionData({ abi, functionName, args })
   const gasCap = safeWriteGas(functionName)
   // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-  const viaSafe = isSafeConnection(wagmiConfig)
   // The cap is a simulation bound, not a price. Sending it would make the
   // wallet reserve cap * maxFeePerGas — 10M gas on Ethereum is a ~0.01 ETH
   // balance requirement for an execution that costs a fraction of it. The
@@ -725,16 +729,14 @@ async function sendContractAndConfirm({
     )
     assertSafeStateUnchanged(before, after)
   }
-  const finalAccount = getAccount(wagmiConfig).address
-  if (!finalAccount || finalAccount.toLowerCase() !== account.toLowerCase()) {
-    throw new Error('Connected account changed. Review the transaction again.')
-  }
+  assertWallet()
   if (isSafeConnection(wagmiConfig) !== viaSafe) {
     throw new Error('Connected wallet changed. Review the transaction again.')
   }
   // Reuse the exact call which just simulated, while setting EIP-1559 fees
   // explicitly instead of spreading a provider-specific transaction fee mode.
   let hash = await wallet.writeContract({
+    chain: wallet.chain,
     address,
     abi,
     functionName,

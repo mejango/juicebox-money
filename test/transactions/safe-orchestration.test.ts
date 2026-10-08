@@ -11,6 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
+  chainId: 1,
+  connectorUid: 'wallet-a',
   client: {
     readContract: vi.fn(),
     simulateContract: vi.fn(),
@@ -21,7 +23,7 @@ const mocks = vi.hoisted(() => ({
     getCode: vi.fn(),
     getTransaction: vi.fn(),
   },
-  wallet: { writeContract: vi.fn(), signTypedData: vi.fn() },
+  wallet: { chain: { id: 1 }, writeContract: vi.fn(), signTypedData: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
   requireReview: vi.fn(),
@@ -163,11 +165,15 @@ function queued(
 }
 
 beforeEach(() => {
+  clearViewAs()
   mocks.account = ALICE
-  mocks.getAccount.mockImplementation(() => ({ address: mocks.account }))
-  mocks.connectedWallet.mockResolvedValue({
-    wallet: mocks.wallet,
-    account: ALICE,
+  mocks.chainId = 1
+  mocks.connectorUid = 'wallet-a'
+  mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }))
+  mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+    mocks.chainId = chainId
+    mocks.wallet.chain = { id: chainId }
+    return { wallet: mocks.wallet, account: ALICE }
   })
   mocks.requireReview.mockResolvedValue(undefined)
   mocks.requireContractReview.mockResolvedValue(undefined)
@@ -1083,4 +1089,58 @@ describe('Safe retry and terminal-state orchestration', () => {
       vi.stubGlobal('fetch', previousFetch)
     }
   })
+})
+
+
+describe('Safe final wallet context', () => {
+  it('binds an onchain execution to the selected wallet chain', async () => {
+    await executeSafeTx(1, SAFE, queued(), { signal: flow })
+    expect(mocks.wallet.writeContract).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chain: { id: 1 } }))
+  })
+
+  it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)('does not publish a signature after %s changes while the wallet signs', async drift => {
+    let release!: (signature: Hex) => void
+    mocks.wallet.signTypedData.mockImplementationOnce(() => new Promise<Hex>(resolve => { release = resolve }))
+    const run = confirmSafeTx(1, SAFE, queued([]), ALICE)
+    const refused = expect(run).rejects.toThrow()
+    await vi.waitFor(() => expect(mocks.wallet.signTypedData).toHaveBeenCalledOnce())
+    if (drift === 'account') mocks.account = BOB
+    if (drift === 'chain') mocks.chainId = 10
+    if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+    if (drift === 'view-as') setViewAs(BOB)
+    if (drift === 'route') mocks.safe = true
+    release(`0x${'11'.repeat(65)}`)
+    try {
+      await refused
+      expect(fetch).not.toHaveBeenCalled()
+    } finally { clearViewAs() }
+  })
+
+  for (const operation of ['signature', 'execution'] as const) {
+    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`refuses %s drift during the last ${operation} preparation`, async drift => {
+      let release!: () => void
+      const blocked = new Promise<void>(resolve => { release = resolve })
+      let reached = false
+      if (operation === 'signature') {
+        // The second nonce read is the post-review live Safe check.
+        mocks.readSafeNonce.mockResolvedValueOnce(7n).mockImplementationOnce(async () => { reached = true; await blocked; return 7n })
+      } else {
+        mocks.client.getBlock.mockImplementationOnce(async () => { reached = true; await blocked; return { baseFeePerGas: 2_000_000_000n } })
+      }
+      const run = operation === 'signature' ? confirmSafeTx(1, SAFE, queued([]), ALICE) : executeSafeTx(1, SAFE, queued(), { signal: flow })
+      const refused = expect(run).rejects.toThrow()
+      await vi.waitFor(() => expect(reached).toBe(true))
+      if (drift === 'account') mocks.account = BOB
+      if (drift === 'chain') mocks.chainId = 10
+      if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+      if (drift === 'view-as') setViewAs(BOB)
+      if (drift === 'route') mocks.safe = true
+      release()
+      try {
+        await refused
+        expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+        expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+      } finally { clearViewAs() }
+    })
+  }
 })

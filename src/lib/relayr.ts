@@ -24,6 +24,7 @@ import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { captureWalletContext } from '@/lib/wallet-context'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import {
   FORWARD_REQUEST_TYPES,
@@ -33,6 +34,7 @@ import {
   RELAYR_PAYMENT_GAS,
   RELAYR_UUID_RE,
   RelayrDestinationRevertedError,
+  RelayrPaymentNotSentError,
   RelayrPaymentRevertedError,
   RelayrProofError,
   TRUSTED_FORWARDER_ABI,
@@ -58,6 +60,7 @@ import {
   relayrSignedRequests,
   relayrStateIsSuccess,
   relayrSupportsChain,
+  relayrWalletPaymentError,
   requireRelayrPaymentRuntime,
   requireRelayrRetry,
   revertedRelayrQuote,
@@ -865,6 +868,16 @@ function connectedWallet(chainId: JBChainId) {
   })
 }
 
+/** Relayr requires an ordinary wallet in the context captured before review. */
+function captureRelayrWallet(account: Address, chainId: JBChainId): () => void {
+  const message = 'Connected wallet changed. Review the relayed transaction again.'
+  const assertWallet = captureWalletContext(wagmiConfig, { account, chainId, message })
+  return () => {
+    assertWallet()
+    if (isSafeConnection(wagmiConfig)) throw new Error(message)
+  }
+}
+
 /** A relayed call must preserve the real sender through the canonical forwarder. */
 export async function relayrTargetSupportsForwarder(call: RelayrCall): Promise<boolean> {
   if (!relayrSupportsChain(call.chainId)) return false
@@ -925,6 +938,7 @@ async function signForwardedRequest(
   if (!activeAccount || activeAccount.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the cross-chain request again.')
   }
+  const assertWallet = captureRelayrWallet(expectedAccount, call.chainId)
 
   const [domain, nonce] = await Promise.all([
     client.readContract({
@@ -994,6 +1008,7 @@ async function signForwardedRequest(
   if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
     throw new Error('Connected account changed. Review the cross-chain request again.')
   }
+  assertWallet()
   const signature = await wallet.signTypedData({
     account: expectedAccount,
     domain: typedDomain,
@@ -1138,9 +1153,16 @@ export async function relayrPay({
     }
     return current
   }
-  if (!reverifyBeforeSendOnly) await reverify?.()
   const chainId = reviewed.chainId as JBChainId
+  const chain = SUPPORTED_CHAINS.find(candidate => candidate.id === chainId)
+  if (!chain) throw new Error('The reviewed payment chain is not configured.')
   const client = publicClient(chainId)
+  const assertWallet = captureRelayrWallet(expectedAccount, chainId)
+  const assertReadyToPay = () => {
+    assertWallet()
+    readReviewed()
+  }
+  if (!reverifyBeforeSendOnly) await reverify?.()
   await requireRelayrPaymentRuntime(client)
 
   await requireTransactionReview({
@@ -1180,10 +1202,18 @@ export async function relayrPay({
   const details = readReviewed()
   await reverify?.()
   if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: account, bundleUuid: details.bundleUuid })
+  assertReadyToPay()
   await onSending?.(details)
+  try {
+    assertReadyToPay()
+  } catch (error) {
+    // The saved marker can be withdrawn because the wallet has not been invoked.
+    throw new RelayrPaymentNotSentError(error)
+  }
   let hash: Hex
   try {
     hash = await wallet.sendTransaction({
+      chain,
       account,
       to: details.target,
       value: details.amount,
@@ -1191,7 +1221,8 @@ export async function relayrPay({
       gas: RELAYR_PAYMENT_GAS,
     })
   } catch (error) {
-    if (isDefiniteWalletRejection(error)) throw error
+    const walletError = relayrWalletPaymentError(error)
+    if (isDefiniteWalletRejection(walletError)) throw walletError
     throw new RelayrPaymentSendingError()
   }
   // Once the wallet returns a hash, a storage, receipt or proof failure is an

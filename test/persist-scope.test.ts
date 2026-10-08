@@ -300,6 +300,39 @@ describe('persisted query scope', () => {
     // project-token persistence tag moved into its single query owner.
     expect(tagged.length).toBeGreaterThanOrEqual(14)
   })
+
+  it('routes persisted reads through the component hydration boundary, with no server seed to discard', () => {
+    const failures: string[] = []
+    let kept = 0
+    for (const file of files) {
+      if (file === join('src', 'lib', 'project-token-query.ts')) continue // Shared options; every hook consumer is checked below.
+      const source = ts.createSourceFile(file, readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true)
+      const names = tagNames(source)
+      for (const statement of source.statements) {
+        if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.moduleSpecifier.text.endsWith('project-token-query')) continue
+        const bindings = statement.importClause?.namedBindings
+        if (bindings && ts.isNamedImports(bindings)) for (const entry of bindings.elements) {
+          if ((entry.propertyName ?? entry.name).text === 'projectTokenQuery') names.add(entry.name.text)
+        }
+      }
+      const visit = (node: ts.Node) => {
+        if ((ts.isIdentifier(node) && names.has(node.text) && isReference(node)) || isPersistProperty(node)) {
+          let reader: ts.Node | undefined = node.parent
+          while (reader && !(ts.isCallExpression(reader) && /^(useKeptQuery|useQuery|useQueries)$/.test(reader.expression.getText(source)))) reader = reader.parent
+          if (!reader || !ts.isCallExpression(reader) || reader.expression.getText(source) !== 'useKeptQuery') {
+            failures.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: persisted read bypasses useKeptQuery`)
+          } else {
+            kept++
+            if (/\b(initialData|placeholderData)\s*:/.test(reader.getText(source))) failures.push(`${file}: seeded read needs its own server snapshot`)
+          }
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
+    }
+    expect(failures).toEqual([])
+    expect(kept).toBeGreaterThanOrEqual(27)
+  })
 })
 
 const IMPORTS = [

@@ -1,7 +1,8 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useQuery } from '@tanstack/react-query'
 import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { projectTokenQuery } from '@/lib/project-token-query'
@@ -13,7 +14,7 @@ import { projectTokenQuery } from '@/lib/project-token-query'
  */
 export function useProjectTokenSymbol(chainId: JBChainId, projectId: number) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  return useQuery({
+  return useKeptQuery({
     ...projectTokenQuery(publicClient!, chainId, projectId),
     enabled: !!publicClient,
   })

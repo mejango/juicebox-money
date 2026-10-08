@@ -1,0 +1,26 @@
+# Direct launch wallet and Safe recovery reconciliation
+
+## Plan refinement
+
+- **Objective:** carry the SDK final wallet guard into direct Safe setup and project launch, and preserve original Safe proposal evidence until authenticated inner outcome allows completion or retry; direct EOA reverts remain retryable.
+- **System fit:** pinned launch plan and reviewed call → SDK reviewed write → durable pre-send signing record → final account/chain/connector/view-as gate → wallet invocation → exact Safe execution evidence and receipt-block deployment/project verification → reload recovery. Existing SDK owns execution proof, local launch-session owns durable state, and CreateForm owns presentation.
+- **Reuse and simplicity:** reuse the parent-owned contract-write wrapper/captureWalletContext and SDK readSafeAppExecution; move setup persistence to beforeWrite, freeze Safe classification, preserve existing Safe hash fields, and add only exact launch-call evidence required to verify at-once replies after reload. No new poller or wallet retry abstraction. For failure retry only, reuse the SDK atCanonicalFinalizedBlock through the existing launch owner; identify legacy direct EOA transactions by original account and exact pinned launch target/calldata before any release.
+- **Evidence and unknowns:** local source currently drops proposal hashes once an execution hash is found and treats an outer revert as safe-to-retry; setup persists after the final guard. Existing source gate and launch setup/session tests are authoritative local checks. Preview SDK supplies canonical receipt matching; production build/browser checks remain parent-owned. Dynamic launch creation fee prevents reconstructing the original exact call on recovery without persisted evidence. Independent review also found old launch records that erased their Safe proposal before saving a reverted outer hash, including failed phases; all saved transaction hashes therefore require reproof, and a failed label alone cannot authorize retry or abandonment.
+- **Verification:** focused setup tests must fail before and pass after for late chain/connector/view-as drift, storage callbacks, outer Safe revert/unproven retained across reload with no extra write, authenticated inner failure retry, and verified success. Session tests cover exact call round trips, malformed evidence fail-closed and pending-abandon prevention. Source gates pin direct wizard gas/chain/frozen classification and recovery use; parent production browser gate verifies the complete wizard.
+- **Resource budget:** edit only owned launch files and negotiated session persistence files, run bounded focused suites/typecheck and no full builds/dependency writes. Stop and refine if proof needs a new SDK rule or another owner. Share concrete evidence and limitations with parent for integration.
+
+## Work
+
+- [x] Read required resources, inspect launch/setup/recovery callers and Next client/test docs.
+- [x] Integrate final SDK wallet boundary and retain Safe setup evidence with focused regression tests.
+- [x] Persist original launch call/account evidence, preserve proposal across tracking, verify exact Safe outcome, and guard direct abandonment.
+- [x] Run focused tests and lint/type verification; report exact evidence to parent.
+
+## Review
+
+- Final qualified SDK preview4: **224/224 tests pass in five suites**, maxWorkers2, covering setup, session persistence, finalized launch failure proof, wizard source boundaries and sibling Relayr launch callers (`/private/tmp/jbm-launch-boundary-final-focused.log`). Setup tests exercise late chain/connector/view-as changes after storage callbacks, early connector drift during preflight, exact inner failure retry, unresolved/outer-reverted/at-once Safe holds across storage reload, and subsequent verified success without another write.
+- Full TypeScript no-emit check and targeted ESLint both pass with exit 0 (`/private/tmp/jbm-launch-boundary-final-types.log`, `/private/tmp/jbm-launch-boundary-final-lint.log`). Parent owns full integration/build/browser qualification.
+- Independent review findings are resolved: normalized `unverifiedSend` survives a sibling-chain update; any legacy launch hash, including failed records that erased their Safe proposal, remains held until exact raw EOA identity or authenticated Safe failure plus canonical finalized receipt permits release. Stale tabs cannot overwrite another launch salt or another pending hash. Owning persistence/finality regressions enforce these boundaries.
+- Root approved finalized/canonical failure-retry evidence for non-idempotent direct launches only. Existing SDK `atCanonicalFinalizedBlock` is reused through the launch owner; normal success confirmation and deterministic setup retain their established policy.
+- Production-browser spec refuses cancellation for uncertain direct launches and covers distinct and at-once Safe hashes surviving dismissal/reload. These browser assertions are prepared but not reported as run here; root runs them against the final production artifact.
+- No live wallet mutation, dependency release, commit or deployment was performed by this delegated task. Legacy records lacking enough identity remain conservatively held; no call data or Safe proposal is invented to migrate them.

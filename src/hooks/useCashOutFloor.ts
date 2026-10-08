@@ -1,8 +1,10 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { jbMultiTerminalAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { v6Address } from '@bananapus/nana-sdk-core/v6'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { getCashOutContext, getContextCashOutQuote } from '@/lib/cashOut'
@@ -26,7 +28,7 @@ export function useCashOutFloor(
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
   const rulesetQuery = currentRulesetQuery(publicClient!, { chainId, projectId: BigInt(projectId) })
-  return useQuery(projectDisplayQuery(queryClient, {
+  return useKeptQuery(projectDisplayQuery(queryClient, {
     meta: PERSIST,
     staleTime: 15000,
     queryKey: ['marketFloor', chainId, projectId],

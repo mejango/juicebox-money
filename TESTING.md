@@ -6,6 +6,15 @@ derived, eventually consistent index. A fixture from Bendystraw must never
 override an ABI, deployment address, onchain quote, owner, permission, or
 transaction simulation.
 
+SDK `@bananapus/nana-sdk-core@2.25.0` owns RPC admission pacing, the reviewed
+write sequence and its final synchronous `beforeSend` gate, exact Safe call and
+execution proofs, proposal helpers, transaction wording, and Relayr payment
+outcome classification. The same owners serve Revnet, Sticky and Homerun.
+`src/lib/wallet-context.ts` supplies live account, chain, connector and View-as
+checks; app adapters retain product journals and confirmation policy. Persisted
+query readers use `useKeptQuery` so each component hydrates before showing
+restored data. Source, transaction and hydration checks enforce these boundaries.
+
 ## Local commands
 
 ```sh

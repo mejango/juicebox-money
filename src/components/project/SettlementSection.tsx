@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JBCoreContracts,
   JBSuckerContracts,
@@ -21,7 +23,7 @@ import {
   jbSuckerV6Abi,
   suckerBytes32ToAddress,
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import {
@@ -187,7 +189,7 @@ function CompositionCard({ chains }: { chains: [number, number][] }) {
   const config = useConfig()
   const queryClient = useQueryClient()
 
-  const { data, isLoading, isError } = useQuery(projectDisplayQuery(queryClient, {
+  const { data, isLoading, isError } = useKeptQuery(projectDisplayQuery(queryClient, {
     staleTime: 30000,
     queryKey: ['settlement-composition', chains],
     meta: PERSIST,
@@ -349,7 +351,7 @@ type BridgeEdge = { a: number; b: number; infra: Infra }
 function BridgesCard({ chains }: { chains: [number, number][] }) {
   const config = useConfig()
 
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useKeptQuery({
     queryKey: ['settlement-bridges', chains],
     meta: PERSIST,
     staleTime: 60_000,
@@ -471,7 +473,7 @@ function QueuedMovementsCard({
   projectId: number
   chains: [number, number][]
 }) {
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError } = useKeptQuery({
     queryKey: ['settlement-movements', chainId, projectId],
     meta: PERSIST,
     staleTime: 20_000,

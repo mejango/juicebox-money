@@ -1,11 +1,23 @@
 import type { Address } from 'viem'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   assertReviewedAccountConnected,
   REVIEWED_ACCOUNT_CHANGED,
   submitReviewedContractWrite,
 } from '@/lib/contract-write'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
+
+const wallet = vi.hoisted(() => ({
+  chainId: 10, connectorUid: 'reviewed-wallet', safe: false,
+}))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({
+  address: '0x1111111111111111111111111111111111111111',
+  chainId: wallet.chainId, connector: { uid: wallet.connectorUid },
+}) }))
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => wallet.safe }))
+
+beforeEach(() => { wallet.chainId = 10; wallet.connectorUid = 'reviewed-wallet'; wallet.safe = false })
 
 // The write sequence itself is tested in @bananapus/nana-sdk-core/review.
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -85,6 +97,35 @@ describe('Juicebox Money reviewed writes', () => {
     await expect(submitReviewedContractWrite(write)).rejects.toThrow(REVIEWED_ACCOUNT_CHANGED)
     expect(write.simulate).not.toHaveBeenCalled()
     expect(write.write).not.toHaveBeenCalled()
+  })
+
+  it.each(['simulation', 'persistence'] as const)('refuses every final wallet-context drift during %s', async stage => {
+    for (const drift of ['chain', 'connector', 'view-as', 'Safe route'] as const) {
+      wallet.chainId = 10
+      wallet.connectorUid = 'reviewed-wallet'
+      wallet.safe = false
+      clearViewAs()
+      const write = options()
+      let release!: () => void
+      const paused = new Promise<void>(resolve => { release = resolve })
+      const beforeWrite = vi.fn(async () => { if (stage === 'persistence') await paused })
+      if (stage === 'simulation') write.simulate.mockImplementation(async () => { await paused; return 'simulated' })
+      const cleanup = vi.fn(async () => {})
+      const rejected = vi.fn(async () => {})
+      const sending = submitReviewedContractWrite({ ...write, beforeWrite,
+        onBeforeWriteAborted: cleanup, onWriteRejected: rejected })
+      await vi.waitFor(() => expect(stage === 'simulation' ? write.simulate : beforeWrite).toHaveBeenCalledOnce())
+      if (drift === 'chain') wallet.chainId = 1
+      if (drift === 'connector') wallet.connectorUid = 'replacement-wallet'
+      if (drift === 'view-as') setViewAs(BOB)
+      if (drift === 'Safe route') wallet.safe = true
+      const refused = expect(sending).rejects.toThrow()
+      release()
+      await refused
+      expect(write.write, drift).not.toHaveBeenCalled()
+      expect(cleanup, drift).toHaveBeenCalledTimes(1)
+      expect(rejected, drift).not.toHaveBeenCalled()
+    }
   })
 
   it('leaves a missing reviewed account to the wallet check', async () => {

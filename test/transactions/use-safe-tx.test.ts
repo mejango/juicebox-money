@@ -20,6 +20,8 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
 
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
+  chainId: 1,
+  connectorUid: 'reviewed-wallet',
   centerWallet: false,
   connected: true,
   publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
@@ -37,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   safeConnection: false,
   switchChain: vi.fn(),
   waitForSafeExecutionHash: vi.fn(),
+  findPendingSafeAppProposal: vi.fn(),
   writeContract: vi.fn(),
 }))
 
@@ -68,7 +71,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => mocks.safeConnection,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
   // The Safe proposal suite covers the queue lookup; nothing is queued here.
-  findPendingSafeAppProposal: async () => null,
+  findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
 }))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
@@ -119,13 +122,16 @@ async function renderHook() {
 beforeEach(() => {
   displayQueries.clear()
   mocks.account = ALICE
+  mocks.chainId = 1
+  mocks.connectorUid = 'reviewed-wallet'
+  mocks.findPendingSafeAppProposal.mockResolvedValue(null)
   mocks.centerWallet = false
   mocks.connected = true
   mocks.receipt = { data: undefined, isError: false }
-  mocks.getAccount.mockImplementation(() => ({ address: mocks.account }))
+  mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }))
   mocks.requestReview.mockResolvedValue(true)
   mocks.safeConnection = false
-  mocks.switchChain.mockResolvedValue(undefined)
+  mocks.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { mocks.chainId = chainId })
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
   mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
     hash,
@@ -163,6 +169,20 @@ describe('useSafeTx', () => {
     }
   })
 
+  it('refuses connector replacement during the initial Safe queue lookup', async () => {
+    mocks.safeConnection = true
+    let release!: (value: null) => void
+    mocks.findPendingSafeAppProposal.mockImplementationOnce(() => new Promise(resolve => { release = resolve }))
+    const hook = await renderHook()
+    let sending!: Promise<Hex | null>
+    await act(async () => { sending = hook.ref.current!.send(request, reviewedByAlice) })
+    expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
+    mocks.connectorUid = 'replacement-wallet'
+    await act(async () => { release(null); await sending })
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(hook.ref.current!.error).toContain('wallet changed')
+  })
+
   it('requests the transaction without a redundant switch when already on its chain', async () => {
     mocks.getAccount.mockImplementation(() => ({ address: ALICE, chainId: 10 }))
     const hook = await renderHook()
@@ -195,7 +215,7 @@ describe('useSafeTx', () => {
       account: ALICE,
     })
     expect(mocks.writeContract).toHaveBeenCalledWith(
-      expect.objectContaining({ gas: 100_000n }),
+      expect.objectContaining({ chainId: request.chainId, gas: 100_000n }),
     )
     expect(hook.ref.current).toMatchObject({
       phase: 'pending',
@@ -350,6 +370,50 @@ describe('useSafeTx', () => {
 
     expect(hook.ref.current!.error).toMatch(/account changed/i)
     expect(mocks.writeContract).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['simulation', 'chain'], ['simulation', 'view-as'],
+    ['persistence', 'chain'], ['persistence', 'view-as'],
+  ] as const)('refuses %s-time %s drift at the final shared boundary', async (phase, changed) => {
+    let release!: () => void
+    let entered!: () => void
+    const waiting = new Promise<void>(resolve => { release = resolve })
+    const started = new Promise<void>(resolve => { entered = resolve })
+    const pause = async () => { entered(); await waiting }
+    if (phase === 'simulation') {
+      mocks.publicClient.simulateContract.mockImplementationOnce(async () => {
+        await pause()
+        return { request: { address: BOB, functionName: 'transfer', gas: 100n } }
+      })
+    }
+    const onBeforeWriteAborted = vi.fn()
+    const onWriteRejected = vi.fn()
+    const hook = await renderHook()
+    try {
+      await act(async () => {
+        const sent = hook.ref.current!.send(request, {
+          ...reviewedByAlice,
+          beforeWrite: phase === 'persistence' ? pause : undefined,
+          onBeforeWriteAborted,
+          onWriteRejected,
+        })
+        await started
+        if (changed === 'chain') mocks.chainId = 8453
+        else setViewAs(BOB)
+        release()
+        expect(await sent).toBeNull()
+      })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(onBeforeWriteAborted).toHaveBeenCalledTimes(phase === 'persistence' ? 1 : 0)
+      expect(onWriteRejected).not.toHaveBeenCalled()
+      expect(hook.ref.current!.error).toBe(changed === 'chain'
+        ? 'Connected wallet changed. Review the transaction again.'
+        : VIEW_AS_WRITE_BLOCKED)
+    } finally {
+      clearViewAs()
+      await act(async () => hook.renderer.unmount())
+    }
   })
 
   it('invalidates only the confirmed chain display evidence after a successful receipt', async () => {
@@ -586,7 +650,7 @@ describe('useSafeTx', () => {
     // The account gate after simulation reads the peer again before the write.
     mocks.getAccount.mockImplementation(() => {
       if (simulated) mocks.safeConnection = false
-      return { address: mocks.account }
+      return { address: mocks.account, chainId: mocks.chainId }
     })
     // And once more after the wallet answered: the sent call is still an ordinary one.
     mocks.writeContract.mockImplementationOnce(async () => {

@@ -11,7 +11,8 @@ import {
 /**
  * Cross-session query persistence, opt-in per query.
  *
- * Two tiers, both restored from disk before the first paint:
+ * Two tiers, restored from disk after document load. Persisted readers use
+ * useKeptQuery so components hydrating later still match their server markup:
  *
  * - `immutable` — the answer provably cannot change (a ruleset row, a revnet's
  *   stage schedule, a settled swap). Restored and trusted: never refetched.
@@ -74,8 +75,8 @@ export function deserializeState(raw: string): DehydratedState {
 
 /**
  * Restore the persisted cache, then keep writing it back as queries settle.
- * Returns a teardown function. Safe to call before render — hydration is
- * synchronous so the first paint already sees the restored data.
+ * Returns a teardown function. Restoration is synchronous; useKeptQuery keeps
+ * these browser-only values out of each component's initial hydration render.
  */
 export function installQueryPersistence(
   client: QueryClient,

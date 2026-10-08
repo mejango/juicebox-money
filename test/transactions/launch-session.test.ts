@@ -11,6 +11,7 @@ import { DRAFT_KEY } from '@/lib/draft'
 import {
   LAUNCH_SESSION_KEY,
   abandonLaunchSession,
+  canAbandonDirectLaunch,
   completeLaunchSession,
   loadLaunchSession,
   recordLaunchChainStatus,
@@ -250,9 +251,9 @@ describe('multichain launch session persistence', () => {
     },
   )
 
-  it('re-sends interrupted signatures but keeps submitted transactions waiting', () => {
+  it('keeps interrupted signatures and submitted transactions waiting for recovery', () => {
     saveLaunchSession(session())
-    // Refresh mid-signature: nothing provably submitted — resume re-sends.
+    // Refresh mid-signature: the wallet may submit later, so recovery must retain the hold.
     recordLaunchChainStatus(1, { phase: 'signing' })
     // Refresh mid-confirmation: the hash exists — resume must NOT re-send.
     recordLaunchChainStatus(10, {
@@ -261,7 +262,7 @@ describe('multichain launch session persistence', () => {
     })
 
     const restored = loadLaunchSession()
-    expect(restored?.statuses[1]).toEqual({ phase: 'pending' })
+    expect(restored?.statuses[1]).toEqual({ phase: 'pending', unverifiedSend: true })
     expect(restored?.statuses[10]).toEqual({
       phase: 'confirming',
       txHash: `0x${'22'.repeat(32)}`,
@@ -514,5 +515,123 @@ describe('inline Safe launch recovery', () => {
       expect(Object.hasOwn(restored.plans[chainId], 'multisigs')).toBe(false)
       expect(Object.hasOwn(restored.statuses[chainId], 'multisigSetup')).toBe(false)
     }
+  })
+})
+
+
+describe('direct Safe launch evidence and abandonment', () => {
+  const call = {
+    safe: '0x1111111111111111111111111111111111111111' as const,
+    to: '0x2222222222222222222222222222222222222222' as const,
+    data: '0x1234' as const,
+    value: 123456789012345678901n,
+  }
+  const proposal = `0x${'ab'.repeat(32)}` as Hex
+  const execution = `0x${'cd'.repeat(32)}` as Hex
+
+  it('round trips the exact Safe, target, calldata and original fee with both hashes after reload', () => {
+    const original = session()
+    original.statuses[1] = { phase: 'uncertain', txHash: execution, safeProposalHash: proposal, directSafeCall: call }
+    expect(saveLaunchSession(original)).toBe(true)
+    expect(loadLaunchSession({ strict: true })!.statuses[1]).toEqual(original.statuses[1])
+    expect(canAbandonDirectLaunch(loadLaunchSession()!)).toBe(false)
+    expect(abandonLaunchSession(SALT)).toBe(false)
+    expect(loadLaunchSession()!.statuses[1]).toEqual(original.statuses[1])
+  })
+
+  it('preserves exact call evidence on interrupted signing and refuses to abandon its unknown wallet request', () => {
+    const original = session()
+    original.statuses[1] = { phase: 'signing', directSafeCall: call }
+    saveLaunchSession(original)
+    expect(loadLaunchSession()!.statuses[1]).toEqual({ phase: 'pending', unverifiedSend: true, directSafeCall: call })
+    expect(abandonLaunchSession(SALT)).toBe(false)
+    expect(loadLaunchSession()).not.toBeNull()
+  })
+
+  it('retains an interrupted wallet marker when a sibling chain saves progress after reload', () => {
+    const original = session()
+    original.statuses[1] = { phase: 'signing', directSafeCall: call }
+    saveLaunchSession(original)
+    expect(loadLaunchSession()!.statuses[1].unverifiedSend).toBe(true)
+    expect(recordLaunchChainStatus(10, { phase: 'done', projectId: 42 })).toBe(true)
+    expect(loadLaunchSession()!.statuses[1]).toEqual({ phase: 'pending', unverifiedSend: true, directSafeCall: call })
+    expect(abandonLaunchSession(SALT)).toBe(false)
+  })
+
+  it.each([
+    null,
+    {},
+    { ...call, safe: '0x1234' },
+    { ...call, to: '0x1234' },
+    { ...call, data: '0x123' },
+    { ...call, value: '123' },
+    { ...call, value: -1n },
+  ])('fails closed on malformed reviewed Safe evidence', invalid => {
+    const original = session()
+    original.statuses[1] = { phase: 'uncertain', safeProposalHash: proposal, directSafeCall: invalid as unknown as typeof call }
+    saveLaunchSession(original)
+    expect(loadLaunchSession()).toBeNull()
+    expect(() => loadLaunchSession({ strict: true })).toThrow('Saved launch authorizations could not be read')
+    expect(abandonLaunchSession(SALT)).toBe(false)
+  })
+
+  it.each(['signing', 'confirming', 'uncertain'] as const)('refuses to abandon a %s direct wallet request', phase => {
+    const original = session()
+    original.statuses[1] = { phase, ...(phase === 'signing' ? {} : { txHash: execution }) }
+    saveLaunchSession(original)
+    expect(abandonLaunchSession(SALT)).toBe(false)
+    expect(loadLaunchSession()).not.toBeNull()
+  })
+
+  it('retains a legacy Safe proposal without inventing the missing call proof', () => {
+    const original = session()
+    original.statuses[1] = { phase: 'uncertain', txHash: execution, safeProposalHash: proposal }
+    saveLaunchSession(original)
+    expect(loadLaunchSession()!.statuses[1].directSafeCall).toBeUndefined()
+    expect(abandonLaunchSession(SALT)).toBe(false)
+  })
+
+  it.each(['signing', 'confirming'] as const)('refuses to abandon %s Safe setup', phase => {
+    const original = safeSession()
+    original.statuses[1] = { phase: 'failed', multisigSetup: { phase, ...(phase === 'confirming' ? { safe: true, txHash: execution, safeProposalHash: proposal } : {}) } }
+    saveLaunchSession(original)
+    expect(abandonLaunchSession(SALT)).toBe(false)
+    expect(loadLaunchSession()).not.toBeNull()
+  })
+
+  it.each(['failed', 'done'] as const)('allows abandonment after verified %s without outstanding authorizations', phase => {
+    const original = session()
+    original.statuses[1] = { phase, directSafeCall: call, ...(phase === 'done' ? { txHash: execution } : {}) }
+    saveLaunchSession(original)
+    expect(canAbandonDirectLaunch(loadLaunchSession()!)).toBe(true)
+    expect(abandonLaunchSession(SALT)).toBe(true)
+    expect(loadLaunchSession()).toBeNull()
+  })
+
+  it('does not trust a legacy failed label with a potentially wrapped transaction hash', () => {
+    const original = session()
+    original.statuses[1] = { phase: 'failed', txHash: execution }
+    saveLaunchSession(original)
+    expect(canAbandonDirectLaunch(loadLaunchSession()!)).toBe(false)
+    expect(abandonLaunchSession(SALT)).toBe(false)
+    expect(loadLaunchSession()!.statuses[1].txHash).toBe(execution)
+  })
+
+  it("does not let a stale launch replace another session's submitted chain", () => {
+    const replacement = session({ salt: execution })
+    replacement.statuses[1] = { phase: 'confirming', txHash: proposal }
+    saveLaunchSession(replacement)
+    expect(recordLaunchChainStatus(1, { phase: 'failed' }, SALT)).toBe(false)
+    expect(loadLaunchSession()!.statuses[1]).toEqual({ phase: 'confirming', txHash: proposal })
+    expect(loadLaunchSession()!.salt).toBe(execution)
+  })
+
+  it('reports a failed durable status write before the caller can submit', () => {
+    saveLaunchSession(session())
+    const original = window.localStorage.setItem
+    window.localStorage.setItem = () => { throw new Error('quota') }
+    expect(recordLaunchChainStatus(1, { phase: 'signing', directSafeCall: call })).toBe(false)
+    window.localStorage.setItem = original
+    expect(loadLaunchSession()!.statuses[1]).toEqual({ phase: 'pending' })
   })
 })

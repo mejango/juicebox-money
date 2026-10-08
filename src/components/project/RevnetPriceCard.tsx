@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import { projectDisplayKey } from '@/lib/project-display-cache'
 
 import {
@@ -119,7 +121,7 @@ export function RevnetPriceCard({
   // the label describe different currencies.
   const axisBaseCurrency = all[0]?.metadata.baseCurrency ?? null
 
-  const { data: references, isFetching: referencesFetching } = useQuery(projectDisplayQuery(queryClient, {
+  const { data: references, isFetching: referencesFetching } = useKeptQuery(projectDisplayQuery(queryClient, {
     meta: PERSIST,
     queryKey: [
       ...projectDisplayKey(args, 'priceReferences'),
@@ -329,7 +331,7 @@ export function RevnetPriceCard({
 
   // Same key as MarketSection's query so the two share one read of the pool.
   const pool = references?.pool ?? null
-  const { data: lp } = useQuery(
+  const { data: lp } = useKeptQuery(
     cachedQuery({
       queryKey: [
         'marketLp',
@@ -360,7 +362,7 @@ export function RevnetPriceCard({
 
   // Every liquidity change the pool has seen, for the reserve bars: the live
   // read above only knows what the pool holds NOW.
-  const { data: liquidityEvents } = useQuery(
+  const { data: liquidityEvents } = useKeptQuery(
     cachedQuery({
       queryKey: ['poolLiquidityEvents', chainId, pool?.poolId ?? null],
       enabled: !!pool,
@@ -371,7 +373,7 @@ export function RevnetPriceCard({
     }),
   )
 
-  const { data: history } = useQuery(
+  const { data: history } = useKeptQuery(
     cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,

@@ -8,18 +8,18 @@ import safeFixture from '../fixtures/safe-1.4.1.json'
 
 const mocks = vi.hoisted(() => ({
   account: vi.fn(), receipt: vi.fn(), review: vi.fn(), preflight: vi.fn(), verifyCreated: vi.fn(),
-  verifySafe: vi.fn(), simulate: vi.fn(), estimateGas: vi.fn(), safe: vi.fn(), safeHash: vi.fn(),
+  verifySafe: vi.fn(), simulate: vi.fn(), estimateGas: vi.fn(), safe: vi.fn(), safeHash: vi.fn(), execution: vi.fn(), viewAs: vi.fn(),
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', () => ({ getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ estimateGas: mocks.estimateGas }) }))
 vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
-vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: vi.fn() }))
+vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: mocks.viewAs }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulate,
 }))
-vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.', waitForSafeExecutionHash: mocks.safeHash }))
+vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: mocks.safe, SAFE_NONCE_GUIDANCE: 'Choose the Safe nonce.', waitForSafeExecutionHash: mocks.safeHash, readSafeAppExecution: mocks.execution, SAFE_PROPOSAL_UNCONFIRMED: 'Safe execution is not confirmed.' }))
 vi.mock('@/lib/launch-multisig', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/launch-multisig')>(),
   checkLaunchMultisigs: mocks.preflight,
@@ -82,13 +82,14 @@ beforeEach(() => {
   }
   vi.stubGlobal('window', { localStorage: storage })
   vi.stubGlobal('navigator', {})
-  mocks.account.mockReturnValue({ address: ACCOUNT })
+  mocks.account.mockReturnValue({ address: ACCOUNT, chainId: CHAIN, connector: { uid: 'wallet-1' } })
   mocks.verifySafe.mockResolvedValue(false)
   mocks.simulate.mockResolvedValue(simulation())
   mocks.estimateGas.mockResolvedValue(500_000n)
   mocks.safe.mockReturnValue(false)
   mocks.receipt.mockResolvedValue({ status: 'success', blockNumber: 123n })
   mocks.safeHash.mockResolvedValue(EXECUTION)
+  mocks.execution.mockResolvedValue({ status: 'success' })
   seed()
 })
 
@@ -217,8 +218,18 @@ describe('direct launch Safe setup', () => {
   it('blocks a wallet connector change before crossing the signing boundary', async () => {
     const args = options()
     mocks.estimateGas.mockImplementation(async () => { mocks.safe.mockReturnValue(true); return 1n })
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Wallet connection changed')
+    expect(args.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('retains the original connector across asynchronous setup checks before review', async () => {
+    const args = options()
+    mocks.preflight.mockImplementation(async () => {
+      mocks.account.mockReturnValue({ address: ACCOUNT, chainId: CHAIN, connector: { uid: 'wallet-2' } })
+    })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connected wallet changed')
     expect(args.writeContract).not.toHaveBeenCalled()
+    expect(setup()).toEqual({ phase: 'failed' })
   })
 
   it('rechecks the account after persisting the signing marker', async () => {
@@ -344,6 +355,15 @@ describe('direct launch Safe setup', () => {
     expect(args.writeContract).not.toHaveBeenCalled()
   })
 
+  it('keeps a legacy Safe execution with missing proposal evidence locked', async () => {
+    seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup: { phase: 'confirming', safe: true, txHash: EXECUTION } } } })
+    mocks.receipt.mockResolvedValue({ status: 'reverted', blockNumber: 123n })
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
+    expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: EXECUTION })
+    expect(args.writeContract).not.toHaveBeenCalled()
+  })
+
   it('keeps Safe proposal recovery data when execution tracking fails', async () => {
     mocks.safe.mockReturnValue(true)
     mocks.safeHash.mockRejectedValue(new Error('Service unavailable'))
@@ -374,6 +394,63 @@ describe('direct launch Safe setup', () => {
     expect(held).toBe(false)
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
     expect(mocks.receipt).not.toHaveBeenCalled()
+  })
+
+
+  it.each(['chain', 'connector', 'view-as'] as const)('blocks %s drift caused by the persisted signing callback', async kind => {
+    const args = options()
+    args.onSetup.mockImplementation(value => {
+      if (value.phase !== 'signing') return
+      if (kind === 'view-as') mocks.viewAs.mockImplementation(() => { throw new Error('View-as is read-only') })
+      else mocks.account.mockReturnValue({ address: ACCOUNT, chainId: kind === 'chain' ? 1 : CHAIN, connector: { uid: kind === 'connector' ? 'wallet-2' : 'wallet-1' } })
+    })
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(kind === 'view-as' ? 'View-as' : 'Connected wallet changed')
+    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(setup()).toEqual({ phase: 'failed' })
+  })
+
+  it.each(['reverted', 'unproven'] as const)('retains a Safe %s execution across reload without another wallet call', async status => {
+    mocks.safe.mockReturnValue(true)
+    mocks.receipt.mockResolvedValue({ status: status === 'reverted' ? 'reverted' : 'success', blockNumber: 123n })
+    mocks.execution.mockResolvedValue({ status })
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
+    expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: EXECUTION, safeProposalHash: HASH })
+    const resumed = options()
+    await expect(prepareLaunchMultisigs(resumed)).rejects.toThrow('not confirmed')
+    expect(args.writeContract).toHaveBeenCalledTimes(1)
+    expect(resumed.writeContract).not.toHaveBeenCalled()
+    expect(mocks.verifyCreated).not.toHaveBeenCalled()
+    mocks.execution.mockResolvedValue({ status: 'success' })
+    await prepareLaunchMultisigs(resumed)
+    expect(resumed.writeContract).not.toHaveBeenCalled()
+    expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
+  })
+
+  it('retains an at-once Safe reply whose outer execution reverted', async () => {
+    mocks.safe.mockReturnValue(true)
+    mocks.safeHash.mockResolvedValue(HASH)
+    mocks.receipt.mockResolvedValue({ status: 'reverted', blockNumber: 123n })
+    mocks.execution.mockResolvedValue({ status: 'reverted' })
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
+    expect(args.writeContract).toHaveBeenCalledTimes(1)
+    expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
+  })
+
+  it('permits retry only after the SDK proves exact Safe inner failure', async () => {
+    mocks.safe.mockReturnValue(true)
+    mocks.execution.mockResolvedValueOnce({ status: 'failed' })
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('failed inside the Safe')
+    expect(setup()).toEqual({ phase: 'failed', txHash: EXECUTION })
+    await prepareLaunchMultisigs(args)
+    expect(args.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.execution).toHaveBeenCalledWith(expect.objectContaining({
+      safe: ACCOUNT, proposalHash: HASH, batch: false,
+      calls: [expect.objectContaining({ to: MULTICALL3, value: 0n })],
+    }))
   })
 
   it('blocks concurrent setup in another tab', async () => {

@@ -1,5 +1,7 @@
 'use client'
 
+import { useKeptQuery } from '@/hooks/useKeptQuery'
+
 import {
   JB_CHAINS,
   NATIVE_TOKEN,
@@ -110,7 +112,7 @@ export function LoansSection({
   })
 
   // The project token symbol, for the collateral copy.
-  const { data: collateralToken } = useQuery({
+  const { data: collateralToken } = useKeptQuery({
     ...projectTokenQuery(publicClient!, chainId, projectId),
     enabled: !!publicClient,
   })
@@ -148,7 +150,7 @@ function LoansTables({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const { data, isLoading, isError, isFetching, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useKeptQuery({
     queryKey: ['loans', chainId, projectId],
     meta: PERSIST,
     staleTime: 30_000,

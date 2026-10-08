@@ -54,6 +54,32 @@ for (const forbidden of ["relayrPostBundle", "relayrPay(", "relayrPoll(", "deadl
   }
 }
 
+// Cross-client rules have one SDK owner; these files are compatibility adapters.
+const rpcTransport = read("src/lib/jbcenter-rpc.ts");
+if (!rpcTransport.includes("createPacedJBCenterLimiter()") ||
+    !/limiter: typeof window === ["']undefined["'] \? undefined : browserLimiter/.test(rpcTransport) ||
+    rpcTransport.includes("createPacedRpcFetch")) {
+  failures.push("Browser RPC pacing must use the shared SDK provider limiter before timeout creation");
+}
+
+const safeConnector = read("src/lib/safe-connector.ts");
+for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "SAFE_PROPOSAL_AWAITING", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "chainAnswer", "reportedSafeExecution"]) {
+  if (!new RegExp(`export \\{[^}]*\\b${name}\\b[^}]*\\} from ['"]@bananapus/nana-sdk-core/safe-service['"]`, "s").test(safeConnector)) {
+    failures.push(`Safe connector must re-export SDK ${name}`);
+  }
+}
+
+const transactionMessage = read("src/lib/transaction-message.ts");
+if (!/^export \{ transactionMessage \} from ["']@bananapus\/nana-sdk-core\/review["'];?\s*$/.test(transactionMessage)) {
+  failures.push("Transaction presentation must re-export the shared SDK owner");
+}
+
+const safeTx = read("src/hooks/useSafeTx.ts");
+const reviewedWrite = read("src/lib/contract-write.ts");
+if (!reviewedWrite.includes("beforeSend: () => {") || !reviewedWrite.includes("captureWalletContext") || !safeTx.includes("chainId: reviewed.chainId")) {
+  failures.push("Safe transaction writes must use the SDK final guard and send the reviewed chain explicitly");
+}
+
 if (failures.length > 0) {
   console.error(failures.map((failure) => `- ${failure}`).join("\n"));
   process.exit(1);
