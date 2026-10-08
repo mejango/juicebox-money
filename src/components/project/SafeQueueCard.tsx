@@ -1483,9 +1483,12 @@ export function SafeQueueCard({
     const state = paidRecord(chainId)?.status?.state;
     if (relayrStateIsFailed(state)) return "Failed";
     if (relayrStateIsSuccess(state) || (paidRecord(chainId) && relayrDestinationHash(paidRecord(chainId)!))) return "Confirming…";
-    return pendingSession.paymentStatus === "confirmed"
-      ? "Executing…"
-      : "Waiting for payment";
+    if (pendingSession.paymentStatus === "confirmed") return "Executing…";
+    if (pendingSession.paymentStatus === "sending" || pendingSession.paymentStatus === "submitted" ||
+        pendingSession.paymentHash || pendingSession.safeLifecycle?.fundingObserved || recovery?.fundingObserved) {
+      return "Checking payment status…";
+    }
+    return "Waiting for payment";
   };
 
   const payment = batchReview?.payments[paymentIndex];

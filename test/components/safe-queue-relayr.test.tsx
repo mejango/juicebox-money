@@ -125,6 +125,7 @@ import {
 } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   RelayrPaymentSendingError,
+  RelayrPaymentSubmittedError,
   clearRelayrPendingSession,
   loadRelayrPendingSession,
   saveRelayrPendingSession,
@@ -564,6 +565,7 @@ describe('Safe queue Relayr execution', () => {
     expect(loadRelayrPendingSession(scope)).toMatchObject({ bundleUuid: BUNDLE, paymentStatus: 'unpaid', paymentHash: null })
     expect(loadRelayrPendingSession(scope)?.safeLifecycle).toMatchObject({ id: reviewed.id, paymentStatus: 'unfunded', quote: reviewed.quote })
     expect(button(/^Pay$/).props.disabled).toBe(false)
+    expect(textOf(renderer.root)).not.toMatch(/Checking payment status/)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.clear).not.toHaveBeenCalled()
@@ -573,6 +575,46 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.review).toHaveBeenCalledTimes(2)
     expect(mocks.review.mock.invocationCallOrder[1]).toBeLessThan(mocks.post.mock.invocationCallOrder[1])
+  })
+
+  it.each(['unavailable', 'mismatch'] as const)('keeps a submitted payment visible and reserved when its proof is %s', async proof => {
+    const { scope } = setupRealRelayrStorage()
+    if (proof === 'mismatch') {
+      const mined = installMinedTransactions()
+      mined.set(HASH, minedTransaction(HASH, 1, TARGET, '0x1234', 0n))
+    }
+    const proofRead = deferred()
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, reverify, onSending, onSent }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+      await reverify?.()
+      await onSending?.(details)
+      await onSent?.([sentRelayrPayment(details, HASH)])
+      await proofRead.promise
+      throw new RelayrPaymentSubmittedError(HASH, payment.chain)
+    })
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    await selectPayment(0)
+    let funding!: Promise<void>
+    await act(async () => {
+      funding = button(/^Pay$/).props.onClick()
+      await vi.waitFor(() => expect(loadRelayrPendingSession(scope)?.paymentStatus).toBe('submitted'))
+    })
+    try {
+      expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentHash: HASH, paymentChainId: 1, paymentStatus: 'submitted' })
+      expect(textOf(renderer.root)).toMatch(/Checking payment status/)
+      expect(textOf(renderer.root)).not.toMatch(/Waiting for payment/)
+      expect(renderer.root.findAllByType('a').some(node => node.props.href === `https://etherscan.io/tx/${HASH}`)).toBe(true)
+      expect(() => button(/^Pay$/)).toThrow()
+    } finally {
+      await act(async () => { proofRead.resolve(); await funding })
+    }
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentHash: HASH, paymentStatus: 'submitted' })
+    expect(textOf(renderer.root)).not.toMatch(/Waiting for payment/)
+    expect(() => button(/^Pay$/)).toThrow()
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.clear).not.toHaveBeenCalled()
   })
 
   it('keeps the original payable quote when its deadline is near on the device clock', async () => {
