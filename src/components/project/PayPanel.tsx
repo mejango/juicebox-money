@@ -2232,6 +2232,7 @@ export function PayPanel({
                       <ResponsiveImage
                         src={row.image}
                         sizes="36px"
+                        loading="lazy"
                         alt=""
                         className="h-full w-full object-cover"
                       />

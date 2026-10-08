@@ -173,6 +173,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
             name={name}
             logoUri={logoUri}
             size={112}
+            eager
             className="rounded-xl"
           />
           <div className="min-w-0">

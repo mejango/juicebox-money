@@ -381,6 +381,7 @@ export function AccountShopHoldings({
                     <ResponsiveImage
                       src={tier.image}
                       sizes="32px"
+                      loading="lazy"
                       alt=""
                       className="h-8 w-8 shrink-0 rounded bg-smoke-100 object-cover"
                     />

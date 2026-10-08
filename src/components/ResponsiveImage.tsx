@@ -10,11 +10,14 @@ type ResponsiveImageProps = Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 's
 }
 
 /** Native layout, responsive delivery, and a single original-source retry. */
-export function ResponsiveImage({ src, sizes, alt, onError, style, ...props }: ResponsiveImageProps) {
+export function ResponsiveImage({ src, sizes, alt, loading, fetchPriority, onError, style, ...props }: ResponsiveImageProps) {
   const ref = useRef<HTMLImageElement>(null)
   const [originalSrc, setOriginalSrc] = useState<string | null>(null)
-  const delivery = responsiveImageProps(src, sizes, originalSrc === src)
-  useEffect(() => ref.current ? observeResponsiveImage(ref.current, () => setOriginalSrc(src)) : undefined, [src])
+  // Critical images must paint before hydration. Their originals also retain
+  // full fidelity when the source aspect ratio is not known on the server.
+  const eager = loading !== 'lazy' || fetchPriority === 'high'
+  const delivery = eager ? { src, style: undefined } : responsiveImageProps(src, sizes, originalSrc === src)
+  useEffect(() => ref.current ? observeResponsiveImage(ref.current, () => setOriginalSrc(src)) : undefined, [src, eager])
   return (
     // Delivery uses Next's supported getImageProps API; layout stays with callers.
     // eslint-disable-next-line @next/next/no-img-element
@@ -22,6 +25,8 @@ export function ResponsiveImage({ src, sizes, alt, onError, style, ...props }: R
       {...props}
       {...delivery}
       alt={alt}
+      loading={loading}
+      fetchPriority={fetchPriority}
       key={src}
       ref={ref}
       style={{ ...style, ...delivery.style }}
