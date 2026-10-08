@@ -801,7 +801,8 @@ function initialPaymentIndex(payments: readonly RelayrPayment[]): number {
 const PHASE_LABELS: Record<SafeRelayrPhase, string> = {
   reviewing: 'Review the Safe executions…',
   quoting: 'Getting payment options…',
-  'payment-review': 'Review the network fee…',
+  'payment-review': 'Preparing payment…',
+  'payment-checking': 'Checking before payment…',
   'payment-submitting': 'Confirm the payment in your wallet…',
   'payment-confirming': 'Confirming payment…',
   executing: 'Waiting for the Safe executions to confirm…',

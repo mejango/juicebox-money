@@ -723,7 +723,58 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.clear).not.toHaveBeenCalled()
   })
 
-  it('shows each verified execution before a delayed chain finishes and completes through status polling', async () => {
+  it('shows final checks after a delayed nested payment review before opening the wallet', async () => {
+    const { scope } = setupRealRelayrStorage()
+    const paymentReview = deferred()
+    const finalValidation = deferred()
+    const walletBoundary = vi.fn()
+    mocks.review.mockImplementation(async ({ title }: { title: string }) => {
+      if (title === 'Review execution payment') await paymentReview.promise
+    })
+    mocks.pay.mockImplementationOnce(async ({ reverify }: Parameters<typeof relayrPay>[0]) => {
+      await mocks.review({ title: 'Review execution payment' })
+      await reverify?.()
+      walletBoundary()
+      throw new Error('Stopped before wallet payment')
+    })
+    await renderQueue()
+    await click(/Execute 2 ready/)
+    await selectPayment(0)
+    mocks.simulateFrozen.mockClear().mockImplementation(async () => {
+      await finalValidation.promise
+      return 'unchanged'
+    })
+    let funding!: Promise<void>
+    await act(async () => {
+      funding = button(/^Pay$/).props.onClick()
+      await vi.waitFor(() => expect(mocks.review).toHaveBeenCalledWith({ title: 'Review execution payment' }))
+    })
+    try {
+      expect(button(/Preparing payment/).props.disabled).toBe(true)
+      expect(mocks.simulateFrozen).not.toHaveBeenCalled()
+      expect(walletBoundary).not.toHaveBeenCalled()
+      await act(async () => {
+        paymentReview.resolve()
+        await vi.waitFor(() => expect(mocks.simulateFrozen).toHaveBeenCalledTimes(2))
+      })
+      expect(button(/Checking before payment/).props.disabled).toBe(true)
+      expect(textOf(renderer.root)).not.toMatch(/Preparing payment/)
+      expect(walletBoundary).not.toHaveBeenCalled()
+      expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', paymentHash: null })
+    } finally {
+      await act(async () => {
+        paymentReview.resolve()
+        finalValidation.resolve()
+        await funding
+      })
+    }
+    expect(walletBoundary).toHaveBeenCalledTimes(1)
+    expect(mocks.post).toHaveBeenCalledTimes(1)
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(loadRelayrPendingSession(scope)).toMatchObject({ paymentStatus: 'unpaid', paymentHash: null })
+  })
+
+  it.each(['successful payment', 'post-send proof error', 'reopened post-send proof error'] as const)('shows each verified execution before a delayed chain finishes after %s', async outcome => {
     const { scope } = setupRealRelayrStorage()
     const mined = installMinedTransactions()
     const hashes = [`0x${'cd'.repeat(32)}`, `0x${'ef'.repeat(32)}`] as Hex[]
@@ -756,6 +807,7 @@ describe('Safe queue Relayr execution', () => {
         })),
       }
       mocks.request.mockResolvedValue(`0x${'6'.padStart(64, '0')}`)
+      if (outcome !== 'successful payment') throw new RelayrPaymentSubmittedError(HASH, payment.chain)
       return { hash: HASH, payments }
     })
     await renderQueue()
@@ -783,6 +835,20 @@ describe('Safe queue Relayr execution', () => {
     expect(mocks.pay).toHaveBeenCalledTimes(1)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.refetch).not.toHaveBeenCalled()
+
+    if (outcome === 'reopened post-send proof error') {
+      const savedId = loadRelayrPendingSession(scope)!.safeLifecycle!.id
+      await closeBatch()
+      await act(async () => renderer.unmount())
+      await renderQueue()
+      await click(/View existing bundle/)
+      expect(loadRelayrPendingSession(scope)?.safeLifecycle?.id).toBe(savedId)
+      expect(executionLinks().map(textOf)).toEqual(['Executed', 'Confirming…'])
+      expect(textOf(renderer.root)).not.toMatch(/Waiting for payment/)
+      expect(() => button(/^Pay$/)).toThrow()
+      expect(mocks.pay).toHaveBeenCalledTimes(1)
+      expect(mocks.post).toHaveBeenCalledTimes(1)
+    }
 
     await act(async () => {
       receiptAvailable = true

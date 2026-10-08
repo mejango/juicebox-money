@@ -61,6 +61,7 @@ import {
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_CODE_HASH,
+  RELAYR_PAYMENT_EVENT,
   RELAYR_FORWARDER_DEADLINE_SECONDS,
   RELAYR_PAYMENT_SELECTOR,
   relayrPaymentDetails,
@@ -191,7 +192,7 @@ function installChain(entries: () => readonly RelayrEntry[]) {
   mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => {
     const transaction = transactionOf(hash)
     return { transactionHash: hash, to: transaction.to, blockHash: BLOCK_HASH, blockNumber: transaction.blockNumber,
-      status: DESTINATION_HASHES.includes(hash) ? 'success' : mocks.paymentStatuses.get(hash) ?? mocks.paymentStatus }
+      status: DESTINATION_HASHES.includes(hash) ? 'success' : mocks.paymentStatuses.get(hash) ?? mocks.paymentStatus, logs: [] }
   })
   // The finalized block has what the SDK reads of one, a number, a 32-byte hash and a timestamp, which comes
   // before every deadline here; the latest block has only a hash, so their reads are told apart.
@@ -514,6 +515,37 @@ describe('Relayr quote and payment boundaries', () => {
     expect(JSON.parse(JSON.stringify(payments))).toEqual(payments)
   })
 
+  it('proves a wallet-wrapped funding effect while preserving the reviewed payment and submitted hash', async () => {
+    const sent = vi.fn()
+    mocks.client.getTransaction.mockResolvedValue({
+      hash: HASH, chainId: 1, from: BOB, to: TARGET, input: '0x9876', value: 0n,
+      blockHash: BLOCK_HASH, blockNumber: 100n,
+    })
+    mocks.client.getTransactionReceipt.mockResolvedValue({
+      transactionHash: HASH, from: BOB, to: TARGET, blockHash: BLOCK_HASH, blockNumber: 100n,
+      status: 'success',
+      logs: [{
+        address: RELAYR_PAYMENT_ADDRESS,
+        transactionHash: HASH, blockHash: BLOCK_HASH, blockNumber: 100n,
+        topics: [RELAYR_PAYMENT_EVENT, `0x${BUNDLE_UUID.replaceAll('-', '').padEnd(64, '0')}`],
+        data: `0x${100n.toString(16).padStart(64, '0')}${BigInt(PAYMENT_DEADLINE).toString(16).padStart(64, '0')}`,
+      }],
+    })
+
+    await expect(pay(payment, [1], { onSent: sent })).resolves.toMatchObject({
+      hash: HASH,
+      payments: [expect.objectContaining({ hash: HASH, target: RELAYR_PAYMENT_ADDRESS, amount: '100', calldata: payment.calldata })],
+    })
+    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+      confirmLabel: 'Pay',
+      calls: [expect.objectContaining({ from: ALICE, to: RELAYR_PAYMENT_ADDRESS, value: 100n, data: payment.calldata })],
+    }))
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
+    expect(sent).toHaveBeenCalledWith([expect.objectContaining({ hash: HASH })])
+    expect(mocks.client.getCode).toHaveBeenCalledWith({ address: RELAYR_PAYMENT_ADDRESS, blockNumber: 100n })
+    expect(mocks.client.getBlock).toHaveBeenCalledWith({ blockNumber: 100n })
+  })
+
   it('refuses to send a payment beyond the 16 a journal keeps for one quote', async () => {
     const details = relayrPaymentDetails(payment, { bundleUuid: BUNDLE_UUID, destinationChainIds: [1] })
     const sent = Array.from({ length: 16 }, () => sentRelayrPayment(details, HASH))
@@ -554,6 +586,8 @@ describe('Relayr quote and payment boundaries', () => {
     const chain = mocks.client.getTransaction.getMockImplementation()!
     // The wallet cancelled the payment with a zero-value transaction to itself.
     mocks.client.getTransaction.mockImplementation(async input => ({ ...await chain(input), to: ALICE, input: '0x', value: 0n }))
+    const receipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+    mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await receipt(input), to: ALICE }))
     const sent = vi.fn()
     await expect(pay(payment, [1], { onSent: sent })).rejects.toMatchObject({
       name: 'RelayrProofError', message: expect.stringMatching(/does not match the reviewed Relayr payment/),
@@ -570,7 +604,22 @@ describe('Relayr quote and payment boundaries', () => {
   ])('refuses a payment the chain shows with %s', async (_, change) => {
     const chain = mocks.client.getTransaction.getMockImplementation()!
     mocks.client.getTransaction.mockImplementation(async input => ({ ...await chain(input), ...change }))
+    if (change.to) {
+      const receipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+      mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await receipt(input), to: change.to }))
+    }
     await expect(pay(payment, [1])).rejects.toMatchObject({ name: 'RelayrProofError' })
+  })
+
+  it('keeps inconsistent transaction and receipt targets as a submitted payment with unavailable proof', async () => {
+    const chain = mocks.client.getTransaction.getMockImplementation()!
+    mocks.client.getTransaction.mockImplementation(async input => ({ ...await chain(input), to: TARGET }))
+    const sent = vi.fn()
+    await expect(pay(payment, [1], { onSent: sent })).rejects.toMatchObject({
+      name: 'RelayrPaymentSubmittedError', hash: HASH, chainId: 1,
+    })
+    expect(sent).toHaveBeenCalledWith([expect.objectContaining({ hash: HASH })])
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
   })
 
   it('reports a payment that reverted onchain as reverted, after proving it is the reviewed one', async () => {
@@ -2656,6 +2705,9 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       const chain = mocks.client.getTransaction.getMockImplementation()!
       mocks.client.getTransaction.mockImplementation(async (input: { hash: Hex }) =>
         input.hash === HASH ? { ...await chain(input), to: ALICE, input: '0x', value: 0n } : chain(input))
+      const receipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+      mocks.client.getTransactionReceipt.mockImplementation(async (input: { hash: Hex }) =>
+        input.hash === HASH ? { ...await receipt(input), to: ALICE } : receipt(input))
       await expect(action()).rejects.toMatchObject(REFUSED)
       expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'submitted', payments: [expect.objectContaining({ hash: HASH })] })
       reverify.mockClear()
@@ -2747,6 +2799,8 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       const chain = mocks.client.getTransaction.getMockImplementation()!
       mocks.client.getTransaction.mockImplementation(async (input: { hash: Hex }) => ({ ...await chain(input), to: sent.target,
         input: sent.calldata, value: BigInt(sent.amount) }))
+      const receipt = mocks.client.getTransactionReceipt.getMockImplementation()!
+      mocks.client.getTransactionReceipt.mockImplementation(async input => ({ ...await receipt(input), to: sent.target }))
       mocks.paymentStatuses.set(HASH, 'reverted')
       now.mockReturnValue(REQUESTS_EXPIRED)
       finalizedAt(REQUESTS_EXPIRED / 1_000)
