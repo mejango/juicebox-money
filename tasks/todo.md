@@ -692,6 +692,22 @@ Review: only the existing deterministic APP_ROUTES branch gains image-proof, cov
 - **Verification:** Run the root refinement gate, existing `container:check` gate and diff checks. Inspect effective patterns for retained existing exclusions; the subsequent clean Docker build must typecheck and retain the guarded runtime optimizer hash.
 - **Resource budget:** One narrow ignore-file exception and this note, no package/lock/runtime change, fixture copy or local build. Root assigns the later OCI slot after current serialized browser builds.
 
-- [ ] Add the narrow context exception and pass the existing container definition gate.
+- [x] Add the narrow context exception and pass the existing container definition gate.
 
 Extraction review: the complete71-line URL/inline-image block matches its prior source byte-for-byte after trimming the final blank line (SHA256 afe903efaab6d847ba48506de7c4d0dbe311c34c2173dec990cd73d0e500fc0f). All12 source imports and the owning test import now use image-source; no compatibility re-export or second rule remains. Focused URL/media/logo/rich-content/metadata/shop tests, lint and TypeScript pass. Independent review approves the unchanged block and import-only changes. Compiled size remains pending the scheduled root build.
+
+Docker-context review: the single existing synthetic AVIF fixture is now explicitly allowed while other test inputs retain their exclusions. The owning container/deployment configuration check and diff check pass; no Next artifact was rebuilt or changed by this edit. OCI execution remains queued with root.
+
+
+## Plan refinement
+
+- **Objective:** Make the guarded standalone optimizer check verify the actual Juicebox artifact when NEXT_DIST_DIR selects an alternate build directory.
+- **System fit:** next.config.js and the existing standalone start script already own the configured directory convention. The compatibility CLI currently hardcodes .next, so its validation can inspect the wrong artifact; this fix only aligns that read-only check.
+- **Reuse and simplicity:** Reuse the existing `process.env.NEXT_DIST_DIR || '.next'` convention in the one CLI path. No patch/hash, runtime behavior, dependency or Revnet change.
+- **Evidence and unknowns:** Root identified the hardcoded standalone path after source review. The compiled image runtime is unchanged; correctness depends on executing the CLI against a temporary alternate tree with a failing default-directory decoy.
+- **Verification:** Add a focused real-CLI regression that succeeds for the patched alternate artifact despite an invalid default tree, then fails after the selected artifact is corrupted. Run the existing compatibility suite, scoped lint and whitespace; no build is needed.
+- **Resource budget:** One script line, one owning regression and this note; coordinate shared task notes with the entry investigator and leave budget/browser changes unstaged.
+
+- [x] Align the standalone check path and prove both selected-artifact success and drift rejection.
+
+Review: the standalone CLI resolves NEXT_DIST_DIR with the same .next fallback as Juicebox configuration/startup. All4compatibility cases pass, including the real CLI selecting a patched alternate tree over an invalid default decoy and rejecting subsequent corruption of that selected tree. Scoped ESLint, plan and whitespace checks pass. Logs: `/private/tmp/jbm-images-alternate-dist-{tests,lint}.log`. No runtime optimizer bytes, Next artifact, dependency or Revnet source changed; a production rebuild is unnecessary for this script-only correction.

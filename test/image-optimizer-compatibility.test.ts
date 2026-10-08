@@ -1,8 +1,9 @@
 // @vitest-environment node
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import sharp from 'sharp'
 import { prepareImageOptimizer } from '../scripts/prepare-image-optimizer.mjs'
@@ -40,6 +41,31 @@ describe('pinned AVIF optimizer compatibility', () => {
     expect(prepareImageOptimizer(directory, { check: true, standalone: true })).toBe(0)
     rmSync(join(directory, optimizerFiles[0]))
     expect(() => prepareImageOptimizer(directory, { check: true, standalone: true })).toThrow()
+  })
+
+  it('checks the selected alternate standalone artifact instead of a default-directory decoy', () => {
+    const directory = unpatchedNext()
+    prepareImageOptimizer(directory)
+    const workspace = mkdtempSync(join(tmpdir(), 'image-optimizer-cli-'))
+    temporaryDirectories.push(workspace)
+    const selected = join(workspace, 'alternate', 'standalone/node_modules/next')
+    mkdirSync(dirname(selected), { recursive: true })
+    cpSync(directory, selected, { recursive: true })
+    const decoy = join(workspace, '.next/standalone/node_modules/next')
+    mkdirSync(decoy, { recursive: true })
+    writeFileSync(join(decoy, 'package.json'), JSON.stringify({ version: 'wrong-artifact' }))
+    const run = () => spawnSync(process.execPath, [resolve('scripts/prepare-image-optimizer.mjs'), '--check-standalone'], {
+      cwd: workspace,
+      env: { ...process.env, NEXT_DIST_DIR: 'alternate' },
+      encoding: 'utf8',
+    })
+    const passing = run()
+    expect(passing.status, passing.stderr).toBe(0)
+    expect(passing.stdout).toContain('Standalone image optimizer preserves AVIF originals.')
+    writeFileSync(join(selected, optimizerFiles[0]), 'unexpected selected artifact')
+    const failing = run()
+    expect(failing.status).not.toBe(0)
+    expect(failing.stderr).toContain('Unexpected Next image optimizer source')
   })
 
   it('rejects version or second-file drift before changing the first file', () => {

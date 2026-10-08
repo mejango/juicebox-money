@@ -56,7 +56,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
   }
   const standalone = args[0] === '--check-standalone'
   const changed = prepareImageOptimizer(
-    standalone ? resolve('.next/standalone/node_modules/next') : undefined,
+    standalone ? resolve(process.env.NEXT_DIST_DIR || '.next', 'standalone/node_modules/next') : undefined,
     { check: standalone, standalone },
   )
   console.log(standalone
