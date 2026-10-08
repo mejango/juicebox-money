@@ -146,6 +146,7 @@ export function OverviewTab({
               <RichContent
                 html={description}
                 fallback={descriptionFallback}
+                imageSizes="(min-width: 1152px) 640px, (min-width: 1024px) calc(100vw - 512px), (min-width: 801px) calc(100vw - 448px), (min-width: 640px) calc(100vw - 88px), calc(100vw - 72px)"
                 className="text-sm leading-relaxed text-ink/90 [&>*+*]:mt-3 [&_a]:break-words [&_a]:font-medium [&_a]:text-bluebs-600 [&_a]:underline [&_a]:underline-offset-2 [&_blockquote]:border-l-2 [&_blockquote]:border-smoke-300 [&_blockquote]:pl-3 [&_img]:rounded-lg [&_li+li]:mt-1 [&_ol]:list-decimal [&_ol]:pl-5 [&_strong]:font-semibold [&_ul]:list-disc [&_ul]:pl-5"
               />
             </Expandable>

@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mocks.push }),
 }))
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'img', priority: undefined }),
 }))

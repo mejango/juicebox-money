@@ -1,6 +1,7 @@
 import { ChainIcon } from '@/components/ChainIcon'
 import { ProjectLink } from '@/components/ProjectLink'
 import { ProjectLogo } from '@/components/ProjectLogo'
+import { ResponsiveImage } from '@/components/ResponsiveImage'
 import {
   type BsAccountNft,
   type BsAccountTokenHolding,
@@ -377,9 +378,9 @@ export function AccountShopHoldings({
               >
                 <span className="flex min-w-0 items-center gap-2.5">
                   {tier.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <ResponsiveImage
                       src={tier.image}
+                      sizes="32px"
                       alt=""
                       className="h-8 w-8 shrink-0 rounded bg-smoke-100 object-cover"
                     />

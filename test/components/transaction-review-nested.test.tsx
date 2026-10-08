@@ -8,7 +8,8 @@ import { encodeFunctionData, erc20Abi, parseAbi, zeroAddress, type Hex } from 'v
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: undefined, chainId: undefined }),
 }))
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'asset' }),
 }))

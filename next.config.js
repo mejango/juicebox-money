@@ -98,8 +98,14 @@ module.exports = phase => ({
     // cached aggressively. Bundled artwork uses hashed static imports and is
     // served immutable independently of this TTL.
     minimumCacheTTL: 60 * 60 * 24 * 365,
+    maximumDiskCacheSize: 500_000_000,
+    qualities: [75, 90],
+    maximumRedirects: 0,
+    dangerouslyAllowSVG: true,
+    contentDispositionType: 'attachment',
+    contentSecurityPolicy: "script-src 'none'; frame-src 'none'; sandbox;",
     remotePatterns: [
-      { protocol: 'https', hostname: 'juicebox.center', pathname: '/ipfs/**' },
+      { protocol: 'https', hostname: 'juicebox.center', port: '', pathname: '/ipfs/**', search: '' },
     ],
   },
   async headers() {

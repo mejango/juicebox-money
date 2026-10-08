@@ -81,13 +81,31 @@ describe('sanitizeRichContent', () => {
     expect(root.querySelector('h1')?.textContent).toBe('Purpose')
     expect(root.querySelector('strong')?.textContent).toBe('world')
     const images = [...root.querySelectorAll('img')]
-    expect(images.map(image => image.getAttribute('src'))).toEqual([
+    expect(images[0].getAttribute('data-original-src')).toBe(
       'https://juicebox.center/ipfs/bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi',
-      'https://example.com/a.png',
-    ])
+    )
+    expect(images[0].getAttribute('srcset')).toContain('&q=90 3840w')
+    expect(images[1].getAttribute('src')).toBe('https://example.com/a.png')
+    expect(images[1].hasAttribute('srcset')).toBe(false)
     expect(images.every(image => image.getAttribute('loading') === 'lazy')).toBe(
       true,
     )
+  })
+
+  it('replaces injected delivery/fallback attributes only with app-generated values', () => {
+    const root = document.createElement('div')
+    root.innerHTML = sanitizeRichContent(
+      '<img src="ipfs://QmPhoto" srcset="https://evil.example/low 9999w" sizes="1px" data-original-src="https://evil.example/fallback" style="display:none" onload="alert(1)">' +
+      '<img src="https://example.com/image.png" data-original-src="https://evil.example/fallback" srcset="https://evil.example/low 9999w">',
+      '640px',
+    )
+    const images = root.querySelectorAll('img')
+    expect(images[0].dataset.originalSrc).toBe('https://juicebox.center/ipfs/QmPhoto')
+    expect(images[0].sizes).toBe('640px')
+    expect(images[0].style.visibility).toBe('hidden')
+    expect(root.innerHTML).not.toContain('evil.example')
+    expect(root.innerHTML).not.toContain('onload')
+    expect(images[1].dataset.originalSrc).toBeUndefined()
   })
 
   it('caps attacker-controlled input before parsing', () => {

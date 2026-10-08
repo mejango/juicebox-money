@@ -2,7 +2,8 @@ import { createElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'img', priority: undefined }),
 }))

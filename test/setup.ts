@@ -1,3 +1,4 @@
+import './next-image-config'
 import { afterEach, beforeEach, vi } from 'vitest'
 
 function blockedNetworkConstructor(transport: string) {

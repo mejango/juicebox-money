@@ -1,5 +1,5 @@
 import type { ComponentProps } from 'react'
-import Image from 'next/image'
+import { ResponsiveImage } from '@/components/ResponsiveImage'
 import { ChainIcon } from '@/components/ChainIcon'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogoWithFallback } from '@/components/ProjectLogoWithFallback'
@@ -157,13 +157,13 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
       />
         {coverImage ? (
           <div className="relative mb-6 h-32 w-full overflow-hidden rounded-xl border border-smoke-200 sm:h-44">
-            <Image
+            <ResponsiveImage
               src={coverImage}
               alt=""
-              fill
-              priority
-              sizes="(min-width: 1152px) 1152px, calc(100vw - 2rem)"
-              className="object-cover"
+              loading="eager"
+              fetchPriority="high"
+              sizes="(min-width: 1152px) 1104px, (min-width: 640px) calc(100vw - 48px), calc(100vw - 32px)"
+              className="absolute inset-0 h-full w-full object-cover"
             />
           </div>
         ) : null}

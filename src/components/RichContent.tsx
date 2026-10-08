@@ -2,9 +2,10 @@
 
 import createDOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { appIpfsUrl } from '@/lib/format'
+import { observeResponsiveImage, responsiveImageProps, retryOriginalImage } from '@/lib/responsive-image'
 
 const ALLOWED_TAGS = [
   'a',
@@ -71,7 +72,7 @@ function unwrap(element: Element) {
  * without receiving an opener or referrer. Images are allowed, but only from
  * https: or ipfs: sources (see resolveImageSrc).
  */
-export function sanitizeRichContent(value: string): string {
+export function sanitizeRichContent(value: string, imageSizes = '100vw'): string {
   if (typeof window === 'undefined') return ''
   const html = marked.parse(value.slice(0, MAX_CONTENT_LENGTH), {
     async: false,
@@ -122,8 +123,17 @@ export function sanitizeRichContent(value: string): string {
       image.remove()
       continue
     }
-    image.setAttribute('src', resolved)
+    // Only app-generated attributes are added after the untrusted HTML boundary.
+    const delivery = responsiveImageProps(resolved, imageSizes)
+    if (delivery.srcSet) image.setAttribute('srcset', delivery.srcSet)
+    if (delivery.sizes) image.setAttribute('sizes', delivery.sizes)
+    if (delivery['data-original-src']) {
+      image.setAttribute('data-original-src', delivery['data-original-src'])
+      image.style.visibility = 'hidden'
+    }
+    image.setAttribute('src', delivery.src)
     image.setAttribute('loading', 'lazy')
+    image.setAttribute('decoding', 'async')
   }
 
   // Legacy editors saved paragraph breaks as `<p><br></p>` spacers; they
@@ -147,11 +157,14 @@ export function RichContent({
   html,
   fallback,
   className = '',
+  imageSizes = '100vw',
 }: {
   html: string
   fallback: string[]
   className?: string
+  imageSizes?: string
 }) {
+  const ref = useRef<HTMLDivElement>(null)
   const [sanitized, setSanitized] = useState<{
     source: string
     html: string
@@ -159,8 +172,13 @@ export function RichContent({
   const sanitizedHtml = sanitized?.source === html ? sanitized.html : null
 
   useEffect(() => {
-    setSanitized({ source: html, html: sanitizeRichContent(html) })
-  }, [html])
+    setSanitized({ source: html, html: sanitizeRichContent(html, imageSizes) })
+  }, [html, imageSizes])
+
+  useEffect(() => {
+    const cleanups = Array.from(ref.current?.querySelectorAll('img') ?? [], image => observeResponsiveImage(image))
+    return () => cleanups.forEach(cleanup => cleanup())
+  }, [sanitizedHtml])
 
   if (sanitizedHtml === null) {
     return (
@@ -174,7 +192,11 @@ export function RichContent({
 
   return (
     <div
+      ref={ref}
       className={className}
+      onErrorCapture={event => {
+        if (event.target instanceof HTMLImageElement) retryOriginalImage(event.target)
+      }}
       // This is the single reviewed HTML boundary. sanitizeRichContent()
       // returns only the explicit allowlist above.
       dangerouslySetInnerHTML={{ __html: sanitizedHtml }}

@@ -1,5 +1,6 @@
 "use client";
 
+import { ResponsiveImage } from '@/components/ResponsiveImage'
 import { projectDisplayKey } from '@/lib/project-display-cache'
 
 import {
@@ -1864,9 +1865,9 @@ export function PayPanel({
                     }
                   >
                     {tier.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <ResponsiveImage
                         src={tier.image}
+                        sizes="96px"
                         alt={item.name}
                         loading="lazy"
                         decoding="async"
@@ -2228,9 +2229,9 @@ export function PayPanel({
                   <span className="text-sm text-smoke-500">+</span>
                   <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-[10px] text-smoke-500">
                     {row.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
+                      <ResponsiveImage
                         src={row.image}
+                        sizes="36px"
                         alt=""
                         className="h-full w-full object-cover"
                       />

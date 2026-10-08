@@ -1,6 +1,6 @@
 'use client'
 
-import Image from 'next/image'
+import { ResponsiveImage } from '@/components/ResponsiveImage'
 import { useState } from 'react'
 import { projectLogoUrl } from '@/lib/format'
 
@@ -51,16 +51,13 @@ export function ProjectLogo({
     >
       {label[0].toUpperCase()}
       {visibleSrc ? (
-        <Image
+        <ResponsiveImage
           src={visibleSrc}
           alt=""
           width={size}
           height={size}
           className="absolute inset-0 size-full object-cover"
-          unoptimized={
-            visibleSrc.startsWith('data:') ||
-            visibleSrc.startsWith('https://juicebox.center/ipfs/')
-          }
+          sizes={`${size}px`}
           loading={eager ? 'eager' : 'lazy'}
           fetchPriority={eager ? 'high' : 'auto'}
           decoding={eager ? 'sync' : 'async'}

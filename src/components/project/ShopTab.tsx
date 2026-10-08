@@ -22,6 +22,7 @@ import { hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
+import { ResponsiveImage } from '@/components/ResponsiveImage'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ADD_SHOP_MANAGER_HASH } from '@/components/project/AuthorityOverview'
@@ -1282,9 +1283,11 @@ function StoreMediaPreview({
 
   if (resolved.kind === 'image') {
     return (
-      // eslint-disable-next-line @next/next/no-img-element
-      <img
+      <ResponsiveImage
         src={resolved.source}
+        sizes={detail
+          ? '(min-width: 768px) 263px, (min-width: 696px) 632px, calc(100vw - 64px)'
+          : '(min-width: 1152px) 216px, (min-width: 1024px) calc((100vw - 504px) / 3), (min-width: 801px) calc((100vw - 440px) / 3), (min-width: 640px) calc((100vw - 80px) / 3), calc((100vw - 48px) / 2)'}
         alt={alt}
         loading={detail ? 'eager' : 'lazy'}
         decoding="async"

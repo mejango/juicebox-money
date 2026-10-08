@@ -21,7 +21,8 @@ vi.mock('next/link', () => ({
   default: ({ href, children, ...props }: Record<string, unknown>) =>
     createElement('a', { href, ...props }, children as never),
 }))
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'img', priority: undefined }),
 }))

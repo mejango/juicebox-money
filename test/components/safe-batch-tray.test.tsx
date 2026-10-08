@@ -18,7 +18,8 @@ const mocks = vi.hoisted(() => ({
   service: true,
 }))
 
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'asset' }),
 }))

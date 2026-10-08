@@ -11,7 +11,8 @@ vi.mock('@/lib/bendystraw', () => ({
   getProjectActivity: mocks.groupActivity,
   getProjectActivityByProject: mocks.projectActivity,
 }))
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) => createElement('img', { ...props, src: 'img' }),
 }))
 vi.mock('@/hooks/useShop721', () => ({ useShop721: vi.fn(), useShop721Media: vi.fn() }))

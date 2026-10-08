@@ -17,7 +17,8 @@ const ACCOUNT = '0x2222222222222222222222222222222222222222'
 vi.mock('wagmi', () => ({
   useAccount: () => ({ address: ACCOUNT, chainId: 1 }),
 }))
-vi.mock('next/image', () => ({
+vi.mock('next/image', async importOriginal => ({
+  ...await importOriginal<typeof import('next/image')>(),
   default: (props: Record<string, unknown>) => createElement('img', { ...props, src: 'asset' }),
 }))
 
