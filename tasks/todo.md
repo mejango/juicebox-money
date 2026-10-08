@@ -725,3 +725,13 @@ Review: the standalone CLI resolves NEXT_DIST_DIR with the same .next fallback a
 Review: final same-policy baseline/rebuilt totals are home448,954→449,991B (+1,037), create519,277→520,318B (+1,041), and aggregate2,589,293→2,588,005B (−1,288). The exact unchanged extraction removes2,261B from the earlier create image build (522,579→520,318). Home/create caps round minimally to440/509KiB; aggregate stays2535KiB. Dedicated proof exclusions are6,485B baseline and11,273B rebuilt, including the nested source stub; all shared chunks remain counted. Four real-checker regressions pass with deployment queries: dedicated page exclusion, unreferenced source stub exclusion, shared chunk retention and a reference from a shipped route outside the three initial-route budgets. Scoped ESLint passes. Evidence: /private/tmp/jb-entry-20261008/{baseline-filtered-budget-final,images-extracted-filtered-budget-final,proof-budget-tests-final,proof-budget-lint-final}.log.
 
 The existing dynamic-route loader separately filters deployment-query chunk names before normalization, undercounting the project route. Root authorized a separate gate-correctness commit and matched rerun; the168.5KiB legacy output is not evidence of the complete project payload. No runtime rebuild is required for these checker-only changes. Final actual entry timing remains pending.
+
+
+## Plan refinement
+
+- **Objective:** Count the real project-route assets and enforce lazy boundaries even when Next appends deployment query parameters to manifest URLs.
+- **System fit:** The existing loadPages owner drops every query-suffixed dynamic-route chunk before sizing and lazy checks. Reuse the newly verified client-manifest asset normalization in that owner; no app runtime or browser artifact changes.
+- **Reuse and simplicity:** First extract the existing proof-manifest normalization unchanged into one helper, then apply it to dynamic-route loading in a separate commit. Preserve common scripts, static HTML parsing, budgets and all exclusions.
+- **Evidence and unknowns:** Both preserved baseline and rebuilt manifests contain `?dpl=browser-test`; earlier project168.5KiB only counts common scripts. Actual project totals and lazy-boundary outcomes must be established with the corrected same checker on both artifacts.
+- **Verification:** Add a failing-before real-checker case with oversized query-suffixed project assets, then rerun all checker cases, scoped lint and both artifact budgets. Preserve earlier partial numbers explicitly as invalid for complete project weight.
+- **Resource budget:** Two tiny checker-only commits for extraction and correction, no build or timing; root owns final browser qualification and release.

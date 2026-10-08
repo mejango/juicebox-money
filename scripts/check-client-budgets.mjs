@@ -224,6 +224,14 @@ function fail(message) {
   process.exitCode = 1
 }
 
+function clientModuleScripts(manifest) {
+  return Object.values(manifest?.clientModules ?? {})
+    .flatMap(module => module.chunks ?? [])
+    .filter(file => typeof file === 'string')
+    .map(file => decodeURIComponent(file.split('?')[0]))
+    .filter(file => file.endsWith('.js'))
+}
+
 function loadPages() {
   if (existsSync(legacyManifestPath)) {
     return JSON.parse(readFileSync(legacyManifestPath, 'utf8')).pages ?? {}
@@ -307,11 +315,7 @@ for (const manifestPath of filesBelow(join(distDir, 'server/app')).filter(file =
   runInNewContext(readFileSync(manifestPath, 'utf8'), context, { filename: manifestPath, timeout: 1_000 })
   for (const [appPath, manifest] of Object.entries(context.globalThis.__RSC_MANIFEST ?? {})) {
     const route = appPath.replace(/\/page$/, '')
-    const files = Object.values(manifest.clientModules ?? {})
-      .flatMap(module => module.chunks ?? [])
-      .filter(file => typeof file === 'string')
-      .map(file => decodeURIComponent(file.split('?')[0]))
-      .filter(file => file.endsWith('.js'))
+    const files = clientModuleScripts(manifest)
     if (!proofRoutes.has(route)) for (const file of files) shippedAssets.add(file)
   }
 }
