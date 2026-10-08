@@ -281,12 +281,7 @@ function loadPages() {
     const manifest = context.globalThis.__RSC_MANIFEST?.[route]
     pages[route] = [
       ...new Set(
-        commonScripts.concat(
-          Object.values(manifest?.clientModules ?? {})
-          .flatMap(module => module.chunks ?? [])
-          .filter(file => typeof file === 'string' && file.endsWith('.js'))
-          .map(decodeURIComponent),
-        ),
+        commonScripts.concat(clientModuleScripts(manifest)),
       ),
     ]
   }

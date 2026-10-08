@@ -14,7 +14,7 @@ afterEach(() => {
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
-function checkProofBudget(shared: boolean, shippedReference = false, sourceStub = false) {
+function checkProofBudget(shared: boolean, shippedReference = false, sourceStub = false, projectReference = false) {
   const root = mkdtempSync(join(tmpdir(), 'client-proof-budget-'))
   directories.push(root)
   const write = (path: string, value: string) => {
@@ -30,7 +30,7 @@ function checkProofBudget(shared: boolean, shippedReference = false, sourceStub 
   write(`.next/${proof}`, oversized)
   const manifests: Record<string, string[]> = {
     '/page': ['static/chunks/initial.js'],
-    '/[urn]/page': ['static/chunks/initial.js'],
+    '/[urn]/page': projectReference ? [proof] : ['static/chunks/initial.js'],
     '/create/page': ['static/chunks/initial.js'],
     '/proof/page': sourceStub ? [] : [proof],
     // This route is outside the three initial-route budgets; its references
@@ -69,4 +69,10 @@ it('counts dedicated proof chunks when any shipped route also references them', 
   const result = checkProofBudget(false, true)
   expect(result.status).toBe(1)
   expect(result.stderr).toContain('aggregate client JavaScript exceeds budget')
+})
+
+it('counts deployment-versioned assets toward the dynamic project route budget', () => {
+  const result = checkProofBudget(false, false, false, true)
+  expect(result.status).toBe(1)
+  expect(result.stderr).toContain('/[urn]/page exceeds its JavaScript budget')
 })
