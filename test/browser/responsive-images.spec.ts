@@ -51,7 +51,7 @@ async function fixture(browser: Browser, baseURL: string, width: number, density
 }
 
 async function loaded(page: Page, alt: string) {
-  const image = page.getByRole('img', { name: alt, exact: true })
+  const image = page.getByAltText(alt, { exact: true })
   await image.scrollIntoViewIfNeeded()
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalWidth > 0 && getComputedStyle(element).visibility === 'visible')).toBe(true)
   return image
@@ -65,7 +65,8 @@ async function displayedPixels(page: Page, alt: string, deliveries: Map<string, 
   })
   const decoded = deliveries.get(display.src)
   expect(decoded, `${alt}: selected body must have been decoded`).toBeDefined()
-  const required = (display.fit === 'cover' ? Math.max(display.width, display.height * decoded!.width / decoded!.height) : display.width) * display.density
+  const fittedWidth = display.height * decoded!.width / decoded!.height
+  const required = (display.fit === 'cover' ? Math.max(display.width, fittedWidth) : display.fit === 'contain' ? Math.min(display.width, fittedWidth) : display.width) * display.density
   // Original is the quality ceiling. Otherwise use actual decoded body pixels,
   // never just a claimed width in the URL or density-corrected naturalWidth.
   if (!display.original && !decoded!.contentType.includes('svg')) expect(decoded!.width, `${alt} needs ${required} physical pixels`).toBeGreaterThanOrEqual(Math.floor(required))
@@ -169,4 +170,24 @@ test('eager project imagery paints the original before hydration', async ({ brow
     await expect(image).not.toHaveAttribute('srcset')
     await testInfo.attach('eager-logo-without-javascript', { body: await image.screenshot(), contentType: 'image/png' })
   } finally { await context.close() }
+})
+
+test('the real optimizer transforms a cold raster and reuses identical cached bytes', async ({ request }, testInfo) => {
+  const source = `/image-proof/source?kind=raster&probe=${Date.now()}`
+  const url = `/_next/image?${new URLSearchParams({ url: source, w: '128', q: '90' })}`
+  const original = await request.get(source)
+  expect(original.ok()).toBe(true)
+  const first = await request.get(url, { headers: { Accept: 'image/webp' } })
+  const second = await request.get(url, { headers: { Accept: 'image/webp' } })
+  expect(first.status()).toBe(200)
+  expect(first.headers()['x-nextjs-cache']).toBe('MISS')
+  expect(second.headers()['x-nextjs-cache']).toBe('HIT')
+  const sourceBytes = (await original.body()).length
+  const bytes = await first.body()
+  expect(bytes.equals(await second.body())).toBe(true)
+  expect(bytes.length).toBeLessThan(sourceBytes)
+  const decoded = await sharp(bytes).metadata()
+  expect(decoded.width).toBe(128)
+  expect(decoded.height).toBe(64)
+  await testInfo.attach('real-next-cache-and-transfer', { body: JSON.stringify({ sourceBytes, outputBytes: bytes.length, width: decoded.width, height: decoded.height, first: first.headers()['x-nextjs-cache'], second: second.headers()['x-nextjs-cache'] }), contentType: 'application/json' })
 })
