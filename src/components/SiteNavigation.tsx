@@ -18,6 +18,7 @@ function GuideLinks({ className = '' }: { className?: string }) {
     >
       <Link
         href="/learn"
+        prefetch={false}
         aria-current={pathname === '/learn' ? 'page' : undefined}
         className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
       >
@@ -26,6 +27,7 @@ function GuideLinks({ className = '' }: { className?: string }) {
       <span aria-hidden>|</span>
       <Link
         href="/build"
+        prefetch={false}
         aria-current={pathname === '/build' ? 'page' : undefined}
         className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
       >
@@ -34,6 +36,7 @@ function GuideLinks({ className = '' }: { className?: string }) {
       <span aria-hidden>|</span>
       <Link
         href="/audit"
+        prefetch={false}
         aria-current={pathname === '/audit' ? 'page' : undefined}
         className="inline-flex min-h-11 min-w-11 items-center justify-center underline-offset-4 hover:text-bluebs-700 hover:underline aria-[current=page]:text-bluebs-700 aria-[current=page]:underline"
       >

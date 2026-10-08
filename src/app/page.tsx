@@ -485,6 +485,7 @@ function HeroColumn() {
         </p>
         <Link
           href="/create"
+          prefetch={false}
           className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm xl:mt-4"
         >
           Start a project

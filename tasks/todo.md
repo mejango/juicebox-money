@@ -613,3 +613,34 @@ Implemented one display owner using real Next width descriptors at quality90, st
 Verification: Node26.7.0/Next16.3.8/React19.2.8/core2.24.5 were checked from the installed graph. Focused83cases pass, followed by all214unit-test files/2,797cases. Full TypeScript, ESLint and source invariants pass. The first TypeScript/lint attempt caught the helper's inferred union/alt annotation and a callback name interpreted as a hook; corrected narrowly, preserving both logs. Test setup applies the actual app image config to Next's direct-call fallback, and existing Image mocks retain the public getImageProps export; it does not replace generated attrs with an imitation. Logs: `/private/tmp/jbm-images-focused-{first,second}.log`, `jbm-images-{types,lint}-{first,second}.log`, `jbm-images-source-first.log`, and `jbm-images-tests-first.log`.
 
 Root still owns integrated entry changes, production build/budgets, real-browser density/format/byte proofs, complete final repository gates and release review. Browser QA is writing separate proof routes/specs; they are deliberately excluded from this runtime checkpoint. No production build, deploy, image upload or metadata mutation ran in this task.
+
+## 2026-10-08 — Reduce project-entry prefetch contention
+
+- [x] Rebaseline current runtime with source/dependency/artifact provenance and browser/server timing.
+- [x] Isolate guide/create speculation in a matched, three-run mobile control.
+- [x] Add the browser regression and preserve its failure against the unchanged artifact.
+- [x] Disable only the four measured guide/create Link prefetches; run focused static checks and prepare the separate commit.
+- [ ] Integrate through the owning image worktree, then qualify the actual combined production artifact and repeat matched timing.
+
+## Plan refinement
+
+- **Objective:** Reduce Juicebox first-project entry waiting by removing observed unrelated guide/create downloads; preserve explicit navigation, project identity, payment disclosure, freshness and recovery.
+- **System fit:** The existing Next Link owners in SiteNavigation and homepage CTA initiate unwanted speculative RSC/chunks. The current project/data/transaction owners remain unchanged. Runtime spans and a request-level causal control justify four props, while the existing browser prefetch regression owns prevention and root's combined build owns final qualification.
+- **Reuse and simplicity:** Reuse `prefetch={false}` already used by ProjectLink and extend the existing prefetch browser spec. No route scheduler, custom Link, preload, cache policy or RPC change. Existing current-runtime artifact is cloned with all 115,532 dependency and 3,318 artifact files hash-matched; no baseline rebuild.
+- **Evidence and unknowns:** Current-source-equivalent preview runtime is traced to fcd1f439, with source/runtime graph equivalence to release candidate 1f14b125 explicitly recorded in /private/tmp/jb-entry-20261008/provenance.json. Five baseline journeys per profile show median mobile entry 2329.5ms. Three matched header-aware control journeys show 2356.2ms versus 1683.1ms with guide/create prefetch alone suppressed; this is diagnostic evidence, not a shipped-source performance claim. Null metadata fixtures do not measure IPFS/image cost or authenticated wallets.
+- **Verification:** Preserve the browser regression's failure on the original artifact, check the four source props and type/lint invariants, then hand the separate commit to root for one combined production build, real-browser regression/full gates and matched timing. Keep explicit guide/create navigation and project draft/authority behavior. Raw control/failure logs remain in /private/tmp/jb-entry-20261008; no live requests or deployment.
+- **Resource budget:** One isolated writer at /Users/jango/Documents/jb/v6/evm/.worktrees/jbm-entry-images-20261008; owning plan /Users/jango/Documents/jb/v6/evm/docs/WEBSITE_ENTRY_IMAGES_IMPLEMENTATION.md. Required root AGENTS.md, workflow/ponytail/SKILL.md, workflow/ponytail/README.md, docs/PLAN_REFINEMENT.md and tasks/lessons.md remain applicable by absolute workspace path. Quiet timing slot is released. No full build here; root integrates with the image change to avoid duplicate qualification.
+
+Review: four `prefetch={false}` props only change speculative guide/create downloads. Focused ESLint, TypeScript and whitespace checks pass. The new browser assertion fails on the unchanged artifact with all eight observed unwanted prefetches, with its trace/video/screenshot preserved; the existing whole-suite teardown also reports expected missing reads for this one-spec run. No after-change production artifact has been built here. Root owns the final combined build, actual-source browser pass, complete gates and matched timing; diagnostic suppression is not substituted for those checks. No RPC, metadata, authority, transaction or image implementation changed in this entry commit.
+
+
+## Plan refinement
+
+- **Objective:** Preserve visible critical/eager originals before hydration while keeping lazy responsive derivatives sharp; avoid making initial project images wait for JavaScript.
+- **System fit:** Independent review identified an initial-paint regression from applying the client fidelity guard to eager images. The existing ResponsiveImage owner will select original delivery for native eager/omitted loading and high fetch priority; project header logo explicitly declares eager intent. Root still owns entry/build/browser integration.
+- **Reuse and simplicity:** Add one selection condition in the shared React wrapper and reuse the existing original rendering path; do not add server geometry reads, speculative aspect metadata, loaders or another quality policy.
+- **Evidence and unknowns:** The214-file/2,797-test checkpoint passes but unit coverage did not establish critical-image visibility before hydration. Covers, header logos and full-detail eager views must retain originals; do not claim these first images transfer fewer bytes. Lazy images still use the reviewed derivative guard and fallback.
+- **Verification:** Add SSR regressions for eager/omitted/high-priority originals with no hidden style, preserve lazy derivative coverage and test loading-mode changes; run focused tests and type/lint checks. Browser QA separately blocks JavaScript to verify actual critical-image visibility in the production artifact.
+- **Resource budget:** One narrow follow-up commit after focused checks, no repeated full suite/build; preserve previous evidence and leave root entry cherry-pick and browser-owned files untouched.
+
+- [ ] Apply critical original delivery and explicit eager project header logo; verify the narrow regression and record the tradeoff.
