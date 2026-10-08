@@ -43,7 +43,11 @@ const budgets = {
     // accounting measures baseline 649,377 B and current 648,889 B (-488 B).
     // Round the smaller current payload to 634 KiB; the 634.2 KiB baseline
     // failure remains recorded rather than misattributed to responsive images.
-    '/[urn]/page': 634 * KIB,
+    // Sizing critical images and retaining the smallest sufficient candidate
+    // measures 648,976 -> 649,767 B (+791 B) on the same physical dependency
+    // graph. Existing narrow image/React owners carry the added lifecycle;
+    // round only this route to 635 KiB, retaining 473 B of headroom.
+    '/[urn]/page': 635 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
     // It shares home's chunks, so SDK 2.12.1 and the shop-read split land here too
