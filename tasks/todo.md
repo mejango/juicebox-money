@@ -665,3 +665,33 @@ Final observer review: the shared check now rechecks its ownership marker on eve
 - [x] Admit the proof segment only in deterministic builds and verify both paths plus production exclusion.
 
 Review: only the existing deterministic APP_ROUTES branch gains image-proof, covering both the page and nested source through the first-segment owner. All5proxy cases pass; the new parameterized regression proves both paths bypass legacy redirects with the flag true and retain307pluspath/query in false or unset production environments. Scoped ESLint and whitespace pass. Logs: `/private/tmp/jbm-images-proof-proxy-{tests,lint}.log`. The prior307browser evidence is preserved; root must rebuild and rerun the actual proof before claiming image behavior verified.
+
+## 2026-10-08 — Measured image bundle ownership correction
+
+- [x] Extract the unchanged image URL rules from numeric formatting and migrate every caller.
+- [x] Verify exact extracted bytes plus owning URL, component and metadata checks; commit separately.
+- [ ] Reuse Revnet's proof-route budget exclusion, retaining all shared/runtime assets; compare the same baseline and add a regression.
+- [ ] Rebuild once through root, then judge the new route/aggregate totals and final performance evidence.
+
+## Plan refinement
+
+- **Objective:** Remove the measured create-route duplicate format/chain payload without changing image behavior, and make aggregate JavaScript budgets count only deployable chunks while preserving shared-code enforcement.
+- **System fit:** The image source validator currently lives in the currency/explorer format module. New image consumers change chunk placement and create downloads that module twice. A dependency-free image-source owner removes this coupling; existing image safety rules, original selection, rendering and transaction owners stay unchanged. The budget checker reuses the sibling app's dedicated browser-proof exclusion with explicit tests, and root's next build owns size verification.
+- **Reuse and simplicity:** Move the exact contiguous ipfsUrl/appIpfsUrl/projectLogoUrl block and constants, migrate every source/test import, and retain no unused compatibility re-export. No copied validator, SDK import replacement, handwritten srcset or image behavior change. Exclude only chunks under registered page.browsertest route directories that no shipped route references; shared chunks always count.
+- **Evidence and unknowns:** Matched lock/installed-lock/Next/SDK runtime hashes and all185 baseline chunk hashes match. Current aggregate grows2316B, home1283B, create3302B; image policy and React wrapper each emit once, while create newly repeats format and chain modules. Dedicated new proof chunks cost3753B under the prior all-chunk policy. Extraction's exact compiled saving remains unmeasured until one scheduled rebuild; no budget increase is assumed.
+- **Verification:** Compare moved code bytes, run existing format/media/logo/rich-content/metadata tests and focused lint/types. For budget filtering, test dedicated proof exclusion, shared-module retention and a shipped route reference preventing exclusion. Run the same checker against immutable baseline and current artifact without changing route limits; preserve original failures. Root retains full build/browser and release qualification.
+- **Resource budget:** One reserved writer in this image worktree, two separate reviewable commits and no local build or timing. Required absolute resources remain /Users/jango/Documents/jb/v6/evm/AGENTS.md, workflow/ponytail/SKILL.md, workflow/ponytail/README.md, docs/PLAN_REFINEMENT.md and tasks/lessons.md beneath the same root; owning plan is docs/WEBSITE_ENTRY_IMAGES_IMPLEMENTATION.md. Coordinate the next quiet measurement with root.
+
+
+## Plan refinement
+
+- **Objective:** Include the single canonical synthetic AVIF fixture needed to typecheck the image-proof source route in clean production Docker builds.
+- **System fit:** Next's production route selection excludes browser-only routes, but TypeScript still resolves their source imports. The Docker context must therefore retain this source dependency without exposing other test fixtures; deployed routes, original image authority and optimizer behavior remain unchanged.
+- **Reuse and simplicity:** Add only the existing `test/fixtures/image-optimizer-animated.ts` to `.dockerignore` exceptions, with parent directory rules where required. Keep one fixture shared by regression and browser proof rather than duplicating bytes under production source.
+- **Evidence and unknowns:** Read-only OCI preparation found both contexts excluded this imported fixture. The existing local browser build has all files and cannot prove a fresh Docker context; root's serialized OCI smoke is the final acceptance evidence.
+- **Verification:** Run the root refinement gate, existing `container:check` gate and diff checks. Inspect effective patterns for retained existing exclusions; the subsequent clean Docker build must typecheck and retain the guarded runtime optimizer hash.
+- **Resource budget:** One narrow ignore-file exception and this note, no package/lock/runtime change, fixture copy or local build. Root assigns the later OCI slot after current serialized browser builds.
+
+- [ ] Add the narrow context exception and pass the existing container definition gate.
+
+Extraction review: the complete71-line URL/inline-image block matches its prior source byte-for-byte after trimming the final blank line (SHA256 afe903efaab6d847ba48506de7c4d0dbe311c34c2173dec990cd73d0e500fc0f). All12 source imports and the owning test import now use image-source; no compatibility re-export or second rule remains. Focused URL/media/logo/rich-content/metadata/shop tests, lint and TypeScript pass. Independent review approves the unchanged block and import-only changes. Compiled size remains pending the scheduled root build.

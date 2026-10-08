@@ -3,7 +3,7 @@ import { getProject721Shop, hasPermissions, JBPermissionIdsV6 } from '@bananapus
 import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { clientFor } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
-import { ipfsUrl } from '@/lib/format'
+import { ipfsUrl } from '@/lib/image-source'
 import { build721TierConfigs } from '@/lib/launch'
 import { loadProjectBatch, projectBatchScope, type ProjectBatchCall } from '@/lib/project-batch'
 import { storeItemsForChain, type PinnedStoreItemDraft } from '@/lib/store-items'

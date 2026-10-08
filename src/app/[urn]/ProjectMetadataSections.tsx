@@ -11,7 +11,8 @@ import { BackOfficeTab, ExtrasTab } from '@/components/project/LazyProjectTabs'
 import type { BsProject } from '@/lib/bendystraw'
 import type { ProjectMetadata } from '@/lib/project-server-data'
 import type { ResolvedProjectRoute } from '@/lib/project-route.server'
-import { formatDate, ipfsUrl, projectLogoUrl } from '@/lib/format'
+import { formatDate } from '@/lib/format'
+import { ipfsUrl, projectLogoUrl } from '@/lib/image-source'
 import { toUrn } from '@/lib/urn'
 
 type MetadataSectionProps = { project: BsProject; metadata: ProjectMetadata | null | Promise<ProjectMetadata | null> }

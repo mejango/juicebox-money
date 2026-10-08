@@ -1,7 +1,7 @@
 import { ImageResponse } from 'next/og'
 import type { NextRequest } from 'next/server'
 import sharp from 'sharp'
-import { projectLogoUrl } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/image-source'
 import { getProjectLinkPreview } from '@/lib/project-link-preview'
 
 export const runtime = 'nodejs'

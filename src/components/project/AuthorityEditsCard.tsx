@@ -38,7 +38,7 @@ import {
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
-import { projectLogoUrl } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/image-source'
 import { TOKEN_SYMBOL_RE, omnichainTokenSalt } from '@/lib/manage'
 import {
   customPropertiesText,

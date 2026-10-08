@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import {
-  billionthsToPct,
-  fmtPct,
-  formatUsd18,
-  projectLogoUrl,
-  treasuryUsdValue,
-} from '@/lib/format'
+import { billionthsToPct, fmtPct, formatUsd18, treasuryUsdValue } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/image-source'
 
 describe('percent formatting', () => {
   it('keeps ordinary percentages compact', () => {

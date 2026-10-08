@@ -2,7 +2,7 @@
 
 import { ResponsiveImage } from '@/components/ResponsiveImage'
 import { useState } from 'react'
-import { projectLogoUrl } from '@/lib/format'
+import { projectLogoUrl } from '@/lib/image-source'
 
 // Fruit-scale placeholder tiles (DESIGN.md §Icons) with checked contrast:
 // ink on split-400 = 10.3, melon-400 = 10.0, crush-400 = 10.5,

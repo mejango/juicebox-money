@@ -4,7 +4,7 @@ import createDOMPurify from 'dompurify'
 import { marked } from 'marked'
 import { useEffect, useRef, useState } from 'react'
 
-import { appIpfsUrl } from '@/lib/format'
+import { appIpfsUrl } from '@/lib/image-source'
 import { observeResponsiveImage, responsiveImageProps, retryOriginalImage } from '@/lib/responsive-image'
 
 const ALLOWED_TAGS = [

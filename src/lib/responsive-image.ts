@@ -1,5 +1,5 @@
 import { getImageProps } from 'next/image'
-import { appIpfsUrl } from '@/lib/format'
+import { appIpfsUrl } from '@/lib/image-source'
 
 type ImageDelivery = {
   src: string

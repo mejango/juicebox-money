@@ -63,7 +63,8 @@ import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
-import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
+import { formatTokenAmount } from "@/lib/format";
+import { appIpfsUrl } from "@/lib/image-source";
 import {
   TIER_UNLIMITED_SUPPLY,
   parseTierMetadataJson,

@@ -1,4 +1,4 @@
-import { ipfsUrl } from '@/lib/format'
+import { ipfsUrl } from '@/lib/image-source'
 
 /**
  * ProjectUri JSON round-tripping for the metadata editor. A projectUri can

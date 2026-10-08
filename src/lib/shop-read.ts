@@ -17,7 +17,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 import type { Shop, ShopTier, TierMedia } from '@/hooks/useShop721'
-import { appIpfsUrl } from '@/lib/format'
+import { appIpfsUrl } from '@/lib/image-source'
 import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
   parseTierMetadataJson,

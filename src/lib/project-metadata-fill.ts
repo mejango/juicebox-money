@@ -1,4 +1,4 @@
-import { ipfsUrl } from '@/lib/format'
+import { ipfsUrl } from '@/lib/image-source'
 
 type IndexedNameRow = {
   name?: string | null
