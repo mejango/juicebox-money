@@ -382,9 +382,20 @@ describe('the call a Safe proposal holds', () => {
   it.each(STAMPED_SITES)(
     'names the deadline of %s only where the contract refuses the call once it passes',
     (site, build) => {
-      expect(stampedDeadline(callOf(build(NOW)))).toBe(revertsOnceStampPasses(site) ? NOW : null)
+      expect(stampedDeadline(callOf(build(NOW)), STAMPED_CHAIN)).toBe(revertsOnceStampPasses(site) ? NOW : null)
     },
   )
+
+  it.each(STAMPED_SITES)('cannot authenticate the deadline of %s without a known chain', (_, build) => {
+    const call = callOf(build(NOW))
+    expect(stampedDeadline(call)).toBeNull()
+    expect(stampedDeadline(call, 999_999)).toBeNull()
+  })
+
+  it.each(STAMPED_SITES)('does not trust the deadline of %s at another target', (_, build) => {
+    const call = { ...callOf(build(NOW)), to: '0x2222222222222222222222222222222222222222' as Address }
+    expect(stampedDeadline(call, STAMPED_CHAIN)).toBeNull()
+  })
 
   it('holds any other call, or a stamped call encoded any other way, exactly as sent', () => {
     const transfer = {
@@ -393,11 +404,11 @@ describe('the call a Safe proposal holds', () => {
       value: 0n,
     }
     expect(heldCall(transfer)).toEqual(transfer)
-    expect(stampedDeadline(transfer)).toBeNull()
+    expect(stampedDeadline(transfer, STAMPED_CHAIN)).toBeNull()
     const sale = callOf(STAMPED_SITES[0][1](NOW))
     const padded = { ...sale, data: `${sale.data}00` as Hex }
     expect(heldCall(padded)).toEqual(padded)
-    expect(stampedDeadline(padded)).toBeNull()
+    expect(stampedDeadline(padded, STAMPED_CHAIN)).toBeNull()
   })
 })
 
@@ -479,6 +490,24 @@ describe("the Safe's queue, asked before a proposal", () => {
     expect((client.request.mock.calls[0][0] as unknown as { params: unknown[] }).params[1]).toBe('0x64')
   })
 
+  it('keeps a queued call whose selector matches a deadline but whose target is unrecognized', async () => {
+    const [, sale] = STAMPED_SITES[0]
+    const to = '0x2222222222222222222222222222222222222222' as Address
+    const queued = { ...callOf(sale(NOW - 1n)), to }
+    await expect(lookup({ ...callOf(sale(LATER)), to }, [queued])).resolves.toMatchObject({
+      call: { data: queued.data, to },
+    })
+  })
+
+  it('keeps a queued call when the deadline and Safe nonce cannot share a numbered block', async () => {
+    const [, sale] = STAMPED_SITES[0]
+    const queued = callOf(sale(NOW - 1n))
+    const client = { ...chain(), getBlock: vi.fn(async () => ({ number: null, timestamp: NOW })) }
+    await expect(
+      findPendingSafeAppProposal(client as never, STAMPED_CHAIN, SAFE, callOf(sale(LATER)), queue([queued])),
+    ).resolves.toMatchObject({ call: { data: queued.data } })
+  })
+
   it.each(STAMPED_SITES)('never finds %s queued with any other field changed', async (_, build) => {
     await expect(lookup(callOf(build(LATER)), [callOf(build(NOW + 600n, 1n))])).resolves.toBeNull()
   })
@@ -530,6 +559,16 @@ describe('a proposal awaiting its signers', () => {
     await expect(look(callOf(authorization(NOW - 1n)))).resolves.toBe('live')
   })
 
+  it('is live when the deadline-shaped call targets an unrecognized contract', async () => {
+    const call = { ...callOf(sale(NOW - 1n)), to: '0x2222222222222222222222222222222222222222' as Address }
+    await expect(look(call)).resolves.toBe('live')
+  })
+
+  it('is live when the deadline and Safe nonce cannot share a numbered block', async () => {
+    const client = { ...chain(), getBlock: vi.fn(async () => ({ number: null, timestamp: NOW })) }
+    await expect(look(callOf(sale(NOW - 1n)), undefined, client as never)).resolves.toBe('live')
+  })
+
   it("is passed once the Safe's nonce is past it with no execution of it listed", async () => {
     chainState.nonce = 6n
     await expect(look(callOf(authorization(NOW + 600n)))).resolves.toBe('passed')
@@ -566,23 +605,22 @@ describe('a proposal awaiting its signers', () => {
       expect(ended).toBe('expired')
     })
 
-    it('ends replaced once looks have found the Safe past it for ten minutes in a row, a live look starting the count again', async () => {
+    it('retains uncertainty after thirty minutes past the proposal nonce and stops only when aborted', async () => {
       vi.useFakeTimers()
       chainState.nonce = 6n
       const client = chain()
-      let ended: string | undefined
-      void watch(callOf(authorization(NOW + 600n)), client).then(end => (ended = end))
-      // Passed at minutes 1 to 3, then live at minute 4: the run starts over at minute 5.
-      await vi.advanceTimersByTimeAsync(3 * 60_000)
-      chainState.nonce = 5n
-      await vi.advanceTimersByTimeAsync(60_000)
-      chainState.nonce = 6n
-      await vi.advanceTimersByTimeAsync(10 * 60_000)
-      expect(ended).toBeUndefined()
-      await vi.advanceTimersByTimeAsync(60_000)
-      expect(ended).toBe('replaced')
+      const controller = new AbortController()
+      const watching = watch(callOf(authorization(NOW + 600n)), client, controller.signal).then(
+        end => ({ end }),
+        error => ({ error }),
+      )
+      await vi.advanceTimersByTimeAsync(30 * 60_000)
+      controller.abort()
+      await expect(watching).resolves.toMatchObject({
+        error: expect.objectContaining({ message: expect.stringMatching(/aborted/i) }),
+      })
       // One look a minute: the Safe's nonce is read at most once a minute.
-      expect(client.request).toHaveBeenCalledTimes(15)
+      expect(client.request).toHaveBeenCalledTimes(30)
     })
 
     it('stops looking when its signal aborts', async () => {

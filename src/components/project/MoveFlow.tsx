@@ -13,12 +13,14 @@ import {
   getAccountingContexts,
   getTokenAddress,
   getV6SuckerPairs,
+  verifySuckerDestinationMint,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
   formatUnits,
+  isAddressEqual,
   parseUnits,
   zeroAddress,
   type Abi,
@@ -58,6 +60,31 @@ type ReviewedMove = {
   backingSymbol: string
   infra: Infra
   account: Address
+  destination: {
+    chainId: JBChainId
+    projectId: bigint
+    sucker: Address
+  }
+}
+
+async function verifyMoveDestinationMint(
+  client: PublicClient,
+  sourceChainId: JBChainId,
+  move: Pick<ReviewedMove, 'destination' | 'sucker' | 'account' | 'amount'>,
+) {
+  const pairs = await getV6SuckerPairs(client, move.destination)
+  if (!pairs.some(pair =>
+    isAddressEqual(pair.local, move.destination.sucker) &&
+    isAddressEqual(pair.remote, move.sucker) &&
+    pair.remoteChainId === BigInt(sourceChainId),
+  )) {
+    throw new Error('The destination bridge no longer matches this transfer.')
+  }
+  await verifySuckerDestinationMint(client, {
+    ...move.destination,
+    beneficiary: move.account,
+    tokenCount: move.amount,
+  })
 }
 
 /**
@@ -151,6 +178,7 @@ export function MoveCard({
               chainId: remoteChainId,
               projectId: remoteProjectId,
               sucker: p.local,
+              remoteSucker: p.remote,
             }]
       }),
     [chains, src],
@@ -276,6 +304,7 @@ export function MoveCard({
               to={to as number}
               toPid={selectedPair.projectId}
               sucker={selectedPair.sucker}
+              remoteSucker={selectedPair.remoteSucker}
               projectToken={src.token}
               amount={parsedAmount}
               maxBalance={src.erc20Balance}
@@ -296,6 +325,7 @@ function MoveFlow({
   to,
   toPid,
   sucker,
+  remoteSucker,
   projectToken,
   amount,
   maxBalance,
@@ -306,6 +336,7 @@ function MoveFlow({
   to: number
   toPid: number
   sucker: Address
+  remoteSucker: Address
   projectToken: Address
   amount: bigint
   maxBalance: bigint
@@ -434,6 +465,12 @@ function MoveFlow({
           'The bridge maps this backing token to a token that is not a verified accounting context on the destination chain.',
         )
       }
+      const destination = {
+        chainId: to as JBChainId,
+        projectId: BigInt(toPid),
+        sucker: remoteSucker,
+      }
+      await verifyMoveDestinationMint(destClient, from, { destination, sucker, account, amount })
 
       // Live backing preview: what the sucker's cash-out of the moved tokens
       // reclaims (holder = the sucker, a protocol-registered feeless address,
@@ -476,6 +513,7 @@ function MoveFlow({
         backingSymbol,
         infra,
         account,
+        destination,
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
@@ -513,7 +551,16 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
+    tx.send({ ...request, abi: request.abi as Abi }, {
+      reviewedAccount: review.account,
+      reverify: async () => {
+        const destClient = getPublicClient(config, { chainId: review.destination.chainId }) as
+          | PublicClient
+          | undefined
+        if (!destClient) throw new Error(`Unsupported destination chain ${review.destination.chainId}.`)
+        await verifyMoveDestinationMint(destClient, from, review)
+      },
+    })
   }
 
   const sendToRemote = async () => {

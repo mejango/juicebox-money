@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react'
-import { SafeBadge } from '@/components/SafeBadge'
 import { explorerAddressUrl } from '@/lib/chainDisplay'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 
@@ -21,7 +20,6 @@ export function AddressLink({
   children,
   note,
   title,
-  showSafe = false,
 }: {
   address: string
   chainId?: number
@@ -29,7 +27,6 @@ export function AddressLink({
   children?: ReactNode
   note?: ReactNode
   title?: string
-  showSafe?: boolean
 }) {
   // Resolved through the app's single explorer registry (lib/chainDisplay).
   const url = chainId !== undefined ? explorerAddressUrl(chainId, address) : null
@@ -49,13 +46,10 @@ export function AddressLink({
       {label}
     </span>
   )
-  const decorated = showSafe && chainId !== undefined ? (
-    <span className="inline-flex items-center">{core}<SafeBadge address={address} chainId={chainId} /></span>
-  ) : core
-  if (note === undefined) return decorated
+  if (note === undefined) return core
   return (
     <span>
-      {decorated}
+      {core}
       {note ? (
         <span className="ml-1.5 text-xs text-smoke-500">{note}</span>
       ) : null}

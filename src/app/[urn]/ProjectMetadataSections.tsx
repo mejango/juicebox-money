@@ -4,7 +4,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { TreasuryCard } from '@/components/TreasuryCard'
 import { ProjectLogoWithFallback } from '@/components/ProjectLogoWithFallback'
 import { ProjectLink } from '@/components/ProjectLink'
-import { AddressLink } from '@/components/ui/AddressLink'
+import { SafeAddressLink } from '@/components/ui/SafeAddressLink'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { ProjectStats } from '@/components/project/ProjectStats'
 import { BackOfficeTab, ExtrasTab } from '@/components/project/LazyProjectTabs'
@@ -213,8 +213,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
                         <span className="text-smoke-500">
                           {isRevnet ? "Operator:" : "Owner:"}
                         </span>{" "}
-                        <AddressLink
-                          showSafe
+                        <SafeAddressLink
                           address={authority}
                           chainId={urn.chainId}
                           className="text-smoke-700"
@@ -266,8 +265,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
                       <span className="text-smoke-500">
                         {isRevnet ? "Operator:" : "Owner:"}
                       </span>{" "}
-                      <AddressLink
-                        showSafe
+                      <SafeAddressLink
                         address={authority}
                         chainId={urn.chainId}
                         className="text-smoke-700"

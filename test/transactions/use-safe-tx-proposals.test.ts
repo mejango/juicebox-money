@@ -20,9 +20,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { STAMPED_CHAIN, STAMPED_SITES } from '../support/stamped-sites'
 
 // Safe proposals through useSafeTx. One registry holds every proposal made
-// this session, shared by every flow, and follows each to its result: a flow
-// that closes, remounts or changes chain never drops one, and never proposes
-// the same call twice while one is pending.
+// this session, shared by every flow, and follows each to its result. Durable
+// recovery also holds its account/chain/target/selector across reloads and
+// changed amounts or quotes until the original outcome is proven.
 
 const displayQueries = new QueryClient()
 vi.mock('@tanstack/react-query', async importOriginal => ({
@@ -37,6 +37,8 @@ const mocks = vi.hoisted(() => ({
     getTransaction: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getTransactionReceipt: vi.fn(),
+    getChainId: vi.fn(),
+    getBlock: vi.fn(),
   },
   chainId: 1,
   getAccount: vi.fn(),
@@ -87,12 +89,15 @@ const SECOND_PROPOSAL = `0x${'ac'.repeat(32)}` as Hex
 const EXECUTION = `0x${'cd'.repeat(32)}` as Hex
 /** A safeTxHash the app never saw, as a Safe{Wallet} that executed at once logs it. */
 const UNSEEN = `0x${'ef'.repeat(32)}` as Hex
+const BLOCK = `0x${'bc'.repeat(32)}` as Hex
 const SUCCESS = toEventSelector('ExecutionSuccess(bytes32,uint256)')
 const FAILURE = toEventSelector('ExecutionFailure(bytes32,uint256)')
 const WORD = `0x${'00'.repeat(32)}` as Hex
 const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
 const UNCONFIRMED =
   'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
+const EARLIER_ACTION =
+  'An earlier action is still being checked. Its amount or quote differs from this review. Check the original transaction before continuing.'
 const reviewedBySafe = { reviewedAccount: SAFE }
 const ABI = parseAbi(['function transfer(address to, uint256 amount)'])
 const request = {
@@ -118,8 +123,20 @@ const execTransaction = (data: Hex = callData) =>
 const receiptOf = (transactionHash: Hex, safeTxHash: Hex, topic = SUCCESS) => ({
   status: 'success' as const,
   transactionHash,
+  from: BOB,
+  to: SAFE,
+  blockHash: BLOCK,
   blockNumber: 9n,
-  logs: [{ address: SAFE, topics: [topic, safeTxHash], data: WORD }],
+  transactionIndex: 0,
+  logs: [{
+    address: SAFE, topics: [topic, safeTxHash], data: WORD,
+    transactionHash, blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0, removed: false,
+  }],
+})
+
+const transactionOf = (hash: Hex, input = execTransaction()) => ({
+  hash, from: BOB, to: SAFE, input,
+  blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0,
 })
 
 let useSafeTx: typeof import('@/hooks/useSafeTx').useSafeTx
@@ -203,11 +220,16 @@ beforeEach(async () => {
   // A proposal's hash is no transaction; the execution is an owner's execTransaction of the call.
   mocks.publicClient.getTransaction.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => {
     if (hash !== EXECUTION) throw new TransactionNotFoundError({ hash })
-    return { hash, from: BOB, to: SAFE, input: execTransaction() }
+    return transactionOf(hash)
   })
   mocks.publicClient.waitForTransactionReceipt
     .mockReset()
     .mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, PROPOSAL))
+  mocks.publicClient.getTransactionReceipt.mockReset().mockImplementation(
+    (args: { hash: Hex }) => mocks.publicClient.waitForTransactionReceipt(args),
+  )
+  mocks.publicClient.getChainId.mockReset().mockResolvedValue(10)
+  mocks.publicClient.getBlock.mockReset().mockResolvedValue({ number: 9n, hash: BLOCK, timestamp: 1_800_000_000n })
   mocks.writeContract.mockReset().mockResolvedValue(PROPOSAL)
 })
 
@@ -359,12 +381,7 @@ describe('a Safe proposal', () => {
 
   it('never shows an execution Safe{Wallet} returned at once as proposed', async () => {
     // The reply is the execution itself, and the Safe logs a safeTxHash the app never saw.
-    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
-      hash,
-      from: BOB,
-      to: SAFE,
-      input: execTransaction(),
-    }))
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => transactionOf(hash))
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
     )
@@ -382,12 +399,7 @@ describe('a Safe proposal', () => {
     ['ran the reviewed call', execTransaction(), 'success'],
     ['ran another call', execTransaction('0xdeadbeef'), 'submitted'],
   ] as const)('settles an execution returned at once only when it %s', async (_, input, phase) => {
-    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
-      hash,
-      from: BOB,
-      to: SAFE,
-      input,
-    }))
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => transactionOf(hash, input))
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
     )
@@ -405,7 +417,10 @@ describe('a Safe proposal', () => {
       EXECUTION,
       (hash: Hex) => ({
         ...receiptOf(hash, PROPOSAL),
-        logs: [{ address: SAFE, topics: [FAILURE], data: `${PROPOSAL}${WORD.slice(2)}` as Hex }],
+        logs: [{
+          ...receiptOf(hash, PROPOSAL).logs[0],
+          topics: [FAILURE], data: `${PROPOSAL}${WORD.slice(2)}` as Hex,
+        }],
       }),
     ],
     ['executed at once', PROPOSAL, (hash: Hex) => receiptOf(hash, UNSEEN, FAILURE)],
@@ -413,7 +428,7 @@ describe('a Safe proposal', () => {
     mocks.waitForSafeExecutionHash.mockResolvedValue(execution)
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       if (hash !== execution) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      return transactionOf(hash)
     })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
     const flow = await mount()
@@ -449,7 +464,7 @@ describe('a Safe proposal', () => {
     },
   )
 
-  it("holds a proposal Safe's service reports failed without naming its execution, until Dismiss", async () => {
+  it("holds a proposal Safe's service reports failed without naming its execution, including after Dismiss", async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(
       new Error('Safe executed the proposal, but the onchain transaction failed.'),
     )
@@ -465,7 +480,8 @@ describe('a Safe proposal', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     await act(async () => flow.tx.dismiss())
     await flow.send()
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
   })
 
   it("holds a known proposal with unproven execution through reset and Dismiss", async () => {
@@ -473,8 +489,8 @@ describe('a Safe proposal', () => {
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({
       ...receiptOf(hash, UNSEEN, FAILURE),
       logs: [
-        { address: SAFE, topics: [FAILURE, UNSEEN], data: WORD },
-        { address: BOB, topics: [FAILURE, PROPOSAL], data: WORD },
+        { ...receiptOf(hash, UNSEEN, FAILURE).logs[0] },
+        { ...receiptOf(hash, PROPOSAL, FAILURE).logs[0], address: BOB },
       ],
     }))
     const flow = await mount()
@@ -503,7 +519,7 @@ describe('a Safe proposal', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('holds a proposal it lost track of until Dismiss, naming why', async () => {
+  it('holds a proposal it lost track of after Dismiss, naming why', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
     const flow = await mount()
     await flow.send()
@@ -517,7 +533,8 @@ describe('a Safe proposal', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     await act(async () => flow.tx.dismiss())
     await flow.send()
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
   })
 })
 
@@ -537,13 +554,13 @@ describe('a call stamped at send time', () => {
       // Done with the flow still open, as every flow's Done handler ends it,
       // then the same action reviewed and confirmed again.
       await act(async () => flow.tx.dismiss())
-      await expect(flow.send(build(NOW + 600n))).resolves.toBe(PROPOSAL)
-      expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
+      await expect(flow.send(build(NOW + 600n))).resolves.toBeNull()
+      expect(flow.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION })
 
       await flow.close()
       const reopened = await mount(STAMPED_CHAIN)
-      await expect(reopened.send(build(NOW + 1_200n))).resolves.toBe(PROPOSAL)
-      expect(reopened.tx).toMatchObject({ phase: 'submitted', notice: AWAITING })
+      await expect(reopened.send(build(NOW + 1_200n))).resolves.toBeNull()
+      expect(reopened.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
       expect(mocks.requestReview).toHaveBeenCalledOnce()
       // Held here, the action is never looked up in the queue again.
@@ -551,14 +568,16 @@ describe('a call stamped at send time', () => {
     },
   )
 
-  it.each(STAMPED_SITES)('never holds %s against the same site with any other field changed', async (_, build) => {
+  it.each(STAMPED_SITES)('holds %s when another amount or quote field changes', async (_, build) => {
     signersDecide()
     mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
     const flow = await mount(STAMPED_CHAIN)
     await flow.send(build(NOW))
     await act(async () => flow.tx.reset())
-    await expect(flow.send(build(NOW, 1n))).resolves.toBe(SECOND_PROPOSAL)
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    await expect(flow.send(build(NOW, 1n))).resolves.toBeNull()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION, receipt: null })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.requestReview).toHaveBeenCalledOnce()
   })
 
   it("follows the queue's proposal of the action with an older stamp, and holds the action by it", async () => {
@@ -573,25 +592,27 @@ describe('a call stamped at send time', () => {
     const hash = canonicalSafeTxHash(STAMPED_CHAIN, SAFE, safeProposalFor(call, 5))
     mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: hash, call })
     const flow = await mount(STAMPED_CHAIN)
-    await expect(flow.send(build(NOW + 600n))).resolves.toBe(hash)
+    await expect(flow.send(build(NOW + 600n))).resolves.toBeNull()
     await settle()
-    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: AWAITING, safeProposalHash: hash })
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION, safeProposalHash: hash })
+    expect(JSON.parse(localStorage.getItem(localStorage.key(0)!)!)).toMatchObject({
+      hash,
+      call: { to: call.to.toLowerCase(), data: call.data, value: call.value.toString() },
+    })
 
     await act(async () => flow.tx.reset())
-    await expect(flow.send(build(NOW + 1_200n))).resolves.toBe(hash)
+    await expect(flow.send(build(NOW + 1_200n))).resolves.toBeNull()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION })
     expect(mocks.findPendingSafeAppProposal).toHaveBeenCalledOnce()
     expect(mocks.writeContract).not.toHaveBeenCalled()
   })
 })
 
 describe('a Safe proposal awaiting its signers', () => {
-  const EXPIRED = "This Safe proposal's deadline passed. Review it again."
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
-
   it.each([
-    ['its deadline passed before the Safe ran it', 'expired', EXPIRED],
-    ["the Safe's nonce moved past it without running it", 'replaced', REPLACED],
-  ] as const)('ends when %s, and releases its action', async (_, end, line) => {
+    ['its deadline passed before the Safe ran it', 'expired'],
+    ["the Safe's nonce moved past it without running it", 'replaced'],
+  ] as const)('keeps the result unconfirmed when its watcher reports %s', async (_, end) => {
     signersDecide()
     let watchEnds!: (end: string) => void
     mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
@@ -605,14 +626,19 @@ describe('a Safe proposal awaiting its signers', () => {
 
     watchEnds(end)
     await settle()
-    expect(flow.tx).toMatchObject({ phase: 'error', busy: false, error: line, notice: null })
+    expect(flow.tx).toMatchObject({ phase: 'submitted', busy: false, error: null, receipt: null })
     // The wait for its execution stops with it.
     expect(waiting.aborted).toBe(true)
     expect(watching.aborted).toBe(true)
 
     await act(async () => flow.tx.reset())
-    await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(localStorage.length).toBe(1)
+    await act(async () => flow.tx.dismiss())
+    await expect(flow.send({ ...request, args: [BOB, 6n] })).resolves.toBeNull()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('stops being watched once its execution is known', async () => {
@@ -720,7 +746,7 @@ describe("a send that asks Safe's queue first", () => {
 })
 
 describe('a Safe proposal another flow dismissed', () => {
-  it('leaves this flow idle, not pending, and the action free', async () => {
+  it('preserves this flow and its held action', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
     const first = await mount()
     await first.send()
@@ -731,10 +757,11 @@ describe('a Safe proposal another flow dismissed', () => {
 
     // The flow that proposed it is the one left showing it.
     await act(async () => second.tx.dismiss())
-    expect(first.tx).toMatchObject({ phase: 'idle', busy: false, settled: false, notice: null, hash: null })
+    expect(second.tx).toMatchObject({ phase: 'idle', busy: false, settled: false, notice: null, hash: null })
+    expect(first.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
     await act(async () => first.tx.reset())
     await first.send()
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 })
 
@@ -746,16 +773,16 @@ describe("a Safe proposal's last look at the chain", () => {
     })
   const NO_RECORD = new Error("Safe's transaction service has no record of this proposal.")
 
-  it('settles an execution returned at once that the probe missed, before it could end unproven', async () => {
+  it('keeps an execution learned after the probe pending while its canonical reread is unavailable', async () => {
     // Safe{Wallet} executed at once, and the node learned the execution only after the probe.
     mocks.atOnceExecution.mockResolvedValue(null)
     mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
-    // A replica behind it answers every later read: the execution is bound on the one the look read.
+    // The last look binds the execution; a lagging canonical reread still holds recovery.
     let reads = 0
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       reads += 1
       if (reads > 1) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      return transactionOf(hash)
     })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
@@ -764,9 +791,10 @@ describe("a Safe proposal's last look at the chain", () => {
     const flow = await mount(10, phases)
     await flow.send()
     await settle()
-    expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL, confirmationUncertain: false })
-    expect(flow.tx.notice).toBeNull()
-    expect(reads).toBe(1)
+    expect(flow.tx).toMatchObject({ phase: 'pending', hash: PROPOSAL, receipt: null })
+    expect(phases).not.toContain('success')
+    expect(reads).toBe(2)
+    expect(localStorage.length).toBe(1)
   })
 
   it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
@@ -815,8 +843,8 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
   })
 
-  it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
-    mocks.atOnceExecution.mockResolvedValue({ hash: PROPOSAL, from: BOB, to: SAFE, input: execTransaction() })
+  it('binds an execution from the probe, but holds recovery until its canonical transaction can be read', async () => {
+    mocks.atOnceExecution.mockResolvedValue(transactionOf(PROPOSAL))
     // A replica that hasn't imported the receipt's block has no transaction for it.
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       throw new TransactionNotFoundError({ hash })
@@ -827,7 +855,17 @@ describe("a Safe proposal's last look at the chain", () => {
     const flow = await mount()
     await flow.send()
     await settle()
+    expect(flow.tx).toMatchObject({ phase: 'pending', hash: PROPOSAL, receipt: null })
+    expect(localStorage.length).toBe(1)
+
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => transactionOf(hash))
+    await act(async () => flow.tx.reset())
+    await flow.send()
+    await settle()
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL })
+    expect(flow.tx.receipt?.transactionHash).toBe(PROPOSAL)
+    expect(localStorage.length).toBe(0)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('asks a node behind the receipt again, held and able to end on Done, when no transaction is in hand', async () => {
@@ -842,7 +880,7 @@ describe("a Safe proposal's last look at the chain", () => {
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       // The receipt is in hand, so a not-found says only that this node is behind.
       if (!caughtUp) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      return transactionOf(hash)
     })
     const flow = await mount()
     await flow.send()
@@ -870,7 +908,7 @@ describe("a Safe proposal's last look at the chain", () => {
     await flow.send()
     await settle()
     expect(flow.tx).toMatchObject({
-      phase: 'submitted', safeProposalHash: PROPOSAL, notice: UNCONFIRMED, hash: EXECUTION,
+      phase: 'submitted', safeProposalHash: PROPOSAL, notice: UNCONFIRMED, hash: EXECUTION, receipt: null,
     })
     await act(async () => flow.tx.dismiss())
     await flow.close()
@@ -893,7 +931,7 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('retains a known reverted proposal when a later service look is unavailable, then releases on nonce proof', async () => {
+  it('retains a known reverted proposal through unavailable service and a replacement report', async () => {
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({
       ...receiptOf(hash, PROPOSAL), status: 'reverted' as const,
     }))
@@ -914,11 +952,16 @@ describe("a Safe proposal's last look at the chain", () => {
     const resumed = await mount()
     await resumed.send()
     await settle()
-    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Safe moved past this proposal without running it. Review it again.' })
+    expect(resumed.tx).toMatchObject({ phase: 'submitted', error: null, receipt: null })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(localStorage.length).toBe(1)
+    await act(async () => resumed.tx.dismiss())
+    await expect(resumed.send({ ...request, args: [BOB, 6n] })).resolves.toBeNull()
+    expect(resumed.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('fails a reverted execution returned at once without waiting on its transaction', async () => {
+  it('keeps a reverted execution returned at once submitted without authenticated transaction evidence', async () => {
     mocks.atOnceExecution.mockResolvedValue(null)
     mocks.waitForSafeExecutionHash.mockResolvedValue(PROPOSAL)
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => ({
@@ -932,25 +975,126 @@ describe("a Safe proposal's last look at the chain", () => {
     await flow.send()
     await settle()
     expect(flow.tx).toMatchObject({
-      phase: 'error',
-      error: `Safe executed the proposal, but the onchain transaction failed (${PROPOSAL}).`,
+      phase: 'submitted',
+      error: null,
+      receipt: null,
     })
+    await act(async () => flow.tx.dismiss())
+    await flow.send()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 })
 
 describe("a Safe app's reply", () => {
-  it('ends one that is not a 32-byte hash as an error, holding nothing', async () => {
+  it('holds a reply without a 32-byte hash through reset, dismissal and page reload', async () => {
     mocks.writeContract.mockResolvedValueOnce('0x1234').mockResolvedValueOnce(PROPOSAL)
     const flow = await mount()
     await expect(flow.send()).resolves.toBeNull()
     expect(flow.tx).toMatchObject({
-      phase: 'error',
+      phase: 'submitted',
       busy: false,
-      error: 'Safe did not return a proposal hash. Check Safe before sending this again.',
+      error: null,
+      confirmationUncertain: true,
     })
+    expect(flow.tx.notice).toContain('may have been submitted')
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
     await act(async () => flow.tx.reset())
-    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    await expect(flow.send()).resolves.toBeNull()
+    expect(flow.tx.notice).toContain('wallet returned no transaction reference')
+    await act(async () => flow.tx.dismiss())
+    await flow.close()
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reloaded = await mount()
+    await expect(reloaded.send({ ...request, args: [BOB, 6n] })).resolves.toBeNull()
+    expect(reloaded.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.requestReview).toHaveBeenCalledOnce()
+    expect(JSON.parse(localStorage.getItem(localStorage.key(0)!)!)).toMatchObject({
+      account: SAFE, chainId: 10, safe: true,
+      call: { to: BOB, data: callData, value: '7' },
+    })
+    expect(JSON.parse(localStorage.getItem(localStorage.key(0)!)!)).not.toHaveProperty('hash')
+  })
+})
+
+describe('durable Safe execution recovery', () => {
+  it.each(['unavailable', 'inconsistent'] as const)(
+    'keeps raw success pending while its canonical receipt is %s, then settles on a read-only retry',
+    async evidence => {
+      vi.useFakeTimers()
+      let proven = false
+      mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => {
+        if (!proven && evidence === 'unavailable') throw new Error('Receipt unavailable')
+        return { ...receiptOf(hash, PROPOSAL), blockHash: proven ? BLOCK : UNSEEN }
+      })
+      const displayKey = ['projectDisplay', 6, 10, '1', 'currentRuleset']
+      displayQueries.setQueryData(displayKey, { marker: true })
+      const phases: string[] = []
+      const flow = await mount(10, phases)
+      await flow.send()
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(flow.tx).toMatchObject({ phase: 'pending', receipt: null, hash: EXECUTION })
+      expect(phases).not.toContain('success')
+      expect(displayQueries.getQueryState(displayKey)?.isInvalidated).toBe(false)
+      expect(localStorage.length).toBe(1)
+
+      proven = true
+      await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+      expect(flow.tx).toMatchObject({ phase: 'success', hash: EXECUTION })
+      expect(flow.tx.receipt?.transactionHash).toBe(EXECUTION)
+      expect(displayQueries.getQueryState(displayKey)?.isInvalidated).toBe(true)
+      expect(localStorage.length).toBe(0)
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(mocks.requestReview).toHaveBeenCalledOnce()
+      await flow.close()
+    },
+  )
+
+  it.each([
+    ['a canonical success receipt', SUCCESS, false],
+    ['a finalized failure receipt', FAILURE, true],
+  ] as const)('releases the action only after %s is proven', async (_, topic, needsFinality) => {
+    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
+      receiptOf(hash, PROPOSAL, topic),
+    )
+    let proven = false
+    mocks.publicClient.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string }) => ({
+      number: !proven && needsFinality && blockTag === 'finalized' ? 8n : 9n,
+      hash: !proven && !needsFinality ? UNSEEN : BLOCK,
+      timestamp: 1_800_000_000n,
+    }))
+    const phases: string[] = []
+    const flow = await mount(10, phases)
+    await flow.send()
+    await settle()
+    expect(flow.tx).toMatchObject({
+      phase: needsFinality ? 'submitted' : 'pending', receipt: null, error: null,
+    })
+    expect(phases).not.toContain(needsFinality ? 'error' : 'success')
+    expect(localStorage.length).toBe(1)
+    await act(async () => flow.tx.dismiss())
+    await flow.close()
+
+    // A full page reload loses the registry but keeps the original wallet evidence.
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reloaded = await mount()
+    await expect(reloaded.send({ ...request, args: [BOB, 6n] })).resolves.toBeNull()
+    await settle()
+    expect(reloaded.tx).toMatchObject({ phase: 'submitted', notice: EARLIER_ACTION, receipt: null })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(localStorage.length).toBe(1)
+
+    proven = true
+    await act(async () => reloaded.tx.reset())
+    await reloaded.send()
+    await settle()
+    expect(localStorage.length).toBe(0)
+    expect(reloaded.tx.phase).toBe(needsFinality ? 'error' : 'success')
+    await act(async () => reloaded.tx.reset())
+    await reloaded.send({ ...request, args: [BOB, 6n] })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.requestReview).toHaveBeenCalledTimes(2)
   })
 })

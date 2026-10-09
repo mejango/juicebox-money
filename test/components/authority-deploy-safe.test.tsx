@@ -33,6 +33,7 @@ vi.mock('@/lib/bendystraw', async importOriginal => ({
 }))
 vi.mock('@/components/project/SafeQueueCard', () => ({ SafeQueueCard: () => null }))
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
+vi.mock('@/components/ui/SafeAddressLink', () => ({ SafeAddressLink: () => null }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 
 // The page keeps creation records per chain and Safe; each test starts with none.
