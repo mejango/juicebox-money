@@ -75,7 +75,11 @@ const budgets = {
     // failure-only SDK proof is already lazy; its 327 B local adapter appears
     // once here, not on home. Independent review rejected another recovery
     // chunk that adds loading/compression cost without solving aggregate growth.
-    '/create/page': 510 * KIB,
+    // SDK 2.27 recovery/deadline safeguards on matching Node26.7/npm12
+    // physical graphs measure 521,768 -> 523,350 B (+1,582 B). The new
+    // recovery journal and destination mint verifier remain lazy; required
+    // shared write/deadline checks use create's existing eager chunk.
+    '/create/page': 512 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -214,7 +218,10 @@ const budgets = {
   // 2,599,308 B (+1,483 B). Independent chunk review confirms the optional
   // Safe graph stays lazy; create/project/largest/style and lazy constraints
   // are unchanged. Round only this measured aggregate to the next KiB.
-  allScripts: 2539 * KIB,
+  // The same matched 2.26 baseline -> 2.27 preview comparison measures
+  // 2,599,261 -> 2,602,943 B (+3,682 B) with no new dependencies or lazy-load
+  // regressions. Round only this measured recovery/readiness cost.
+  allScripts: 2542 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

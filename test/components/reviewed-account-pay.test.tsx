@@ -305,12 +305,12 @@ describe('a payment from a Safe', () => {
   const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
 
   const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const CHECKING = 'Confirming the original transaction’s result before allowing another action.'
   const UNCONFIRMED =
     'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
   const panelSays = (line: string) => host.textContent?.includes(line) ?? false
 
-  it("keeps a proposed payment's line on the panel after Done, and frees the panel by Dismiss once it can't be proven", async () => {
+  it("keeps a proposed payment's recovery after Done and Dismiss when its result cannot be proven", async () => {
     m.safe = true
     let lose!: (reason: Error) => void
     m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
@@ -338,9 +338,10 @@ describe('a payment from a Safe', () => {
     await click('Dismiss')
     expect(panelSays(UNCONFIRMED)).toBe(false)
     expect(button('Pay').disabled).toBe(false)
+    expect(localStorage.length).toBe(1)
   })
 
-  it('frees a panel whose proposed payment another panel dismissed, by its own Dismiss', async () => {
+  it('returns both panels to their forms by Dismiss while retaining the unresolved payment', async () => {
     m.safe = true
     let lose!: (reason: Error) => void
     m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
@@ -360,15 +361,16 @@ describe('a payment from a Safe', () => {
     await clickIn('second', 'Done')
     expect(panelButton('second', 'Pay')!.disabled).toBe(false)
 
-    // Released there, the first panel's stage is lost: its line says so, and Dismiss frees it.
+    // The first panel can also dismiss its status; the durable payment remains held.
     await waitUntil(() => !!panelButton('first', 'Dismiss'))
     expect(panel('first').textContent).toContain(UNCONFIRMED)
     expect(panelButton('first', 'Pay')!.disabled).toBe(true)
     await clickIn('first', 'Dismiss')
     expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+    expect(localStorage.length).toBe(1)
   })
 
-  it("shows on the panel why a router authorization proposed to the Safe ended after Done", async () => {
+  it("keeps the router authorization held after an unproven replacement report", async () => {
     m.safe = true
     m.token = 'erc20'
     // A direct swap from USDC, which Permit2 has not authorized the router to spend.
@@ -403,14 +405,15 @@ describe('a payment from a Safe', () => {
     await click('Done')
     await waitUntil(() => panelSays(AWAITING))
 
-    // The Safe moved past the authorization without running it.
+    // A replacement report alone cannot prove the original authorization's result.
     await act(async () => end('replaced'))
-    await waitUntil(() => panelSays(REPLACED))
-    expect(panelSays(REPLACED)).toBe(true)
-    expect(button('Pay').disabled).toBe(false)
+    await waitUntil(() => panelSays(CHECKING))
+    expect(host.textContent).toContain(CHECKING)
+    expect(button('Pay').disabled).toBe(true)
+    expect(localStorage.length).toBe(1)
   })
 
-  it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
+  it("retains an unproven approval after Done and resumes it without another wallet request", async () => {
     m.safe = true
     m.token = 'erc20'
     // Safe's service is lost before the approval's execution can be read.
@@ -427,13 +430,12 @@ describe('a payment from a Safe', () => {
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // Dismissed after its line, the same approval can be proposed again.
+    // Dismissal closes the status; reopening recovers the original approval.
     await click('Pay')
     await click('Confirm & Pay')
-    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
-    expect(wallet.writes()).toEqual([
-      { functionName: 'approve', account: ALICE },
-      { functionName: 'approve', account: ALICE },
-    ])
+    await waitUntil(() => dialogStatus()?.includes('Safe service unavailable') ?? false)
+    expect(dialogStatus()).toContain('Safe service unavailable')
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(localStorage.length).toBe(1)
   })
 })

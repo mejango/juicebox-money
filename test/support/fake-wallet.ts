@@ -1,8 +1,12 @@
 import { useSyncExternalStore } from 'react'
-import { TransactionNotFoundError, type Address, type Hex } from 'viem'
+import { encodeFunctionData, TransactionNotFoundError, type Abi, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { vi } from 'vitest'
 
-type Receipt = { status: 'success'; blockNumber: bigint; transactionHash: Hex }
+type Receipt = TransactionReceipt
+type SentRequest = { chainId: number; account: Address; address: Address; abi: Abi; functionName: string; args?: readonly unknown[]; value?: bigint }
+type SentCall = { chainId: number; from: Address; to: Address; input: Hex; value: bigint }
+
+const blockHash = (number: bigint): Hex => `0x${number.toString(16).padStart(64, '0')}`
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
 export function sentHash(n: number): Hex {
@@ -21,6 +25,9 @@ export function sentHash(n: number): Hex {
 function createFakeWallet() {
   let account: Address | undefined
   const receipts = new Map<string, Receipt>()
+  const sent = new Map<string, SentCall>()
+  let currentChainId = 1
+  let finalizedBlock = 0n
   /** Flows awaiting a receipt the chain has not reported yet. */
   const awaiting = new Map<string, ((receipt: Receipt) => void)[]>()
   const listeners = new Set<() => void>()
@@ -32,11 +39,31 @@ function createFakeWallet() {
     }
   }
   let sentCount = 0
-  const writeContract = vi.fn(async () => sentHash((sentCount += 1)))
+  const writeContract = vi.fn(async (request: SentRequest) => {
+    const hash = sentHash((sentCount += 1))
+    currentChainId = request.chainId
+    sent.set(hash.toLowerCase(), {
+      chainId: request.chainId, from: request.account, to: request.address,
+      input: encodeFunctionData(request), value: request.value ?? 0n,
+    })
+    return hash
+  })
   const requestReview = vi.fn(async () => true)
-  const switchChain = vi.fn(async () => undefined)
+  const switchChain = vi.fn(async ({ chainId }: { chainId: number }) => { currentChainId = chainId })
+  const transaction = async ({ hash }: { hash: Hex }) => {
+    const call = sent.get(hash.toLowerCase())
+    const receipt = receipts.get(hash.toLowerCase())
+    if (!call || !receipt) throw new TransactionNotFoundError({ hash })
+    return { ...call, hash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }
+  }
+  const block = async ({ blockNumber }: { blockNumber?: bigint; blockTag?: string }) => {
+    const number = blockNumber ?? finalizedBlock
+    return { number, hash: blockHash(number), timestamp: 1n }
+  }
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
   const client = {
+    getChainId: vi.fn(async () => currentChainId),
+    getBlock: vi.fn(block),
     simulateContract: vi.fn(async (request: Record<string, unknown>) => ({ request: { ...request } })),
     estimateContractGas: vi.fn(async () => 50_000n),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => receipts.get(hash.toLowerCase()) ?? null),
@@ -48,10 +75,8 @@ function createFakeWallet() {
       return new Promise<Receipt>(resolve => awaiting.set(key, [...(awaiting.get(key) ?? []), resolve]))
     }),
     getBalance: vi.fn(async () => 10n ** 30n),
-    /** No write is a transaction the chain shows: a Safe app's reply is its proposal's hash. */
-    getTransaction: vi.fn(async ({ hash }: { hash: Hex }): Promise<never> => {
-      throw new TransactionNotFoundError({ hash })
-    }),
+    /** Only confirmed writes are mined transactions; Safe proposal replies stay unknown. */
+    getTransaction: vi.fn(transaction),
     /** A flow's own reads; each test answers the ones its flow makes. */
     readContract: vi.fn(async (request: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
       throw new Error(`Unexpected read ${request.functionName}`)
@@ -74,7 +99,15 @@ function createFakeWallet() {
     /** The chain reports `hash` as confirmed. */
     confirm(hash: Hex, blockNumber = 10n) {
       const key = hash.toLowerCase()
-      const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash }
+      const call = sent.get(key)
+      if (!call) throw new Error(`Cannot confirm an unsent transaction ${hash}`)
+      const receipt: Receipt = {
+        status: 'success', blockNumber, blockHash: blockHash(blockNumber), transactionHash: hash,
+        transactionIndex: 0, from: call.from, to: call.to, contractAddress: null,
+        logs: [], logsBloom: `0x${'00'.repeat(256)}`, type: 'eip1559',
+        cumulativeGasUsed: 50_000n, gasUsed: 50_000n, effectiveGasPrice: 1n,
+      }
+      if (blockNumber > finalizedBlock) finalizedBlock = blockNumber
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)
@@ -94,12 +127,18 @@ function createFakeWallet() {
     reset() {
       account = undefined
       sentCount = 0
+      currentChainId = 1
+      finalizedBlock = 0n
+      sent.clear()
       receipts.clear()
       awaiting.clear()
       writeContract.mockClear()
       requestReview.mockClear()
       requestReview.mockImplementation(async () => true)
       switchChain.mockClear()
+      client.getChainId.mockClear()
+      client.getBlock.mockReset().mockImplementation(block)
+      client.getTransaction.mockReset().mockImplementation(transaction)
       client.simulateContract.mockClear()
       client.getTransactionReceipt.mockClear()
       client.waitForTransactionReceipt.mockClear()
