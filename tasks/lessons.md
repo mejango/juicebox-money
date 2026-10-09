@@ -46,3 +46,8 @@ Use shared lifecycle phases to distinguish quote requests, wallet confirmation, 
 
 ## 2026-10-07 — Automatic work is status, not an idle action
 During automatic Safe checks and quote preparation, show one passive progress indicator and retain dismissal. Do not render a disabled action or empty payment selector before a quote exists. Keep phase copy in one location and verify that real controls appear only when usable data is available.
+
+## 2026-10-09 — Submitted payment confirmation is recoverable
+- User reported that a batch showing confirmation uncertainty succeeded and registered on continuation, then requested the equivalent Juicebox Money check.
+- Keep typed submitted-payment errors bound to their exact durably saved hash/chain; continue canonical reconciliation without another payment. Hashless, mismatched and unavailable proof remain pending. Foreground recovery must use the exact submitted scope/ID, including after replacing a draft.
+- Gates: raw lifecycle regressions enforce one wallet payment and canonical funding/destination proof; PendingPayments tests enforce exact recovery identity, while modal error checks preserve readable full hashes.

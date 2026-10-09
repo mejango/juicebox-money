@@ -692,3 +692,31 @@ Matched budget review: baseline6a0598d and candidate7e39b80 use separate physica
 Independent import/chunk review approves440KiB home,510KiB create and2537KiB aggregate, leaving759/820/76B headroom. The local finalized-failure adapter adds327B once on create and is absent from home; its heavy SDK proof already loads lazily. Moving it into Safe setup would couple EOA failure to that module, while a new recovery chunk adds loading/compression overhead and cannot resolve home or aggregate growth. Required hydration, original-wallet checks and durable recovery remain intact. No application source changed; project570KiB, largest450KiB, styles20KiB and every lazy-loading constraint are unchanged. New hosted CI must run the previously blocked browser journeys before merge.
 
 The unchanged candidate artifact passes the reviewed caps; source invariants, scoped ESLint, whitespace and refinement checks also pass. Root accepted the measured limits and existing lazy placement. The76B aggregate headroom is only the measured rounding margin, not a broader performance claim; hosted output on the pushed revision remains decisive.
+
+## Pending payment confirmation recovery — 2026-10-09
+
+## Plan refinement
+- **Objective:** Check and correct Juicebox Money's corresponding pending-payment confirmation recovery and long-hash rendering, then push verified frontend fixes.
+- **System fit:** PendingPayments owns review identity; project-batch owns persisted attempts; raw Relayr lifecycle owns payment/destination proof. Keep these owners and exact saved IDs, with no new payment after ambiguous submission.
+- **Reuse and simplicity:** Reuse savedSelection and existing batch/session recovery; wrap confirmation errors using the existing Tailwind utility. Inspect shared lifecycle before adding any observer.
+- **Evidence and unknowns:** Revnet screenshot and user-confirmed success establish the symptom there; Juicebox source shows saved progress updates without rebinding foreground selection. Its underlying Relayr path is under review and no live failure is claimed.
+- **Verification:** Pending-payment component regressions cover pending/error continuation, replacement identity and concurrent journal changes; existing Relayr/project-batch tests, typecheck, scoped lint and whitespace check cover affected code.
+- **Resource budget:** One delegated lifecycle investigation and minimal foreground changes; reuse tests and no deployment/transactions, no broad dependency changes.
+
+- [x] Trace corresponding funding and review paths.
+- [x] Fix evidenced recovery/presentation issues with regressions.
+- [x] Run focused checks; authorized push follows this verified commit.
+
+## Plan refinement
+- **Objective:** Continue raw pending-payment reconciliation after a transient submitted-payment confirmation error, retaining the exact saved payment and batch.
+- **System fit:** runRawRelayrLifecycle owns durable raw funding transitions and existing proof/poll steps; callers still own canonical destination completion. PendingPayments rebinds recovery via exact loadProjectBatch scope and ID rather than a potentially different destination journal.
+- **Reuse and simplicity:** Catch only the existing typed submitted-payment error with exact saved hash and executing phase, persist durably, then use existing reconciliation. Reuse loadProjectBatch and savedSelection for foreground resume.
+- **Evidence and unknowns:** Source shows relayrPay persists onSent before receipt/proof and raw lifecycle rethrows that error before polling. Storage failures share the error type, so successful durable persistence is required before continuation; mismatch/revert/hashless errors remain refused.
+- **Verification:** Actual lifecycle regressions must prove one payment, delayed confirmation recovery and refusal on unavailable/mismatched proof or storage failure; component checks preserve expectedBatchId, replacement and original identity. Run typecheck/scoped lint and related transaction tests.
+- **Resource budget:** Delegate raw lifecycle/tests only, main handles foreground UI and authorized pushes; no new watcher, dependency, contract or transaction.
+
+### Confirmation recovery review
+- Matching typed submitted-payment errors continue through durable persistence and existing canonical reconciliation with no second payment. Missing funding proof and hashless/mismatched/storage-failure outcomes remain pending.
+- PendingPayments resumes its exact scope and batch ID after pending/error submission, including replacement of a draft; confirmation errors wrap hashes and expose an accessible alert.
+- Rebased onto current origin/main, preserving transactionMessage rendering and newer wallet-context regressions; installed the pinned SDK2.25.0 with a clean install.
+- Final Node26.7.0 verification:465 tests pass across eight affected component/data/transaction suites; full typecheck, changed-file ESLint and whitespace checks pass. Transaction inventory gate also passes. No real payments or contract changes were made.

@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
-  recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
+  recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), loadExact: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
@@ -47,6 +47,7 @@ vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/
 vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
   runProjectBatch: mocks.run,
+  loadProjectBatch: mocks.loadExact,
   isProjectBatchDraft: mocks.draft,
   projectBatchRecoveryReason: () => 'A saved attempt needs recovery.',
   recheckProjectBatch: mocks.recheckBatch,
@@ -79,6 +80,7 @@ beforeEach(() => {
   mocks.connected = true; mocks.rows = []; mocks.error = null; mocks.checking = false; mocks.loading = false; mocks.verificationError = null
   mocks.address = '0x1111111111111111111111111111111111111111'
   mocks.load.mockReturnValue(null)
+  mocks.loadExact.mockReturnValue(null)
   mocks.invalidate.mockResolvedValue(undefined)
   mocks.reconcile.mockResolvedValue(null)
   mocks.outcome.mockReturnValue('pending')
@@ -86,6 +88,37 @@ beforeEach(() => {
 afterEach(async () => { if (tree) await act(async () => tree!.unmount()); tree = null })
 
 describe('pending payment review above activity', () => {
+  it.each([
+    ['pending', false], ['uncertain', false], ['pending', true], ['uncertain', true],
+  ] as const)('resumes the exact saved batch after %s submission (replacement: %s)', async (outcome, replacement) => {
+    mocks.rows = [row()]
+    if (replacement) {
+      mocks.load.mockReturnValue({ id: 'draft', scope: 'legacy', calls: [], completedIds: [] })
+      mocks.draft.mockReturnValue(true)
+    }
+    await render()
+    await act(async () => button('Batch all pending').props.onClick())
+    mocks.run.mockImplementationOnce(async options => {
+      const saved = { id: 'submitted', scope: options.scope, action: options.action, account: mocks.address,
+        calls: options.calls, completedIds: [], status: 'pending' } as unknown as ProjectBatch
+      mocks.loadExact.mockReturnValue(saved)
+      mocks.draft.mockReturnValue(false)
+      // Destination inventory can discover another journal; recover this submitted scope.
+      mocks.load.mockReturnValue({ ...saved, id: 'other', scope: 'other-scope' })
+      if (outcome === 'uncertain') throw new Error('Payment was submitted; confirmation unavailable. Do not pay again.')
+      return saved
+    })
+    await act(async () => dialog().onConfirm())
+    expect(dialog().action).toBe('Resume original attempts')
+    expect(dialog().complete).toBe(false)
+    expect(dialog().actionDisabled).toBe(false)
+    if (outcome === 'uncertain') expect(dialog().error).toContain('Do not pay again')
+    mocks.run.mockResolvedValue({ status: 'complete' })
+    await act(async () => dialog().onConfirm())
+    expect(mocks.run.mock.calls[1][0]).toMatchObject({ scope: 'route-destination-payments:1:17', expectedBatchId: 'submitted' })
+    expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
+  })
+
   it('reviews the full live inventory instead of an untouched saved subset', async () => {
     mocks.rows = [row(), row(10)]
     const saved = { id: 'draft', scope: 'route-pending-payments:1:6', action: 'route-pending-payments',

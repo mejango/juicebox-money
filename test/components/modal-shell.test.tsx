@@ -182,6 +182,15 @@ describe('ModalShell', () => {
 })
 
 describe('a confirm hosted in the shell', () => {
+  it('keeps submitted transaction hashes readable in confirmation errors', () => {
+    const message = `Payment 0x${'a'.repeat(64)} was submitted; confirmation is unavailable.`
+    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1}
+      action="Resume" onConfirm={() => {}} onClose={() => {}} error={message} />)
+    const alert = only().querySelector('[role="alert"]')!
+    expect(alert.textContent).toBe(message)
+    expect(alert.classList.contains('wrap-anywhere')).toBe(true)
+  })
+
   function Hosted({
     busy,
     onClose,

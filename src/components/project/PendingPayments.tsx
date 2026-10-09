@@ -13,7 +13,7 @@ import { chainName } from '@/lib/urn'
 import { truncateAddress } from '@/lib/format'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
-import { isProjectBatchDraft, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { isProjectBatchDraft, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 const subscribeHydration = () => () => {}
 const clientHydrated = () => true
@@ -113,6 +113,13 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const submit = async () => {
     if (!address || !calls?.length || busy || needsReview) return
     if (!account || !isAddressEqual(account, address)) { setError('Reconnect the wallet that reviewed these payments.'); return }
+    let recovered = false
+    const recover = (batch: ProjectBatch | null) => {
+      if (!batch || batch.status !== 'pending' || !batch.account || isProjectBatchDraft(batch) ||
+          !isAddressEqual(batch.account, address) || (savedSelection && batch.id !== savedSelection.id)) return
+      setSavedSelection(batch); setCalls(batch.calls); setSaved(batch)
+      setNeedsReview(false); recovered = true
+    }
     setBusy(true); setError(null); discard.capture(null)
     try {
       const result = await runProjectBatch({ scope: savedSelection?.scope ?? scope, action: savedSelection?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: savedSelection?.id, replaceDraft,
@@ -138,15 +145,17 @@ export function PendingPayments({ chainId, projectId, chains }: {
         onProgress: progress => { setStatus(progress.message); setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) },
       })
       setSaved(result.status === 'pending' ? result : loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      if (result.status === 'pending') recover(result)
       setComplete(result.status === 'complete')
       setStatus(result.status === 'complete' ? 'The reviewed batch is finished. Each payment’s outcome is shown below.' : 'The original action is saved. Resume it to check its execution before trying again.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the reviewed payments.')
       discard.capture(failure)
       setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      recover(loadProjectBatch(savedSelection?.scope ?? scope))
     } finally {
       // Replacement consumes the old draft identity. Reopen to bind any new recovery journal.
-      if (replaceDraft) { setNeedsReview(true); setReplaceDraft(undefined) }
+      if (replaceDraft) { if (!recovered) setNeedsReview(true); setReplaceDraft(undefined) }
       setBusy(false)
       await queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
     }

@@ -137,7 +137,7 @@ export function TxConfirmDialog({
               {status ? <p className="text-sm text-bluebs-700">{typeof status === 'string' ? transactionMessage(status) : status}</p> : null}
             </>
           )}
-          {error ? <p className="text-sm text-red-600">{typeof error === 'string' ? transactionMessage(error) : error}</p> : null}
+          {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? transactionMessage(error) : error}</p> : null}
         </div>
         <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
           {complete ? (

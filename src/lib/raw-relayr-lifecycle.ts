@@ -2,7 +2,7 @@
 
 import { isAddressEqual, type Address, type Hex } from 'viem'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
-import { relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
+import { RelayrPaymentSubmittedError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
 import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type RawRelayrState = {
@@ -149,16 +149,23 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
             session.phase = outcome === 'reverted' ? 'payment-reverted' : 'quoted'
             persist()
           }
-          throw error
+          const latest = session.payments?.at(-1)
+          if (!(error instanceof RelayrPaymentSubmittedError) || session.phase !== 'executing' ||
+              !latest || latest.hash.toLowerCase() !== error.hash.toLowerCase() || latest.chainId !== error.chainId ||
+              session.paymentHash?.toLowerCase() !== error.hash.toLowerCase()) throw error
+          // Only a durably saved submission continues into read-only reconciliation.
+          persist(true)
         }
       }
+      if (session.phase === 'payment-sending') throw new Error('The wallet funding result is uncertain. Keep the saved bundle pending; do not pay again.')
       if (!paidNow && session.phase === 'executing') {
         // A payment that reverted funded nothing: the quote waits on the retry rule.
         // A send with no hash yet stays as it is, since it may still land.
-        await proveSavedRelayrPayment(relayrChainClient, session.payments, session.account, () => {
+        const confirmed = await proveSavedRelayrPayment(relayrChainClient, session.payments, session.account, () => {
           session.phase = 'payment-reverted'
           persist()
         })
+        if (!confirmed) throw new Error('The submitted Relayr payment cannot be confirmed yet. Keep the saved bundle pending; do not pay again.')
       }
       let pollError: unknown
       try {

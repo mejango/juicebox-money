@@ -111,6 +111,22 @@ function records() {
   }))
 }
 
+/** Exact canonical funding evidence, alongside the existing destination fixtures. */
+function confirmSavedFunding() {
+  const transaction = mocks.getTransaction.getMockImplementation()!
+  const receipt = mocks.getReceipt.getMockImplementation()!
+  mocks.getTransaction.mockImplementation(async (chain: number, args: { hash: Hex }) => {
+    const sent = loadPayerDeployment(review.scope)?.payments?.find(payment => payment.hash === args.hash)
+    return sent ? { hash: sent.hash, chainId: sent.chainId, from: ALICE, to: sent.target,
+      input: sent.calldata, value: BigInt(sent.amount), blockHash: BLOCK, blockNumber: 100n } : transaction(chain, args)
+  })
+  mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => {
+    const sent = loadPayerDeployment(review.scope)?.payments?.find(payment => payment.hash === args.hash)
+    return sent ? { transactionHash: sent.hash, to: sent.target, blockHash: BLOCK, blockNumber: 100n,
+      status: 'success' } : receipt(chain, args)
+  })
+}
+
 function receipt(chain: number) {
   const call = review.calls.find(call => call.chainId === chain)!
   const event = jbProjectPayerDeployerAbi.find(item => item.type === 'event')!
@@ -326,10 +342,64 @@ describe('payer deployment review and raw Relayr execution', () => {
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes.map(outcome => outcome.state)).toEqual(['verified', 'ready'])
     expect(saved.paymentHash).toBe(PAYMENT_HASH)
+    confirmSavedFunding()
     await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('complete')
+  })
+
+  it.each([true, false])('reconciles submitted funding without another payment (canonical funding available: %s)', async available => {
+    const pay = mocks.pay.getMockImplementation()!
+    mocks.pay.mockImplementationOnce(async args => {
+      await pay(args)
+      throw new RelayrPaymentSubmittedError(PAYMENT_HASH, args.payment.chain)
+    })
+    if (available) confirmSavedFunding()
+    if (available) {
+      await expect(runPayerDeployments(review, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
+      expect(mocks.poll).toHaveBeenCalledOnce()
+    } else {
+      await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cannot be confirmed yet/)
+      expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', paymentHash: PAYMENT_HASH })
+      expect(mocks.poll).not.toHaveBeenCalled()
+      confirmSavedFunding()
+      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).resolves.toMatchObject({ phase: 'complete' })
+    }
+    expect(mocks.post).toHaveBeenCalledOnce()
+    expect(mocks.pay).toHaveBeenCalledOnce()
+    expect(mocks.paymentSent).toHaveBeenCalledOnce()
+  })
+
+  it.each(['hash', 'chain'] as const)('does not reconcile a submitted error for another funding %s', async changed => {
+    const pay = mocks.pay.getMockImplementation()!
+    mocks.pay.mockImplementationOnce(async args => {
+      await pay(args)
+      throw new RelayrPaymentSubmittedError(changed === 'hash' ? hashFor(99) : PAYMENT_HASH,
+        changed === 'chain' ? 1 : args.payment.chain)
+    })
+    confirmSavedFunding()
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    expect(mocks.poll).not.toHaveBeenCalled()
+    expect(mocks.pay).toHaveBeenCalledOnce()
+    expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', paymentHash: PAYMENT_HASH })
+  })
+
+  it('preserves destination proof after reconciling submitted funding', async () => {
+    const pay = mocks.pay.getMockImplementation()!
+    mocks.pay.mockImplementationOnce(async args => {
+      await pay(args)
+      throw new RelayrPaymentSubmittedError(PAYMENT_HASH, args.payment.chain)
+    })
+    confirmSavedFunding()
+    const transaction = mocks.getTransaction.getMockImplementation()!
+    mocks.getTransaction.mockImplementation(async (chain: number, args: { hash: Hex }) => {
+      const result = await transaction(chain, args)
+      return args.hash === PAYMENT_HASH ? result : { ...result, input: '0xdeadbeef' }
+    })
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/remain unresolved/)
+    expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', paymentHash: PAYMENT_HASH })
+    expect(mocks.pay).toHaveBeenCalledOnce()
   })
 
   it('persists the payment send window and never repays an ambiguous no-hash send', async () => {
@@ -339,7 +409,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       throw new Error('Wallet disconnected after send.')
     })
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/disconnected/)
-    await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/wallet funding result is uncertain/)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -350,7 +420,7 @@ describe('payer deployment review and raw Relayr execution', () => {
       onSent?.([sentRelayrPayment(details, PAYMENT_HASH)])
       throw new RelayrPaymentSubmittedError(PAYMENT_HASH, payment.chain)
     })
-    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cannot be confirmed yet/)
     const sent = loadPayerDeployment(review.scope)!.payments![0]
     // The SDK reads no signed request in them, so none can ever be dead.
     expect(relayrSignedRequests(loadPayerDeployment(review.scope)!.quote!.expectedTransactions!.map(binding => binding.entry))).toBeNull()
@@ -400,6 +470,7 @@ describe('payer deployment review and raw Relayr execution', () => {
     const saved = loadPayerDeployment(review.scope)!
     expect(saved).toMatchObject({ phase: 'executing', paymentHash: PAYMENT_HASH })
     storage.setItem.mockImplementation(original)
+    confirmSavedFunding()
     await runPayerDeployments(saved, vi.fn(), flow)
     expect(mocks.paymentSent).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
@@ -859,7 +930,7 @@ describe('paying a reverted payer quote again', () => {
       onSent?.([sentRelayrPayment(details, PAYMENT_HASH)])
       throw new RelayrPaymentSubmittedError(PAYMENT_HASH, payment.chain)
     })
-    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrPaymentSubmittedError' })
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/cannot be confirmed yet/)
     expect(loadPayerDeployment(review.scope)?.phase).toBe('executing')
     // The funding chain holds the reviewed payment, reverted.
     const sent = loadPayerDeployment(review.scope)!.payments![0]
@@ -931,4 +1002,25 @@ describe('payer final wallet context', () => {
       } finally { clearViewAs() }
     })
   }
+})
+
+it('requires durable storage before reconciling a matching submitted funding error', async () => {
+  const { runRawRelayrLifecycle } = await import('@/lib/raw-relayr-lifecycle')
+  review = makeReview()
+  mocks.paymentSent.mockReset()
+  const pay = mocks.pay.getMockImplementation()!
+  mocks.pay.mockImplementationOnce(async args => {
+    await pay(args)
+    throw new RelayrPaymentSubmittedError(PAYMENT_HASH, args.payment.chain)
+  })
+  const saveState = vi.fn((session: PayerDeploymentSession, beforeWrite?: boolean) => {
+    if (session.phase === 'executing' && beforeWrite) throw new Error('Recovery storage unavailable.')
+  })
+  await expect(runRawRelayrLifecycle({ session: review,
+    entries: review.calls.map(call => ({ chain: call.chainId, target: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: '0' })),
+    saveState, assertAccount: vi.fn(), reverify: vi.fn(),
+  })).rejects.toThrow('Recovery storage unavailable.')
+  expect(saveState).toHaveBeenLastCalledWith(review, true)
+  expect(mocks.poll).not.toHaveBeenCalled()
+  expect(mocks.pay).toHaveBeenCalledOnce()
 })
