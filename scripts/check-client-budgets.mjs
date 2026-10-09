@@ -39,7 +39,12 @@ const budgets = {
     // 6a0598d -> 7e39b80 measures home 448,960 -> 449,801 B (+841 B).
     // Per-component persisted-query hydration and final wallet guards stay
     // eager where needed. Round only this measured route cost to 440 KiB.
-    '/page': 440 * KIB,
+    // SDK 2.26.0 plus correct custom-hook activity recipients measure
+    // 449,802 -> 450,902 B on the same Node26.7/npm12 physical graph.
+    // Optional Safe badges were separated from plain address links first,
+    // removing their unnecessary ~10 KiB eager dependency edge. Only the
+    // shared recipient/link renderers remain; round this measured cost.
+    '/page': 441 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -205,7 +210,11 @@ const budgets = {
   // and every lazy wallet/dialog boundary are unchanged. Independent review
   // accepts rounding only this measured aggregate to 2537 KiB (76 B headroom).
   // First hosted failure: CI37724379008; exact comparison is in tasks/todo.md.
-  allScripts: 2537 * KIB,
+  // The same SDK 2.26.0/recipient comparison measures 2,597,825 ->
+  // 2,599,308 B (+1,483 B). Independent chunk review confirms the optional
+  // Safe graph stays lazy; create/project/largest/style and lazy constraints
+  // are unchanged. Round only this measured aggregate to the next KiB.
+  allScripts: 2539 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

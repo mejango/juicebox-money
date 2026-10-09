@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { formatUnits, type Address } from 'viem'
+import { formatUnits, zeroAddress, type Address } from 'viem'
 import { mergeCrossChainActivityGroups, SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
 import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
@@ -31,9 +31,8 @@ import {
   timeAgo,
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
-import { isStickyHook } from '@/lib/sticky'
 import { ACTIVITY_PAGE_SIZE, PROJECT_ACTIVITY_FRESHNESS_MS } from '@/lib/project-activity'
-import { StickyRecipient } from '@/components/project/StickyRecipient'
+import { SplitRecipient } from '@/components/project/SplitRecipient'
 import { ActorLink } from './ActorLink'
 import {
   ActivityAmountLine,
@@ -576,11 +575,12 @@ export function combinedActivityParts(
               {formatCompactTokenAmount(receipt.tokenCount)} {tokenUnit}
             </span>{' '}
             to{' '}
-            {receipt.hook && isStickyHook(receipt.hook, entry.chainId) ? (
-              <StickyRecipient
+            {receipt.hook && receipt.hook.toLowerCase() !== zeroAddress ? (
+              <SplitRecipient
                 split={{
                   projectId: BigInt(receipt.splitProjectId),
                   beneficiary: receipt.beneficiary as Address,
+                  hook: receipt.hook as Address,
                 }}
                 chainId={entry.chainId as JBChainId}
               />
