@@ -39,6 +39,9 @@ vi.mock('@/components/project/SafeQueueCard', () => ({
 vi.mock('@/components/ui/AddressLink', () => ({
   AddressLink: ({ address }: { address: string }) => <span>{address}</span>,
 }))
+vi.mock('@/components/ui/SafeAddressLink', () => ({
+  SafeAddressLink: ({ address }: { address: string }) => <span>{address}</span>,
+}))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 
 import { AuthorityOverview } from '@/components/project/AuthorityOverview'

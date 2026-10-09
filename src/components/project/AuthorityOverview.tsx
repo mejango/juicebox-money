@@ -19,6 +19,7 @@ import {
   SafeQueueCard,
   type SafeQueueChain,
 } from "@/components/project/SafeQueueCard";
+import { SafeAddressLink } from "@/components/ui/SafeAddressLink";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
 import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
@@ -320,8 +321,7 @@ export function AuthorityOverview({
                     <dt className="text-smoke-500">{authorityLabel}</dt>
                     <dd>
                       {group.authority ? (
-                        <AddressLink
-                          showSafe
+                        <SafeAddressLink
                           address={group.authority}
                           chainId={group.rows[0].chainId}
                           className="font-mono text-sm text-ink"
@@ -929,8 +929,7 @@ function PermissionsAcrossChains({
         <div className="mt-4 border-b border-smoke-100 pb-4">
           {owners.map((owner) => (
             <div key={owner.address} className="flex flex-wrap items-center gap-2">
-              <AddressLink
-                showSafe
+              <SafeAddressLink
                 address={owner.address}
                 chainId={owner.chains[0]}
                 className="font-mono text-sm text-ink"
@@ -969,8 +968,7 @@ function PermissionsAcrossChains({
               className="py-4 first:pt-0 last:pb-0"
             >
               <div className="flex flex-wrap items-center gap-2">
-                <AddressLink
-                  showSafe
+                <SafeAddressLink
                   address={grant.operator}
                   chainId={chainIds[0]}
                   className="font-mono text-sm text-ink"

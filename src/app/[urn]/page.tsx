@@ -15,7 +15,7 @@ import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
 import { PendingPayments } from "@/components/project/PendingPayments";
 import { ChainIcon } from "@/components/ChainIcon";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
-import { AddressLink } from "@/components/ui/AddressLink";
+import { SafeAddressLink } from "@/components/ui/SafeAddressLink";
 import { ProjectDataStatus } from "@/components/project/ProjectDataStatus";
 import { ProjectTabs } from "@/components/project/Tabs";
 import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
@@ -258,8 +258,7 @@ async function DegradedProjectShell({
               <>
                 <span>
                   <span className="text-smoke-500">{roleLabel}:</span>{" "}
-                  <AddressLink
-                    showSafe
+                  <SafeAddressLink
                     address={authority}
                     chainId={route.chainId}
                     className="text-smoke-700"
