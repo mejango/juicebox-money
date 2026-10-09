@@ -156,6 +156,9 @@ describe('durable project batches', () => {
     const batch = await run(calls, { verifyCompletion: verify })
     expect(projectBatchRounds(calls)).toEqual([calls.map(item => item.id)])
     expect(batch.status).toBe('complete')
+    expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({
+      description: 'Pay network fees once for this batch. Each payment has its own result.',
+    }))
     expect(mocks.rawRelayr).toHaveBeenCalledTimes(1)
     expect(mocks.rawRelayr.mock.calls[0][0].calls).toEqual(calls)
     expect(verify.mock.calls.map(([item]) => item.id)).toEqual(calls.map(item => item.id))

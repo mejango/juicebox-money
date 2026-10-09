@@ -10,7 +10,9 @@ import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { chainName } from '@/lib/urn'
-import { truncateAddress } from '@/lib/format'
+import { getProjectsByRefs } from '@/lib/bendystraw'
+import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
+import { LoadingText } from '@/components/ui/LoadingText'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
 import { isProjectBatchDraft, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -19,7 +21,7 @@ const subscribeHydration = () => () => {}
 const clientHydrated = () => true
 const serverHydrated = () => false
 const amountLabel = ({ payment, decimals, symbol }: ReviewedPayment) => decimals === null
-  ? `${payment.amount} base units (${symbol})`
+  ? 'Amount unavailable'
   : `${formatUnits(BigInt(payment.amount), decimals)} ${symbol}`
 
 export function PendingPayments({ chainId, projectId, chains }: {
@@ -84,6 +86,22 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const checking = rows.some(item => !verified.has(pendingPaymentId(item.payment)))
   const available = rows.flatMap(item => item.review?.ready ? [item.review] : [])
   const unreadable = !!pending.error || !!verification.error || rows.some(item => item.error)
+  const projectRefs = [...new Map([
+    ...rows.map(item => item.payment),
+    ...(calls ?? []).flatMap(call => {
+      const payment = (call.context as ReviewedPayment | undefined)?.payment
+      return payment ? [payment] : []
+    }),
+  ].flatMap(payment => [payment.sourceProjectId, payment.projectId].map(id => ({ chainId: payment.chainId, projectId: id, version: payment.version })))
+    .map(ref => [`${ref.chainId}:${ref.projectId}:${ref.version}`, ref])).values()]
+  const projectNames = useQuery({
+    queryKey: ['pendingPaymentProjectNames', projectRefs],
+    enabled: hydrated && !!projectRefs.length,
+    staleTime: 60_000, retry: 1,
+    queryFn: async () => fillIndexedMetadata(await getProjectsByRefs(projectRefs)),
+  })
+  const projectLabel = (payment: ReviewedPayment['payment'], id: number) =>
+    projectNames.data?.find(project => project.chainId === payment.chainId && project.projectId === id && project.version === payment.version)?.name?.trim() || `Project ${id}`
 
   const recheckSaved = async () => {
     if (!recovery || busy) return
@@ -123,7 +141,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     setBusy(true); setError(null); discard.capture(null)
     try {
       const result = await runProjectBatch({ scope: savedSelection?.scope ?? scope, action: savedSelection?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: savedSelection?.id, replaceDraft,
-        title: 'Route pending payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
+        title: 'Retry payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
           if (outcome) setOutcomes(previous => ({ ...previous, [call.id]: outcome }))
@@ -163,58 +181,55 @@ export function PendingPayments({ chainId, projectId, chains }: {
 
   if (!hydrated) return null
   if (!rows.length && !recovery && !open) {
-    if (pending.isPending) return <p className="mb-5 text-sm text-smoke-500" role="status">Loading pending payments…</p>
+    if (pending.isPending) return <p className="mb-5 text-sm text-smoke-500" role="status"><LoadingText text="Loading pending payments…" /></p>
     return pending.error || error ? <p className="mb-5 text-sm text-smoke-500" role="status">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void pending.refetch()}>Retry</button></p> : null
   }
   const reviewedRows: TxConfirmRow[] = (calls ?? []).flatMap(call => {
     const reviewed = call.context as ReviewedPayment
     const payment = reviewed.payment
     return [
-      { label: chainName(payment.chainId), value: amountLabel(reviewed), strong: true },
-      { label: 'From project', value: `#${payment.sourceProjectId}` },
-      { label: 'To project', value: `#${payment.projectId}` },
-      { label: 'Gateway', value: payment.gateway, mono: true },
-      { label: 'Payment ID', value: payment.pendingCallId, mono: true },
-      { label: 'Token', value: payment.token, mono: true },
-      { label: 'Beneficiary', value: payment.beneficiary, mono: true },
-      { label: 'Action', value: reviewed.functionName === 'finalizePendingCall' ? 'Try routing once more; a matching failure returns the payment to its source project.' : 'Retry the original payment. It may remain pending if routing still fails.' },
+      { label: 'Amount', value: amountLabel(reviewed), strong: true },
+      { label: 'On', value: chainName(payment.chainId) },
+      { label: 'To', value: projectLabel(payment, payment.projectId) },
+      { label: 'Source', value: projectLabel(payment, payment.sourceProjectId) },
+      { label: 'Action', value: 'Retry payments' },
       ...(payment.memo ? [{ label: 'Memo', value: payment.memo }] : []),
       ...(outcomes[call.id] ? [{ label: 'Outcome', value: outcomes[call.id], strong: true }] : []),
     ]
   })
-  return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments awaiting routing">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <h2 className="font-agrandir text-lg">Payments awaiting routing</h2>
-      <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || (!recovery && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
-        {recovery ? 'Resume saved batch' : checking && !verification.error ? 'Checking pending payments…' : available.length === rows.length ? 'Batch all pending' : `Batch ${available.length} available`}
-      </button>
-    </div>
-    <p className="mt-2 text-sm text-smoke-500">These payments are held by the routing gateway. Anyone can retry them. Batch available payments and pay the quoted fees once.</p>
-    {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
-    {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
-    {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status">{transactionMessage(status)}</p> : null}
-    <p className="mt-2 text-sm text-smoke-500" role="status">{pending.isPending ? 'Loading pending payments…' : pending.error ? 'Pending payment count unavailable.' : checking ? `Found ${rows.length} payments.${verification.error ? ' Current status unavailable.' : ' Checking current status…'}` : `${rows.length} payments awaiting routing. ${available.length} ready`}</p>
-    {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
-    {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be verified. Refresh before batching all pending payments. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
-    <ul className="mt-3 divide-y divide-smoke-200">
-      {rows.map(item => <li key={pendingPaymentId(item.payment)} className="flex flex-wrap items-center justify-between gap-3 py-3">
-        <div className="min-w-0 text-sm">
-          <p className="font-medium">{item.review ? amountLabel(item.review) : `${item.payment.amount} base units of ${truncateAddress(item.payment.token)}`}</p>
-          <p className="text-smoke-500">{chainName(item.payment.chainId)}: project #{item.payment.sourceProjectId} → #{item.payment.projectId}</p>
-          {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500">{verification.error ? 'Could not check this payment.' : 'Checking availability…'}</p> : null}
-          {item.error ? <p className="mt-1 text-red-600">{transactionMessage(item.error)}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
-        </div>
-        <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>
-          {item.review?.functionName === 'finalizePendingCall' ? 'Route or return' : 'Retry payment'}
-        </button>
-      </li>)}
-    </ul>
-    {error && !open ? <p className="mt-2 text-sm text-red-600">{transactionMessage(error)}</p> : null}
-    <TxConfirmDialog open={open} title={complete ? 'Payment batch finished' : 'Review pending payments'} rows={reviewedRows}
+  return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments awaiting processing">
+    <details>
+      <summary className="cursor-pointer text-sm font-medium">{rows.length ? `${rows.length} ${rows.length === 1 ? 'payment' : 'payments'} awaiting processing.` : 'Saved payment batch'}</summary>
+      <p className="mt-3 text-sm text-smoke-500">These payments did not have sufficient gas to process automatically.</p>
+      {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
+      {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
+      {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status"><LoadingText text={transactionMessage(status)} /></p> : null}
+      <p className="mt-2 text-sm text-smoke-500" role="status"><LoadingText text={pending.isPending ? 'Loading pending payments…' : pending.error ? 'Payment count unavailable.' : checking ? verification.error ? 'Payment status unavailable.' : 'Checking payments…' : `${available.length} ${available.length === 1 ? 'payment' : 'payments'} ready to retry`} /></p>
+      {recovery || rows.length > 1 ? <button type="button" className="btn-secondary mt-3 min-h-[40px] px-3 text-sm" disabled={busy || (!recovery && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
+        {recovery ? 'Resume saved batch' : 'Retry'}
+      </button> : null}
+      {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
+      {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be checked. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
+      <ul className="mt-3 divide-y divide-smoke-200">
+        {rows.map(item => <li key={pendingPaymentId(item.payment)} className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div className="min-w-0 text-sm">
+            <p className="font-medium">{item.review ? amountLabel(item.review) : <LoadingText text={item.error || verification.error ? 'Amount unavailable' : 'Checking payment amount…'} />}</p>
+            <p className="text-smoke-500">To {projectLabel(item.payment, item.payment.projectId)} on {chainName(item.payment.chainId)}</p>
+            {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500"><LoadingText text={verification.error ? 'Could not check this payment.' : 'Checking payment status…'} /></p> : null}
+            {item.error ? <p className="mt-1 text-red-600">{transactionMessage(item.error)}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
+          </div>
+          <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>
+            Retry
+          </button>
+        </li>)}
+      </ul>
+      {error && !open ? <p className="mt-2 text-sm text-red-600">{transactionMessage(error)}</p> : null}
+    </details>
+    <TxConfirmDialog open={open} title={complete ? 'Payments finished' : 'Retry payments'} rows={reviewedRows}
       steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)}: ${call.label}` }))}
-      stepsIntro="Available payments are bundled into one fee payment, including payments on the same chain. Each routing attempt has its own outcome; the batch does not make them atomic. Safe wallets and unsupported networks use separate transactions."
+      stepsIntro="Retry the original payments. You pay network fees only. Payments may remain pending; a final failed attempt may return them to the source project."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={needsReview && !complete ? 'Close this review and reopen pending payments to review the current batch.' : status} error={discard.active ? null : error}
-      action={savedSelection ? 'Resume original attempts' : 'Confirm attempts'} actionDisabled={needsReview || !calls?.length || discard.active}
+      action={savedSelection ? 'Resume saved batch' : 'Retry'} actionDisabled={needsReview || !calls?.length || discard.active}
       onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>
   </section>
 }

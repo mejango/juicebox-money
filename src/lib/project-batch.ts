@@ -433,7 +433,7 @@ export async function runProjectBatch({
       // its sent gas limit, which is measured at send time, so it is not shown.
       const viaSafe = isSafeConnection(wagmiConfig)
       await requireTransactionReview({ title,
-        description: `Review each destination and its amounts. ${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Independent pending payments are submitted together; each has its own routing outcome.' : 'Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
+        description: `${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Pay network fees once for this batch. Each payment has its own result.' : 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A Safe app signs the sent gas as safeTxGas; each call is sent with 0.
         calls: batch.calls.map(({ gas: _gas, ...call }) => ({ ...call, from: call.authority, to: call.target,

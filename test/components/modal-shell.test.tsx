@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { LoadingText } from '@/components/ui/LoadingText'
 import { topLayerDialogs } from '../dialog-shim'
 
 let container: HTMLDivElement
@@ -182,6 +183,13 @@ describe('ModalShell', () => {
 })
 
 describe('a confirm hosted in the shell', () => {
+  it('animates progress without changing its accessible text', () => {
+    render(<LoadingText text="Requesting the network-fee quote." active />)
+    expect(document.querySelector('.loading-dots')?.getAttribute('aria-hidden')).toBe('true')
+    expect(document.body.textContent).toContain('Requesting the network-fee quote.')
+    render(<LoadingText text="Payment confirmed." />)
+    expect(document.querySelector('.loading-dots')).toBeNull()
+  })
   it('keeps submitted transaction hashes readable in confirmation errors', () => {
     const message = `Payment 0x${'a'.repeat(64)} was submitted; confirmation is unavailable.`
     render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1}

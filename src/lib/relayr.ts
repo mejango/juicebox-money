@@ -1,5 +1,7 @@
 'use client'
 
+import { relayrPaymentReview } from '@/lib/relayr-payment-review'
+
 import { getAccount } from '@wagmi/core'
 import {
   JBCoreContracts,
@@ -1179,8 +1181,8 @@ export async function relayrPay({
         value: reviewed.amount,
         gas: RELAYR_PAYMENT_GAS,
         data: reviewed.calldata,
-        label: 'Pay for relayed transactions',
-        contractName: 'Prepaid payment',
+        label: 'Pay network fee',
+        ...relayrPaymentReview(reviewed.calldata),
       },
     ],
   })

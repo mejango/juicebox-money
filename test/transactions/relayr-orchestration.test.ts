@@ -1,3 +1,4 @@
+import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { ContractFunctionExecutionError, HttpRequestError, encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -587,6 +588,7 @@ describe('Relayr quote and payment boundaries', () => {
             value: 100n,
             gas: 150_000n,
             data: payment.calldata,
+            ...relayrPaymentReview(payment.calldata),
           }),
         ],
       }),

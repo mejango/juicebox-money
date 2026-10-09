@@ -21,6 +21,7 @@ vi.mock('next/image', () => ({
   default: (props: Record<string, unknown>) => createElement('img', { ...props, src: 'asset' }),
 }))
 
+import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
 import '../dialog-shim'
@@ -55,6 +56,19 @@ async function review(request: TransactionReviewRequest): Promise<string> {
 }
 
 describe('decoded transaction review', () => {
+  it('decodes the exact network-fee payment without an unavailable ABI warning', async () => {
+    const data = `0x103903a7${'11111111222233334444555555555555'.padEnd(64, '0')}${(1900000000n).toString(16).padStart(64, '0')}` as Hex
+    const text = await review({
+      title: 'Review payment', confirmLabel: 'Pay',
+      calls: [{ chainId: 1, to: TARGET, data, value: 100n, gas: 150_000n,
+        label: 'Pay network fee', ...relayrPaymentReview(data) }],
+    })
+    expect(text).toContain('prepayment(bytes16, uint40)')
+    expect(text).toContain('0x11111111222233334444555555555555')
+    expect(text).toContain('1900000000')
+    expect(text).not.toContain('ABI is not available')
+  })
+
   it('reads address zero as native ETH only where it is a pool currency', async () => {
     const abi = parseAbi(['function modifyLiquidities(bytes unlockData, uint256 deadline) payable'])
     const mint = encodeAbiParameters(

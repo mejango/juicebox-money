@@ -1,5 +1,7 @@
 'use client'
 
+import { LoadingText } from '@/components/ui/LoadingText'
+
 import {
   type ComponentType,
   type PropsWithChildren,
@@ -217,7 +219,7 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
           >
             <div className="card w-full max-w-lg p-5 shadow-2xl">
               <p id={`transaction-review-loading-${active.id}`} role="status">
-                Loading transaction review…
+                <LoadingText text="Loading transaction review…" />
               </p>
               <button
                 type="button"

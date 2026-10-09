@@ -15,12 +15,17 @@ const mocks = vi.hoisted(() => ({
   queryFn: null as ((context: { signal: AbortSignal }) => Promise<ReviewedPayment['payment'][]>) | null,
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
+  names: [] as { chainId: number; projectId: number; version: number; name: string | null }[], namesFn: null as (() => Promise<unknown>) | null, projects: vi.fn(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
   recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), loadExact: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
   useQuery: ({ queryKey, queryFn }: { queryKey: string[]; queryFn: (context: { signal: AbortSignal }) => Promise<unknown> }) => {
+    if (queryKey[0] === 'pendingPaymentProjectNames') {
+      mocks.namesFn = queryFn as unknown as typeof mocks.namesFn
+      return { data: mocks.names }
+    }
     if (queryKey[1] === 'verification') {
       mocks.verifyFn = queryFn as unknown as typeof mocks.verifyFn
       return { data: mocks.checking ? undefined : mocks.rows, error: mocks.verificationError }
@@ -29,6 +34,9 @@ vi.mock('@tanstack/react-query', () => ({
     return { data: mocks.loading ? undefined : mocks.rows.map(item => item.payment), error: mocks.error, isPending: mocks.loading, refetch: mocks.refetch }
   },
 }))
+vi.mock('@/lib/bendystraw', () => ({ getProjectsByRefs: mocks.projects }))
+vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (rows: unknown) => rows }))
+vi.mock('@/components/ui/LoadingText', () => ({ LoadingText: ({ text }: { text: string }) => text }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, isConnected: mocks.connected, openSignIn: mocks.openSignIn }) }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: ComponentProps<typeof TxConfirmDialog>) => props.open ? createElement('review-dialog', props) : null }))
 vi.mock('@/lib/pending-payments', () => ({
@@ -77,7 +85,7 @@ const dialog = () => tree!.root.findByType('review-dialog' as never).props as Co
 
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.connected = true; mocks.rows = []; mocks.error = null; mocks.checking = false; mocks.loading = false; mocks.verificationError = null
+  mocks.connected = true; mocks.rows = []; mocks.names = []; mocks.projects.mockResolvedValue([]); mocks.error = null; mocks.checking = false; mocks.loading = false; mocks.verificationError = null
   mocks.address = '0x1111111111111111111111111111111111111111'
   mocks.load.mockReturnValue(null)
   mocks.loadExact.mockReturnValue(null)
@@ -97,7 +105,7 @@ describe('pending payment review above activity', () => {
       mocks.draft.mockReturnValue(true)
     }
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockImplementationOnce(async options => {
       const saved = { id: 'submitted', scope: options.scope, action: options.action, account: mocks.address,
         calls: options.calls, completedIds: [], status: 'pending' } as unknown as ProjectBatch
@@ -109,7 +117,7 @@ describe('pending payment review above activity', () => {
       return saved
     })
     await act(async () => dialog().onConfirm())
-    expect(dialog().action).toBe('Resume original attempts')
+    expect(dialog().action).toBe('Resume saved batch')
     expect(dialog().complete).toBe(false)
     expect(dialog().actionDisabled).toBe(false)
     if (outcome === 'uncertain') expect(dialog().error).toContain('Do not pay again')
@@ -127,9 +135,9 @@ describe('pending payment review above activity', () => {
     mocks.draft.mockReturnValue(true)
     await render()
     expect(button('Resume saved batch')).toBeUndefined()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     expect(dialog().steps).toHaveLength(2)
-    expect(dialog().action).toBe('Confirm attempts')
+    expect(dialog().action).toBe('Retry')
     mocks.run.mockResolvedValue({ ...saved, status: 'complete' })
     await act(async () => dialog().onConfirm())
     expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({
@@ -144,7 +152,7 @@ describe('pending payment review above activity', () => {
     mocks.load.mockReturnValue({ id: 'draft', scope: 'legacy', calls: [], completedIds: [] })
     mocks.draft.mockReturnValue(true)
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockRejectedValue(new Error('preflight failed'))
     await act(async () => dialog().onConfirm())
     expect(dialog().actionDisabled).toBe(true)
@@ -153,7 +161,7 @@ describe('pending payment review above activity', () => {
     expect(mocks.run).toHaveBeenCalledTimes(1)
     await act(async () => dialog().onClose())
     mocks.load.mockReturnValue(null)
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     expect(dialog().actionDisabled).toBe(false)
     await act(async () => dialog().onConfirm())
     expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
@@ -181,14 +189,52 @@ describe('pending payment review above activity', () => {
     mocks.recheckBatch.mockImplementation(async () => { mocks.load.mockReturnValue(null); return true })
     await act(async () => button('Re-check saved batch').props.onClick())
     expect(mocks.recheckBatch).toHaveBeenCalledWith('legacy', 'saved')
-    expect(button('Batch all pending')).toBeDefined()
+    expect(button('Retry')).toBeDefined()
     expect(mocks.run).not.toHaveBeenCalled()
   })
   it('keeps persisted pending rows out of server markup until hydration', async () => {
     mocks.rows = [row()]
     expect(renderToString(createElement(PendingPayments, { chainId: 1, projectId: 17, chains: [] }))).toBe('')
     await render()
-    expect(tree!.root.findByType('h2').children).toEqual(['Payments awaiting routing'])
+    expect(text(tree!.root.findByType('summary'))).toBe('1 payment awaiting processing.')
+    expect(tree!.root.findByType('details').props.open).toBeUndefined()
+    expect(tree!.root.findAllByType('button').filter(item => text(item) === 'Retry')).toHaveLength(1)
+  })
+
+  it('keeps raw amounts hidden until token metadata is checked', async () => {
+    mocks.rows = [row()]
+    mocks.checking = true
+    await render()
+    expect(text(tree!.root)).toContain('Checking payment amount…')
+    expect(text(tree!.root)).not.toContain(mocks.rows[0].payment.amount)
+    expect(text(tree!.root)).not.toContain('base units')
+    mocks.checking = false
+    mocks.rows[0].review!.decimals = null
+    await render()
+    expect(text(tree!.root)).toContain('Amount unavailable')
+    expect(text(tree!.root)).not.toContain('base units')
+  })
+
+  it('resolves exact source and destination names for live and saved reviews', async () => {
+    mocks.rows = [row(), row(10)]
+    mocks.names = [
+      { chainId: 1, projectId: 6, version: 6, name: 'Source' },
+      { chainId: 1, projectId: 17, version: 6, name: 'Destination' },
+      { chainId: 10, projectId: 6, version: 5, name: 'Wrong version' },
+      { chainId: 10, projectId: 42, version: 6, name: 'Other destination' },
+    ]
+    await render()
+    expect(text(tree!.root)).toContain('To Destination on Ethereum')
+    await mocks.namesFn!()
+    expect(mocks.projects).toHaveBeenCalledWith([
+      { chainId: 1, projectId: 6, version: 6 }, { chainId: 1, projectId: 17, version: 6 },
+      { chainId: 10, projectId: 6, version: 6 }, { chainId: 10, projectId: 42, version: 6 },
+    ])
+    await act(async () => button('Retry').props.onClick())
+    expect(dialog().rows?.filter(item => item.label === 'Source').map(item => item.value)).toEqual(['Source', 'Project 6'])
+    expect(dialog().rows?.filter(item => item.label === 'To').map(item => item.value)).toEqual(['Destination', 'Other destination'])
+    expect(dialog().rows?.filter(item => item.label === 'Action').map(item => item.value)).toEqual(['Retry payments', 'Retry payments'])
+    expect(dialog().rows?.some(item => item.label === 'Gateway')).toBe(false)
   })
 
   it('hides an empty inventory and verifies every linked destination project independently', async () => {
@@ -217,11 +263,11 @@ describe('pending payment review above activity', () => {
     mocks.load.mockReturnValue({ calls: [{}, {}, {}], completedIds: [], status: 'pending' })
     await render()
     expect(tree!.root.findAllByType('li')).toHaveLength(7)
-    expect(text(tree!.root)).toContain('Found 7 payments. Checking current status…')
+    expect(text(tree!.root)).toContain('7 payments awaiting processing.')
     expect(text(tree!.root)).toContain('Saved batch: 0 of 3 attempts handled')
     expect(button('Resume saved batch').props.disabled).toBe(false)
-    expect(tree!.root.findAllByType('button').filter(item => text(item) === 'Retry payment').every(item => item.props.disabled)).toBe(true)
-    expect(text(tree!.root)).toContain('Checking availability')
+    expect(tree!.root.findAllByType('li').flatMap(item => item.findAllByType('button')).every(item => item.props.disabled)).toBe(true)
+    expect(text(tree!.root)).toContain('Checking payment status')
   })
 
   it('keeps discovered rows visible and prevents submitting when live verification fails', async () => {
@@ -231,8 +277,8 @@ describe('pending payment review above activity', () => {
     await render()
     expect(tree!.root.findAllByType('li')).toHaveLength(2)
     expect(text(tree!.root)).toContain('Could not check this payment.')
-    expect(text(tree!.root)).not.toContain('Checking availability')
-    expect(button('Batch 0 available').props.disabled).toBe(true)
+    expect(text(tree!.root)).not.toContain('Checking payment status')
+    expect(button('Retry').props.disabled).toBe(true)
     await act(async () => button('Retry checks').props.onClick())
     expect(mocks.invalidate).toHaveBeenCalledWith({ queryKey: ['pendingPayments'] })
     expect(mocks.run).not.toHaveBeenCalled()
@@ -283,14 +329,14 @@ describe('pending payment review above activity', () => {
   it('opens the standard transaction review for the complete batch and only submits on confirmation', async () => {
     mocks.rows = [row(), row(10)]
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     expect(mocks.run).not.toHaveBeenCalled()
-    expect(dialog().title).toBe('Review pending payments')
+    expect(dialog().title).toBe('Retry payments')
     expect(dialog().steps).toHaveLength(2)
-    expect(dialog().stepsIntro).toContain('does not make them atomic')
-    expect(dialog().stepsIntro).toContain('one fee payment')
-    expect(dialog().stepsIntro).toContain('same chain')
-    expect(dialog().rows?.filter(item => item.label === 'From project').map(item => item.value)).toEqual(['#6', '#6'])
+    expect(dialog().stepsIntro).toContain('network fees only')
+    expect(dialog().stepsIntro).toContain('may remain pending')
+    expect(dialog().stepsIntro).toContain('return them to the source project')
+    expect(dialog().rows?.filter(item => item.label === 'Source').map(item => item.value)).toEqual(['Project 6', 'Project 6'])
     mocks.run.mockImplementation(async options => {
       expect(options.reverify).toBe(mocks.reverify)
       expect(options.calls).toHaveLength(2)
@@ -314,12 +360,12 @@ describe('pending payment review above activity', () => {
     const failed = row(10)
     mocks.rows = [row(), { ...failed, review: null, error: 'Commitment could not be verified' }]
     await render()
-    expect(button('Batch 1 available').props.disabled).toBe(true)
-    const retries = tree!.root.findAllByType('button').filter(item => text(item) === 'Retry payment')
+    expect(button('Retry').props.disabled).toBe(true)
+    const retries = tree!.root.findAllByType('li').flatMap(item => item.findAllByType('button'))
     expect(retries.map(item => item.props.disabled)).toEqual([false, true])
     await act(async () => retries[0].props.onClick())
     expect(dialog().steps).toHaveLength(1)
-    expect(dialog().rows?.find(item => item.label === 'From project')?.value).toBe('#6')
+    expect(dialog().rows?.find(item => item.label === 'Source')?.value).toBe('Project 6')
   })
 
   it.each(['nonzero', 'unknown'])('keeps a known Safe proposal when its commitment is %s', async state => {
@@ -327,7 +373,7 @@ describe('pending payment review above activity', () => {
     if (state === 'nonzero') mocks.review.mockResolvedValue(row().review)
     else mocks.review.mockRejectedValue(new Error('Commitment unavailable'))
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockImplementation(async options => {
       expect(await options.reconcileObsoleteSafe(options.calls[0], { nonce: 3, safeTxHash: zeroHash })).toBe(false)
       return { status: 'pending', calls: options.calls, completedIds: [] }
@@ -342,7 +388,7 @@ describe('pending payment review above activity', () => {
     mocks.rows = [row()]
     mocks.review.mockResolvedValue(null)
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockImplementation(async options => {
       expect(await options.reconcileObsoleteSafe(options.calls[0], { nonce: 3, safeTxHash: zeroHash })).toBe(true)
       return { status: 'complete' }
@@ -357,10 +403,10 @@ describe('pending payment review above activity', () => {
     mocks.rows = [row(), row(10, false)]
     mocks.connected = false
     await render()
-    expect(button('Batch 1 available').props.disabled).toBe(false)
-    const retries = tree!.root.findAllByType('button').filter(item => text(item) === 'Retry payment')
+    expect(button('Retry').props.disabled).toBe(false)
+    const retries = tree!.root.findAllByType('li').flatMap(item => item.findAllByType('button'))
     expect(retries.map(item => item.props.disabled)).toEqual([false, true])
-    await act(async () => button('Batch 1 available').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     expect(mocks.openSignIn).toHaveBeenCalledTimes(1)
     expect(tree!.root.findAllByType('review-dialog' as never)).toHaveLength(0)
     expect(mocks.run).not.toHaveBeenCalled()
@@ -369,7 +415,7 @@ describe('pending payment review above activity', () => {
   it('shows the line and Discard in place of the error when its Relayr round can only be discarded', async () => {
     mocks.rows = [row(), row(10)]
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'changed'))
     await act(async () => dialog().onConfirm())
     expect(dialog().error).toBeNull()
@@ -388,7 +434,7 @@ describe('pending payment review above activity', () => {
   it('drops the line with its review when the review closes, so it never shows without Discard', async () => {
     mocks.rows = [row(), row(10)]
     await render()
-    await act(async () => button('Batch all pending').props.onClick())
+    await act(async () => button('Retry').props.onClick())
     mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'ran'))
     await act(async () => dialog().onConfirm())
     expect(tree!.root.findAllByType(RelayrDiscard)).toHaveLength(1)
@@ -402,8 +448,14 @@ describe('pending payment review above activity', () => {
       value: 0n, data: '0x1234', context: reviewed }] as ProjectBatchCall[]
     const saved = { id: 'original-batch', scope: 'route-pending-payments:1:6', action: 'route-pending-payments', calls, account: mocks.address, completedIds: [], status: 'pending' } as unknown as ProjectBatch
     mocks.load.mockReturnValue(saved)
+    mocks.names = [{ chainId: 1, projectId: 6, version: 6, name: 'Saved source' }, { chainId: 1, projectId: 17, version: 6, name: 'Saved destination' }]
     await render()
+    expect(text(tree!.root.findByType('summary'))).toBe('Saved payment batch')
     await act(async () => button('Resume saved batch').props.onClick())
+    await mocks.namesFn!()
+    expect(mocks.projects).toHaveBeenCalledWith([{ chainId: 1, projectId: 6, version: 6 }, { chainId: 1, projectId: 17, version: 6 }])
+    expect(dialog().rows?.find(item => item.label === 'Source')?.value).toBe('Saved source')
+    expect(dialog().rows?.find(item => item.label === 'To')?.value).toBe('Saved destination')
     mocks.run.mockResolvedValue(saved)
     await act(async () => dialog().onConfirm())
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: 'route-pending-payments:1:6', action: 'route-pending-payments', expectedBatchId: 'original-batch', calls })

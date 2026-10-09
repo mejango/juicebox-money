@@ -720,3 +720,9 @@ The unchanged candidate artifact passes the reviewed caps; source invariants, sc
 - PendingPayments resumes its exact scope and batch ID after pending/error submission, including replacement of a draft; confirmation errors wrap hashes and expose an accessible alert.
 - Rebased onto current origin/main, preserving transactionMessage rendering and newer wallet-context regressions; installed the pinned SDK2.25.0 with a clean install.
 - Final Node26.7.0 verification:465 tests pass across eight affected component/data/transaction suites; full typecheck, changed-file ESLint and whitespace checks pass. Transaction inventory gate also passes. No real payments or contract changes were made.
+
+## Compact pending-payment retry UI — 2026-10-09
+- Implemented collapsed inventory, verified readable amounts, exact source/destination project names, concise Retry review/actions and canonical network-fee payment ABI decoding.
+- Shared loading text uses fixed-width CSS dots with original accessible text and reduced-motion support.
+- Verified: 473 tests in9 focused files, full types, changed-file lint, source invariants, transaction-boundary checks and whitespace checks. Chromium native-disclosure/loading-motion check also passes; canonical payment/recovery tests remain green.
+- Refinement and cross-client evidence: ../../tasks/todo.md, latest Both-client pending payment experience record. No contracts or real transactions changed.

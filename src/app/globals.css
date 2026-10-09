@@ -501,3 +501,25 @@
     transform: none;
   }
 }
+
+/* Fixed-width dots signal progress without shifting text or repeating announcements. */
+.loading-dots {
+  display: inline-block;
+  width: 3ch;
+  vertical-align: baseline;
+}
+.loading-dots::after {
+  display: inline-block;
+  width: 3ch;
+  content: "...";
+  animation: progress-dots 1.4s steps(1) infinite;
+}
+@keyframes progress-dots {
+  0% { clip-path: inset(0 100% 0 0); }
+  25% { clip-path: inset(0 66.666% 0 0); }
+  50% { clip-path: inset(0 33.333% 0 0); }
+  75%, 100% { clip-path: inset(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-dots::after { animation: none; }
+}
