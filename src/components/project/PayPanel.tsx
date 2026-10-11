@@ -32,6 +32,7 @@ import {
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
+import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
@@ -284,16 +285,7 @@ export function PayPanel({
 
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const inventory = useShop721(chainId, projectId, isRevnet);
-  // Protocol identity is independent of optional tier metadata and full shop reads.
-  const identity = useQuery({
-    queryKey: ['payNftProtocol', chainId, projectId, isRevnet],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () => getProjectNftInventory(publicClient!, {
-      chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
-    }),
-  });
+  const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
