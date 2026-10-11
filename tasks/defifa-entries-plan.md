@@ -18,3 +18,5 @@ The latest user instruction supersedes earlier Entries requests: curve informati
 
 ## Review checkpoint
 Independent source review approved the generic-only diff and 28 focused tests across six files. The phase owner matches all six real DefifaGamePhase enum values, unknown values remain unavailable, and native writer guards remain intact. Full local check has passed lint/types/source/deployment/schema/writer checks and unit coverage; optimized build/budget/browser gates and final hosted CI remain pending. No merge, deployment or transactions performed.
+
+Measured generic-only delivery: same pinned Node26.7/npm12 graph emits193chunks, baseline2618208→2618460B (+252B), removing5056B of consumer curve delivery. Restored2557KiB was92B too small; root approved aggregate-only2558KiB, reduced from2563, with all other gates unchanged.2937unit tests passed; final full check and exact-head hosted CI remain required. Final production proof is generic-only at /tmp/jbm-defifa-generic-production-proof.mjs and requires merged health SHA plus Railway SUCCESS, with no curve/API replay.

@@ -220,7 +220,11 @@ const budgets = {
   // and the browser-only proof route. Lazy SDK readers grew aggregate by 1.9 KiB
   // with no initial-route saving, so retain the existing static reader imports.
   // Round measured delivery cost; project/largest/style/lazy gates remain fixed.
-  allScripts: 2557 * KIB,
+  // Generic Defifa inventory and verified Flavor on matched Node26.7/npm12
+  // builds: baseline2618208 B ->2618460 B (+252 B), with193chunks each.
+  // Consumer curve code is removed (5056 B below its prior delivery).
+  // Round only this measured aggregate cost; every other gate is unchanged.
+  allScripts: 2558 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
