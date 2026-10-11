@@ -14,6 +14,6 @@ describe('verified project flavor', () => {
   })
   it('keeps unread identity unknown with retry rather than guessing native or ordinary flavor', () => {
     identity.result.isSuccess = false; identity.result.isError = true
-    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toContain('Unavailable · Retry')
+    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toContain('Unavailable. Retry')
   })
 })

@@ -8,6 +8,6 @@ export function ProjectFlavor({ chainId, projectId, isRevnet }: { chainId: JBCha
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet)
   if (isRevnet) return <>Revnet</>
   if (identity.isSuccess) return <>{identity.data?.protocol === 'defifa' ? 'Defifa' : 'Project'}</>
-  if (identity.isError) return <button type="button" className="underline" onClick={() => void identity.refetch()}>Unavailable · Retry</button>
+  if (identity.isError) return <button type="button" className="underline" onClick={() => void identity.refetch()}>Unavailable. Retry</button>
   return <span role="status">Checking…</span>
 }

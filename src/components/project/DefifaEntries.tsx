@@ -50,7 +50,7 @@ function Entry({ entry, context, page }: { entry: MetalogEntry; context: EntryCo
   const explorer = `https://${explorerHostname(context.chainId)}`
   const recognized = entry.status === 'verified-curve' || entry.status === 'verified-manual'
   return <details className="border-t border-smoke-200 py-3">
-    <summary className="cursor-pointer font-medium">{utc(entry.timestamp)} · {short(entry.account)} · {entry.stakeWei === null ? 'Stake unavailable' : `${formatEther(BigInt(entry.stakeWei))} ETH`} · {entry.status === 'verified-curve' ? 'Curve entry' : entry.status === 'verified-manual' ? 'By range entry' : 'Curve unavailable'}</summary>
+    <summary className="cursor-pointer font-medium">{utc(entry.timestamp)} | {short(entry.account)} | {entry.stakeWei === null ? 'Stake unavailable' : `${formatEther(BigInt(entry.stakeWei))} ETH`} | {entry.status === 'verified-curve' ? 'Curve entry' : entry.status === 'verified-manual' ? 'By range entry' : 'Curve unavailable'}</summary>
     <div className="mt-4 space-y-4">
       <div className="flex flex-wrap gap-3"><a className="underline" href={`${explorer}/tx/${entry.transactionHash}`} target="_blank" rel="noreferrer">View mint receipt</a><button className="underline" type="button" onClick={() => download({ ...page, exportScope: 'single-entry', entries: [entry] }, `metalog-entry-${entry.transactionHash}.json`)}>Download entry JSON</button></div>
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
@@ -79,5 +79,5 @@ function EntryChartView({ chart, reference }: { chart: EntryChart; reference: bo
     <polyline points={points} fill="none" stroke="currentColor" strokeWidth="2" className="text-bluebs-600" />
     <path d="M40 190H660" stroke="currentColor" className="text-smoke-300" />
     {[chart.low, chart.low + (chart.high - chart.low) / 2, chart.high].map((value, i) => <text key={i} x={x(value)} y="215" textAnchor={i === 0 ? 'start' : i === 2 ? 'end' : 'middle'} fontSize="12" fill="currentColor">{Number(value.toPrecision(5))}%</text>)}
-  </svg><figcaption className="text-smoke-600">{reference ? 'Reference curve' : 'Submitted curve'} · Bars show actual minted position density. Outer ranges are listed below.</figcaption></figure>
+  </svg><figcaption className="text-smoke-600">{reference ? 'Reference curve' : 'Submitted curve'}. Bars show actual minted position density. Outer ranges are listed below.</figcaption></figure>
 }

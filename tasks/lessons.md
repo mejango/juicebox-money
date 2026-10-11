@@ -51,3 +51,6 @@ During automatic Safe checks and quote preparation, show one passive progress in
 - User reported that a batch showing confirmation uncertainty succeeded and registered on continuation, then requested the equivalent Juicebox Money check.
 - Keep typed submitted-payment errors bound to their exact durably saved hash/chain; continue canonical reconciliation without another payment. Hashless, mismatched and unavailable proof remain pending. Foreground recovery must use the exact submitted scope/ID, including after replacing a draft.
 - Gates: raw lifecycle regressions enforce one wallet payment and canonical funding/destination proof; PendingPayments tests enforce exact recovery identity, while modal error checks preserve readable full hashes.
+
+## 2026-10-11 — Native market copy uses ordinary punctuation
+The user rejected middot separators in the new native market views. Use ordinary punctuation in summaries, captions and retry copy. The actual native Entries browser view now asserts that no middot is displayed; preserve snapshot/receipt evidence instead of removing audit details with decorative copy.

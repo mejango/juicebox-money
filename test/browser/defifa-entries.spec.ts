@@ -42,6 +42,7 @@ for (const width of [390, 1280]) {
     await expect(entries.getByRole('img', { name: 'Reference curve and actual minted position density', exact: true })).toBeVisible()
     await entries.locator('details > summary').filter({ hasText: /Curve unavailable/ }).click()
     await expect(entries).toContainText('Stake unavailable'); await expect(entries).toContainText('No supported curve memo.')
+    await expect(surface).not.toContainText('·')
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true)
     await page.screenshot({ path: `test-results/defifa-entries-${width}.png`, fullPage: true })
     await entries.getByRole('button', { name: 'Load older entries', exact: true }).click()
