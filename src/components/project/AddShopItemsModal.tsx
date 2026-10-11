@@ -1,5 +1,7 @@
 'use client'
 
+import { SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
+
 import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -113,7 +115,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       setPhase('writing')
       const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
       setBatch(result)
-      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
+      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: SHOP_721_QUERY_PREFIX }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
       setPhase(result.status === 'complete' ? 'done' : 'failed')
       setMessage(result.status === 'complete' ? 'Items added on every reviewed chain.' : 'This update is saved. Continue to check its original transactions and any unfinished chains.')
     } catch (error) {

@@ -2025,6 +2025,7 @@ export async function getOperatorGrants(
  */
 export async function getProjectsByRefs(
   refs: VersionedProjectRef[],
+  { signal }: { signal?: AbortSignal } = {},
 ): Promise<BsProject[]> {
   const wheres = projectRefsWheres(refs)
   if (!wheres.length) return []
@@ -2033,7 +2034,7 @@ export async function getProjectsByRefs(
       bendystraw<{ projects: { items: BsProject[] } }>(
         PROJECTS_BY_FILTER_QUERY,
         { where, limit: 200 },
-        { policy: 'stable' },
+        { policy: 'stable', signal },
       ),
     ),
   )

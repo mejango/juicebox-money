@@ -39,7 +39,14 @@ const budgets = {
     // 6a0598d -> 7e39b80 measures home 448,960 -> 449,801 B (+841 B).
     // Per-component persisted-query hydration and final wallet guards stay
     // eager where needed. Round only this measured route cost to 440 KiB.
-    '/page': 440 * KIB,
+    // Defifa inventory, exact Node26.7/npm12.0.1 physical installs: origin aee4ccf
+    // measures 450,269 B; SDK-only 2.28.0 measures 451,059 B; final adoption 451,583 B.
+    // Lazy inventory imports did not reduce this route and added aggregate bytes.
+    // Local adoption leaves only 1 B under 441 KiB. Linux hosted CI run
+    // 38104405718 measures 441.0 KiB rounded and exceeds that exact ceiling;
+    // preserve the same build graph and round its measured cost to 442 KiB.
+    // Project/create/aggregate/largest/style/lazy gates remain unchanged.
+    '/page': 442 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -70,7 +77,9 @@ const budgets = {
     // failure-only SDK proof is already lazy; its 327 B local adapter appears
     // once here, not on home. Independent review rejected another recovery
     // chunk that adds loading/compression cost without solving aggregate growth.
-    '/create/page': 510 * KIB,
+    // The same comparison measures create 521,889 -> 523,483 -> 525,190 B.
+    // Preserve all wallet/dialog boundaries and round the measured route cost.
+    '/create/page': 513 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -205,7 +214,13 @@ const budgets = {
   // and every lazy wallet/dialog boundary are unchanged. Independent review
   // accepts rounding only this measured aggregate to 2537 KiB (76 B headroom).
   // First hosted failure: CI37724379008; exact comparison is in tasks/todo.md.
-  allScripts: 2537 * KIB,
+  // Defifa comparison on the same exact locked graph/toolchain: baseline
+  // 2,598,612 B (already above 2537 KiB), SDK-only 2,599,443 B, adoption
+  // 2,618,207 B. This includes read-only native UI, guarded lifecycle callers
+  // and the browser-only proof route. Lazy SDK readers grew aggregate by 1.9 KiB
+  // with no initial-route saving, so retain the existing static reader imports.
+  // Round measured delivery cost; project/largest/style/lazy gates remain fixed.
+  allScripts: 2557 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

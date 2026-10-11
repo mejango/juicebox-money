@@ -5,6 +5,7 @@ import {
   getAccountActivity,
   getPermissionHoldersAcrossDeployments,
   getProject,
+  getProjectsByRefs,
   getProjectActivity,
   getProjectActivityByProject,
   getProjectPayers,
@@ -90,6 +91,7 @@ describe("a Bendystraw read's signal", () => {
   const ACCOUNT = '0x1111111111111111111111111111111111111111' as const
   const POOL = `0x${'ab'.repeat(32)}`
   const readers: [string, (signal: AbortSignal) => Promise<unknown>][] = [
+    ['@/lib/bendystraw#getProjectsByRefs', signal => getProjectsByRefs([{ chainId: 8453, projectId: 11, version: 6 }], { signal })],
     ['@/lib/bendystraw#getProject', signal => getProject(8453, 11, { signal })],
     ['@/lib/bendystraw#getSuckerGroupProjects', signal => getSuckerGroupProjects('group', 8453, { signal })],
     ['@/lib/bendystraw#getProjectActivity', signal => getProjectActivity('group', 20, 8453, 0, { signal })],

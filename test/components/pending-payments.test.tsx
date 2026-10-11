@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   queryFn: null as ((context: { signal: AbortSignal }) => Promise<ReviewedPayment['payment'][]>) | null,
   /** The inventory query's own, which react-query aborts once no page shows it. */
   query: new AbortController(),
-  names: [] as { chainId: number; projectId: number; version: number; name: string | null }[], namesFn: null as (() => Promise<unknown>) | null, projects: vi.fn(),
+  names: [] as { chainId: number; projectId: number; version: number; name: string | null }[], namesFn: null as ((context: { signal: AbortSignal }) => Promise<unknown>) | null, projects: vi.fn(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
   recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), loadExact: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
@@ -225,11 +225,11 @@ describe('pending payment review above activity', () => {
     ]
     await render()
     expect(text(tree!.root)).toContain('To Destination on Ethereum')
-    await mocks.namesFn!()
+    await mocks.namesFn!({ signal: new AbortController().signal })
     expect(mocks.projects).toHaveBeenCalledWith([
       { chainId: 1, projectId: 6, version: 6 }, { chainId: 1, projectId: 17, version: 6 },
       { chainId: 10, projectId: 6, version: 6 }, { chainId: 10, projectId: 42, version: 6 },
-    ])
+    ], { signal: expect.any(AbortSignal) })
     await act(async () => button('Retry').props.onClick())
     expect(dialog().rows?.filter(item => item.label === 'Source').map(item => item.value)).toEqual(['Source', 'Project 6'])
     expect(dialog().rows?.filter(item => item.label === 'To').map(item => item.value)).toEqual(['Destination', 'Other destination'])
@@ -452,8 +452,8 @@ describe('pending payment review above activity', () => {
     await render()
     expect(text(tree!.root.findByType('summary'))).toBe('Saved payment batch')
     await act(async () => button('Resume saved batch').props.onClick())
-    await mocks.namesFn!()
-    expect(mocks.projects).toHaveBeenCalledWith([{ chainId: 1, projectId: 6, version: 6 }, { chainId: 1, projectId: 17, version: 6 }])
+    await mocks.namesFn!({ signal: new AbortController().signal })
+    expect(mocks.projects).toHaveBeenCalledWith([{ chainId: 1, projectId: 6, version: 6 }, { chainId: 1, projectId: 17, version: 6 }], { signal: expect.any(AbortSignal) })
     expect(dialog().rows?.find(item => item.label === 'Source')?.value).toBe('Saved source')
     expect(dialog().rows?.find(item => item.label === 'To')?.value).toBe('Saved destination')
     mocks.run.mockResolvedValue(saved)

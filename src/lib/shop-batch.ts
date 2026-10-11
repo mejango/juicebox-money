@@ -1,5 +1,5 @@
 import { bytes32ToCidV0, jb721TiersHookAbi, jb721TiersHookStoreAbi, type JBChainId } from '@bananapus/nana-sdk-core'
-import { getProject721Shop, hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
+import { getProjectNftInventory, hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { clientFor } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -75,7 +75,8 @@ export async function readShopTier(client: PublicClient, hook: Address, tierId: 
 export async function readShopSnapshot(target: ShopWriteTarget, account: Address, isRevnet: boolean, action: ShopAction, tierId?: number): Promise<ShopSnapshot> {
   if (!target.hook || !target.pricing || target.error) throw new Error(`${chainName(target.chainId)} shop is unavailable.`)
   const client = clientFor(target.chainId)
-  const shop = await getProject721Shop(client, { chainId: target.chainId, projectId: BigInt(target.projectId), isRevnet, tierLimit: 0 })
+  const shop = await getProjectNftInventory(client, { chainId: target.chainId, projectId: BigInt(target.projectId), isRevnet, tierLimit: 1 })
+  if (shop?.protocol === 'defifa') throw new Error('Manage this market in Metalog.')
   if (!shop || shop.hook.toLowerCase() !== target.hook.toLowerCase()) throw new Error(`The shop on ${chainName(target.chainId)} changed. Reopen it and review again.`)
   if (shop.pricing.currency !== target.pricing.currency || shop.pricing.decimals !== target.pricing.decimals) throw new Error(`Shop pricing changed on ${chainName(target.chainId)}. Review again.`)
   const [owner, projectId] = await Promise.all([

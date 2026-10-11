@@ -68,6 +68,11 @@ type Allowed = { file: string; key: string; reason: string }
 /** Persisted queries that the scan may not pass, and are safe: the file, the key as the scan reports it, and why. */
 const ALLOWED: Allowed[] = [
   {
+    file: 'src/hooks/useShop721.ts',
+    key: 'shop721QueryKey(chainId, projectId, isRevnet)',
+    reason: 'The owned versioned shop key accepts only public chain/project identity and protocol family, never wallet identity.',
+  },
+  {
     file: 'src/components/project/OwnersTab.tsx',
     key: "[...projectDisplayKey({ chainId, projectId: BigInt(projectId) }, 'splitStages')]",
     reason: 'The shared display key accepts only protocol, chain and public project identity; stage display has no account input.',

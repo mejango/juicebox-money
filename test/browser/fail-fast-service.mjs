@@ -548,6 +548,19 @@ const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
 
 const graphqlFixtures = [
   {
+    name: 'pendingPaymentProjectNames',
+    query: `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
+      projects(where: $where, orderBy: "volume", orderDirection: "desc", limit: $limit) {
+        items { ${projectFields} }
+      }
+    }`,
+    variables: { where: { OR: [
+      { AND: [{ chainId: 1 }, { projectId: 6 }, { version: 6 }] },
+      { AND: [{ chainId: 1 }, { projectId: 1 }, { version: 6 }] },
+    ] }, limit: 200 },
+    data: { projects: { items: [project, { ...project, projectId: 6, name: 'Source Project' }] } },
+  },
+  {
     name: 'pendingPayments',
     query: `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
       routerPendingCalls(
@@ -1107,12 +1120,11 @@ function handleRpcCall(payload, chainId) {
   }
 
   const callTarget = typeof params?.[0]?.to === 'string' ? params[0].to.toLowerCase() : ''
-  const isEnsRegistry = chainId === CHAIN_ID && callTarget === ENS_REGISTRY
   const isEnsResolver = chainId === CHAIN_ID && callTarget === ENS_RESOLVER
   if (
     !Array.isArray(params) ||
     params.length !== 2 ||
-    (params[1] !== 'latest' && !((isEnsRegistry || isEnsResolver) && params[1] === FIXTURE_BLOCK)) ||
+    (params[1] !== 'latest' && params[1] !== FIXTURE_BLOCK) ||
     !Object.keys(params[0]).every(key => ['to', 'data', 'gas', ...(isEnsResolver ? ['from'] : [])].includes(key)) ||
     typeof params[0].to !== 'string' ||
     !/^0x[0-9a-f]{40}$/i.test(params[0].to) ||

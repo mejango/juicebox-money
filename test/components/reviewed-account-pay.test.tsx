@@ -79,6 +79,12 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
     useQueryClient: () => displayQueries,
   useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => query(String(queryKey[0] === 'projectDisplay' ? queryKey[4] : queryKey[0])),
 }))
+vi.mock('@/hooks/useShop721', () => ({
+  useShop721: () => ({ data: null, isSuccess: true, ...m.queries.nativeInventory as object }),
+}))
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
+  ...await original(), getProjectNftInventory: vi.fn(async () => null),
+}))
 vi.mock('@/hooks/useProjectTokenSymbol', () => ({
   useProjectTokenSymbol: () => ({ data: { symbol: 'TKN' } }),
 }))
@@ -132,6 +138,8 @@ const contextFor = (token: 'native' | 'erc20') =>
 function query(key: string) {
   if (key in m.queries) return m.queries[key]
   switch (key) {
+    case 'payNftProtocol':
+      return { data: null, isSuccess: true, isError: false, refetch: vi.fn() }
     case 'paySurface':
       return {
         data: { contexts: [contextFor(m.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
@@ -435,5 +443,56 @@ describe('a payment from a Safe', () => {
       { functionName: 'approve', account: ALICE },
       { functionName: 'approve', account: ALICE },
     ])
+  })
+})
+
+
+describe('native market payment guard', () => {
+  it('allows ordinary payment after verified identity even when cosmetic full-shop reads fail', async () => {
+    m.queries.nativeInventory = { data: null, isSuccess: false, isError: true }
+    m.queries.payShop = { data: null, isError: true }
+    m.queries.payNftProtocol = { data: { protocol: 'jb721' }, isSuccess: true }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+  })
+
+  it('blocks payment when protocol identity cannot be verified', async () => {
+    m.queries.payNftProtocol = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.textContent).toContain('Could not verify')
+    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+  })
+
+  it('keeps native payment blocked if full inventory fails', async () => {
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.textContent).toContain('Could not read market positions')
+    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+  })
+
+  it('refuses a stale generic inventory when identity proves a native market', async () => {
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: { protocol: 'jb721' }, isSuccess: true, refetch: vi.fn() }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.textContent).toContain('Could not read market positions')
+    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+  })
+
+  it('shows native inventory instead of generic payment or cart controls', async () => {
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: {
+      protocol: 'defifa', hook: TERMINAL, capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
+      pricing: { currency: 1, decimals: 6, symbol: 'USDC' },
+      tiers: [{ id: 1, name: 'Crab', price: 1250000n, currentSupply: 7n }],
+    } }
+    await act(async () => {
+      root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />)
+    })
+    expect(host.textContent).toContain('Crab')
+    expect(host.textContent).toContain('1.25 USDC')
+    expect(host.querySelector('a')?.getAttribute('href')).toBe('https://metalog.money/markets/1/42')
+    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+    expect(host.querySelector('button')).toBeNull()
   })
 })

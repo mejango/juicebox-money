@@ -13,7 +13,7 @@ import {
   getAccountingContexts,
   getAllRulesets,
   getCurrentRuleset,
-  getProject721Shop,
+  getProjectNftInventory,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 import type { Shop, ShopTier, TierMedia } from '@/hooks/useShop721'
@@ -75,11 +75,11 @@ export async function readShop(
   nativeSymbol: string,
 ): Promise<Shop | null> {
   const [identity, current, allRulesets] = await Promise.all([
-    getProject721Shop(client, {
+    getProjectNftInventory(client, {
       chainId,
       projectId: BigInt(projectId),
       isRevnet,
-      tierLimit: 0,
+      tierLimit: 100,
     }),
     getCurrentRuleset(client, {
       chainId,
@@ -98,6 +98,49 @@ export async function readShop(
   ])
   if (!identity) return null
   const resolved = identity
+  if (resolved.protocol === 'defifa') {
+    const tiers = [...resolved.tiers]
+    const seen = new Set(tiers.map(tier => tier.id))
+    const cursors = new Set<bigint>()
+    let cursor = resolved.nextStartingId
+    while (cursor !== null) {
+      if (cursors.has(cursor) || cursors.size >= 100) {
+        throw new Error('The market returned an invalid inventory cursor.')
+      }
+      cursors.add(cursor)
+      const page = await getProjectNftInventory(client, {
+        chainId, projectId: BigInt(projectId), isRevnet,
+        blockNumber: resolved.blockNumber, startingId: cursor, tierLimit: 100,
+      })
+      if (!page || page.protocol !== 'defifa' || page.hook !== resolved.hook) {
+        throw new Error('The market inventory changed while loading.')
+      }
+      for (const tier of page.tiers) {
+        if (seen.has(tier.id)) throw new Error('The market repeated a range while loading.')
+        seen.add(tier.id)
+        tiers.push(tier)
+      }
+      cursor = page.nextStartingId
+    }
+    return {
+      protocol: 'defifa', capabilities: resolved.capabilities,
+      hook: resolved.hook, phase: resolved.phase,
+      cashOutEnabled: false, transfersPaused: null,
+      transferPauseByStage: null, configFlags: null,
+      pricing: {
+        currency: resolved.pricing.currency, decimals: resolved.pricing.decimals,
+        symbol: await tokenSymbol(client, resolved.pricing.token, { chainId }),
+      },
+      tiers: tiers.map(tier => ({
+        id: tier.id, name: tier.name, currentSupply: tier.currentSupply,
+        price: tier.price, remaining: tier.remainingSupply, initial: tier.initialSupply,
+        category: tier.category, discountPercent: tier.discountPercent,
+        reserveFrequency: tier.reserveFrequency, votingUnits: tier.votingUnits,
+        splitPercent: 0, encodedIpfsUri: tier.encodedIpfsUri,
+        resolvedUri: '',
+      })),
+    }
+  }
   const rawTiers = await readAllActiveTiers(
     client,
     resolved.store,
@@ -202,6 +245,8 @@ export async function readShop(
   }))
 
   return {
+    protocol: resolved.protocol,
+    capabilities: resolved.capabilities,
     hook: resolved.hook,
     idTarget,
     cashOutEnabled,
@@ -240,6 +285,7 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
     }
   }
 
+  if (tier.name !== undefined) return { name: tier.name }
   const resolved = tier.resolvedUri
     ? parseTierMetadataJson(tier.resolvedUri)
     : null

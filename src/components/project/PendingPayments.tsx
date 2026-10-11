@@ -98,7 +98,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     queryKey: ['pendingPaymentProjectNames', projectRefs],
     enabled: hydrated && !!projectRefs.length,
     staleTime: 60_000, retry: 1,
-    queryFn: async () => fillIndexedMetadata(await getProjectsByRefs(projectRefs)),
+    queryFn: async ({ signal }) => fillIndexedMetadata(await getProjectsByRefs(projectRefs, { signal })),
   })
   const projectLabel = (payment: ReviewedPayment['payment'], id: number) =>
     projectNames.data?.find(project => project.chainId === payment.chainId && project.projectId === id && project.version === payment.version)?.name?.trim() || `Project ${id}`
