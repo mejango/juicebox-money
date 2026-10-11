@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { ProjectFlavor } from '@/components/project/ProjectFlavor'
 import { PayPanel } from '@/components/project/PayPanel'
 import { ShopTab } from '@/components/project/ShopTab'
 import { ShopCartProvider } from '@/components/project/ShopCartProvider'
@@ -18,8 +19,8 @@ export default function DefifaInventoryProof() {
       cashOutEnabled: false, transfersPaused: null, transferPauseByStage: null,
       configFlags: null, phase: 4,
       pricing: { currency: 1, decimals: 6, symbol: 'USDC' },
-      tiers: ['Rekt', 'FUD', 'Copium', 'Crab', 'Hopium', 'FOMO', 'Moon'].map((name, index) => ({
-        id: index + 1, name, currentSupply: BigInt(index), price: 1250000n,
+      tiers: ['Home team', 'Away team', 'Draw', 'Blue team', 'Red team', 'Green team', 'Gold team'].map((name, index) => ({
+        id: index + 1, name, currentSupply: BigInt(index), price: index % 2 === 0 ? 1250000n : 2750000n,
         remaining: 100, initial: 100, category: 0, discountPercent: 0,
         reserveFrequency: 0, votingUnits: 0n, splitPercent: 0,
         encodedIpfsUri: `0x${'0'.repeat(64)}`, resolvedUri: '',
@@ -30,7 +31,8 @@ export default function DefifaInventoryProof() {
     setReady(true)
   }, [client])
   return <main className="mx-auto max-w-4xl space-y-6 px-4 py-8" data-defifa-ready={ready}>
-    <h1 className="font-agrandir text-2xl">Native market inventory</h1>
+    <h1 className="font-agrandir text-2xl">Defifa NFT inventory</h1>
+    {ready && <p>Flavor: <ProjectFlavor chainId={1} projectId={1} isRevnet={false} /></p>}
     {ready ? <ShopCartProvider>
       <section aria-label="Payment surface"><PayPanel chainId={1} projectId={1} projectName="Fixture" isRevnet={false} chains={[[1, 1]]} /></section>
       <section aria-label="NFT inventory"><ShopTab chainId={1} projectId={1} isRevnet={false} chains={[[1, 1]]} /></section>

@@ -14,6 +14,7 @@ vi.mock('@/components/ProjectLogoWithFallback', () => ({ ProjectLogoWithFallback
 vi.mock('@/components/ProjectLink', () => ({ ProjectLink: () => null }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
+vi.mock('@/hooks/useProjectNftProtocol', () => ({ useProjectNftProtocol: () => ({ isSuccess: true, data: null }) }))
 vi.mock('@/components/project/ProjectStats', () => ({ ProjectStats: () => null }))
 
 import { ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice, ProjectHeader } from '@/app/[urn]/ProjectMetadataSections'

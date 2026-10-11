@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 for (const width of [390, 1280]) {
-  test(`native market inventory is read-only on payment and NFT surfaces at ${width}px`, async ({ page, context }) => {
+  test(`Defifa NFT tier inventory is read-only on payment and NFT surfaces at ${width}px`, async ({ page, context }) => {
     await page.setViewportSize({ width, height: 900 })
     await context.route(/^https?:\/\//, async route => {
       const url = new URL(route.request().url())
@@ -9,21 +9,36 @@ for (const width of [390, 1280]) {
       await route.fulfill({ status: 503, body: '{}' })
     })
     const errors: string[] = []
+    const curveRequests: string[] = []
+    page.on('request', request => { if (request.url().startsWith('https://metalog.money/')) curveRequests.push(request.url()) })
     page.on('pageerror', error => errors.push(error.message))
     await page.goto('/defifa-inventory-proof')
     await expect(page.locator('[data-defifa-ready="true"]')).toBeVisible()
     for (const name of ['Payment surface', 'NFT inventory']) {
       const surface = page.getByRole('region', { name, exact: true })
       await expect(surface.getByRole('row')).toHaveCount(8)
-      await expect(surface).toContainText('Crab')
+      await expect(surface).toContainText('Home team')
+      await expect(surface).toContainText('Away team')
+      await expect(surface).toContainText('2.75 USDC')
+      await expect(surface).toContainText('Protocol phase: Complete')
       await expect(surface).toContainText('1.25 USDC')
-      await expect(surface.getByRole('link', { name: 'Open in Metalog →' })).toHaveAttribute('href', 'https://metalog.money/markets/1/1')
+      await expect(surface.locator('a[href^="https://metalog.money"]')).toHaveCount(0)
+      await expect(surface.getByRole('columnheader', { name: 'Tier', exact: true })).toBeVisible()
+      await expect(surface.getByRole('columnheader', { name: 'Name', exact: true })).toBeVisible()
+      await expect(surface.getByRole('columnheader', { name: 'Current supply', exact: true })).toBeVisible()
+      await expect(surface.getByRole('columnheader', { name: 'Price', exact: true })).toBeVisible()
+      await expect(surface).not.toContainText('Metalog')
+      await expect(surface.getByRole('tab')).toHaveCount(0)
+      await expect(surface.getByRole('img')).toHaveCount(0)
+      await expect(surface).not.toContainText('curve')
+      await expect(surface).not.toContainText('·')
       await expect(surface.getByRole('button')).toHaveCount(0)
       await expect(surface.getByRole('spinbutton')).toHaveCount(0)
       await expect(surface).not.toContainText('Unlimited')
     }
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     expect(errors).toEqual([])
+    expect(curveRequests).toEqual([])
     await page.screenshot({ path: `test-results/defifa-inventory-${width}.png`, fullPage: true })
   })
 }

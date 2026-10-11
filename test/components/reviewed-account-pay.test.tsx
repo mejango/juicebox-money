@@ -467,7 +467,7 @@ describe('native market payment guard', () => {
     m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
     m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
     await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />) })
-    expect(host.textContent).toContain('Could not read market positions')
+    expect(host.textContent).toContain('Could not read Defifa NFT tiers')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
   })
 
@@ -475,7 +475,7 @@ describe('native market payment guard', () => {
     m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
     m.queries.nativeInventory = { data: { protocol: 'jb721' }, isSuccess: true, refetch: vi.fn() }
     await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />) })
-    expect(host.textContent).toContain('Could not read market positions')
+    expect(host.textContent).toContain('Could not read Defifa NFT tiers')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
   })
 
@@ -491,7 +491,8 @@ describe('native market payment guard', () => {
     })
     expect(host.textContent).toContain('Crab')
     expect(host.textContent).toContain('1.25 USDC')
-    expect(host.querySelector('a')?.getAttribute('href')).toBe('https://metalog.money/markets/1/42')
+    expect(host.querySelector('a[href^="https://metalog.money"]')).toBeNull()
+    expect(host.textContent).toContain('Defifa NFT tiers')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
     expect(host.querySelector('button')).toBeNull()
   })

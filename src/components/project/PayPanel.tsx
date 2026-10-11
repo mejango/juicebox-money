@@ -32,6 +32,7 @@ import {
   uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
+import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
@@ -284,16 +285,7 @@ export function PayPanel({
 
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const inventory = useShop721(chainId, projectId, isRevnet);
-  // Protocol identity is independent of optional tier metadata and full shop reads.
-  const identity = useQuery({
-    queryKey: ['payNftProtocol', chainId, projectId, isRevnet],
-    enabled: !!publicClient,
-    staleTime: 60_000,
-    retry: 1,
-    queryFn: () => getProjectNftInventory(publicClient!, {
-      chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
-    }),
-  });
+  const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
@@ -1548,7 +1540,7 @@ export function PayPanel({
         chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
       });
       if (liveInventory?.protocol === 'defifa') {
-        throw new Error('This market uses native entries in Metalog.');
+        throw new Error('Defifa payments are not supported by this form.');
       }
       const tokenApproval = actionOf("token-approval");
       if (tokenApproval?.kind === "token-approval") {
@@ -1807,13 +1799,13 @@ export function PayPanel({
   }
 
   if (nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <DefifaInventory chainId={chainId} projectId={projectId} shop={inventory.data} />;
+    return <DefifaInventory shop={inventory.data} />;
   }
   if (!identity.isSuccess || nativeMarket) {
     const pending = nativeMarket ? inventory : identity;
     const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
     return <div className="space-y-2 text-sm text-smoke-600">
-      <p>{failed ? (nativeMarket ? 'Could not read market positions.' : 'Could not verify this project’s NFT protocol.') : 'Checking market positions…'}</p>
+      <p>{failed ? (nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.') : (nativeMarket ? 'Checking Defifa NFT tiers…' : 'Checking this project’s NFT protocol…')}</p>
       {failed ? <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button> : null}
     </div>;
   }
