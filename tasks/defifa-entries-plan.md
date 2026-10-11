@@ -1,22 +1,20 @@
-# Defifa entries and verified flavor
+# Generic Defifa NFT inventory and verified flavor
 
 ## Plan refinement
-- **Objective:** Display original Defifa entries and native Flavor in Juicebox Money, preserving generic project behavior and read-only native inventory.
-- **System fit:** SDK owns protocol identity; Metalog's bounded public API owns canonical receipt verification and chart data; Juicebox Money validates binding and displays it, without contract writers or reconstructed probabilities.
-- **Reuse and simplicity:** Extract the existing PayPanel bounded identity query unchanged for header reuse; retain inventory card and native disclosure controls, installed React Query, existing explorer/download formatting, and lazy loading.
-- **Evidence and unknowns:** Current main 9a3ffc2 contains verified native inventory; API Metalog schema is adding public GET CORS. Bind chain/project/hook and original pagination snapshot, reject malformed/bounded responses, and show unavailable evidence explicitly.
-- **Verification:** Run parser identity/bounds/chart/status/pagination regression tests, actual UI recovery/download checks, desktop/mobile fixture browser tests, full pinned npm check and hosted CI; public API/live verification awaits API deployment.
-- **Resource budget:** One API parser, one lazy read-only entry component, one shared protocol identity hook; <=8 receipts/61 ranges/600 chart samples, preserve existing SDK dependencies, and measure client budgets rather than broaden gates speculatively.
+- **Objective:** Show verified Defifa Flavor and generic native NFT tier inventory in Juicebox Money. Curve information remains exclusively in Metalog.
+- **System fit:** SDK identity proves the Defifa protocol family, not application identity. Existing Center-backed SDK reads own tier names, per-tier prices, current supply and phase. No Metalog API, automatic application links or curve evidence belongs in this consumer.
+- **Reuse and simplicity:** Reuse the existing bounded payment protocol query for both header flavors, and the native read-only inventory component for payment and Shop. Remove the obsolete lazy Entries view, its API/parser and dedicated fixtures/tests entirely.
+- **Evidence and unknowns:** Installed SDK2.28 verifies native Defifa inventory. Unknown protocol or inventory reads remain unavailable with retry; generic pay/cash-out/management guards remain intact. Nonnumeric tier names and mixed prices exercise app-independent inventory.
+- **Verification:** Run generic inventory/payment regressions, desktop/mobile no-curve/no-Metalog-link browser assertions, full pinned npm check and exact-head hosted CI before root merge/deployment.
+- **Resource budget:** No new dependencies, readers or chart/math ownership. Keep existing route/largest/style/lazy budgets and measure reduced aggregate delivery after removing consumer curve code.
 
-- [x] Extract bounded SDK identity query without behavior change.
-- [x] Add verified native Flavor and lazy native Entries view.
-- [x] Validate bound public API, snapshot continuation and unavailable states.
-- [ ] Run focused/full/browser/budget gates and prepare PR, without merging.
+- [x] Reuse bounded SDK identity query without changing payment guards.
+- [x] Remove consumer curve views and automatic Metalog navigation; show generic NFT tiers/phase.
+- [ ] Verify generic names/mixed prices and absent curve/API/links in actual consumers.
+- [ ] Complete full local and hosted checks and prepare final PR without merging.
+
+## Authority and recovery
+The latest user instruction supersedes earlier Entries requests: curve information belongs only in Metalog. Parent root owns final merge/publication; no contract changes, wallet connections or transactions are performed here. Preserve existing read-only native guards and Center access. Earlier release heads remained unmerged; branch changes remain reviewable in PR121.
 
 ## Review checkpoint
-Shared identity extraction committed separately as 875a623 with 13 payment-guard tests passing. Native Flavor and Entries retain API ownership of receipt verification and chart math. Center-backed installed SDK2.28 independently verifies Base27 native hook, and binds the public block52459661 snapshot with its original verified100-NFT receipt and600 chart samples. Full lint/type/protocol/schema/writer gates passed; final coverage/build/budget/browser/hosted CI remain pending. No merge, deployment, wallet connection or transaction performed.
-
-Measured delivery evidence: exact Node26.7/npm12 browser builds emit193chunks, aggregate2618208→2623516B (+5308B). Entries validator/chart/export is lazy; home441.0/create512.5/project168.6KiB and largest/style/lazy gates pass. Reviewed aggregate-only ceiling2563KiB; all other limits unchanged.218files/2940unit tests pass. First separate browser run67/70 passes; three desktop cases timed out in context teardown across laptop closure, with no assertion failure. Fresh full check and hosted CI still required.
-
-## Copy correction refinement
-The user requested ordinary punctuation instead of middots. Replace only new native Entries summary/caption and Flavor retry separators; no analogous native inventory block caption exists here. Preserve receipt snapshots and JSON audit context. Add the no-middot assertion to the existing desktop/mobile Entries browser gate, rerun full pinned checks and exact-head hosted CI, and keep merge/deployment with root. Previous d2ffc68 passed all local and hosted gates before this correction.
+Independent source review approved the generic-only diff and 28 focused tests across six files. The phase owner matches all six real DefifaGamePhase enum values, unknown values remain unavailable, and native writer guards remain intact. Full local check has passed lint/types/source/deployment/schema/writer checks and unit coverage; optimized build/budget/browser gates and final hosted CI remain pending. No merge, deployment or transactions performed.

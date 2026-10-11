@@ -1540,7 +1540,7 @@ export function PayPanel({
         chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
       });
       if (liveInventory?.protocol === 'defifa') {
-        throw new Error('This market uses native entries in Metalog.');
+        throw new Error('Defifa payments are not supported by this form.');
       }
       const tokenApproval = actionOf("token-approval");
       if (tokenApproval?.kind === "token-approval") {
@@ -1799,13 +1799,13 @@ export function PayPanel({
   }
 
   if (nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <DefifaInventory chainId={chainId} projectId={projectId} shop={inventory.data} />;
+    return <DefifaInventory shop={inventory.data} />;
   }
   if (!identity.isSuccess || nativeMarket) {
     const pending = nativeMarket ? inventory : identity;
     const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
     return <div className="space-y-2 text-sm text-smoke-600">
-      <p>{failed ? (nativeMarket ? 'Could not read market positions.' : 'Could not verify this project’s NFT protocol.') : 'Checking market positions…'}</p>
+      <p>{failed ? (nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.') : (nativeMarket ? 'Checking Defifa NFT tiers…' : 'Checking this project’s NFT protocol…')}</p>
       {failed ? <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button> : null}
     </div>;
   }

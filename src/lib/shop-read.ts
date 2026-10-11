@@ -105,7 +105,7 @@ export async function readShop(
     let cursor = resolved.nextStartingId
     while (cursor !== null) {
       if (cursors.has(cursor) || cursors.size >= 100) {
-        throw new Error('The market returned an invalid inventory cursor.')
+        throw new Error('The Defifa inventory returned an invalid inventory cursor.')
       }
       cursors.add(cursor)
       const page = await getProjectNftInventory(client, {
@@ -113,10 +113,10 @@ export async function readShop(
         blockNumber: resolved.blockNumber, startingId: cursor, tierLimit: 100,
       })
       if (!page || page.protocol !== 'defifa' || page.hook !== resolved.hook) {
-        throw new Error('The market inventory changed while loading.')
+        throw new Error('The Defifa inventory changed while loading.')
       }
       for (const tier of page.tiers) {
-        if (seen.has(tier.id)) throw new Error('The market repeated a range while loading.')
+        if (seen.has(tier.id)) throw new Error('The Defifa inventory repeated a tier while loading.')
         seen.add(tier.id)
         tiers.push(tier)
       }

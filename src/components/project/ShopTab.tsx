@@ -322,7 +322,7 @@ export function ShopTab({
   }
 
   if (shop.protocol === 'defifa') {
-    return <DefifaInventory chainId={chainId} projectId={projectId} shop={shop} entries />
+    return <DefifaInventory shop={shop} />
   }
 
   const collectionName = String(collectionMeta?.[0]?.result ?? '').trim()

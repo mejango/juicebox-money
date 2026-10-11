@@ -54,3 +54,9 @@ During automatic Safe checks and quote preparation, show one passive progress in
 
 ## 2026-10-11 — Native market copy uses ordinary punctuation
 The user rejected middot separators in the new native market views. Use ordinary punctuation in summaries, captions and retry copy. The actual native Entries browser view now asserts that no middot is displayed; preserve snapshot/receipt evidence instead of removing audit details with decorative copy.
+
+## 2026-10-11 — Protocol identity is not application identity
+The user corrected a Metalog-specific native inventory classification: SDK Defifa detection proves only the protocol family. Defifa inventory must display actual tier names, independent prices, current supply and phase without numerical-range assumptions or automatic application links/advice. Curve information belongs only in Metalog; generic Defifa consumers must not expose application-specific curve views or infer a Metalog collection. Existing browser and payment tests enforce nonnumeric names, mixed prices and absent automatic Metalog navigation.
+
+## 2026-10-11 — Honor the final consumer boundary
+The user explicitly removed curve information from Juicebox Money and Juicescan. Keep generic Defifa tiers and protocol Flavor; remove curve tabs, Metalog API callers and curve-only dependencies/fixtures from these consumers. Native desktop/mobile tests assert no curve controls, automatic Metalog links or API requests while preserving SDK inventory and writer guards.
