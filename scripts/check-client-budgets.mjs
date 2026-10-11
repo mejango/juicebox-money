@@ -220,7 +220,11 @@ const budgets = {
   // and the browser-only proof route. Lazy SDK readers grew aggregate by 1.9 KiB
   // with no initial-route saving, so retain the existing static reader imports.
   // Round measured delivery cost; project/largest/style/lazy gates remain fixed.
-  allScripts: 2557 * KIB,
+  // Native Entries reuse Metalog receipt/chart evidence in one lazy view. Exact
+  // Node26.7/npm12 builds emit193chunks both before/after:2618208 ->2623516 B
+  // (+5308 B); initial routes, largest/style and lazy gates still pass.
+  // Round only this measured aggregate delivery cost to the next KiB.
+  allScripts: 2563 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

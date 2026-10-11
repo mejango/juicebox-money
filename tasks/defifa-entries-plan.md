@@ -15,3 +15,5 @@
 
 ## Review checkpoint
 Shared identity extraction committed separately as 875a623 with 13 payment-guard tests passing. Native Flavor and Entries retain API ownership of receipt verification and chart math. Center-backed installed SDK2.28 independently verifies Base27 native hook, and binds the public block52459661 snapshot with its original verified100-NFT receipt and600 chart samples. Full lint/type/protocol/schema/writer gates passed; final coverage/build/budget/browser/hosted CI remain pending. No merge, deployment, wallet connection or transaction performed.
+
+Measured delivery evidence: exact Node26.7/npm12 browser builds emit193chunks, aggregate2618208→2623516B (+5308B). Entries validator/chart/export is lazy; home441.0/create512.5/project168.6KiB and largest/style/lazy gates pass. Reviewed aggregate-only ceiling2563KiB; all other limits unchanged.218files/2940unit tests pass. First separate browser run67/70 passes; three desktop cases timed out in context teardown across laptop closure, with no assertion failure. Fresh full check and hosted CI still required.
