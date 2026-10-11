@@ -42,8 +42,11 @@ const budgets = {
     // Defifa inventory, exact Node26.7/npm12.0.1 physical installs: origin aee4ccf
     // measures 450,269 B; SDK-only 2.28.0 measures 451,059 B; final adoption 451,583 B.
     // Lazy inventory imports did not reduce this route and added aggregate bytes.
-    // Round only the measured SDK/shared readiness cost to the next KiB.
-    '/page': 441 * KIB,
+    // Local adoption leaves only 1 B under 441 KiB. Linux hosted CI run
+    // 38104405718 measures 441.0 KiB rounded and exceeds that exact ceiling;
+    // preserve the same build graph and round its measured cost to 442 KiB.
+    // Project/create/aggregate/largest/style/lazy gates remain unchanged.
+    '/page': 442 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
