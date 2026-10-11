@@ -31,6 +31,7 @@ vi.mock('@/components/LoadingSkeletons', () => ({
 vi.mock('@/components/ProjectLogoWithFallback', () => ({ ProjectLogoWithFallback: () => null }))
 vi.mock('@/components/ProjectLink', () => ({ ProjectLink: ({ children }: { children: ReactNode }) => <span>{children}</span> }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
+vi.mock('@/hooks/useProjectNftProtocol', () => ({ useProjectNftProtocol: () => ({ isSuccess: true, data: null }) }))
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
 vi.mock('@/components/TreasuryCard', () => ({ TreasuryCard: ({ payDisclosure }: { payDisclosure?: string }) => <p>Payment panel {payDisclosure}</p> }))
 vi.mock('@/components/project/ProjectStats', () => ({ ProjectStats: () => null }))

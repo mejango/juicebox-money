@@ -1,3 +1,5 @@
+import { ProjectFlavor } from '@/components/project/ProjectFlavor'
+import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { ComponentProps } from 'react'
 import Image from 'next/image'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -201,7 +203,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
                   <span>
                     <span className="text-smoke-500">Flavor:</span>{" "}
                     <span className="font-medium text-ink">
-                      {isRevnet ? "Revnet" : "Project"}
+                      <ProjectFlavor chainId={urn.chainId as JBChainId} projectId={project.projectId} isRevnet={isRevnet} />
                     </span>
                   </span>
                   {authority ? (
@@ -254,7 +256,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
                 <span>
                   <span className="text-smoke-500">Flavor:</span>{" "}
                   <span className="font-medium text-ink">
-                    {isRevnet ? "Revnet" : "Project"}
+                    <ProjectFlavor chainId={urn.chainId as JBChainId} projectId={project.projectId} isRevnet={isRevnet} />
                   </span>
                 </span>
                 {authority ? (

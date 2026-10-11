@@ -18,7 +18,7 @@ for (const width of [390, 1280]) {
       await expect(surface).toContainText('Crab')
       await expect(surface).toContainText('1.25 USDC')
       await expect(surface.getByRole('link', { name: 'Open in Metalog →' })).toHaveAttribute('href', 'https://metalog.money/markets/1/1')
-      await expect(surface.getByRole('button')).toHaveCount(0)
+      await expect(surface.getByRole('button').filter({ hasNotText: /^(Positions|Entries)$/ })).toHaveCount(0)
       await expect(surface.getByRole('spinbutton')).toHaveCount(0)
       await expect(surface).not.toContainText('Unlimited')
     }

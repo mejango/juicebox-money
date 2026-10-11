@@ -1,13 +1,21 @@
+'use client'
+
+import { useState } from 'react'
+import dynamic from 'next/dynamic'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import type { Shop } from '@/hooks/useShop721'
 import { formatTokenAmount } from '@/lib/format'
 
+const Entries = dynamic(() => import('./DefifaEntries').then(module => module.DefifaEntries), { loading: () => <p role="status">Loading entries…</p> })
+
 /** Native inventory is display-only here; entries and settlement use Metalog. */
-export function DefifaInventory({ chainId, projectId, shop }: {
+export function DefifaInventory({ chainId, projectId, shop, entries = false }: {
   chainId: JBChainId
   projectId: number
   shop: Shop
+  entries?: boolean
 }) {
+  const [view, setView] = useState<'positions' | 'entries'>('positions')
   return (
     <div className="card space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -17,6 +25,10 @@ export function DefifaInventory({ chainId, projectId, shop }: {
         </a>
       </div>
       <p className="text-sm text-smoke-700">Entries, transfers and settlement are managed in Metalog.</p>
+      {entries && <div role="tablist" aria-label="Market inventory views" className="flex border-b border-smoke-200">
+        {(['positions', 'entries'] as const).map(option => <button key={option} role="tab" type="button" aria-selected={view === option} onClick={() => setView(option)} className={`border-b-2 px-3 py-2 ${view === option ? 'border-ink text-ink' : 'border-transparent text-smoke-500'}`}>{option === 'positions' ? 'Positions' : 'Entries'}</button>)}
+      </div>}
+      {view === 'entries' && entries && shop.protocol === 'defifa' ? <Entries key={`${chainId}:${projectId}:${shop.hook}`} context={{ protocol: 'defifa', chainId, projectId, hook: shop.hook }} /> : <>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-smoke-200 text-smoke-600">
@@ -31,7 +43,7 @@ export function DefifaInventory({ chainId, projectId, shop }: {
           </tr>)}</tbody>
         </table>
       </div>
-      {shop.tiers.length === 0 ? <p className="text-sm text-smoke-600">No ranges configured.</p> : null}
+      {shop.tiers.length === 0 ? <p className="text-sm text-smoke-600">No ranges configured.</p> : null}</> }
     </div>
   )
 }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import { ProjectFlavor } from '@/components/project/ProjectFlavor'
 import { PayPanel } from '@/components/project/PayPanel'
 import { ShopTab } from '@/components/project/ShopTab'
 import { ShopCartProvider } from '@/components/project/ShopCartProvider'
@@ -31,6 +32,7 @@ export default function DefifaInventoryProof() {
   }, [client])
   return <main className="mx-auto max-w-4xl space-y-6 px-4 py-8" data-defifa-ready={ready}>
     <h1 className="font-agrandir text-2xl">Native market inventory</h1>
+    {ready && <p>Flavor: <ProjectFlavor chainId={1} projectId={1} isRevnet={false} /></p>}
     {ready ? <ShopCartProvider>
       <section aria-label="Payment surface"><PayPanel chainId={1} projectId={1} projectName="Fixture" isRevnet={false} chains={[[1, 1]]} /></section>
       <section aria-label="NFT inventory"><ShopTab chainId={1} projectId={1} isRevnet={false} chains={[[1, 1]]} /></section>
