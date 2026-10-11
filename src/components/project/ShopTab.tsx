@@ -15,7 +15,7 @@ import {
 import {
   DISCOUNT_DENOMINATOR,
   effectiveTierPrice,
-  getProject721Shop,
+  getProjectNftInventory,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -79,6 +79,7 @@ import {
   type TierMedia,
 } from '@/hooks/useShop721'
 import { readShop } from '@/lib/shop-read'
+import { DefifaInventory } from '@/components/project/DefifaInventory'
 import { isStickyHook } from '@/lib/sticky'
 import { StickyRecipient } from '@/components/project/StickyRecipient'
 
@@ -186,7 +187,7 @@ export function ShopTab({
         chainId,
       },
     ],
-    query: { enabled: !!shop, staleTime: 5 * 60_000 },
+    query: { enabled: !!shop && shop.protocol !== 'defifa', staleTime: 5 * 60_000 },
   })
 
   // Leftover pay credits the connected wallet can spend in the Pay box.
@@ -196,7 +197,7 @@ export function ShopTab({
     functionName: 'payCreditsOf',
     args: address ? [address] : undefined,
     chainId,
-    query: { enabled: !!shop && !!address, staleTime: 30_000 },
+    query: { enabled: !!shop && shop.protocol !== 'defifa' && !!address, staleTime: 30_000 },
   })
 
   const { data: mediaById } = useShop721Media(chainId, shop)
@@ -248,10 +249,10 @@ export function ShopTab({
   // address holding SET_721_METADATA for the project.
   const { data: canEditMetadata = false } = useQuery({
     queryKey: ['shop721CanEditMetadata', chainId, shop?.hook, address],
-    enabled: !!publicClient && !!shop && !!address,
+    enabled: !!publicClient && !!shop && shop.protocol !== 'defifa' && !!address,
     staleTime: 60_000,
     queryFn: async () => {
-      if (!publicClient || !shop || !address) return false
+      if (!publicClient || !shop || shop.protocol === 'defifa' || !address) return false
       const owner = await publicClient.readContract({
         address: shop.hook,
         abi: jb721TiersHookAbi,
@@ -277,7 +278,7 @@ export function ShopTab({
   } = useKeptQuery({
     queryKey: ['shop721WriteTargets', chains, isRevnet],
     meta: PERSIST,
-    enabled: (addItemsOpen || replaceTierId != null) && !!shop,
+    enabled: (addItemsOpen || replaceTierId != null) && !!shop && shop.protocol !== 'defifa',
     staleTime: 30_000,
     retry: false,
     queryFn: async (): Promise<ShopWriteTarget[]> =>
@@ -290,7 +291,7 @@ export function ShopTab({
       ).map(resolved => ({
         chainId: resolved.chainId,
         projectId: resolved.projectId,
-        hook: resolved.shop?.hook ?? null,
+        hook: resolved.shop?.protocol === 'defifa' ? null : resolved.shop?.hook ?? null,
         pricing: resolved.shop?.pricing ?? null,
         error:
           resolved.failure === 'unreadable'
@@ -318,6 +319,10 @@ export function ShopTab({
         </p>
       </div>
     )
+  }
+
+  if (shop.protocol === 'defifa') {
+    return <DefifaInventory chainId={chainId} projectId={projectId} shop={shop} />
   }
 
   const collectionName = String(collectionMeta?.[0]?.result ?? '').trim()
@@ -803,7 +808,7 @@ function ShopCustomers({
       if (!address || !owned.data || !linkedShops.data) return []
       const targets: RedeemableShopTarget[] = []
       for (const linked of linkedShops.data) {
-        if (!linked.shop.cashOutEnabled) continue
+        if (linked.shop.protocol === 'defifa' || !linked.shop.idTarget || !linked.shop.cashOutEnabled) continue
         const candidates = owned.data.items.filter(
           item =>
             item.chainId === linked.chainId &&
@@ -843,6 +848,7 @@ function ShopCustomers({
             projectId: linked.projectId,
             hook: linked.shop.hook,
             idTarget: linked.shop.idTarget,
+            isRevnet,
             items,
           })
         }
@@ -1574,11 +1580,11 @@ function TierDetailModal({
             return { chainId: targetId, state: 'unavailable' as const }
           }
           try {
-            const targetShop = await getProject721Shop(client, {
+            const targetShop = await getProjectNftInventory(client, {
               chainId: targetId,
               projectId: BigInt(targetProjectId),
               isRevnet,
-              tierLimit: 0,
+              tierLimit: 1,
             })
             const targetTier = targetShop
               ? (

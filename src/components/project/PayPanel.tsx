@@ -26,7 +26,7 @@ import {
   buildPermit2ApproveTx,
   buildPayTx,
   effectiveTierPrice,
-  getProject721Shop,
+  getProjectNftInventory,
   previewPay,
   tokenCurrencyId,
   uniswapV4Deployment,
@@ -96,6 +96,8 @@ import {
   restampDirectSwapDeadline,
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
+import { useShop721 } from '@/hooks/useShop721'
+import { DefifaInventory } from '@/components/project/DefifaInventory'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 
@@ -281,6 +283,18 @@ export function PayPanel({
   }, [initialChainId, initialProjectId]);
 
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
+  const inventory = useShop721(chainId, projectId, isRevnet);
+  // Protocol identity is independent of optional tier metadata and full shop reads.
+  const identity = useQuery({
+    queryKey: ['payNftProtocol', chainId, projectId, isRevnet],
+    enabled: !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () => getProjectNftInventory(publicClient!, {
+      chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
+    }),
+  });
+  const nativeMarket = identity.data?.protocol === 'defifa';
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
   const routerApproveTx = useSafeTx(chainId);
@@ -575,7 +589,7 @@ export function PayPanel({
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
   const { data: shop } = useQuery({
     queryKey: ["payShop", chainId, projectId, isRevnet],
-    enabled: !!publicClient,
+    enabled: !!publicClient && identity.isSuccess && !nativeMarket,
     staleTime: 120_000,
     retry: 1,
     queryFn: async (): Promise<ShopInfo | null> => {
@@ -583,13 +597,13 @@ export function PayPanel({
       // Paged to completion, like ShopTab. A single 200-tier page truncated the shop, and the
       // effect below then DELETED any cart row outside that window — so items added from the
       // Shop tab silently disappeared from the cart on a large shop.
-      const resolved = await getProject721Shop(client, {
+      const resolved = await getProjectNftInventory(client, {
         chainId,
         projectId: BigInt(projectId),
         isRevnet,
-        tierLimit: 0,
+        tierLimit: 1,
       });
-      if (!resolved) return null;
+      if (!resolved || resolved.protocol !== 'jb721') return null;
       const rawTiers = await readAllActiveTiers(client, resolved.store, resolved.hook, true);
       // One read now carries flags too, so the second `tiersOf` call this used to make — and
       // its `.catch(() => [])`, which quietly failed every tier closed — is gone.
@@ -953,7 +967,7 @@ export function PayPanel({
       !!context &&
       !!terminalAddress &&
       (amountRaw > 0n || cartCount > 0) &&
-      mode === "pay",
+      mode === "pay" && !nativeMarket && identity.isSuccess,
     // Keep the last verified quote mounted while the next amount is quoted.
     // The receipt gently dims it below, and submission stays blocked until the
     // fresh quote arrives.
@@ -1420,6 +1434,7 @@ export function PayPanel({
   };
 
   const submit = () => {
+    if (nativeMarket || !identity.isSuccess) return;
     const action = payButtonAction({ isConnected, payWithDollars });
     if (action === "signIn") {
       openSignIn();
@@ -1498,6 +1513,7 @@ export function PayPanel({
   }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
 
   const runPaymentSequence = async () => {
+    if (nativeMarket || !identity.isSuccess) return;
     const account = sequenceSummary?.account;
     if (
       !address ||
@@ -1528,6 +1544,12 @@ export function PayPanel({
     };
     try {
       stillReviewed();
+      const liveInventory = await getProjectNftInventory(publicClient, {
+        chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
+      });
+      if (liveInventory?.protocol === 'defifa') {
+        throw new Error('This market uses native entries in Metalog.');
+      }
       const tokenApproval = actionOf("token-approval");
       if (tokenApproval?.kind === "token-approval") {
         await showAction("token-approval");
@@ -1782,6 +1804,18 @@ export function PayPanel({
         </button>
       </div>
     );
+  }
+
+  if (nativeMarket && inventory.data?.protocol === 'defifa') {
+    return <DefifaInventory chainId={chainId} projectId={projectId} shop={inventory.data} />;
+  }
+  if (!identity.isSuccess || nativeMarket) {
+    const pending = nativeMarket ? inventory : identity;
+    const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
+    return <div className="space-y-2 text-sm text-smoke-600">
+      <p>{failed ? (nativeMarket ? 'Could not read market positions.' : 'Could not verify this project’s NFT protocol.') : 'Checking market positions…'}</p>
+      {failed ? <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button> : null}
+    </div>;
   }
 
   const hasShopPreview = !!shop && shop.tiers.length > 0 && mode === "pay";

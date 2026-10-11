@@ -33,6 +33,8 @@ export type ShopConfigFlags = {
 
 export type ShopTier = {
   id: number
+  name?: string
+  currentSupply?: bigint
   /** Full (undiscounted) price in the shop's pricing terms. */
   price: bigint
   remaining: number
@@ -55,7 +57,10 @@ export type ShopTier = {
 export type Shop = {
   hook: Address
   /** Shared implementation address used to key 721 hook metadata. */
-  idTarget: Address
+  idTarget?: Address
+  protocol?: 'jb721' | 'defifa'
+  capabilities?: { genericPay: boolean; genericCashOut: boolean; manageTiers: boolean }
+  phase?: number
   cashOutEnabled: boolean
   /** Whether the current ruleset has the 721 transfer-pause bit enabled. */
   transfersPaused: boolean | null
@@ -82,12 +87,18 @@ export type TierMedia = {
 }
 
 
+export const SHOP_721_QUERY_PREFIX = ['shop721-v2'] as const
+
+export function shop721QueryKey(chainId: JBChainId, projectId: number, isRevnet: boolean) {
+  return [...SHOP_721_QUERY_PREFIX, chainId, projectId, isRevnet] as const
+}
+
 /** The project's 721 shop, shared by the tab, the pay box, and activity rows (one query key). */
 export function useShop721(chainId: JBChainId, projectId: number, isRevnet: boolean) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   return useKeptQuery({
-    queryKey: ['shop721', chainId, projectId, isRevnet],
+    queryKey: shop721QueryKey(chainId, projectId, isRevnet),
     meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
@@ -108,7 +119,7 @@ export function useShop721(chainId: JBChainId, projectId: number, isRevnet: bool
  */
 export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefined) {
   const mediaTierKey = (shop?.tiers ?? [])
-    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}`)
+    .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}${tier.name === undefined ? '' : `:${tier.name}`}`)
     .join(',')
   return useKeptQuery({
     queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],

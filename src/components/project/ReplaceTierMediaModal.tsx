@@ -1,5 +1,7 @@
 'use client'
 
+import { SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
+
 import { cidV0ToBytes32, type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -137,7 +139,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
       setPhase('writing')
       const result = await runProjectBatch({ scope: scope!, action: 'shop-replace-media', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Replace item media', reverify: call => reverifyShopCall(call, address), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
       setBatch(result)
-      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: ['shop721'] }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
+      await Promise.allSettled([queryClient.invalidateQueries({ queryKey: SHOP_721_QUERY_PREFIX }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
       setPhase(result.status === 'complete' ? 'done' : 'form')
       setMessage(result.status === 'complete' ? null : 'This update is saved. Continue to check its original transactions and any unfinished chains.')
     } catch (error) {

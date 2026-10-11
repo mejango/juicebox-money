@@ -62,7 +62,7 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
-  getProject721Shop: mocks.shop,
+  getProjectNftInventory: mocks.shop,
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),

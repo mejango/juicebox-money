@@ -3,7 +3,7 @@ import { decodeFunctionData, parseUnits, zeroAddress, type Address, type Hex } f
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ shop: vi.fn(), permissions: vi.fn(), client: vi.fn(), load: vi.fn(), identity: vi.fn() }))
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProject721Shop: mocks.shop, hasPermissions: mocks.permissions }))
+vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), getProjectNftInventory: mocks.shop, hasPermissions: mocks.permissions }))
 vi.mock('@/lib/authority', () => ({ clientFor: mocks.client }))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe')>()),
@@ -33,7 +33,7 @@ beforeEach(() => {
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
   mocks.shop.mockImplementation(async (_client, args) => {
     const target = targets.find(target => target.chainId === args.chainId)!
-    return { hook: target.hook, store: STORE, metadataIdTarget: HOOK, pricing: target.pricing }
+    return { protocol: 'jb721', hook: target.hook, store: STORE, metadataIdTarget: HOOK, pricing: target.pricing }
   })
   mocks.permissions.mockImplementation(async (_client, args) => !state.get(args.chainId)?.denied)
   mocks.client.mockImplementation((chain: number) => ({ readContract: vi.fn(async request => {
@@ -164,5 +164,14 @@ describe('original item metadata', () => {
     await expect(readOriginalShopMetadata(URI)).rejects.toThrow('not a JSON object')
     vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ unknown: [123] }) } as unknown as Response)
     await expect(readOriginalShopMetadata(URI)).resolves.toEqual({ unknown: [123] })
+  })
+})
+
+
+describe('native market writer guard', () => {
+  it('refuses tier management before authority reads or generic calldata preparation', async () => {
+    mocks.shop.mockResolvedValue({ protocol: 'defifa', hook: HOOK, capabilities: { manageTiers: false } })
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-add-items')).rejects.toThrow('Manage this market in Metalog')
+    expect(mocks.permissions).not.toHaveBeenCalled()
   })
 })

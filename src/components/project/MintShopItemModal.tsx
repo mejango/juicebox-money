@@ -1,12 +1,14 @@
 'use client'
 
+import { shop721QueryKey } from '@/hooks/useShop721'
+
 import {
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
-  getProject721Shop,
+  getProjectNftInventory,
   hasPermissions,
   JBPermissionIdsV6,
 } from '@bananapus/nana-sdk-core/v6'
@@ -280,7 +282,7 @@ export function MintShopItemModal({
 
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: ['shop721', chainId, projectId, isRevnet],
+          queryKey: shop721QueryKey(chainId, projectId, isRevnet),
         }),
         queryClient.invalidateQueries({
           queryKey: ['shopTierSupply'],
@@ -420,12 +422,13 @@ async function assertMintReady(
     isRevnet: boolean
   },
 ) {
-  const liveShop = await getProject721Shop(client, {
+  const liveShop = await getProjectNftInventory(client, {
     chainId,
     projectId: BigInt(projectId),
     isRevnet,
-    tierLimit: 0,
+    tierLimit: 1,
   })
+  if (liveShop?.protocol === 'defifa') throw new Error('Enter this market in Metalog.')
   if (!liveShop || liveShop.hook.toLowerCase() !== hook.toLowerCase()) {
     throw new Error('The project’s live shop hook changed. Review the mint again.')
   }

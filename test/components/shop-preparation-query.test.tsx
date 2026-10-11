@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   multicall: vi.fn(),
   readContract: vi.fn(),
   contexts: vi.fn(),
+  inventory: vi.fn(),
   terminal: vi.fn(),
   send: vi.fn(),
   reset: vi.fn(),
@@ -29,6 +30,7 @@ vi.mock('@/hooks/useSafeTx', () => ({
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
   getAccountingContexts: mocks.contexts,
+  getProjectNftInventory: mocks.inventory,
   resolvePaymentTerminal: mocks.terminal,
 }))
 vi.mock('@/components/ui/ModalShell', () => ({
@@ -76,6 +78,7 @@ async function settle() {
 }
 
 async function mount(value = target) {
+  mocks.inventory.mockResolvedValue({ protocol: 'jb721', hook: value.hook, metadataIdTarget: value.idTarget })
   await act(async () => { renderer = TestRenderer.create(modal(value)) })
   await settle()
 }
@@ -98,6 +101,7 @@ function quoteQuery() {
 }
 
 beforeEach(() => {
+  mocks.inventory.mockResolvedValue({ protocol: 'jb721', hook: HOOK, metadataIdTarget: HOOK })
   vi.useFakeTimers()
   vi.setSystemTime(new Date('2026-10-07T12:00:00.000Z'))
   client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })

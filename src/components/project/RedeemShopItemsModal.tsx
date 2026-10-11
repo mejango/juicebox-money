@@ -12,6 +12,7 @@ import {
   buildCashOutTx,
   cashOutProtocolFee,
   getAccountingContexts,
+  getProjectNftInventory,
   resolvePaymentTerminal,
   slippageFloor,
 } from '@bananapus/nana-sdk-core/v6'
@@ -50,6 +51,7 @@ export type RedeemableShopTarget = {
   projectId: number
   hook: Address
   idTarget: Address
+  isRevnet?: boolean
   items: RedeemableShopItem[]
 }
 
@@ -163,6 +165,15 @@ export function RedeemShopItemsModal({
         chainId: selectedChainId,
       }) as PublicClient | undefined
       if (!client) throw new Error('This chain is unavailable.')
+      const inventory = await getProjectNftInventory(client, {
+        chainId: selectedChainId, projectId: BigInt(target.projectId),
+        isRevnet: target.isRevnet, tierLimit: 1,
+      })
+      if (!inventory || inventory.protocol !== 'jb721' ||
+          inventory.hook.toLowerCase() !== target.hook.toLowerCase() ||
+          inventory.metadataIdTarget.toLowerCase() !== target.idTarget.toLowerCase()) {
+        throw new Error('The collection changed. Native markets are settled in Metalog.')
+      }
 
       // The index is only a candidate set. Verify every selected NFT against
       // its collection immediately before trusting it in a quote.

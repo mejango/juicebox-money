@@ -382,9 +382,15 @@ describe('the call a Safe proposal holds', () => {
   it.each(STAMPED_SITES)(
     'names the deadline of %s only where the contract refuses the call once it passes',
     (site, build) => {
-      expect(stampedDeadline(callOf(build(NOW)))).toBe(revertsOnceStampPasses(site) ? NOW : null)
+      expect(stampedDeadline(callOf(build(NOW)), STAMPED_CHAIN)).toBe(revertsOnceStampPasses(site) ? NOW : null)
     },
   )
+
+  it('never treats a deadline as expiry evidence without its canonical chain or target', () => {
+    const call = callOf(STAMPED_SITES[0][1](NOW))
+    expect(stampedDeadline(call)).toBeNull()
+    expect(stampedDeadline({ ...call, to: '0x2222222222222222222222222222222222222222' }, STAMPED_CHAIN)).toBeNull()
+  })
 
   it('holds any other call, or a stamped call encoded any other way, exactly as sent', () => {
     const transfer = {
@@ -566,12 +572,15 @@ describe('a proposal awaiting its signers', () => {
       expect(ended).toBe('expired')
     })
 
-    it('ends replaced once looks have found the Safe past it for ten minutes in a row, a live look starting the count again', async () => {
+    it('keeps a proposal pending when only the Safe nonce has advanced, until the watcher aborts', async () => {
       vi.useFakeTimers()
       chainState.nonce = 6n
       const client = chain()
       let ended: string | undefined
-      void watch(callOf(authorization(NOW + 600n)), client).then(end => (ended = end))
+      const controller = new AbortController()
+      const watching = watch(callOf(authorization(NOW + 600n)), client, controller.signal)
+      const aborted = expect(watching).rejects.toThrow(/aborted/i)
+      void watching.then(end => (ended = end), () => {})
       // Passed at minutes 1 to 3, then live at minute 4: the run starts over at minute 5.
       await vi.advanceTimersByTimeAsync(3 * 60_000)
       chainState.nonce = 5n
@@ -580,7 +589,9 @@ describe('a proposal awaiting its signers', () => {
       await vi.advanceTimersByTimeAsync(10 * 60_000)
       expect(ended).toBeUndefined()
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(ended).toBe('replaced')
+      expect(ended).toBeUndefined()
+      controller.abort()
+      await aborted
       // One look a minute: the Safe's nonce is read at most once a minute.
       expect(client.request).toHaveBeenCalledTimes(15)
     })
