@@ -56,6 +56,9 @@ export type ShopTier = {
 
 export type Shop = {
   hook: Address
+  /** SDK-authenticated native store/snapshot, used only for cosmetic URI reads. */
+  store?: Address
+  inventoryBlockNumber?: bigint
   /** Shared implementation address used to key 721 hook metadata. */
   idTarget?: Address
   protocol?: 'jb721' | 'defifa'
@@ -89,6 +92,7 @@ export type TierMedia = {
 
 export const SHOP_721_QUERY_PREFIX = ['shop721-v2'] as const
 export const DEFIFA_HOLDINGS_QUERY_PREFIX = ['defifa-owned-nfts'] as const
+export const NFT_CHECKOUT_PREVIEW_PAGE_SIZE = 12
 
 export function shop721QueryKey(chainId: JBChainId, projectId: number, isRevnet: boolean) {
   return [...SHOP_721_QUERY_PREFIX, chainId, projectId, isRevnet] as const
@@ -118,19 +122,25 @@ export function useShop721(chainId: JBChainId, projectId: number, isRevnet: bool
  * the hook alone, an infinite-staleTime persisted entry survives reloads, so
  * tiers added from anywhere but this browser rendered as "Item #N" forever.
  */
-export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefined) {
-  const mediaTierKey = (shop?.tiers ?? [])
+export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefined, nativeTierIds?: readonly number[]) {
+  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  const tiers = nativeTierIds ? (shop?.tiers ?? []).filter(tier => nativeTierIds.includes(tier.id)).slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE) : shop?.tiers ?? []
+  const mediaTierKey = tiers
     .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}${tier.name === undefined ? '' : `:${tier.name}`}`)
     .join(',')
   return useKeptQuery({
-    queryKey: ['shop721Media', chainId, shop?.hook, mediaTierKey],
+    queryKey: ['shop721Media', chainId, shop?.hook, nativeTierIds === undefined
+      ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
     meta: PERSIST,
-    enabled: !!shop && shop.tiers.length > 0,
+    enabled: !!shop && tiers.length > 0 && (!nativeTierIds || !shop.store || !!publicClient || tiers.every(tier => !!tier.resolvedUri)),
     staleTime: Infinity,
     queryFn: async () => {
-      const { resolveTierMedia } = await import('@/lib/shop-read')
+      const { resolveTierMedia, resolveNativeShopMedia } = await import('@/lib/shop-read')
+      if (nativeTierIds && shop?.protocol === 'defifa') {
+        return resolveNativeShopMedia(publicClient, shop, tiers)
+      }
       const entries = await Promise.all(
-        shop!.tiers.map(
+        tiers.map(
           async tier => [tier.id, await resolveTierMedia(tier)] as const,
         ),
       )

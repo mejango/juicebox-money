@@ -61,7 +61,6 @@ import {
 } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
-import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
 import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
 import {
@@ -98,7 +97,11 @@ import {
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
 import { useShop721 } from '@/hooks/useShop721'
-import { DefifaInventory } from '@/components/project/DefifaInventory'
+import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE } from "@/hooks/useShop721";
+import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from "@/components/project/CheckoutAmountRow";
+import { NftCartLine } from "@/components/project/NftCartLine";
+import { shopCartTotal } from "@/lib/shop-cart-total";
+import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
@@ -838,25 +841,11 @@ export function PayPanel({
           "units");
   const cartTotal = useMemo(() => {
     if (!shop || cartCount === 0) return 0n;
-    return shop.tiers.reduce(
-      (sum, tier) =>
-        sum +
-        effectiveTierPrice(tier.price, tier.discountPercent) *
-          BigInt(cart[tier.id] ?? 0),
-      0n,
-    );
+    return shopCartTotal(shop.tiers, cart);
   }, [shop, cart, cartCount]);
   const restrictedCartTotal = useMemo(() => {
     if (!shop) return 0n;
-    return shop.tiers.reduce(
-      (sum, tier) =>
-        sum +
-        (tier.cantBuyWithCredits
-          ? effectiveTierPrice(tier.price, tier.discountPercent) *
-            BigInt(cart[tier.id] ?? 0)
-          : 0n),
-      0n,
-    );
+    return shopCartTotal(shop.tiers.filter(tier => tier.cantBuyWithCredits), cart);
   }, [shop, cart]);
   const shopCreditApplied = useMemo(() => {
     const eligible = cartTotal - restrictedCartTotal;
@@ -1805,7 +1794,7 @@ export function PayPanel({
 
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <div className="space-y-4"><DefifaInventory shop={inventory.data} /><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
+    return <div className="space-y-4"><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
   if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
     const pending = nativeMarket ? inventory : identity;
@@ -1855,7 +1844,7 @@ export function PayPanel({
           ) : null}
 
           <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
-            {shop.tiers.slice(0, 12).map((tier) => {
+            {shop.tiers.slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE).map((tier) => {
               const qty = cart[tier.id] ?? 0;
               const soldOut = !tier.unlimited && tier.remaining === 0;
               const cap = tier.unlimited ? 99 : tier.remaining;
@@ -1869,76 +1858,12 @@ export function PayPanel({
                 image: tier.image ?? undefined,
               };
               return (
-                <div
-                  key={tier.id}
-                  className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
-                    qty > 0
-                      ? "border-bluebs-500 bg-bluebs-25"
-                      : "border-smoke-200 hover:border-bluebs-300"
-                  } ${soldOut ? "opacity-40" : ""}`}
-                >
-                  {qty > 0 ? (
-                    <span className="absolute right-1.5 top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-bluebs-600 px-1 text-[10px] font-medium text-white">
-                      {qty}
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (soldOut || qty > 0) return;
-                      setQuantity(tier.id, 1, item);
-                    }}
-                    disabled={busy || soldOut}
-                    className="block w-full disabled:cursor-not-allowed"
-                    title={
-                      soldOut
-                        ? `${item.name} is sold out`
-                        : `Add ${item.name} to cart`
-                    }
-                  >
-                    {tier.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={tier.image}
-                        alt={item.name}
-                        loading="lazy"
-                        decoding="async"
-                        className="block aspect-square w-full object-contain"
-                      />
-                    ) : (
-                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
-                        #{tier.id}
-                      </span>
-                    )}
-                  </button>
-                  {soldOut ? (
-                    <p className="px-2 pb-2 text-[10px] text-smoke-500">
-                      Sold out
-                    </p>
-                  ) : qty === 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(tier.id, 1, item)}
-                      disabled={busy}
-                      className="w-full px-2 pb-2 text-[11px] text-smoke-700"
-                    >
-                      {formatTokenAmount(price, shop.pricingDecimals)}{" "}
-                      {shopPricingSymbol}
-                    </button>
-                  ) : (
-                    <QuantityStepper
-                      size="sm"
-                      quantity={qty}
-                      itemName={item.name}
-                      onRemove={() => setQuantity(tier.id, qty - 1, item)}
-                      onAdd={() =>
-                        setQuantity(tier.id, Math.min(cap, qty + 1), item)
-                      }
-                      disabledRemove={busy || qty === 0}
-                      disabledAdd={busy || qty >= cap}
-                    />
-                  )}
-                </div>
+                <NftCheckoutCard key={tier.id} tierId={tier.id} name={item.name} image={tier.image} qty={qty}
+                  priceLabel={`${formatTokenAmount(price, shop.pricingDecimals)} ${shopPricingSymbol}`}
+                  soldOut={soldOut} busy={busy} canAdd={qty < cap}
+                  onSelect={() => setQuantity(tier.id, 1, item)}
+                  onRemove={() => setQuantity(tier.id, qty - 1, item)}
+                  onAdd={() => setQuantity(tier.id, Math.min(cap, qty + 1), item)} />
               );
             })}
           </div>
@@ -2000,7 +1925,7 @@ export function PayPanel({
 
       {/* Amount + token + pay, inline (website/ parity) */}
       <div className="mt-3">
-        <div className="input-well flex items-stretch overflow-hidden !p-0">
+        <CheckoutAmountRow amount={
           <input
             type="text"
             inputMode="decimal"
@@ -2011,10 +1936,10 @@ export function PayPanel({
             disabled={busy}
             placeholder={payWithDollars ? "$0.00" : "0.00"}
             aria-label="Amount"
-            className="min-w-0 flex-1 bg-transparent px-4 py-3 text-lg font-medium outline-none placeholder:text-smoke-500 disabled:opacity-60"
+            className={CHECKOUT_AMOUNT_INPUT_CLASS}
           />
-          <div className="flex shrink-0 flex-col items-end justify-center gap-0.5 pr-3">
-          {contexts.length > 1 || onRamp.supported ? (
+        } currency={<>
+{contexts.length > 1 || onRamp.supported ? (
             // Valued by INDEX, not address — a token can appear direct and
             // via-router, so the option must stay in lock-step with the
             // selected context (website/ fund-loss fix).
@@ -2071,7 +1996,7 @@ export function PayPanel({
             </span>
           )}
             {/* Inside the field, under the token it refers to. */}
-          </div>
+        </>} action={
           <button
             onClick={submit}
             // When disconnected this button reads "Sign in", so warm Para's
@@ -2103,11 +2028,11 @@ export function PayPanel({
                   (mode === "pay" && !previewReady))) ||
               (isConnected && payWithDollars && amount.trim() === "")
             }
-            className="btn-primary shrink-0 rounded-l-none px-5 text-sm disabled:opacity-60"
+            className={CHECKOUT_ACTION_BUTTON_CLASS}
           >
             {payActionLabel}
           </button>
-        </div>
+        } />
         {/* No gap: the invisible spacer at the end has to match the pay
             button's width exactly, or the balance drifts off the token
             selector it sits under. */}
@@ -2254,55 +2179,10 @@ export function PayPanel({
           {selectedCartRows.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
               {selectedCartRows.map((row) => (
-                <div
-                  key={row.tierId}
-                  className="flex min-w-0 items-center gap-2"
-                >
-                  <span className="text-sm text-smoke-500">+</span>
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-[10px] text-smoke-500">
-                    {row.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={row.image}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      `#${row.tierId}`
-                    )}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">
-                    {row.name}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(row.tierId, row.quantity - 1)}
-                      disabled={busy}
-                      aria-label={`Remove one ${row.name}`}
-                      className="flex h-6 w-6 items-center justify-center rounded-full border border-smoke-300 text-xs text-smoke-700 disabled:opacity-40"
-                    >
-                      −
-                    </button>
-                    <span className="min-w-4 text-center text-xs tabular-nums text-ink">
-                      {row.quantity}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setQuantity(
-                          row.tierId,
-                          Math.min(row.cap, row.quantity + 1),
-                        )
-                      }
-                      disabled={busy || row.quantity >= row.cap}
-                      aria-label={`Add one ${row.name}`}
-                      className="flex h-6 w-6 items-center justify-center rounded-full border border-smoke-300 text-xs text-smoke-700 disabled:opacity-40"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
+                <NftCartLine key={row.tierId} tierId={row.tierId} name={row.name} image={row.image} quantity={row.quantity}
+                  onRemove={() => setQuantity(row.tierId, row.quantity - 1)}
+                  onAdd={() => setQuantity(row.tierId, Math.min(row.cap, row.quantity + 1))}
+                  removeDisabled={busy} addDisabled={busy || row.quantity >= row.cap} />
               ))}
               <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
                 <div className="flex items-center justify-between gap-3">

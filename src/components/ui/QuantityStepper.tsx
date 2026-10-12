@@ -36,7 +36,7 @@ export function QuantityStepper({
       : 'min-w-4 text-center text-xs tabular-nums text-ink'
 
   return (
-    <div className={container}>
+    <div className={container} role="group" aria-label={`${itemName} quantity`}>
       <button
         type="button"
         onClick={onRemove}

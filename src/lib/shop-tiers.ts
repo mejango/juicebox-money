@@ -19,6 +19,7 @@ export async function readTierPage(
   hook: Address,
   startingId: bigint,
   includeResolvedUri = false,
+  options: { size?: bigint; blockNumber?: bigint } = {},
 ) {
   return client.readContract({
     address: store,
@@ -29,8 +30,9 @@ export async function readTierPage(
       [],
       includeResolvedUri,
       startingId,
-      BigInt(startingId === 0n ? TIER_PAGE_SIZE : TIER_PAGE_SIZE + 1),
+      options.size ?? BigInt(startingId === 0n ? TIER_PAGE_SIZE : TIER_PAGE_SIZE + 1),
     ],
+    ...(options.blockNumber === undefined ? {} : { blockNumber: options.blockNumber }),
   })
 }
 

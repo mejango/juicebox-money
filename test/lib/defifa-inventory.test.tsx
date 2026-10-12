@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({ inventory: vi.fn(), current: vi.fn() }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
   ...await original(), getProjectNftInventory: mocks.inventory, getCurrentRuleset: mocks.current,
 }))
-import { readShop, resolveTierMedia } from '@/lib/shop-read'
+import { readShop, resolveNativeShopMedia, resolveTierMedia } from '@/lib/shop-read'
 import { DefifaInventory } from '@/components/project/DefifaInventory'
 
 const hook = '0x1111111111111111111111111111111111111111'
@@ -74,4 +74,24 @@ describe('native market inventory', () => {
     mocks.inventory.mockResolvedValueOnce(page(1, 2n)).mockResolvedValueOnce(null)
     await expect(readShop({} as PublicClient, 8453, 27, false, 'ETH')).rejects.toThrow('inventory changed')
   })
+  it('reads one pinned native URI and keeps SDK names and prices authoritative', async () => {
+    mocks.inventory.mockResolvedValue(page(1, null))
+    const shop = await readShop({} as PublicClient, 8453, 27, false, 'ETH')
+    const image = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`
+    const uri = `data:application/json;base64,${Buffer.from(JSON.stringify({ name: 'Untrusted name', image, price: '0' })).toString('base64')}`
+    const readContract = vi.fn().mockResolvedValue([{ id: 1, resolvedUri: uri }])
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toMatchObject({ 1: { name: 'Range 1', image } })
+    expect(readContract).toHaveBeenCalledOnce()
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ address: hook, functionName: 'tiersOf', args: [hook, [], true, 1n, 1n], blockNumber: 99n }))
+    expect(shop!.tiers[0].price).toBe(1250000n)
+  })
+  it('uses a placeholder after native resolver errors or an incorrect tier without blocking inventory', async () => {
+    mocks.inventory.mockResolvedValue(page(1, null))
+    const shop = await readShop({} as PublicClient, 8453, 27, false, 'ETH')
+    const readContract = vi.fn().mockRejectedValueOnce(new Error('Large URI RPC unavailable')).mockResolvedValueOnce([{ id: 2, resolvedUri: 'data:application/json;base64,e30=' }])
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ 1: { name: 'Range 1' } })
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ 1: { name: 'Range 1' } })
+    expect(shop!.tiers).toHaveLength(1)
+  })
+
 })

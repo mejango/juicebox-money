@@ -124,6 +124,7 @@ export async function readShop(
     }
     return {
       protocol: 'defifa', capabilities: resolved.capabilities,
+      store: resolved.store, inventoryBlockNumber: resolved.blockNumber,
       hook: resolved.hook, phase: resolved.phase,
       cashOutEnabled: false, transfersPaused: null,
       transferPauseByStage: null, configFlags: null,
@@ -276,7 +277,7 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   const pick = (json: Record<string, unknown>): TierMedia => {
     const meta = pickTierMetadata(json)
     return {
-      name: meta.name,
+      name: tier.name ?? meta.name,
       description: meta.description,
       image: tierMediaImageUrl(meta.image),
       animationUrl: tierMediaAssetUrl(meta.animationUrl),
@@ -285,7 +286,7 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
     }
   }
 
-  if (tier.name !== undefined) return { name: tier.name }
+  if (tier.name !== undefined && !tier.resolvedUri) return { name: tier.name }
   const resolved = tier.resolvedUri
     ? parseTierMetadataJson(tier.resolvedUri)
     : null
@@ -308,4 +309,28 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   } catch {
     return {}
   }
+}
+
+/** Cosmetic native resolver read: one exact tier, independent of action preparation. */
+async function resolveNativeTierMedia(client: PublicClient, shop: Shop, tier: ShopTier): Promise<TierMedia> {
+  if (shop.protocol !== 'defifa' || !shop.store) return { name: tier.name }
+  try {
+    const rows = await readTierPage(client, shop.store, shop.hook, BigInt(tier.id), true, { size: 1n, blockNumber: shop.inventoryBlockNumber })
+    const row = rows[0]
+    if (rows.length !== 1 || Number(row.id) !== tier.id) return { name: tier.name }
+    return await resolveTierMedia({ ...tier, resolvedUri: row.resolvedUri })
+  } catch {
+    return { name: tier.name }
+  }
+}
+
+/** The query owner admits a small preview page; at most two URI reads run together. */
+export async function resolveNativeShopMedia(client: PublicClient | undefined, shop: Shop, tiers: ShopTier[]): Promise<Record<number, TierMedia>> {
+  const entries: [number, TierMedia][] = []
+  for (let offset = 0; offset < tiers.length; offset += 2) {
+    entries.push(...await Promise.all(tiers.slice(offset, offset + 2).map(async tier => [tier.id,
+      tier.resolvedUri ? await resolveTierMedia(tier) : client && shop.store ? await resolveNativeTierMedia(client, shop, tier) : { name: tier.name },
+    ] as [number, TierMedia])))
+  }
+  return Object.fromEntries(entries)
 }

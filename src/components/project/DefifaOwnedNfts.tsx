@@ -15,6 +15,7 @@ import { getAccount } from 'wagmi/actions'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX, type Shop } from '@/hooks/useShop721'
 import { clearDefifaWriteRecovery, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_QUERY_PREFIX } from '@/lib/defifa-write-recovery'
@@ -51,6 +52,7 @@ export function DefifaOwnedNfts({ chainId, projectId, shop }: { chainId: JBChain
 function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId: number; shop: Shop }) {
   const { address, openSignIn } = useWallet()
   const config = useConfig()
+  const flowSignal = useUnmountSignal()
   const holdingsClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queries = useQueryClient()
   const [continuation, setContinuation] = useState<{ cursor: string; blockNumber: bigint }>()
@@ -152,6 +154,8 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const prepare = async (kind: Plan['kind']) => {
     if (!address || !client || busy || sending.current) return
     const generation = actorContext.current.generation
+    const signal = flowSignal()
+    if (signal.aborted) return
     setPreparing(true)
     setError(null)
     try {
@@ -168,18 +172,19 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       let minimum = 0n
       if (kind === 'cash-out') {
         const quote = await prepareDefifaCashOut(client, { ...context, tokenIds })
+        if (signal.aborted || actorContext.current.generation !== generation) return
         if (quote.reclaimAmount === 0n && quote.protocolRewards.defifaAmount === 0n && quote.protocolRewards.baseProtocolAmount === 0n) throw new Error('These NFTs have nothing to claim right now.')
         minimum = quote.reclaimAmount > 0n ? slippageFloor(quote.reclaimAmount) : 0n
         result = minimum > 0n ? await prepareDefifaCashOut(client, { ...context, tokenIds, minimumReclaim: minimum }) : quote
       } else result = await prepareDefifaTransfer(client, { ...context, tokenId: tokenIds[0], recipient: to })
-      if (actorContext.current.generation !== generation) return
+      if (signal.aborted || actorContext.current.generation !== generation) return
       if (getAccount(config).address?.toLowerCase() !== address.toLowerCase()) throw new Error('Your account changed. Review again.')
       tx.reset()
       setProof('idle')
       markWrite(false)
       setProposalHash(undefined)
       setPlan({ kind, account: address, tokenIds, recipient: to, minimum, result, chainId, projectId, symbol: shop.pricing.symbol })
-    } catch (reason) { if (actorContext.current.generation === generation) setError(message(reason)) } finally { if (actorContext.current.generation === generation) setPreparing(false) }
+    } catch (reason) { if (!signal.aborted && actorContext.current.generation === generation) setError(message(reason)) } finally { if (!signal.aborted && actorContext.current.generation === generation) setPreparing(false) }
   }
   const confirm = async () => {
     if (!plan || !client || busy || sending.current || proof !== 'idle') return
@@ -188,6 +193,11 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       return
     }
     const generation = actorContext.current.generation
+    const signal = flowSignal()
+    const assertWriteState = () => {
+      if (signal.aborted) throw new Error('This NFT action closed before submission. Prepare it again.')
+      if (actorContext.current.generation !== generation) throw new Error('Your account or project changed before submission. Prepare this action again.')
+    }
     sending.current = true
     setError(null)
     try {
@@ -197,18 +207,20 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
         onRecord: record => { recovery.current = record; markWrite(record !== null) },
         options: {
         reviewedAccount: plan.account,
+        assertWriteState,
         beforeWrite: () => {
-          if (actorContext.current.generation !== generation) throw new Error('Your account or project changed before submission. Prepare this action again.')
+          assertWriteState()
           markWrite(true)
         },
         onBeforeWriteAborted: () => markWrite(false),
         onWriteRejected: () => markWrite(false),
         reverify: async () => {
-          if (actorContext.current.generation !== generation) throw new Error('Your account or project changed. Prepare this action again.')
+          assertWriteState()
           const context = { chainId: plan.chainId, projectId: BigInt(plan.projectId), account: plan.account, expectedHook: plan.result.inventory.hook }
           const fresh = plan.kind === 'cash-out'
             ? await prepareDefifaCashOut(client, { ...context, tokenIds: plan.tokenIds, minimumReclaim: plan.minimum })
             : await prepareDefifaTransfer(client, { ...context, tokenId: plan.tokenIds[0], recipient: plan.recipient })
+          assertWriteState()
           if (requestKey(fresh) !== requestKey(plan.result) || fresh.inventory.implementation.toLowerCase() !== plan.result.inventory.implementation.toLowerCase() || fresh.inventory.phase !== plan.result.inventory.phase ||
             ('reclaimAmount' in fresh && 'reclaimAmount' in plan.result && (fresh.reclaimAmount !== plan.result.reclaimAmount || rewardsKey(fresh) !== rewardsKey(plan.result)))) {
             throw new Error('The NFT action changed. Close this review and prepare it again.')

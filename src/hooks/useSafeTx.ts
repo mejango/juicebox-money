@@ -92,6 +92,8 @@ export type TxSendOptions = {
   reverify?: (request: TxRequest) => Promise<unknown>
   /** Persist an unknown-submission marker immediately before the wallet write. */
   beforeWrite?: () => unknown | Promise<unknown>
+  /** Synchronous caller intent/mount check at the final wallet boundary. */
+  assertWriteState?: () => void
   /** Called if the final wallet gate aborts a persisted intent before the wallet write. */
   onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
@@ -691,6 +693,7 @@ export function useSafeTx(chainId: number) {
             if (isSafeConnection(wagmiConfig) !== viaSafe) {
               throw new Error('Wallet connection changed. Review the transaction again.')
             }
+            options.assertWriteState?.()
           },
           write: simulated => writeContractAsync(simulated),
           onPhase: setPhase,

@@ -86,7 +86,9 @@ vi.mock('@tanstack/react-query', async importOriginal => {
       : query(String(options.queryKey[0] === 'projectDisplay' ? options.queryKey[4] : options.queryKey[0])),
   }
 })
-vi.mock('@/hooks/useShop721', () => ({
+vi.mock('@/hooks/useShop721', async original => ({
+  ...(await original<typeof import('@/hooks/useShop721')>()),
+  useShop721Media: () => ({ data: undefined }),
   useShop721: () => ({ data: null, isSuccess: true, ...m.queries.nativeInventory as object }),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => {
@@ -494,20 +496,23 @@ describe('native market payment guard', () => {
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
   })
 
-  it('shows native inventory instead of generic payment or cart controls', async () => {
+  it('uses the compact native shop without generic payment controls or a duplicate inventory table', async () => {
+    m.realNativeRecovery = true
     m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
     m.queries.nativeInventory = { data: {
       protocol: 'defifa', hook: TERMINAL, capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
       pricing: { currency: 1, decimals: 6, symbol: 'USDC' },
-      tiers: [{ id: 1, name: 'Crab', price: 1250000n, currentSupply: 7n }],
+      phase: 4, tiers: [{ id: 1, name: 'Crab', price: 1250000n, discountPercent: 0, remaining: 100, currentSupply: 7n }],
     } }
     await act(async () => {
       root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />)
     })
-    expect(host.textContent).toContain('Crab')
+    await waitUntil(() => !!host.querySelector('[title="Add Crab to cart"]'))
+    expect(host.querySelector('[title="Add Crab to cart"]')).not.toBeNull()
     expect(host.textContent).toContain('1.25 USDC')
     expect(host.querySelector('a[href^="https://metalog.money"]')).toBeNull()
-    expect(host.textContent).toContain('Defifa NFT tiers')
+    expect(host.querySelector('table')).toBeNull()
+    expect(host.textContent).toContain('Protocol phase: Complete')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
     expect(button('Add to balance').disabled).toBe(false)
   })
@@ -515,6 +520,38 @@ describe('native market payment guard', () => {
 
 
 describe('compatible basic funding', () => {
+  it.each(['native mint', 'payment approval'])('cancels an unsent %s when funding mode unmounts checkout during simulation', async leg => {
+    m.realNativeRecovery = true
+    vi.stubGlobal('navigator', { locks: { request: (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+    const token = leg === 'native mint' ? NATIVE : USDC
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: {
+      protocol: 'defifa', hook: TERMINAL, phase: 1, capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
+      pricing: { token, currency: 1, decimals: 18, symbol: 'ETH' },
+      tiers: [{ id: 1, name: 'Home team', price: 100n, remaining: 100, initial: 100, discountPercent: 0 }],
+    } }
+    m.nativePrepared = {
+      inventory: { implementation: TERMINAL, pricing: { token, decimals: 18 } },
+      transaction: buildPayTx({ chainId: 1, terminal: TERMINAL, projectId: 42n, token, amount: 100n, beneficiary: ALICE, metadata: buildDefifaPayMetadata({ metadataIdTarget: TERMINAL, tierIdsToMint: [1n] }) }),
+      amount: 100n, selectedTiers: [{ tierId: 1n, count: 1n, unitPrice: 100n }], attestationDelegate: zeroAddress,
+      effectiveAttestationDelegate: ALICE, effectiveDelegates: [{ tierId: 1n, delegate: ALICE }],
+    }
+    wallet.client.readContract.mockImplementation(async () => 0n)
+    let finish!: () => void
+    wallet.client.simulateContract.mockImplementationOnce(request => new Promise(resolve => { finish = () => resolve({ request }) }))
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+    await waitUntil(() => !!host.querySelector('[title="Add Home team to cart"]'))
+    await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
+    await click('Review mint'); await click(leg === 'native mint' ? 'Confirm mint' : 'Approve payment')
+    await waitUntil(() => wallet.client.simulateContract.mock.calls.length === 1)
+    await click('Add to balance')
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+    await act(async () => { finish(); await new Promise(resolve => setTimeout(resolve, 20)) })
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(readDefifaWriteRecovery({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })).toBeNull()
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+  })
+
   it('dismisses a nonbusy unknown mint to its saved pending card and makes funding directly usable', async () => {
     m.realNativeRecovery = true
     vi.stubGlobal('navigator', { locks: { request: (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
@@ -531,8 +568,8 @@ describe('compatible basic funding', () => {
       effectiveAttestationDelegate: ALICE, effectiveDelegates: [{ tierId: 1n, delegate: ALICE }],
     }
     await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
-    await waitUntil(() => !!host.querySelector('[aria-label="Add Home team"]'))
-    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Add Home team"]')!.click())
+    await waitUntil(() => !!host.querySelector('[title="Add Home team to cart"]'))
+    await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
     await click('Review mint')
     wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection dropped after invocation'))
     await click('Confirm mint')
