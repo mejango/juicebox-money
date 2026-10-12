@@ -742,3 +742,35 @@ The unchanged candidate artifact passes the reviewed caps; source invariants, sc
 - [ ] Create follow-up PR and obtain exact-head hosted CI for root release.
 
 Review: root approved the minimal shared-owner source/test delta. Final full `npm run check` passed222files/3008tests and70browser journeys (38.3s), with every existing budget/source/protocol/schema/transaction gate unchanged. `/tmp/jbm-ens-center-check.log`. Hosted CI and exact deployed Center-only ENS browser provenance remain release gates.
+
+## Shared NFT checkout presentation (2026-10-12)
+
+## Plan refinement
+- **Objective:** Defifa checkout uses the same NFT preview cards and quantity controls as ordinary checkout while retaining its native protocol operations.
+- **System fit:** PayPanel owns compact ordinary checkout presentation; DefifaCheckout owns native quantities/preparation/recovery. Extract only presentation, then reuse it. SDK inventory remains authority for names/prices/stock/phase; existing Center media readers provide optional images.
+- **Reuse and simplicity:** First extract the existing compact card unchanged and prove ordinary payment parity. Then reuse it with native callbacks and QuantityStepper. Preserve authenticated store in Shop and extend existing readTierPage with an optional one-tier page size for cosmetic resolver reads; existing resolveTierMedia parses the native inline JSON/SVG.
+- **Evidence and unknowns:** Center Base27 tier1 opt-in resolver returns102077-character inline JSON/SVG while encodedIPFS is zero. Current native checkout has no preview and named-tier media short-circuits. Large resolver payloads must not block inventory or purchase.
+- **Verification:** Compare ordinary selection/price/soldout/quantity markup and engine tests before behavior change; test exact native URI, failed media fallback and authoritative names, then native preview/selection/review parity at mobile/desktop and all required gates/CI before root release. Native metadata, phase, delegation, canonical proof, Safe approval and durable recovery stay unchanged.
+- **Resource budget:** Clean latestmain483cad branch, one shared compact card owner and bounded cosmetic query/cache using existing Center transport. Native preview pages bound metadata to12 displayed tiers with quantity selections retained across pages. No copied ABI/decoder, new public writes or native lifecycle redesign.
+
+- [x] Extract ordinary compact selection card without behavior change and verify parity.
+- [ ] Reuse it in native checkout with optional bounded Center previews and verify native action parity.
+- [ ] Run full checks and hosted CI, then coordinate root publication and actual previews.
+
+Refactor evidence: separate21a8f77 preserves ordinary card markup/callbacks;40tests/4files plus globaltypes/touchedlint passed before native behavior. Native stage now has52focusedtests/5files passing, including exact one-tier pinned resolver reads, max12/max2 metadata admission, cross-page full selection, locked quote/review fields and cosmetic-failure purchase usability. Full local/hosted gates and live previews remain pending.
+
+## Plan refinement
+- **Objective:** Parent mode/tab changes must cancel unsent native NFT wallet exposure while keeping already-submitted proof/recovery intact.
+- **System fit:** Independent review traced a gap between asynchronous journal beforeWrite and SDK's synchronous final beforeSend; useSafeTx owns the final wallet gate, and native callers own their mount/intent context.
+- **Reuse and simplicity:** Add an optional synchronous assertWriteState callback to the existing beforeSend gate, compose after current wallet/Safe checks, and reuse useUnmountSignal plus existing frozen review/generation checks in Checkout/Owned. No new transaction engine, authority or journal.
+- **Evidence and unknowns:** SDK awaits beforeWrite before final wallet exposure; previous native checks did not detect component unmount. The new checkout exposes parent funding mode during pending quote/simulation, making this final guard essential.
+- **Verification:** Exercise real SDK reviewed engine with deferred simulation, parent funding-mode or component unmount before wallet invocation, including approval and owned operations; assert no write and exact reserved-marker cleanup. Preserve ordinary callbacks, prior canonical submitted proof and all required checks.
+- **Resource budget:** One additive synchronous engine callback and two existing native caller checks, narrow reviewer follow-up; no duplicated wallet guards, policy changes or public writes. Bundle attribution happens only after final source is fixed.
+
+## Plan refinement
+- **Objective:** Complete ordinary/native checkout parity with the existing inline amount/currency/action row and visible selected NFT names/counts/total, beyond preview cards alone.
+- **System fit:** PayPanel remains the generic routing/credit owner, DefifaCheckout remains the native preparation/proof/recovery owner, and shared components own only layout/classes/selection summary presentation.
+- **Reuse and simplicity:** First extract the existing ordinary row into three child slots plus class constants, the minimal cart line and existing subtotal into one pure SDK-price owner, with unchanged ordinary behavior. Then native uses read-only selected/fresh-reviewed total, fixed currency and its existing action callbacks in that same presentation.
+- **Evidence and unknowns:** Root inspected actual screenshots and found the native standalone action had no ordinary amount bar. Previous browser name assertion came from the removed table; shared alt/title already identify images, and shared fallback aria/quantity labels now preserve identification without native-only style.
+- **Verification:** Prove ordinary amount/select/button callbacks and class output unchanged before native use; test mixed-price/cross-page totals, summary names/counts, readonly amount and native final-context cancellation. Inspect ordinary/native actual-art parity screenshots, then full required gates and hosted CI before root release.
+- **Resource budget:** Small presentational extraction and one subtotal owner, no credits/swap/terminal routing copied into native, no protocol or wallet writes. Preserve existing URI page/concurrency budget and final guard; remeasure only necessary bundle impact after final source.

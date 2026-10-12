@@ -8,15 +8,19 @@ import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { DefifaNftTransactionRevertedError, defifaPhaseAllowsPay, effectiveTierPrice, MAX_DEFIFA_ACTION_NFTS, prepareDefifaPay, verifyDefifaNftTransaction, type PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
 import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useSafeTx, type TxRequest, type TxSendOptions } from '@/hooks/useSafeTx'
-import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX, type Shop } from '@/hooks/useShop721'
+import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
+import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
 import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { formatTokenAmount } from '@/lib/format'
 import { explorerTxUrl } from '@/lib/chainDisplay'
+import { defifaPhaseLabel } from '@/lib/defifa-phase'
 
 type Review = {
+  generation: number
   chainId: JBChainId
   projectId: number
   account: Address
@@ -41,9 +45,15 @@ const samePreparation = (a: PreparedDefifaPay, b: PreparedDefifaPay) =>
 /** Native NFT selection, with SDK-owned pricing, delegation and receipt proof. */
 export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainId; projectId: number; shop: Shop }) {
   const { address, isConnected, openSignIn } = useWallet()
+  const flowSignal = useUnmountSignal()
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const queries = useQueryClient()
   const [quantities, setQuantities] = useState<Record<number, number>>({})
+  const [page, setPage] = useState(0)
+  const pageCount = Math.max(1, Math.ceil(shop.tiers.length / NFT_CHECKOUT_PREVIEW_PAGE_SIZE))
+  const visiblePage = Math.min(page, pageCount - 1)
+  const visibleTiers = shop.tiers.slice(visiblePage * NFT_CHECKOUT_PREVIEW_PAGE_SIZE, (visiblePage + 1) * NFT_CHECKOUT_PREVIEW_PAGE_SIZE)
+  const { data: mediaById } = useShop721Media(chainId, shop, visibleTiers.map(tier => tier.id))
   const [delegate, setDelegate] = useState('')
   const [review, setReview] = useState<Review | null>(null)
   const [preparing, setPreparing] = useState(false)
@@ -74,11 +84,12 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     setReview(null)
     setPreparing(false)
     setQuantities({})
+    setPage(0)
     setError(null)
   }, [identity, client])
   const assertCurrent = (frozen: Review) => {
     const now = current.current
-    if (now.chainId !== frozen.chainId || now.projectId !== frozen.projectId || now.hook !== frozen.hook || now.client !== frozen.client || now.address?.toLowerCase() !== frozen.account.toLowerCase())
+    if (flowSignal().aborted || generation.current !== frozen.generation || now.chainId !== frozen.chainId || now.projectId !== frozen.projectId || now.hook !== frozen.hook || now.client !== frozen.client || now.address?.toLowerCase() !== frozen.account.toLowerCase())
       throw new Error('The connected account or project changed. Review again.')
   }
   const prepareFresh = async (frozen: Review) => {
@@ -89,7 +100,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     return fresh
   }
   const prepare = async () => {
-    if (preparingRef.current || locked.current || !client || !address) return
+    if (flowSignal().aborted || preparingRef.current || locked.current || !client || !address) return
     preparingRef.current = true
     const attempt = ++generation.current
     setPreparing(true)
@@ -100,8 +111,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       const prepared = await prepareDefifaPay(client, { chainId, projectId: BigInt(projectId), account: address, expectedHook: shop.hook, tierIdsToMint: tierIds, attestationDelegate: (delegate || zeroAddress) as Address })
       const token = prepared.inventory.pricing.token
       const allowance = token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? prepared.amount : await client.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [address, prepared.transaction.address] })
-      if (generation.current !== attempt) return
-      setReview({ chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { chainId, address: token, abi: erc20Abi, functionName: 'approve', args: [prepared.transaction.address, prepared.amount], value: 0n, label: 'Approve Defifa mint payment' } : null })
+      if (flowSignal().aborted || generation.current !== attempt) return
+      setReview({ generation: attempt, chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { chainId, address: token, abi: erc20Abi, functionName: 'approve', args: [prepared.transaction.address, prepared.amount], value: 0n, label: 'Approve Defifa mint payment' } : null })
       setStep('review')
       setSubmitted(null)
       submissionStarted.current = false
@@ -125,7 +136,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     const request = approving ? review.approval! : { ...review.prepared.transaction, label: 'Mint Defifa NFTs' }
     try {
       assertCurrent(review)
-      const options: TxSendOptions = { reviewedAccount: review.account, reviewedInParent: true, beforeWrite: () => { assertCurrent(review); submissionStarted.current = true }, onBeforeWriteAborted: () => { submissionStarted.current = false }, onWriteRejected: () => { submissionStarted.current = false }, simulationBlockNumber: approving ? undefined : approvalBlock, reverify: async () => {
+      const options: TxSendOptions = { reviewedAccount: review.account, reviewedInParent: true, assertWriteState: () => assertCurrent(review), beforeWrite: () => { assertCurrent(review); submissionStarted.current = true }, onBeforeWriteAborted: () => { submissionStarted.current = false }, onWriteRejected: () => { submissionStarted.current = false }, simulationBlockNumber: approving ? undefined : approvalBlock, reverify: async () => {
         await prepareFresh(review)
         if (!approving && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
           const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
@@ -231,15 +242,29 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const frozenAmount = review ? `${formatUnits(review.prepared.amount, review.prepared.inventory.pricing.decimals)} ${review.symbol}` : ''
   const busy = approvalTx.busy || mintTx.busy || checking
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['pay']} active={!!review}><div className="space-y-4">
-    {allowed ? <>
-      {shop.tiers.map(tier => <div key={tier.id} className="flex items-center justify-between gap-3 border-b border-smoke-200 py-2">
-        <div><p>{tier.name ?? `Tier #${tier.id}`}</p><p className="text-sm text-smoke-600">{formatTokenAmount(effectiveTierPrice(tier.price, tier.discountPercent), shop.pricing.decimals)} {shop.pricing.symbol}, {tier.remaining.toLocaleString('en-US')} available</p></div>
-        <div className="flex items-center gap-2">
-          <button type="button" className="btn-secondary px-3 py-1" aria-label={`Remove ${tier.name ?? `tier ${tier.id}`}`} disabled={!!review || preparing || !(quantities[tier.id] ?? 0)} onClick={() => setQuantities(q => ({ ...q, [tier.id]: q[tier.id] - 1 }))}>−</button>
-          <output aria-label={`${tier.name ?? `Tier ${tier.id}`} quantity`}>{quantities[tier.id] ?? 0}</output>
-          <button type="button" className="btn-secondary px-3 py-1" aria-label={`Add ${tier.name ?? `tier ${tier.id}`}`} disabled={!!review || preparing || count >= MAX_DEFIFA_ACTION_NFTS || (quantities[tier.id] ?? 0) >= tier.remaining} onClick={() => setQuantities(q => ({ ...q, [tier.id]: (q[tier.id] ?? 0) + 1 }))}>+</button>
+    <p className="text-sm text-smoke-600">Protocol phase: {defifaPhaseLabel(shop.phase)}</p>
+      <div className="mt-4">
+        <span className="field-label">Shop</span>
+        <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
+          {visibleTiers.map(tier => {
+            const quantity = quantities[tier.id] ?? 0
+            const name = tier.name ?? `Tier #${tier.id}`
+            const canAdd = count < MAX_DEFIFA_ACTION_NFTS && quantity < tier.remaining
+            return <NftCheckoutCard key={tier.id} tierId={tier.id} name={name} image={mediaById?.[tier.id]?.image} qty={quantity}
+              priceLabel={`${formatTokenAmount(effectiveTierPrice(tier.price, tier.discountPercent), shop.pricing.decimals)} ${shop.pricing.symbol}`}
+              soldOut={tier.remaining === 0} busy={!allowed || !!review || preparing} canAdd={canAdd}
+              onSelect={() => { if (canAdd) setQuantities(q => ({ ...q, [tier.id]: 1 })) }}
+              onAdd={() => setQuantities(q => ({ ...q, [tier.id]: quantity + 1 }))}
+              onRemove={() => setQuantities(q => ({ ...q, [tier.id]: quantity - 1 }))} />
+          })}
         </div>
-      </div>)}
+        {pageCount > 1 ? <div className="flex items-center justify-between gap-3 text-xs text-smoke-600">
+          <button type="button" className="btn-secondary px-3 py-1" disabled={!!review || preparing || visiblePage === 0} onClick={() => setPage(visiblePage - 1)}>Previous NFTs</button>
+          <span>Page {visiblePage + 1} of {pageCount}</span>
+          <button type="button" className="btn-secondary px-3 py-1" disabled={!!review || preparing || visiblePage + 1 >= pageCount} onClick={() => setPage(visiblePage + 1)}>Next NFTs</button>
+        </div> : null}
+      </div>
+    {allowed ? <>
       <label className="block text-sm">Voting delegate, optional<input className="input-well mt-1 w-full px-3 py-2" value={delegate} placeholder="Use the contract default" disabled={!!review || preparing} onChange={event => setDelegate(event.target.value)} /></label>
       {isConnected ? <button className="btn-primary px-4 py-2" disabled={!count || preparing || !!review} onClick={() => void prepare()}>{preparing ? 'Preparing mint…' : 'Review mint'}</button> : <button className="btn-primary px-4 py-2" onClick={openSignIn}>Connect wallet</button>}
     </> : <p className="text-sm text-smoke-600">NFT minting is {shop.phase === undefined ? 'unavailable while the protocol phase is unknown' : 'not open in this phase'}.</p>}

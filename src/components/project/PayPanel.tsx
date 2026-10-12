@@ -97,8 +97,8 @@ import {
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
 import { useShop721 } from '@/hooks/useShop721'
+import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE } from "@/hooks/useShop721";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
-import { DefifaInventory } from '@/components/project/DefifaInventory'
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
@@ -1805,7 +1805,7 @@ export function PayPanel({
 
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <div className="space-y-4"><DefifaInventory shop={inventory.data} /><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
+    return <div className="space-y-4"><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
   if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
     const pending = nativeMarket ? inventory : identity;
@@ -1855,7 +1855,7 @@ export function PayPanel({
           ) : null}
 
           <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
-            {shop.tiers.slice(0, 12).map((tier) => {
+            {shop.tiers.slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE).map((tier) => {
               const qty = cart[tier.id] ?? 0;
               const soldOut = !tier.unlimited && tier.remaining === 0;
               const cap = tier.unlimited ? 99 : tier.remaining;

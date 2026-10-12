@@ -18,6 +18,7 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
 }) {
   return (
                 <div
+                  data-nft-checkout-tier={tierId}
                   className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
                     qty > 0
                       ? "border-bluebs-500 bg-bluebs-25"
@@ -31,11 +32,12 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
                   ) : null}
                   <button
                     type="button"
+                    aria-label={name}
                     onClick={() => {
                       if (soldOut || qty > 0) return;
                       onSelect();
                     }}
-                    disabled={busy || soldOut}
+                    disabled={busy || soldOut || (qty === 0 && !canAdd)}
                     className="block w-full disabled:cursor-not-allowed"
                     title={
                       soldOut
@@ -66,7 +68,7 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
                     <button
                       type="button"
                       onClick={onSelect}
-                      disabled={busy}
+                      disabled={busy || !canAdd}
                       className="w-full px-2 pb-2 text-[11px] text-smoke-700"
                     >
                       {priceLabel}

@@ -230,7 +230,11 @@ const budgets = {
   // (+21,223 B for lazy native actions and original-write recovery).
   // Round only this measured aggregate to the next KiB. Every route,
   // largest-chunk, stylesheet and lazy-boundary ceiling stays unchanged.
-  allScripts: 2579 * KIB,
+  // Shared NFT checkout previews and final native intent guards, exact locked
+  // Node26.7/npm12 builds: main 483cad2 is 2,640,148 B, adoption is
+  // 2,641,755 B (+1,607 B). Moving URI batching to the existing lazy reader
+  // keeps create within its unchanged 513 KiB ceiling. Round only aggregate.
+  allScripts: 2580 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

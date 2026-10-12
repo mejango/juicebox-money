@@ -24,6 +24,7 @@ describe('shared NFT checkout card', () => {
     let view!: TestRenderer.ReactTestRenderer
     await act(async () => { view = TestRenderer.create(createElement(NftCheckoutCard, props)) })
     expect(view.root.findAllByType('img')).toHaveLength(0)
+    expect(view.root.findByType('button').props['aria-label']).toBe('Draw')
     expect(JSON.stringify(view.toJSON())).toContain('Sold out')
     expect(view.root.findByType('button').props.disabled).toBe(true)
     await act(async () => { view.update(createElement(NftCheckoutCard, { ...props, soldOut: false, qty: 1, busy: true })) })

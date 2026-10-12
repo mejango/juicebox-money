@@ -14,9 +14,10 @@ const TERMINAL = '0x4444444444444444444444444444444444444444' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
 const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const queries = new QueryClient()
-const controls = vi.hoisted(() => ({ prepare: vi.fn(), verify: vi.fn(), approvalProof: vi.fn() }))
+const controls = vi.hoisted(() => ({ prepare: vi.fn(), verify: vi.fn(), approvalProof: vi.fn(), media: undefined as Record<number, { image: string }> | undefined }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...(await original<typeof import('@bananapus/nana-sdk-core/v6')>()), prepareDefifaPay: controls.prepare, verifyDefifaNftTransaction: controls.verify }))
 vi.mock('@bananapus/nana-sdk-core/review', async original => ({ ...(await original<typeof import('@bananapus/nana-sdk-core/review')>()), verifyReviewedWriteReceipt: controls.approvalProof }))
+vi.mock('@/hooks/useShop721', async original => ({ ...(await original<typeof import('@/hooks/useShop721')>()), useShop721Media: () => ({ data: controls.media }) }))
 vi.mock('@/components/project/DefifaRecovery', () => ({ DefifaRecovery: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async original => {
@@ -65,7 +66,7 @@ function text(node: ReactTestInstance): string {
 }
 let renderer: TestRenderer.ReactTestRenderer
 async function click(label: string) {
-  const button = renderer.root.findAllByType('button').find(node => text(node) === label || node.props['aria-label'] === label)
+  const button = renderer.root.findAllByType('button').find(node => text(node) === label || node.props['aria-label'] === label || node.props.title === `${label} to cart`)
   expect(button, label).toBeDefined()
   await act(async () => button!.props.onClick())
 }
@@ -74,6 +75,7 @@ beforeEach(async () => {
   localStorage.clear()
   vi.stubGlobal('navigator', { locks: { request: async (name: string, _: unknown, run: (lock: object) => Promise<unknown>) => run({ name }) } })
   wallet.reset(); wallet.connect(ALICE)
+  controls.media = undefined
   controls.prepare.mockReset().mockResolvedValue(prepared())
   controls.verify.mockReset().mockResolvedValue(undefined)
   controls.approvalProof.mockReset().mockResolvedValue('success')
@@ -267,6 +269,45 @@ describe('native Defifa checkout through the reviewed engine', () => {
   it('shows inactive phase honestly without a disabled mint placeholder', async () => {
     await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, phase: 3 } })))
     expect(text(renderer.root)).toContain('NFT minting is not open in this phase.')
-    expect(renderer.root.findAllByType('button')).toHaveLength(0)
+    expect(renderer.root.findAllByType('button').every(node => node.props.disabled)).toBe(true)
+    expect(text(renderer.root)).toContain('Shop')
   })
+  it('retains selections across preview pages in the complete native intent', async () => {
+    const tiers = Array.from({ length: 13 }, (_, index) => ({ ...shop.tiers[0], id: index + 1, name: index === 0 ? 'Banny' : `Team ${index + 1}` }))
+    const quote = prepared(NATIVE, 200n)
+    quote.transaction = buildPayTx({ chainId: 1, terminal: TERMINAL, projectId: 42n, token: NATIVE, amount: 200n, beneficiary: ALICE, metadata: buildDefifaPayMetadata({ metadataIdTarget: HOOK, tierIdsToMint: [1n, 13n] }) })
+    quote.selectedTiers = [1n, 13n].map(tierId => ({ tierId, count: 1n, unitPrice: 100n }))
+    quote.effectiveDelegates = [1n, 13n].map(tierId => ({ tierId, delegate: ALICE }))
+    controls.prepare.mockResolvedValue(quote)
+    await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, tiers } })))
+    await click('Add Banny'); await click('Next NFTs'); await click('Add Team 13'); await click('Previous NFTs'); await click('Review mint')
+    expect(controls.prepare).toHaveBeenLastCalledWith(wallet.client, expect.objectContaining({ tierIdsToMint: [1n, 13n] }))
+    expect(text(renderer.root)).toContain('Tier 1: Banny'); expect(text(renderer.root)).toContain('Tier 13: Team 13')
+  })
+  it('locks preview pages, selection and delegate during a pending quote and review', async () => {
+    let finish!: (quote: PreparedDefifaPay) => void
+    controls.prepare.mockReturnValueOnce(new Promise<PreparedDefifaPay>(resolve => { finish = resolve }))
+    const tiers = Array.from({ length: 13 }, (_, index) => ({ ...shop.tiers[0], id: index + 1, name: index === 0 ? 'Banny' : `Team ${index + 1}` }))
+    await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, tiers } })))
+    await click('Add Banny'); await click('Review mint')
+    expect(renderer.root.findByProps({ title: 'Add Banny to cart' }).props.disabled).toBe(true)
+    expect(renderer.root.findAllByType('button').find(node => text(node) === 'Next NFTs')!.props.disabled).toBe(true)
+    expect(renderer.root.findByType('input').props.disabled).toBe(true)
+    await act(async () => { finish(prepared()) })
+    expect(renderer.root.findByProps({ title: 'Add Banny to cart' }).props.disabled).toBe(true)
+    expect(renderer.root.findAllByType('button').find(node => text(node) === 'Next NFTs')!.props.disabled).toBe(true)
+    expect(renderer.root.findByType('input').props.disabled).toBe(true)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+  it('hydrates the shared preview while cosmetic failure leaves selection and preparation usable', async () => {
+    controls.media = { 1: { image: 'data:image/svg+xml;base64,PHN2Zy8+' } }
+    await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop })))
+    expect(renderer.root.findByType('img').props.alt).toBe('Banny')
+    controls.media = undefined
+    await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop })))
+    expect(renderer.root.findAllByType('img')).toHaveLength(0)
+    await openReview()
+    expect(controls.prepare).toHaveBeenCalledOnce()
+  })
+
 })

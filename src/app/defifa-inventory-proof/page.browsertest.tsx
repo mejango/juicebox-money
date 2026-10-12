@@ -23,7 +23,7 @@ export default function DefifaInventoryProof() {
         id: index + 1, name, currentSupply: BigInt(index), price: index % 2 === 0 ? 1250000n : 2750000n,
         remaining: 100, initial: 100, category: 0, discountPercent: 0,
         reserveFrequency: 0, votingUnits: 0n, splitPercent: 0,
-        encodedIpfsUri: `0x${'0'.repeat(64)}`, resolvedUri: '',
+        encodedIpfsUri: `0x${'0'.repeat(64)}`, resolvedUri: `data:application/json;base64,${btoa(JSON.stringify({ name: 'Cosmetic name', image: `data:image/svg+xml;base64,${btoa(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" fill="#274ff5"/><text x="12" y="55" fill="white">NFT ${index + 1}</text></svg>`)}` }))}`,
       })),
     }
     client.setQueryData(shop721QueryKey(1, 1, false), shop)

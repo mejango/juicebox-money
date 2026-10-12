@@ -1,15 +1,19 @@
+// @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { zeroAddress, encodeFunctionData } from 'viem'
 
-const m = vi.hoisted(() => ({ account: '0x1111111111111111111111111111111111111111', holdings: vi.fn(), cash: vi.fn(), transfer: vi.fn(), verify: vi.fn(), clear: vi.fn(), read: vi.fn(), saved: null as unknown, send: vi.fn(), phase: 'idle', receipt: null as unknown, hash: null as unknown }))
-vi.mock('@/lib/defifa-write-recovery', () => ({
+const m = vi.hoisted(() => ({ realEngine: false, account: '0x1111111111111111111111111111111111111111', holdings: vi.fn(), cash: vi.fn(), transfer: vi.fn(), verify: vi.fn(), clear: vi.fn(), read: vi.fn(), saved: null as unknown, send: vi.fn(), phase: 'idle', receipt: null as unknown, hash: null as unknown }))
+vi.mock('@/lib/defifa-write-recovery', async original => {
+  const actual = await original<typeof import('@/lib/defifa-write-recovery')>()
+  return ({
   clearDefifaWriteRecovery: m.clear,
-  readDefifaWriteRecovery: m.read,
+  readDefifaWriteRecovery: (scope: Parameters<typeof actual.readDefifaWriteRecovery>[0]) => m.realEngine ? actual.readDefifaWriteRecovery(scope) : m.read(scope),
   DEFIFA_RECOVERY_QUERY_PREFIX: ['defifa-write-recovery'],
   sendRecoverableDefifaWrite: async ({ send, request, options, onRecord, scope, safe }: Parameters<typeof import('@/lib/defifa-write-recovery').sendRecoverableDefifaWrite>[0]) => {
+    if (m.realEngine) return actual.sendRecoverableDefifaWrite({ send, request, options, onRecord, scope, safe })
     const record = { version: 1 as const, id: 'owned-test', chainId: scope.chainId, account: scope.account, safe, call: { to: request.address, data: encodeFunctionData(request), value: '0' } }
     return send(request, { ...options,
       beforeWrite: async () => {
@@ -20,14 +24,39 @@ vi.mock('@/lib/defifa-write-recovery', () => ({
       onWriteRejected: async () => { m.saved = null; onRecord?.(null); await options.onWriteRejected?.() },
     })
   },
-}))
-vi.mock('wagmi', () => ({ useConfig: () => ({}), usePublicClient: () => ({}) }))
-vi.mock('wagmi/actions', () => ({ getAccount: () => ({ address: m.account }) }))
-vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: m.account, openSignIn: vi.fn() }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ phase: m.phase, hash: m.hash, receipt: m.receipt, send: m.send, busy: m.phase === 'pending', reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }))
+}) })
+vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
+vi.mock('@wagmi/core', async original => {
+  const { wallet } = await import('../support/fake-wallet')
+  return { ...(await original<typeof import('@wagmi/core')>()), getAccount: () => ({ address: m.realEngine ? wallet.account : m.account, chainId: 1 }) }
+})
+vi.mock('wagmi', async () => {
+  const { walletHooks } = await import('../support/fake-wallet')
+  return { ...walletHooks, useConfig: () => ({}), usePublicClient: () => m.realEngine ? walletHooks.usePublicClient() : {} }
+})
+vi.mock('wagmi/actions', async () => {
+  const { wallet } = await import('../support/fake-wallet')
+  return { getAccount: () => ({ address: m.realEngine ? wallet.account : m.account, chainId: 1 }) }
+})
+vi.mock('@/hooks/useWallet', async () => {
+  const { useFakeWallet } = await import('../support/fake-wallet')
+  return { useWallet: () => { const connected = useFakeWallet(); return m.realEngine ? connected : ({ address: m.account, openSignIn: vi.fn() }) } }
+})
+vi.mock('@/hooks/useSafeTx', async original => {
+  const actual = await original<typeof import('@/hooks/useSafeTx')>()
+  return { useSafeTx: (chainId: number) => m.realEngine ? actual.useSafeTx(chainId) : ({ phase: m.phase, hash: m.hash, receipt: m.receipt, send: m.send, busy: m.phase === 'pending', reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }
+})
+vi.mock('@/lib/transaction-review', async original => {
+  const { wallet } = await import('../support/fake-wallet')
+  return { ...(await original<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: wallet.requestReview }
+})
+vi.mock('@/lib/safe-connector', async original => ({ ...(await original<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...(await original<typeof import('@bananapus/nana-sdk-core/v6')>()), getDefifaHoldings: m.holdings, prepareDefifaCashOut: m.cash, prepareDefifaTransfer: m.transfer, verifyDefifaNftTransaction: m.verify }))
 vi.mock('@/components/project/DefifaRecovery', () => ({ DefifaRecovery: ({ children, active }: { children: ReactNode; active: boolean }) => !active && m.saved ? createElement('p', null, 'Original NFT action retained') : children }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: ({ title, onConfirm, actionDisabled, status, error, children, rows, complete, onClose, busy }: { title: string; onConfirm: () => void; actionDisabled: boolean; status: string; error: string; children: ReactNode; rows: { label: string; value: ReactNode }[]; complete: boolean; busy: boolean; onClose: () => void }) => createElement('section', null, title, status, error, children, ...rows.map(row => createElement('p', { key: row.label }, row.label, row.value)), createElement('button', { onClick: onClose, disabled: busy }, 'Close'), complete ? createElement('button', { onClick: onClose }, 'Done') : createElement('button', { onClick: onConfirm, disabled: actionDisabled }, 'Confirm NFT action')) }))
+import { wallet } from '../support/fake-wallet'
+import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
+import type { Address } from 'viem'
 import { DefifaOwnedNfts } from '@/components/project/DefifaOwnedNfts'
 import type { Shop } from '@/hooks/useShop721'
 import { erc721Abi } from 'viem'
@@ -50,6 +79,8 @@ async function settle() { await act(async () => { await new Promise(resolve => s
 async function manual(value = '1000000001') { await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === 'Token IDs separated by commas')!.props.onChange({ target: { value } })) }
 function element(projectId = 1, collection = shop) { return createElement(QueryClientProvider, { client: queries }, createElement(DefifaOwnedNfts, { chainId: 1, projectId, shop: collection })) }
 beforeEach(async () => {
+  m.realEngine = false
+  localStorage.clear()
   m.account = '0x1111111111111111111111111111111111111111'; m.phase = 'idle'; m.receipt = null; m.hash = null
   m.holdings.mockReset().mockResolvedValue({ hook: HOOK, blockNumber: 99n, tokens: [], totalOwned: 1n, totalCandidates: 200n, nextCursor: '100', complete: false })
   m.cash.mockReset().mockImplementation(async () => cash()); m.transfer.mockReset().mockImplementation(async (_client, args) => ({ inventory, transaction: { chainId: 1, address: HOOK, abi: erc721Abi, functionName: 'safeTransferFrom', args: [args.account, args.recipient, args.tokenId] } }))
@@ -57,8 +88,54 @@ beforeEach(async () => {
   queries = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
 })
-afterEach(async () => { await act(async () => renderer.unmount()); queries.clear() })
+afterEach(async () => { await act(async () => renderer.unmount()); queries.clear(); localStorage.clear() })
 describe('native owned NFT actions', () => {
+  it.each(['cash-out', 'transfer'] as const)('real reviewed engine prevents %s wallet exposure after unmount during simulation', async action => {
+    await act(async () => renderer.unmount())
+    m.realEngine = true
+    wallet.reset(); wallet.connect(m.account as Address)
+    vi.stubGlobal('navigator', { locks: { request: async (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+    const reservations = vi.spyOn(Storage.prototype, 'setItem')
+    let release!: () => void
+    wallet.client.simulateContract.mockImplementationOnce(request => new Promise(resolve => { release = () => resolve({ request }) }))
+    await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
+    await manual()
+    if (action === 'transfer') await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    await click(action === 'transfer' ? 'Transfer Defifa NFT' : 'Cash out Defifa NFTs')
+    await click('Confirm NFT action')
+    expect(wallet.client.simulateContract).toHaveBeenCalledTimes(1)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+    await act(async () => release()); await settle()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(reservations).toHaveBeenCalled()
+    expect(readDefifaWriteRecovery({ chainId: 1, projectId: 1, account: m.account as Address, action })).toBeNull()
+  })
+
+  it.each(['cash-out', 'transfer'] as const)('final synchronous gate prevents %s exposure after beforeWrite yields', async action => {
+    await act(async () => renderer.unmount())
+    m.realEngine = true
+    wallet.reset(); wallet.connect(m.account as Address)
+    wallet.client.simulateContract.mockImplementation(async request => ({ request }))
+    vi.stubGlobal('navigator', { locks: { request: async (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+    await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
+    await manual()
+    if (action === 'transfer') await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    await click(action === 'transfer' ? 'Transfer Defifa NFT' : 'Cash out Defifa NFTs')
+    const originalSet = Storage.prototype.setItem
+    let unmounted = false
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      originalSet.call(this, key, value)
+      if (!unmounted) {
+        unmounted = true
+        queueMicrotask(() => { act(() => renderer.unmount()) })
+      }
+    })
+    await click('Confirm NFT action')
+    expect(unmounted).toBe(true)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(readDefifaWriteRecovery({ chainId: 1, projectId: 1, account: m.account as Address, action })).toBeNull()
+  })
   it('wallet-action:cash-out-defifa-nfts preserves zero currency with positive protocol rewards', async () => {
     await manual(); await click('Cash out Defifa NFTs'); await click('Confirm NFT action')
     expect(m.cash).toHaveBeenCalledTimes(2); expect(m.send).toHaveBeenCalledTimes(1)
