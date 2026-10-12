@@ -1,5 +1,6 @@
 'use client'
 
+import { NftCheckoutImage } from '@/components/project/NftCheckoutImage'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
 
 /** Presentation only: the protocol owner supplies quantities, prices and actions. */
@@ -45,20 +46,9 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
                         : `Add ${name} to cart`
                     }
                   >
-                    {image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={image}
-                        alt={name}
-                        loading="lazy"
-                        decoding="async"
-                        className="block aspect-square w-full object-contain"
-                      />
-                    ) : (
-                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
-                        #{tierId}
-                      </span>
-                    )}
+                    <NftCheckoutImage image={image} name={name} loading="lazy" className="block aspect-square w-full object-contain" fallback={
+                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">#{tierId}</span>
+                    } />
                   </button>
                   {soldOut ? (
                     <p className="px-2 pb-2 text-[10px] text-smoke-500">

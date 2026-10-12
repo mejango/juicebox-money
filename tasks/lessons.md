@@ -71,3 +71,6 @@ The user requested basic Juicebox actions for Defifa without inert UI. A generic
 
 ## 2026-10-12 — Shared auxiliary reads must honor the RPC owner
 Live native acceptance found owner/account ENS names still used publicnode through an older production-only client branch, although primary protocol reads used Center. Route the single ENS client through the existing Center transport for name, address and handle consumers alike. A regression invokes real forward/reverse ENS reads and asserts every RPC URL/origin uses Center; deterministic alias behavior remains covered.
+
+## 2026-10-12 — Image availability requires actual decode evidence
+- Live preview acceptance found valid JSON and a returned SVG URI did not imply the SVG would decode: middle-tier images had naturalWidth zero. Verify each visible image's actual browser decode or a graceful named fallback, including selected thumbnails. Keep malformed untrusted metadata unchanged and place cosmetic failure handling in the shared presentation owner.

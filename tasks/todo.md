@@ -774,3 +774,17 @@ Refactor evidence: separate21a8f77 preserves ordinary card markup/callbacks;40te
 - **Evidence and unknowns:** Root inspected actual screenshots and found the native standalone action had no ordinary amount bar. Previous browser name assertion came from the removed table; shared alt/title already identify images, and shared fallback aria/quantity labels now preserve identification without native-only style.
 - **Verification:** Prove ordinary amount/select/button callbacks and class output unchanged before native use; test mixed-price/cross-page totals, summary names/counts, readonly amount and native final-context cancellation. Inspect ordinary/native actual-art parity screenshots, then full required gates and hosted CI before root release.
 - **Resource budget:** Small presentational extraction and one subtotal owner, no credits/swap/terminal routing copied into native, no protocol or wallet writes. Preserve existing URI page/concurrency budget and final guard; remeasure only necessary bundle impact after final source.
+
+## Checkout image decode failure (2026-10-12)
+
+## Plan refinement
+- **Objective:** Every visible checkout preview and selected thumbnail either decodes or displays a named fallback without a broken-image icon.
+- **System fit:** SDK names/prices/phase remain authoritative; shared card/cart media is cosmetic. Existing StoreMediaPreview already handles image errors, but compact checkout cards and summary thumbnails do not. Native writes and recovery are unaffected.
+- **Reuse and simplicity:** First extract the existing raw image markup into a single checkout image owner without behavior changes, verify parity, then use the existing failed-source React-state pattern to render the existing placeholder with an actual NFT name on error. Do not sanitize or rewrite untrusted SVG.
+- **Evidence and unknowns:** Actual production middle-tier images complete with naturalWidth zero while outer tiers decode. The Center probe owns the exact malformed URI diagnosis; this consumer must handle any invalid image safely without inventing metadata or weakening purchase guards.
+- **Verification:** Unit-test error, changed source, stale source error and card/cart parity; browser-test a malformed SVG through actual ordinary/native checkout owners with names, selection and exact amount intact. Required checks, hosted CI and exact merged deployment plus actual Center media proof precede completion.
+- **Resource budget:** Narrow shared image owner, two consumers, existing fixture/tests; no new dependencies, RPC reads, public writes or metadata transformations. Reuse bounded media discovery and current bundle gates.
+
+- [ ] Verify behavior-preserving checkout image extraction.
+- [ ] Add failed-source named fallback and meaningful regression.
+- [ ] Complete required checks, CI and actual deployment/media verification.
