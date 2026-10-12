@@ -17,7 +17,7 @@ export default function DefifaInventoryProof() {
       protocol: 'defifa', hook: '0x1111111111111111111111111111111111111111',
       capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
       cashOutEnabled: false, transfersPaused: null, transferPauseByStage: null,
-      configFlags: null, phase: 4,
+      configFlags: null, phase: new URLSearchParams(window.location.search).get('phase') === 'mint' ? 1 : 4,
       pricing: { currency: 1, decimals: 6, symbol: 'USDC' },
       tiers: ['Home team', 'Away team', 'Draw', 'Blue team', 'Red team', 'Green team', 'Gold team'].map((name, index) => ({
         id: index + 1, name, currentSupply: BigInt(index), price: index % 2 === 0 ? 1250000n : 2750000n,

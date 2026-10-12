@@ -428,7 +428,7 @@ async function assertMintReady(
     isRevnet,
     tierLimit: 1,
   })
-  if (liveShop?.protocol === 'defifa') throw new Error('Enter this market in Metalog.')
+  if (liveShop?.protocol === 'defifa') throw new Error('Use the collection’s native NFT checkout.')
   if (!liveShop || liveShop.hook.toLowerCase() !== hook.toLowerCase()) {
     throw new Error('The project’s live shop hook changed. Review the mint again.')
   }

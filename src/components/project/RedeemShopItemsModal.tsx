@@ -172,7 +172,7 @@ export function RedeemShopItemsModal({
       if (!inventory || inventory.protocol !== 'jb721' ||
           inventory.hook.toLowerCase() !== target.hook.toLowerCase() ||
           inventory.metadataIdTarget.toLowerCase() !== target.idTarget.toLowerCase()) {
-        throw new Error('The collection changed. Native markets are settled in Metalog.')
+        throw new Error('The collection changed. Use its native NFT cash-out flow.')
       }
 
       // The index is only a candidate set. Verify every selected NFT against

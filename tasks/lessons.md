@@ -63,3 +63,8 @@ The user explicitly removed curve information from Juicebox Money and Juicescan.
 
 ## 2026-10-12 — Scope compatibility to the operation
 The user requested basic Juicebox actions for Defifa without inert UI. A generic pay metadata incompatibility must not disable hook-free add-to-balance or compatible fund/admin actions. Keep native pay preparation explicit, but scope mint identity/start/pause guards to minting. Actual payment-engine tests prove native/unknown funding while ordinary pay and reviewed-account protections remain enforced.
+
+## Defifa native action verification
+- Development SDK installs must preserve the existing lock graph. Do not use --package-lock=false for no-save previews: ranged dev dependencies may drift and invalidate baseline comparisons. Restore npm ci, install a checked package against the lock, and rerun final gates.
+- Reuse actual app control classes (input-well and padded buttons), then inspect mobile browser artifacts; nonexistent class names can leave working controls visually unrecognizable.
+- Native attempt guards must survive mode/tab/remount and reload through the shared recovery owner. Local refs alone do not preserve unknown direct submissions.

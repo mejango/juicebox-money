@@ -80,6 +80,7 @@ import {
 } from '@/hooks/useShop721'
 import { readShop } from '@/lib/shop-read'
 import { DefifaInventory } from '@/components/project/DefifaInventory'
+import dynamic from 'next/dynamic'
 import { isStickyHook } from '@/lib/sticky'
 import { StickyRecipient } from '@/components/project/StickyRecipient'
 
@@ -92,6 +93,8 @@ import { StickyRecipient } from '@/components/project/StickyRecipient'
  * getProject721Shop helper, so Pay and Shop use the same revnet, custom, and
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
+
+const DefifaOwnedNfts = dynamic(() => import('./DefifaOwnedNfts').then(module => module.DefifaOwnedNfts))
 
 const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['preventOverspending', 'Require exact payment'],
@@ -322,7 +325,7 @@ export function ShopTab({
   }
 
   if (shop.protocol === 'defifa') {
-    return <DefifaInventory shop={shop} />
+    return <div className="space-y-4"><DefifaInventory shop={shop} /><DefifaOwnedNfts chainId={chainId} projectId={projectId} shop={shop} /></div>
   }
 
   const collectionName = String(collectionMeta?.[0]?.result ?? '').trim()

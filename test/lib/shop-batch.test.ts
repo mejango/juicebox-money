@@ -171,7 +171,7 @@ describe('original item metadata', () => {
 describe('native market writer guard', () => {
   it('refuses tier management before authority reads or generic calldata preparation', async () => {
     mocks.shop.mockResolvedValue({ protocol: 'defifa', hook: HOOK, capabilities: { manageTiers: false } })
-    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-add-items')).rejects.toThrow('Manage this market in Metalog')
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-add-items')).rejects.toThrow('This collection does not support the standard tier editor')
     expect(mocks.permissions).not.toHaveBeenCalled()
   })
 })

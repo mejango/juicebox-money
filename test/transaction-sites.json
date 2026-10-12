@@ -284,6 +284,37 @@
           ]
         }
       ]
+    },
+    "src/components/project/DefifaCheckout.tsx": {
+      "hooks": 2,
+      "sends": 2,
+      "sendSites": [
+        {
+          "id": "approve-native-defifa-payment",
+          "actions": [
+            "Approve Defifa mint payment"
+          ]
+        },
+        {
+          "id": "mint-native-defifa-nfts",
+          "actions": [
+            "Mint Defifa NFTs"
+          ]
+        }
+      ]
+    },
+    "src/components/project/DefifaOwnedNfts.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        {
+          "id": "cash-out-or-transfer-native-defifa",
+          "actions": [
+            "Cash out Defifa NFTs",
+            "Transfer Defifa NFT"
+          ]
+        }
+      ]
     }
   },
   "authorityCalls": {

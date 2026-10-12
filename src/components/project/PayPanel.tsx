@@ -99,8 +99,11 @@ import {
 } from "@/lib/direct-pay-swap";
 import { useShop721 } from '@/hooks/useShop721'
 import { DefifaInventory } from '@/components/project/DefifaInventory'
+import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
+
+const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout))
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -1802,7 +1805,7 @@ export function PayPanel({
 
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <div className="space-y-4"><DefifaInventory shop={inventory.data} />{addBalanceAction}</div>;
+    return <div className="space-y-4"><DefifaInventory shop={inventory.data} /><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
   if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
     const pending = nativeMarket ? inventory : identity;
