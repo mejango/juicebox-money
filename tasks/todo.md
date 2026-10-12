@@ -726,3 +726,19 @@ The unchanged candidate artifact passes the reviewed caps; source invariants, sc
 - Shared loading text uses fixed-width CSS dots with original accessible text and reduced-motion support.
 - Verified: 473 tests in9 focused files, full types, changed-file lint, source invariants, transaction-boundary checks and whitespace checks. Chromium native-disclosure/loading-motion check also passes; canonical payment/recovery tests remain green.
 - Refinement and cross-client evidence: ../../tasks/todo.md, latest Both-client pending payment experience record. No contracts or real transactions changed.
+
+## ENS Center transport correction (2026-10-12)
+
+## Plan refinement
+- **Objective:** All production ENS address/name and project-handle reads use Center, matching the user's RPC infrastructure choice.
+- **System fit:** AddressLabel/useEnsName and recipient/handle readers share src/lib/ens.ts; only its client transport changes, while native action authority/recovery remain unchanged.
+- **Reuse and simplicity:** Reuse jbCenterRpcTransport(mainnet) for the single existing ENS client and remove direct publicnode/http selection; retain deterministic wallet-name skipping and alias readers.
+- **Evidence and unknowns:** Production04fe7cb emitted two publicnode reverse-resolution calls for owner/account while Base27 was loaded; source confirms this production-only transport branch. Center already owns all-chain browser/server requests.
+- **Verification:** Assert actual name/address calls use the Center client, no public http fallback and existing deterministic/alias parity; full required check, hosted CI and exact-source health plus live request provenance precede completion.
+- **Resource budget:** Clean follow-up branch on04fe7cb, two source/test files and local plan/lesson; one full gate run and no native code changes, public wallet writes or duplicate live matrix.
+
+- [x] Correct the shared ENS transport and focused regression.
+- [x] Run required checks.
+- [ ] Create follow-up PR and obtain exact-head hosted CI for root release.
+
+Review: root approved the minimal shared-owner source/test delta. Final full `npm run check` passed222files/3008tests and70browser journeys (38.3s), with every existing budget/source/protocol/schema/transaction gate unchanged. `/tmp/jbm-ens-center-check.log`. Hosted CI and exact deployed Center-only ENS browser provenance remain release gates.
