@@ -68,3 +68,6 @@ The user requested basic Juicebox actions for Defifa without inert UI. A generic
 - Development SDK installs must preserve the existing lock graph. Do not use --package-lock=false for no-save previews: ranged dev dependencies may drift and invalidate baseline comparisons. Restore npm ci, install a checked package against the lock, and rerun final gates.
 - Reuse actual app control classes (input-well and padded buttons), then inspect mobile browser artifacts; nonexistent class names can leave working controls visually unrecognizable.
 - Native attempt guards must survive mode/tab/remount and reload through the shared recovery owner. Local refs alone do not preserve unknown direct submissions.
+
+## 2026-10-12 — Shared auxiliary reads must honor the RPC owner
+Live native acceptance found owner/account ENS names still used publicnode through an older production-only client branch, although primary protocol reads used Center. Route the single ENS client through the existing Center transport for name, address and handle consumers alike. A regression invokes real forward/reverse ENS reads and asserts every RPC URL/origin uses Center; deterministic alias behavior remains covered.

@@ -1,5 +1,5 @@
 import { JB_CHAINS } from '@bananapus/nana-sdk-core'
-import { createPublicClient, http, isAddress, type Address } from 'viem'
+import { createPublicClient, isAddress, type Address } from 'viem'
 import { normalize } from 'viem/ens'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import {
@@ -23,10 +23,7 @@ const IS_DETERMINISTIC_BROWSER =
 
 const ensClient = createPublicClient({
   chain: JB_CHAINS[PROJECT_HANDLES_CHAIN_ID].chain,
-  // CORS-friendly public RPC (several big providers block browser origins).
-  transport: IS_DETERMINISTIC_BROWSER
-    ? jbCenterRpcTransport(PROJECT_HANDLES_CHAIN_ID)
-    : http('https://ethereum-rpc.publicnode.com'),
+  transport: jbCenterRpcTransport(PROJECT_HANDLES_CHAIN_ID),
 })
 
 const addressCache = new Map<string, Address | null>()
