@@ -61,7 +61,6 @@ import {
 } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
-import { QuantityStepper } from "@/components/ui/QuantityStepper";
 import { contractReverted } from "@/lib/errors";
 import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
 import {
@@ -98,6 +97,7 @@ import {
   type DirectPaySwapQuote,
 } from "@/lib/direct-pay-swap";
 import { useShop721 } from '@/hooks/useShop721'
+import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import { DefifaInventory } from '@/components/project/DefifaInventory'
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
@@ -1869,76 +1869,12 @@ export function PayPanel({
                 image: tier.image ?? undefined,
               };
               return (
-                <div
-                  key={tier.id}
-                  className={`relative w-24 shrink-0 overflow-hidden rounded-lg border bg-white text-center transition ${
-                    qty > 0
-                      ? "border-bluebs-500 bg-bluebs-25"
-                      : "border-smoke-200 hover:border-bluebs-300"
-                  } ${soldOut ? "opacity-40" : ""}`}
-                >
-                  {qty > 0 ? (
-                    <span className="absolute right-1.5 top-1.5 z-10 flex h-5 min-w-5 items-center justify-center rounded-full bg-bluebs-600 px-1 text-[10px] font-medium text-white">
-                      {qty}
-                    </span>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (soldOut || qty > 0) return;
-                      setQuantity(tier.id, 1, item);
-                    }}
-                    disabled={busy || soldOut}
-                    className="block w-full disabled:cursor-not-allowed"
-                    title={
-                      soldOut
-                        ? `${item.name} is sold out`
-                        : `Add ${item.name} to cart`
-                    }
-                  >
-                    {tier.image ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={tier.image}
-                        alt={item.name}
-                        loading="lazy"
-                        decoding="async"
-                        className="block aspect-square w-full object-contain"
-                      />
-                    ) : (
-                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">
-                        #{tier.id}
-                      </span>
-                    )}
-                  </button>
-                  {soldOut ? (
-                    <p className="px-2 pb-2 text-[10px] text-smoke-500">
-                      Sold out
-                    </p>
-                  ) : qty === 0 ? (
-                    <button
-                      type="button"
-                      onClick={() => setQuantity(tier.id, 1, item)}
-                      disabled={busy}
-                      className="w-full px-2 pb-2 text-[11px] text-smoke-700"
-                    >
-                      {formatTokenAmount(price, shop.pricingDecimals)}{" "}
-                      {shopPricingSymbol}
-                    </button>
-                  ) : (
-                    <QuantityStepper
-                      size="sm"
-                      quantity={qty}
-                      itemName={item.name}
-                      onRemove={() => setQuantity(tier.id, qty - 1, item)}
-                      onAdd={() =>
-                        setQuantity(tier.id, Math.min(cap, qty + 1), item)
-                      }
-                      disabledRemove={busy || qty === 0}
-                      disabledAdd={busy || qty >= cap}
-                    />
-                  )}
-                </div>
+                <NftCheckoutCard key={tier.id} tierId={tier.id} name={item.name} image={tier.image} qty={qty}
+                  priceLabel={`${formatTokenAmount(price, shop.pricingDecimals)} ${shopPricingSymbol}`}
+                  soldOut={soldOut} busy={busy} canAdd={qty < cap}
+                  onSelect={() => setQuantity(tier.id, 1, item)}
+                  onRemove={() => setQuantity(tier.id, qty - 1, item)}
+                  onAdd={() => setQuantity(tier.id, Math.min(cap, qty + 1), item)} />
               );
             })}
           </div>
