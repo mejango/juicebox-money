@@ -788,3 +788,5 @@ Refactor evidence: separate21a8f77 preserves ordinary card markup/callbacks;40te
 - [ ] Verify behavior-preserving checkout image extraction.
 - [ ] Add failed-source named fallback and meaningful regression.
 - [ ] Complete required checks, CI and actual deployment/media verification.
+
+Browser fixture correction: the new ordinary presentation-only fixture performs incidental hook-name and pricing RPC reads that its seeded fake inventory cannot authenticate. Those reads reached the shared fail-fast service and polluted the audit for unrelated alias tests. Scope the four new cosmetic rendering cases to explicit RPC unavailability at their own browser context, retaining seeded inventory and exact selection assertions. Do not add unknown-contract allowances to the shared service or change production transports. Existing real-reader browser journeys remain untouched; rerun the full browser gate on the already verified production build.

@@ -87,3 +87,32 @@ for (const width of [390, 1280]) {
     await page.screenshot({ path: `test-results/defifa-native-mint-${width}.png`, fullPage: true })
   })
 }
+
+for (const width of [390, 1280]) {
+  for (const presentation of ['ordinary', 'native']) {
+    test(`${presentation} checkout shows named fallback for invalid SVG at ${width}px`, async ({ page, context }) => {
+      await page.setViewportSize({ width, height: 900 })
+      await context.route(/^https?:\/\//, async route => {
+        const url = new URL(route.request().url())
+        // This cosmetic fixture seeds inventory and does not prove protocol reads.
+        // Keep its deliberately unavailable RPC out of the real-reader fixture audit.
+        if (url.pathname.startsWith('/rpc/')) return route.fulfill({ status: 503, body: '{}' })
+        if (['127.0.0.1', 'localhost'].includes(url.hostname)) return route.continue()
+        await route.fulfill({ status: 503, body: '{}' })
+      })
+      await page.goto(`/defifa-inventory-proof?phase=mint&media=invalid&presentation=${presentation}`)
+      const surface = page.getByRole('region', { name: 'Payment surface', exact: true })
+      const card = surface.locator('[data-nft-checkout-tier="2"]')
+      await expect(card).toContainText('Away team')
+      await expect(card.locator('img')).toHaveCount(0)
+      await card.getByRole('button', { name: 'Away team', exact: true }).click()
+      await expect(card.getByRole('group', { name: 'Away team quantity', exact: true })).toContainText('1')
+      await expect(surface.locator('[data-nft-checkout-tier="1"]')).toContainText('Home team')
+      await expect(surface.locator('img')).toHaveCount(0)
+      await expect(surface).toContainText('Away team')
+      if (presentation === 'native') await expect(surface.getByRole('textbox', { name: 'NFT amount', exact: true })).toHaveValue('2.75')
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await page.screenshot({ path: `test-results/${presentation}-checkout-invalid-svg-${width}.png`, fullPage: true })
+    })
+  }
+}

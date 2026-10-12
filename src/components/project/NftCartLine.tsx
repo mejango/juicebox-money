@@ -15,7 +15,7 @@ export function NftCartLine({ tierId, name, image, quantity, onRemove, onAdd, re
     <div className="flex min-w-0 items-center gap-2">
       <span className="text-sm text-smoke-500">+</span>
       <span className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-[10px] text-smoke-500">
-        <NftCheckoutImage image={image} name="" className="h-full w-full object-cover" fallback={`#${tierId}`} />
+        <NftCheckoutImage image={image} name={name} imageAlt="" className="h-full w-full object-cover" fallback={`#${tierId}`} />
       </span>
       <span className="min-w-0 flex-1 truncate text-xs font-medium text-ink">{name}</span>
       <div className="flex shrink-0 items-center gap-1">

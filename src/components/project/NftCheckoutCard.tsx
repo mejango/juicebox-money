@@ -47,7 +47,7 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
                     }
                   >
                     <NftCheckoutImage image={image} name={name} loading="lazy" className="block aspect-square w-full object-contain" fallback={
-                      <span className="flex aspect-square w-full items-center justify-center bg-smoke-75 text-xs text-smoke-500">#{tierId}</span>
+                      <span className="flex aspect-square w-full flex-col items-center justify-center gap-1 bg-smoke-75 px-2 text-xs text-smoke-500"><span>#{tierId}</span><span className="line-clamp-3 break-words">{name}</span></span>
                     } />
                   </button>
                   {soldOut ? (

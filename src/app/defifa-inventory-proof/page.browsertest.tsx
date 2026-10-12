@@ -29,6 +29,11 @@ export default function DefifaInventoryProof() {
     }
     const replay = (window as Window & { __recordedNftArt?: { name: string; resolvedUri: string } }).__recordedNftArt
     const ordinary = new URLSearchParams(window.location.search).get('presentation') === 'ordinary'
+    if (new URLSearchParams(window.location.search).get('media') === 'invalid') {
+      // Production resolver split an escaped less-than token across text nodes.
+      const image = `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg"><text>-2.5% to &</text><text>lt; -1.5%</text></svg>')}`
+      shop.tiers = shop.tiers.map(tier => ({ ...tier, resolvedUri: `data:application/json;base64,${btoa(JSON.stringify({ image }))}` }))
+    }
     if (replay) shop.tiers = shop.tiers.slice(0, 2).map(tier => ({ ...tier, name: `${replay.name} / tier ${tier.id}`, resolvedUri: replay.resolvedUri }))
     if (ordinary) {
       shop.protocol = 'jb721'
