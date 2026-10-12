@@ -233,8 +233,10 @@ const budgets = {
   // Shared NFT checkout previews and final native intent guards, exact locked
   // Node26.7/npm12 builds: main 483cad2 is 2,640,148 B, adoption is
   // 2,641,755 B (+1,607 B). Moving URI batching to the existing lazy reader
-  // keeps create within its unchanged 513 KiB ceiling. Round only aggregate.
-  allScripts: 2580 * KIB,
+  // keeps create within its unchanged 513 KiB ceiling. Shared amount/cart
+  // presentation adds 903 B, final 2,642,658 B (+2,510 B vs main).
+  // Round only aggregate to its next KiB; every other gate stays fixed.
+  allScripts: 2581 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

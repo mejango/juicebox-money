@@ -12,6 +12,9 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useSafeTx, type TxRequest, type TxSendOptions } from '@/hooks/useSafeTx'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
 import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
+import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
+import { NftCartLine } from '@/components/project/NftCartLine'
+import { shopCartTotal } from '@/lib/shop-cart-total'
 import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -239,6 +242,10 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   }
   const count = Object.values(quantities).reduce((sum, value) => sum + value, 0)
   const allowed = shop.protocol === 'defifa' && shop.phase !== undefined && defifaPhaseAllowsPay(shop.phase)
+  const selectedTiers = shop.tiers.filter(tier => quantities[tier.id] > 0)
+  const selectedAmount = shopCartTotal(shop.tiers, quantities)
+  const amountValue = formatUnits(review?.prepared.amount ?? selectedAmount, review?.prepared.inventory.pricing.decimals ?? shop.pricing.decimals)
+  const amountSymbol = review?.symbol ?? shop.pricing.symbol
   const frozenAmount = review ? `${formatUnits(review.prepared.amount, review.prepared.inventory.pricing.decimals)} ${review.symbol}` : ''
   const busy = approvalTx.busy || mintTx.busy || checking
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['pay']} active={!!review}><div className="space-y-4">
@@ -266,7 +273,22 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       </div>
     {allowed ? <>
       <label className="block text-sm">Voting delegate, optional<input className="input-well mt-1 w-full px-3 py-2" value={delegate} placeholder="Use the contract default" disabled={!!review || preparing} onChange={event => setDelegate(event.target.value)} /></label>
-      {isConnected ? <button className="btn-primary px-4 py-2" disabled={!count || preparing || !!review} onClick={() => void prepare()}>{preparing ? 'Preparing mint…' : 'Review mint'}</button> : <button className="btn-primary px-4 py-2" onClick={openSignIn}>Connect wallet</button>}
+      <CheckoutAmountRow
+        amount={<input type="text" readOnly aria-label="NFT amount" value={amountValue} className={CHECKOUT_AMOUNT_INPUT_CLASS} />}
+        currency={<span className="text-sm font-medium text-ink">{amountSymbol}</span>}
+        action={isConnected ? <button className={CHECKOUT_ACTION_BUTTON_CLASS} disabled={!count || preparing || !!review} onClick={() => void prepare()}>{preparing ? 'Preparing mint…' : 'Review mint'}</button> : <button className={CHECKOUT_ACTION_BUTTON_CLASS} onClick={openSignIn}>Connect wallet</button>} />
+      {selectedTiers.length ? <div aria-label="Selected NFTs" className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
+        {selectedTiers.map(tier => {
+          const quantity = quantities[tier.id]
+          return <NftCartLine key={tier.id} tierId={tier.id} name={tier.name ?? `Tier #${tier.id}`} image={mediaById?.[tier.id]?.image} quantity={quantity}
+            onRemove={() => setQuantities(q => ({ ...q, [tier.id]: quantity - 1 }))}
+            onAdd={() => setQuantities(q => ({ ...q, [tier.id]: quantity + 1 }))}
+            removeDisabled={preparing || !!review} addDisabled={preparing || !!review || count >= MAX_DEFIFA_ACTION_NFTS || quantity >= tier.remaining} />
+        })}
+        <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
+          <div className="flex items-center justify-between gap-3"><span>{count} NFTs</span><span>{amountValue} {amountSymbol}</span></div>
+        </div>
+      </div> : null}
     </> : <p className="text-sm text-smoke-600">NFT minting is {shop.phase === undefined ? 'unavailable while the protocol phase is unknown' : 'not open in this phase'}.</p>}
     {previousFailedTransaction ? <p className="wrap-anywhere text-xs text-smoke-600">
       Previous {previousFailedTransaction.kind === 'approval' ? 'payment approval' : 'NFT mint'} failed onchain, project {previousFailedTransaction.projectId}, chain {previousFailedTransaction.chainId}.{' '}
