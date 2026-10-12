@@ -60,3 +60,6 @@ The user corrected a Metalog-specific native inventory classification: SDK Defif
 
 ## 2026-10-11 — Honor the final consumer boundary
 The user explicitly removed curve information from Juicebox Money and Juicescan. Keep generic Defifa tiers and protocol Flavor; remove curve tabs, Metalog API callers and curve-only dependencies/fixtures from these consumers. Native desktop/mobile tests assert no curve controls, automatic Metalog links or API requests while preserving SDK inventory and writer guards.
+
+## 2026-10-12 — Scope compatibility to the operation
+The user requested basic Juicebox actions for Defifa without inert UI. A generic pay metadata incompatibility must not disable hook-free add-to-balance or compatible fund/admin actions. Keep native pay preparation explicit, but scope mint identity/start/pause guards to minting. Actual payment-engine tests prove native/unknown funding while ordinary pay and reviewed-account protections remain enforced.

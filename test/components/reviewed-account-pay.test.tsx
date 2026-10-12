@@ -494,6 +494,40 @@ describe('native market payment guard', () => {
     expect(host.querySelector('a[href^="https://metalog.money"]')).toBeNull()
     expect(host.textContent).toContain('Defifa NFT tiers')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
-    expect(host.querySelector('button')).toBeNull()
+    expect(button('Add to balance').disabled).toBe(false)
   })
+})
+
+
+describe('compatible basic funding', () => {
+  for (const identity of ['defifa', 'unknown'] as const) {
+    it(`adds to balance for ${identity} identity without native pay metadata or a mint preview`, async () => {
+      m.queries.payNftProtocol = identity === 'defifa'
+        ? { data: { protocol: 'defifa' }, isSuccess: true }
+        : { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+      m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+      m.queries.previewPay = { data: null, isError: true }
+      m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: Math.floor(Date.now() / 1000) + 3600, pausePay: true, terminals: [TERMINAL], unknown: [] }, isError: false }
+      await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+      expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+      await click('Add to balance')
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        await new Promise(resolve => setTimeout(resolve, 450))
+      })
+      expect(button('Add').disabled).toBe(false)
+      expect(host.textContent).not.toContain('Starts in')
+      await click('Add')
+      expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
+      await click('Confirm & Add')
+      await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
+      expect(dialogError()).toBe('')
+      expect(wallet.writes()).toEqual([{ functionName: 'addToBalanceOf', account: ALICE }])
+      const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
+      expect(request.args[0]).toBe(42n)
+      expect(request.args.at(-1)).toBe('0x')
+    })
+  }
 })

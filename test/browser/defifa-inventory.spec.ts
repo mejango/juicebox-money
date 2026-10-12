@@ -32,7 +32,8 @@ for (const width of [390, 1280]) {
       await expect(surface.getByRole('img')).toHaveCount(0)
       await expect(surface).not.toContainText('curve')
       await expect(surface).not.toContainText('·')
-      await expect(surface.getByRole('button')).toHaveCount(0)
+      await expect(surface.getByRole('button')).toHaveCount(name === 'Payment surface' ? 1 : 0)
+      if (name === 'Payment surface') await expect(surface.getByRole('button', { name: 'Add to balance', exact: true })).toBeEnabled()
       await expect(surface.getByRole('spinbutton')).toHaveCount(0)
       await expect(surface).not.toContainText('Unlimited')
     }
