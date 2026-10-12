@@ -224,7 +224,13 @@ const budgets = {
   // builds: baseline2618208 B ->2618460 B (+252 B), with193chunks each.
   // Consumer curve code is removed (5056 B below its prior delivery).
   // Round only this measured aggregate cost; every other gate is unchanged.
-  allScripts: 2558 * KIB,
+  // Native Defifa checkout/holdings/recovery on exact Node26.7/npm12 builds:
+  // main 4f2e9d1 measures 2,618,445 B; unchanged main with SDK 2.29.0
+  // measures 2,618,981 B (+536 B); final official adoption is 2,640,204 B
+  // (+21,223 B for lazy native actions and original-write recovery).
+  // Round only this measured aggregate to the next KiB. Every route,
+  // largest-chunk, stylesheet and lazy-boundary ceiling stays unchanged.
+  allScripts: 2579 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

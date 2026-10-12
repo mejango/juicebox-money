@@ -99,8 +99,11 @@ import {
 } from "@/lib/direct-pay-swap";
 import { useShop721 } from '@/hooks/useShop721'
 import { DefifaInventory } from '@/components/project/DefifaInventory'
+import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
+
+const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout))
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -509,7 +512,7 @@ export function PayPanel({
     const t = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000);
     return () => clearInterval(t);
   }, [startsAt, now]);
-  const notStarted = startsAt > now;
+  const notStarted = mode === "pay" && startsAt > now;
 
   const amountRaw = useMemo(() => {
     try {
@@ -1426,7 +1429,7 @@ export function PayPanel({
   };
 
   const submit = () => {
-    if (nativeMarket || !identity.isSuccess) return;
+    if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
     const action = payButtonAction({ isConnected, payWithDollars });
     if (action === "signIn") {
       openSignIn();
@@ -1505,7 +1508,7 @@ export function PayPanel({
   }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
 
   const runPaymentSequence = async () => {
-    if (nativeMarket || !identity.isSuccess) return;
+    if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
     const account = sequenceSummary?.account;
     if (
       !address ||
@@ -1536,11 +1539,13 @@ export function PayPanel({
     };
     try {
       stillReviewed();
-      const liveInventory = await getProjectNftInventory(publicClient, {
-        chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
-      });
-      if (liveInventory?.protocol === 'defifa') {
-        throw new Error('Defifa payments are not supported by this form.');
+      if (mode === "pay") {
+        const liveInventory = await getProjectNftInventory(publicClient, {
+          chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
+        });
+        if (liveInventory?.protocol === 'defifa') {
+          throw new Error('Defifa payments are not supported by this form.');
+        }
       }
       const tokenApproval = actionOf("token-approval");
       if (tokenApproval?.kind === "token-approval") {
@@ -1798,15 +1803,17 @@ export function PayPanel({
     );
   }
 
-  if (nativeMarket && inventory.data?.protocol === 'defifa') {
-    return <DefifaInventory shop={inventory.data} />;
+  const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
+  if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
+    return <div className="space-y-4"><DefifaInventory shop={inventory.data} /><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
-  if (!identity.isSuccess || nativeMarket) {
+  if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
     const pending = nativeMarket ? inventory : identity;
     const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
     return <div className="space-y-2 text-sm text-smoke-600">
       <p>{failed ? (nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.') : (nativeMarket ? 'Checking Defifa NFT tiers…' : 'Checking this project’s NFT protocol…')}</p>
       {failed ? <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button> : null}
+      {addBalanceAction}
     </div>;
   }
 
@@ -1948,7 +1955,7 @@ export function PayPanel({
           disabled={busy}
           ariaLabel="Payment mode"
           options={[
-            { value: "pay", label: "Pay" },
+            { value: "pay", label: nativeMarket ? "NFTs" : "Pay" },
             {
               value: "addbalance",
               label: "Add to balance",

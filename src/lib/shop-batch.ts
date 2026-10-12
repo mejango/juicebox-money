@@ -76,7 +76,7 @@ export async function readShopSnapshot(target: ShopWriteTarget, account: Address
   if (!target.hook || !target.pricing || target.error) throw new Error(`${chainName(target.chainId)} shop is unavailable.`)
   const client = clientFor(target.chainId)
   const shop = await getProjectNftInventory(client, { chainId: target.chainId, projectId: BigInt(target.projectId), isRevnet, tierLimit: 1 })
-  if (shop?.protocol === 'defifa') throw new Error('Manage this market in Metalog.')
+  if (shop?.protocol === 'defifa') throw new Error('This collection does not support the standard tier editor.')
   if (!shop || shop.hook.toLowerCase() !== target.hook.toLowerCase()) throw new Error(`The shop on ${chainName(target.chainId)} changed. Reopen it and review again.`)
   if (shop.pricing.currency !== target.pricing.currency || shop.pricing.decimals !== target.pricing.decimals) throw new Error(`Shop pricing changed on ${chainName(target.chainId)}. Review again.`)
   const [owner, projectId] = await Promise.all([

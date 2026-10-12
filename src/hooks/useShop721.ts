@@ -88,6 +88,7 @@ export type TierMedia = {
 
 
 export const SHOP_721_QUERY_PREFIX = ['shop721-v2'] as const
+export const DEFIFA_HOLDINGS_QUERY_PREFIX = ['defifa-owned-nfts'] as const
 
 export function shop721QueryKey(chainId: JBChainId, projectId: number, isRevnet: boolean) {
   return [...SHOP_721_QUERY_PREFIX, chainId, projectId, isRevnet] as const

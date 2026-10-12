@@ -13,9 +13,11 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { zeroAddress, type Address } from 'viem'
+import { erc20Abi, zeroAddress, type Address } from 'viem'
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { DEFIFA_RECOVERY_QUERY_PREFIX, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { buildDefifaPayMetadata, buildPayTx } from '@bananapus/nana-sdk-core/v6'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -35,6 +37,8 @@ const m = vi.hoisted(() => ({
   watchSafeProposal: (() => new Promise(() => {})) as (...args: unknown[]) => Promise<unknown>,
   /** Query answers a test sets in place of the defaults, by key. */
   queries: {} as Record<string, unknown>,
+  realNativeRecovery: false,
+  nativePrepared: null as unknown,
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -74,17 +78,23 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   waitForSafeExecutionHash: (...args: unknown[]) => m.waitForSafeExecutionHash(...args),
   watchSafeProposal: (...args: unknown[]) => m.watchSafeProposal(...args),
 }))
-vi.mock('@tanstack/react-query', async importOriginal => ({
-  ...(await importOriginal<typeof import('@tanstack/react-query')>()),
-    useQueryClient: () => displayQueries,
-  useQuery: ({ queryKey }: { queryKey: readonly unknown[] }) => query(String(queryKey[0] === 'projectDisplay' ? queryKey[4] : queryKey[0])),
-}))
+vi.mock('@tanstack/react-query', async importOriginal => {
+  const actual = await importOriginal<typeof import('@tanstack/react-query')>()
+  return { ...actual, useQueryClient: () => displayQueries,
+    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => m.realNativeRecovery && options.queryKey[0] === DEFIFA_RECOVERY_QUERY_PREFIX[0]
+      ? actual.useQuery(options, displayQueries)
+      : query(String(options.queryKey[0] === 'projectDisplay' ? options.queryKey[4] : options.queryKey[0])),
+  }
+})
 vi.mock('@/hooks/useShop721', () => ({
   useShop721: () => ({ data: null, isSuccess: true, ...m.queries.nativeInventory as object }),
 }))
-vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
-  ...await original(), getProjectNftInventory: vi.fn(async () => null),
-}))
+vi.mock('@bananapus/nana-sdk-core/v6', async original => {
+  const actual = await original<typeof import('@bananapus/nana-sdk-core/v6')>()
+  return { ...actual, getProjectNftInventory: vi.fn(async () => null),
+    prepareDefifaPay: (...args: Parameters<typeof actual.prepareDefifaPay>) => m.nativePrepared ? Promise.resolve(m.nativePrepared) : actual.prepareDefifaPay(...args),
+  }
+})
 vi.mock('@/hooks/useProjectTokenSymbol', () => ({
   useProjectTokenSymbol: () => ({ data: { symbol: 'TKN' } }),
 }))
@@ -121,6 +131,7 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
       <section data-tx-confirm>
         <p data-status>{status}</p>
         <p data-error>{error}</p>
+        {!complete ? <button type="button" onClick={onClose}>Close review</button> : null}
         {complete ? (
           <button type="button" onClick={onClose}>Done</button>
         ) : (
@@ -176,6 +187,10 @@ beforeEach(() => {
   m.token = 'native'
   m.safe = false
   m.queries = {}
+  m.realNativeRecovery = false
+  m.nativePrepared = null
+  displayQueries.clear()
+  localStorage.clear()
   m.watchSafeProposal = () => new Promise(() => {})
   host = document.createElement('div')
   document.body.append(host)
@@ -494,6 +509,107 @@ describe('native market payment guard', () => {
     expect(host.querySelector('a[href^="https://metalog.money"]')).toBeNull()
     expect(host.textContent).toContain('Defifa NFT tiers')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
-    expect(host.querySelector('button')).toBeNull()
+    expect(button('Add to balance').disabled).toBe(false)
   })
+})
+
+
+describe('compatible basic funding', () => {
+  it('dismisses a nonbusy unknown mint to its saved pending card and makes funding directly usable', async () => {
+    m.realNativeRecovery = true
+    vi.stubGlobal('navigator', { locks: { request: (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: {
+      protocol: 'defifa', hook: TERMINAL, phase: 1, capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
+      pricing: { token: NATIVE, currency: 1, decimals: 18, symbol: 'ETH' },
+      tiers: [{ id: 1, name: 'Home team', price: 100n, currentSupply: 7n, remaining: 100, initial: 100, discountPercent: 0 }],
+    } }
+    m.nativePrepared = {
+      inventory: { implementation: TERMINAL, pricing: { token: NATIVE, decimals: 18 } },
+      transaction: buildPayTx({ chainId: 1, terminal: TERMINAL, projectId: 42n, token: NATIVE, amount: 100n, beneficiary: ALICE, metadata: buildDefifaPayMetadata({ metadataIdTarget: TERMINAL, tierIdsToMint: [1n] }) }),
+      amount: 100n, selectedTiers: [{ tierId: 1n, count: 1n, unitPrice: 100n }], attestationDelegate: zeroAddress,
+      effectiveAttestationDelegate: ALICE, effectiveDelegates: [{ tierId: 1n, delegate: ALICE }],
+    }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+    await waitUntil(() => !!host.querySelector('[aria-label="Add Home team"]'))
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Add Home team"]')!.click())
+    await click('Review mint')
+    wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection dropped after invocation'))
+    await click('Confirm mint')
+    await waitUntil(() => !!host.textContent?.includes('wallet submission is unconfirmed'))
+    const scope = { chainId: 1, projectId: 42, account: ALICE, action: 'pay' as const }
+    const original = readDefifaWriteRecovery(scope)!
+    expect(original.hash).toBeUndefined()
+    await click('Close review')
+    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
+    await click('Add to balance')
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+    expect(wallet.writeContract).toHaveBeenCalledOnce()
+    expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
+  })
+
+  it('retains the original unknown native intent through funding mode and payment-panel remount', async () => {
+    m.realNativeRecovery = true
+    vi.stubGlobal('navigator', { locks: { request: (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+    const scope = { chainId: 1, projectId: 42, account: ALICE, action: 'pay' as const }
+    await sendRecoverableDefifaWrite({ scope, request: { chainId: 1, address: USDC, abi: erc20Abi, functionName: 'approve', args: [TERMINAL, 7n] }, safe: false,
+      options: { reviewedAccount: ALICE }, send: async (_request, options) => { await options.beforeWrite?.(); return null },
+    })
+    const original = readDefifaWriteRecovery(scope)!
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: {
+      protocol: 'defifa', hook: TERMINAL, phase: 1, capabilities: { genericPay: false, genericCashOut: false, manageTiers: false },
+      pricing: { token: NATIVE, currency: 1, decimals: 18, symbol: 'ETH' },
+      tiers: [{ id: 1, name: 'Home team', price: 1n, currentSupply: 7n, remaining: 100, initial: 100, discountPercent: 0 }],
+    } }
+    const panel = <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+    await act(async () => root.render(panel))
+    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    expect(host.textContent).toContain('Retrying this NFT action is blocked')
+    await click('Add to balance')
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+    const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Payment mode"]')!
+    await act(async () => { mode.value = 'pay'; mode.dispatchEvent(new Event('change', { bubbles: true })) })
+    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
+    await act(async () => root.unmount())
+    root = createRoot(host)
+    await act(async () => root.render(panel))
+    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  for (const identity of ['defifa', 'unknown'] as const) {
+    it(`adds to balance for ${identity} identity without native pay metadata or a mint preview`, async () => {
+      m.queries.payNftProtocol = identity === 'defifa'
+        ? { data: { protocol: 'defifa' }, isSuccess: true }
+        : { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+      m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+      m.queries.previewPay = { data: null, isError: true }
+      m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: Math.floor(Date.now() / 1000) + 3600, pausePay: true, terminals: [TERMINAL], unknown: [] }, isError: false }
+      await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+      expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+      await click('Add to balance')
+      const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        await new Promise(resolve => setTimeout(resolve, 450))
+      })
+      expect(button('Add').disabled).toBe(false)
+      expect(host.textContent).not.toContain('Starts in')
+      await click('Add')
+      expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
+      await click('Confirm & Add')
+      await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
+      expect(dialogError()).toBe('')
+      expect(wallet.writes()).toEqual([{ functionName: 'addToBalanceOf', account: ALICE }])
+      const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
+      expect(request.args[0]).toBe(42n)
+      expect(request.args.at(-1)).toBe('0x')
+    })
+  }
 })
