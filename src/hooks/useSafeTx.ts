@@ -5,7 +5,15 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { openWriteRecovery, writeNonceEvidence, type WriteRecovery } from '@/lib/write-recovery'
+import {
+  openWriteRecovery,
+  releaseWhenFinal,
+  WRITE_RECOVERY_IN_TAB_LINE,
+  heldWriteState,
+  writeNonceEvidence,
+  writeRecoveryIsDurable,
+  type WriteRecovery,
+} from '@/lib/write-recovery'
 import {
   BaseError,
   encodeFunctionData,
@@ -258,6 +266,8 @@ type HeldWrite = {
   record: ReviewedWriteRecoveryRecord
   request: TxRequest
   options: TxSendOptions
+  /** It has no known hash, or its hash is proven dropped: the user's exit is offered. */
+  exit?: boolean
 }
 
 /** Save the wallet's hash; a failed save keeps it in memory, and the write stays held either way. */
@@ -588,21 +598,15 @@ export function useSafeTx(chainId: number) {
     heldRef.current = next
     setHeld(next)
   }, [])
-  // A receipt for the held write's own hash proves it was sent, whatever its
-  // status: the hold ends and the receipt is the result.
+  // A receipt for the held write's own hash is its result, whatever its status.
   useEffect(() => {
     const current = heldRef.current
     if (!current || !receiptData || current.record.hash?.toLowerCase() !== receiptData.transactionHash.toLowerCase()) return
+    // The flow shows the result now; its hold stays until a finalized block
+    // includes the receipt, so a reorg can't let it run twice.
     showHeld(null)
-    void current.journal.withLock(async () => {
-      const saved = current.journal.read()
-      if (saved?.id !== current.record.id) return
-      // A hash kept only in memory after a failed save is committed before it is cleared.
-      current.journal.clear(saved.hash ? current.journal.submitted(saved.hash, saved) : saved)
-    }, true).catch(() => {
-      // Storage refused: the next send of this call checks the chain again.
-    })
-  }, [receiptData, showHeld])
+    if (publicClient) releaseWhenFinal(current.journal, current.record, publicClient as never, receiptData as TransactionReceipt)
+  }, [receiptData, publicClient, showHeld])
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
@@ -629,25 +633,57 @@ export function useSafeTx(chainId: number) {
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null
   const sendRef = useRef<(request: TxRequest, options: TxSendOptions) => Promise<Hex | null>>(async () => null)
-  /** The user checked their wallet: the hold ends and the same send runs again. */
+  /**
+   * Ask the chain about a held write, under its lock, and show what it says:
+   * a hash it shows sent is tracked; a hash still pending gets its one line
+   * and no exit; no known hash, or a dropped one, gets the exit. False once
+   * nothing is held any more.
+   */
+  const inspectHeld = useCallback(async (journal: WriteRecovery, request: TxRequest, options: TxSendOptions): Promise<boolean> => {
+    const check = await journal.resolve(publicClient!).catch(() => null)
+    const saved = journal.read()
+    if (!saved) return false
+    if (check?.status === 'sent') {
+      showHeld({ journal, record: saved, request, options })
+      setHash(check.hash)
+      setPhase('pending')
+      return true
+    }
+    const state = await heldWriteState(publicClient, saved)
+    showHeld({ journal, record: saved, request, options, exit: state !== 'pending' })
+    setHash(saved.hash ?? null)
+    setPhase('unconfirmed')
+    return true
+  }, [publicClient, showHeld])
+  /**
+   * The user checked their wallet. The chain is asked once more, so a
+   * confirmation that landed meanwhile wins; then exactly the record the user
+   * saw is released and the same send runs again. One another tab changed
+   * since stays held, shown as it is now.
+   */
   const exitHeld = useCallback(() => {
     const current = heldRef.current
-    if (!current) return
-    try {
-      const latest = current.journal.read()
-      // Only this write's own record, possibly updated since it was shown.
-      if (latest?.id === current.record.id) current.journal.abandon(latest, { checkedWallet: true })
-    } catch (e) {
-      setError(friendlyTxError(e))
-      setPhase('error')
-      return
-    }
-    showHeld(null)
-    setHash(null)
-    setPhase('idle')
-    inFlightRef.current = false
-    void sendRef.current(current.request, current.options)
-  }, [showHeld])
+    if (!current?.exit) return
+    void current.journal.withLock(async () => {
+      if (!(await inspectHeld(current.journal, current.request, current.options))) return true
+      const now = heldRef.current
+      if (!now?.exit || JSON.stringify(now.record) !== JSON.stringify(current.record)) return false
+      current.journal.abandon(current.record, { checkedWallet: true })
+      return true
+    }, true).then(
+      released => {
+        if (!released) return
+        showHeld(null)
+        setHash(null)
+        setPhase('idle')
+        inFlightRef.current = false
+        void sendRef.current(current.request, current.options)
+      },
+      () => {
+        // Changed or unreadable: the hold stays, as last shown.
+      },
+    )
+  }, [inspectHeld, showHeld])
   const effectiveError: string | ReactElement | null = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -660,7 +696,7 @@ export function useSafeTx(chainId: number) {
               chainId: held.record.chainId,
               hash: held.record.hash ?? hash,
               value: held.record.call.value,
-              onExit: exitHeld,
+              onExit: held.exit ? exitHeld : undefined,
             })
           : writeHeldMessage()
         : error
@@ -739,13 +775,8 @@ export function useSafeTx(chainId: number) {
             // An earlier write of this exact call has no confirmed result. The
             // chain may prove it now: its receipt, or the exact call at its nonce.
             setPhase('simulating')
-            const check = await journal.resolve(publicClient).catch(() => null)
-            const saved = journal.read()
-            if (saved) {
+            if (await inspectHeld(journal, request, options)) {
               inFlightRef.current = false
-              showHeld({ journal, record: saved, request, options })
-              setHash(check?.status === 'sent' ? check.hash : (saved.hash ?? null))
-              setPhase(check?.status === 'sent' ? 'pending' : 'unconfirmed')
               return null
             }
           }
@@ -783,6 +814,7 @@ export function useSafeTx(chainId: number) {
               const description = [
                 options.reviewNotice,
                 viaSafe ? SAFE_NONCE_GUIDANCE : null,
+                journal && !writeRecoveryIsDurable() ? WRITE_RECOVERY_IN_TAB_LINE : null,
               ]
                 .filter(Boolean)
                 .join('\n\n')
@@ -905,13 +937,11 @@ export function useSafeTx(chainId: number) {
           return e.hash
         }
         try {
-          // The wallet may have sent it without saying so: its hold is shown, with the exit.
+          // The wallet may have sent it without saying so: its hold is shown, as the chain says.
           const saved = reserved && journal?.read()
           if (journal && saved && saved.id === reserved!.id) {
-            showHeld({ journal, record: saved, request, options })
-            setHash(saved.hash ?? null)
-            setPhase('unconfirmed')
-            return null
+            const shown = journal
+            if (await shown.withLock(() => inspectHeld(shown, request, options), true)) return null
           }
         } catch {
           // An unreadable record falls through to the error itself.
@@ -925,7 +955,7 @@ export function useSafeTx(chainId: number) {
         return null
       }
     },
-    [isConnected, isCenterWallet, publicClient, showHeld, switchChainAsync, writeContractAsync],
+    [inspectHeld, isConnected, isCenterWallet, publicClient, showHeld, switchChainAsync, writeContractAsync],
   )
   sendRef.current = send
 

@@ -13,6 +13,7 @@ import { chainName } from '@/lib/urn'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
+import { heldWriteState, WRITE_PENDING_LINE } from '@/lib/write-recovery'
 import { abandonDefifaWriteRecovery, clearDefifaWriteRecovery, readDefifaWriteRecovery, resolveDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
@@ -63,9 +64,28 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
       // Unread: the hold stays, with its exit.
     })
   }, [unhashedId, client])
-  const exit = () => {
-    if (!original) return
+  // The exit is only for a write with no known hash, or one proven dropped. A
+  // hash still pending (or a Safe proposal) is the wallet's to speed up or cancel.
+  const [dropped, setDropped] = useState<string | null>(null)
+  const hashedId = original?.record.hash && !original.record.safe ? original.record.id : undefined
+  const originalRef = useRef(original)
+  originalRef.current = original
+  useEffect(() => {
+    const current = originalRef.current
+    if (!hashedId || !current || !client) return
+    let live = true
+    void heldWriteState(client, current.record).then(state => { if (live && state === 'dropped') setDropped(hashedId) }, () => {})
+    return () => { live = false }
+  }, [hashedId, client])
+  const exitable = !!original && !original.record.safe && (!original.record.hash || dropped === original.record.id)
+  const exit = async () => {
+    if (!original || !client) return
     try {
+      // A confirmation that landed meanwhile wins.
+      const check = await resolveDefifaWriteRecovery(original.scope, original.record, client).catch(() => null)
+      const now = readDefifaWriteRecovery(original.scope)
+      if (check?.status === 'sent' || !now || JSON.stringify(now) !== JSON.stringify(original.record)) return
+      if (now.hash && await heldWriteState(client, now) !== 'dropped') return
       abandonDefifaWriteRecovery(original.scope, original.record)
     } catch (reason) {
       setError(describe(reason))
@@ -119,9 +139,9 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     <p className="text-sm">{writeHeldMessage(actionLabel[original.scope.action])}</p>
     <div className="flex flex-wrap gap-2">
       {original.record.hash ? <button type="button" className="btn-primary px-4 py-2" disabled={checking} onClick={() => void verify()}>{checking ? 'Checking original transaction…' : 'Check original transaction'}</button> : null}
-      <button type="button" className="btn-secondary px-4 py-2" disabled={checking} onClick={exit}>{WRITE_EXIT_LABEL}</button>
+      {exitable ? <button type="button" className="btn-secondary px-4 py-2" disabled={checking} onClick={() => void exit()}>{WRITE_EXIT_LABEL}</button> : null}
     </div>
-    <p className="text-xs text-smoke-600">{writeExitMessage(original.record.call, actionLabel[original.scope.action])}</p>
+    <p className="text-xs text-smoke-600">{exitable ? writeExitMessage(original.record.call, actionLabel[original.scope.action]) : original.record.hash ? WRITE_PENDING_LINE : null}</p>
     {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
   </div>
   return <>{resolved ? <p className="mb-3 text-sm">{resolved.failed ? 'Original transaction failed onchain.' : 'Original transaction verified onchain.'} <a className="underline" target="_blank" rel="noopener noreferrer" href={explorerTxUrl(resolved.chainId, resolved.hash) ?? undefined}>View original transaction</a></p> : null}{children}</>

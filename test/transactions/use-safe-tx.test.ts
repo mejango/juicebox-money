@@ -4,6 +4,7 @@ import TestRenderer, { act } from 'react-test-renderer'
 import {
   encodeFunctionData,
   parseAbi,
+  TransactionNotFoundError,
   UserRejectedRequestError,
   zeroAddress,
   type Address,
@@ -75,6 +76,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { openWriteRecovery } from '@/lib/write-recovery'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -125,7 +127,21 @@ async function renderHook() {
   return { ref, renderer }
 }
 
+/** A browser's storage: shared by its tabs and kept across reloads. */
+function browserStorage() {
+  const values = new Map<string, string>()
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+    removeItem: (key: string) => { values.delete(key) },
+  }
+}
+
+const basePublicClient = mocks.publicClient
+
 beforeEach(() => {
+  vi.stubGlobal('localStorage', browserStorage())
+  mocks.publicClient = basePublicClient
   displayQueries.clear()
   mocks.account = ALICE
   mocks.chainId = 1
@@ -520,44 +536,162 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
-  it('releases the hold once the chain shows its hash mined, showing that result instead of sending again', async () => {
-    const first = await renderHook()
-    await act(async () => {
-      await first.ref.current!.send(request, reviewedByAlice)
-    })
-    mocks.receipt = { data: undefined, isError: true }
-    await act(async () => {
-      first.renderer.update(createElement(Harness, { ref: first.ref }))
-    })
-    await act(async () => first.renderer.unmount())
-    mocks.receipt = { data: undefined, isError: false }
+  it('shows an earlier hash the chain mined instead of sending again, and keeps the hold until a finalized block includes it', async () => {
+    vi.useFakeTimers()
+    try {
+      const first = await renderHook()
+      await act(async () => {
+        await first.ref.current!.send(request, reviewedByAlice)
+      })
+      await act(async () => first.renderer.unmount())
 
-    // The earlier transaction landed while no flow was open.
+      // The earlier transaction landed while no flow was open, at block 5, not final yet.
+      const BLOCK = `0x${'55'.repeat(32)}` as Hex
+      const mined = { hash: HASH, chainId: 10, from: ALICE, to: BOB, input: '0x', nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 }
+      const receipt = { status: 'success' as const, transactionHash: HASH, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] }
+      let finalized = 4n
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getChainId: vi.fn(async () => 10),
+        getTransaction: vi.fn(async () => mined),
+        getTransactionReceipt: vi.fn(async () => receipt),
+        getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint }) => args.blockTag === 'finalized'
+          ? { number: finalized, hash: `0x${'66'.repeat(32)}`, timestamp: 1n }
+          : { number: args.blockNumber, hash: args.blockNumber === 5n ? BLOCK : `0x${'66'.repeat(32)}` }),
+      } as typeof mocks.publicClient
+      const reopened = await renderHook()
+      await act(async () => {
+        await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+      })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(reopened.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
+      mocks.receipt = { data: receipt, isError: false }
+      await act(async () => {
+        reopened.renderer.update(createElement(Harness, { ref: reopened.ref }))
+      })
+      // The dialog has its result at once; the hold stays in the background.
+      expect(reopened.ref.current).toMatchObject({ phase: 'success', error: null })
+
+      // Before finality the same call still isn't sent again.
+      mocks.receipt = { data: undefined, isError: false }
+      await act(async () => reopened.ref.current!.reset())
+      await act(async () => {
+        await reopened.ref.current!.send(request, reviewedByAlice)
+      })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+
+      // Once a finalized block includes it, the hold ends and the call can be sent again.
+      finalized = 6n
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16_000)
+      })
+      await act(async () => reopened.ref.current!.reset())
+      await act(async () => {
+        await reopened.ref.current!.send(request, reviewedByAlice)
+      })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => reopened.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps a reverted write held through a reorg until finality, so a retry sends nothing twice', async () => {
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    mocks.receipt = { data: { status: 'reverted', transactionHash: HASH, blockNumber: 5n }, isError: false }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'error' })
+
+    // A reorg drops the block: the node no longer knows the transaction.
+    mocks.receipt = { data: undefined, isError: false }
     mocks.publicClient = {
       ...mocks.publicClient,
       getChainId: vi.fn(async () => 10),
-      getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, nonce: 3, blockNumber: 5n })),
+      getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) }),
+    } as typeof mocks.publicClient
+    await act(async () => hook.ref.current!.reset())
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', hash: HASH })
+    await act(async () => hook.renderer.unmount())
+  })
+
+  it('tracks a hash still pending with one line and no exit', async () => {
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', hash: HASH })
+    expect(heldNotice(hook.ref.current!.error)).toMatchObject({ hash: HASH, onExit: undefined })
+
+    // In the mempool on a later attempt: still tracked, still no exit.
+    mocks.publicClient = {
+      ...mocks.publicClient,
+      getChainId: vi.fn(async () => 10),
+      getTransaction: vi.fn(async () => ({ hash: HASH, from: ALICE, nonce: 3, blockNumber: null })),
     } as typeof mocks.publicClient
     const reopened = await renderHook()
     await act(async () => {
       await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(reopened.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
-    mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
-    await act(async () => {
-      reopened.renderer.update(createElement(Harness, { ref: reopened.ref }))
-    })
-    expect(reopened.ref.current).toMatchObject({ phase: 'success', error: null })
-
-    // Its receipt ended the hold: the same call can be sent again.
-    mocks.receipt = { data: undefined, isError: false }
-    await act(async () => reopened.ref.current!.reset())
-    await act(async () => {
-      await reopened.ref.current!.send(request, reviewedByAlice)
-    })
-    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(reopened.ref.current).toMatchObject({ phase: 'unconfirmed', hash: HASH })
+    expect(heldNotice(reopened.ref.current!.error).onExit).toBeUndefined()
+    await act(async () => hook.renderer.unmount())
     await act(async () => reopened.renderer.unmount())
+  })
+
+  it('offers the exit only after a recheck, and keeps the hold when another tab saved a hash under the same record', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    const shown = heldNotice(hook.ref.current!.error)
+    expect(shown.onExit).toBeTypeOf('function')
+
+    // Tab B records the wallet's hash for the same attempt.
+    const OTHER = `0x${'ef'.repeat(32)}` as Hex
+    const journal = openWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: {
+      to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+    await journal.withLock(async () => { journal.submitted(OTHER, journal.read()!) })
+
+    await act(async () => { shown.onExit!() })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', hash: OTHER })
+    expect(heldNotice(hook.ref.current!.error)).toMatchObject({ hash: OTHER, onExit: undefined })
+    await act(async () => hook.renderer.unmount())
+  })
+
+  it("says in the review when this browser can't remember pending writes, and still holds a repeat in this tab", async () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('SecurityError') } })
+    mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    expect(mocks.requestReview).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      description: "This browser can't remember pending transactions. Check your wallet before repeating one.",
+    }))
+    await act(async () => hook.ref.current!.reset())
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current!.phase).toBe('unconfirmed')
+    await act(async () => hook.renderer.unmount())
   })
 
   it('holds a write the wallet may have sent without a hash, with one line and the exit that sends it again', async () => {
@@ -664,7 +798,7 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.phase).toBe('success')
 
     mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
-    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] }, reviewedByAlice) })
     expect(hook.ref.current).toMatchObject({
       phase: 'pending', busy: true, hash: EXECUTION_HASH, receipt: null,
     })
