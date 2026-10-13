@@ -431,11 +431,12 @@ describe('useSafeTx', () => {
     await act(async () => hook.renderer.unmount())
   })
 
-  it('keeps a receipt RPC error pending and prevents a duplicate send', async () => {
+  it('says it could not confirm yet once the receipt watch gives up, frees the dialog and still refuses a duplicate send', async () => {
     const hook = await renderHook()
     await act(async () => {
       await hook.ref.current!.send(request, reviewedByAlice)
     })
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', busy: true, confirmationUncertain: false })
 
     mocks.receipt = { data: undefined, isError: true }
     await act(async () => {
@@ -444,14 +445,46 @@ describe('useSafeTx', () => {
 
     expect(hook.ref.current).toMatchObject({
       phase: 'pending',
-      busy: true,
+      busy: false,
+      settled: true,
       confirmationUncertain: true,
     })
-    expect(hook.ref.current!.error).toMatch(/do not submit it again/i)
+    expect(hook.ref.current!.error).toMatch(/^Couldn't confirm yet/)
+    expect(hook.ref.current!.error).toContain(hook.ref.current!.hash)
+    expect(hook.ref.current!.error).not.toMatch(/—|temporarily|Relayr/)
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the unconfirmed send locked through dismiss and reset, then settles when the receipt shows up', async () => {
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    const hash = hook.ref.current!.hash!
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+
+    await act(async () => hook.ref.current!.dismiss())
+    await act(async () => hook.ref.current!.reset())
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', hash, confirmationUncertain: true })
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+
+    mocks.receipt = { data: { status: 'success', transactionHash: hash }, isError: false }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, confirmationUncertain: false, error: null })
+    await act(async () => hook.ref.current!.reset())
+    expect(hook.ref.current).toMatchObject({ phase: 'idle', hash: null })
+    await act(async () => hook.renderer.unmount())
   })
 
   it.each([

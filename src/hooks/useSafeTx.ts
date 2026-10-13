@@ -535,14 +535,20 @@ export function useSafeTx(chainId: number) {
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null
+  // The receipt watch gave up on a transaction that has a hash. It may still
+  // land, so the send stays locked against a repeat until its receipt proves
+  // it, but nothing is in flight to hold a dialog open for.
+  const unconfirmed = !shownKey && phase === 'pending' && receipt.isError && !receiptData
+  const unconfirmedRef = useRef(false)
+  unconfirmedRef.current = unconfirmed
   const effectiveError = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
       : null
     : receiptReverted
       ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-      : phase === 'pending' && receipt.isError && !receiptData
-        ? `Transaction${hash ? ` ${hash}` : ''} was submitted, but confirmation is temporarily unavailable. Check the explorer and do not submit it again yet.`
+      : unconfirmed
+        ? `Couldn't confirm yet${hash ? ` (${hash})` : ''}. Check the explorer before sending again.`
         : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
@@ -735,6 +741,8 @@ export function useSafeTx(chainId: number) {
    * since the user may not have seen its line.
    */
   const reset = useCallback(() => {
+    // An unconfirmed send is still the user's pending transaction: its lock outlives the dialog.
+    if (unconfirmedRef.current) return
     inFlightRef.current = false
     setPhase('idle')
     setError(null)
@@ -748,6 +756,7 @@ export function useSafeTx(chainId: number) {
    * followed and held.
    */
   const dismiss = useCallback(() => {
+    if (unconfirmedRef.current) return
     if (shownKey && proposals.get(shownKey)?.phase === 'unproven') {
       proposals.delete(shownKey)
       notifyProposals()
@@ -757,13 +766,13 @@ export function useSafeTx(chainId: number) {
 
   return {
     phase: effectivePhase,
-    /** True while the transaction is in flight: simulating/signing/pending. */
+    /** True while the transaction is in flight: simulating/signing/pending. Not once its confirmation could not be read. */
     busy:
       effectivePhase === 'simulating' ||
       effectivePhase === 'signing' ||
-      effectivePhase === 'pending',
-    /** The confirm can end on Done: the transaction succeeded, or it is with a Safe. */
-    settled: effectivePhase === 'success' || effectivePhase === 'submitted',
+      (effectivePhase === 'pending' && !unconfirmed),
+    /** The confirm can end on Done: the transaction succeeded, it is with a Safe, or its confirmation could not be read. */
+    settled: effectivePhase === 'success' || effectivePhase === 'submitted' || unconfirmed,
     /** The one line a `submitted` confirm shows. */
     notice,
     /** Whether the connected writer is a Safe connector. */
@@ -776,7 +785,7 @@ export function useSafeTx(chainId: number) {
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: shownKey
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
-      : phase === 'pending' && receipt.isError && !receiptData,
+      : unconfirmed,
     send,
     reset,
     dismiss,
