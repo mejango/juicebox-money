@@ -77,7 +77,8 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     void heldWriteState(client, current.record).then(state => { if (live && state === 'dropped') setDropped(hashedId) }, () => {})
     return () => { live = false }
   }, [hashedId, client])
-  const exitable = !!original && !original.record.safe && (!original.record.hash || dropped === original.record.id)
+  // A hashless reservation, ordinary or Safe, has no hash to track: the exit is offered.
+  const exitable = !!original && (!original.record.hash || (!original.record.safe && dropped === original.record.id))
   const exit = async () => {
     if (!original || !client) return
     try {

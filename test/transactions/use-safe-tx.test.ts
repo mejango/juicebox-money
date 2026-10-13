@@ -725,6 +725,18 @@ describe('useSafeTx', () => {
     await act(async () => hook.renderer.unmount())
   })
 
+  it("says in the review when this browser can't remember an app-journaled write", async () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('SecurityError') } })
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, { ...reviewedByAlice, journaled: true })
+    })
+    expect(mocks.requestReview).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      description: "This browser can't remember pending transactions. Check your wallet before repeating one.",
+    }))
+    await act(async () => hook.renderer.unmount())
+  })
+
   it('holds a write the wallet may have sent without a hash, with one line and the exit that sends it again', async () => {
     mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
     const hook = await renderHook()

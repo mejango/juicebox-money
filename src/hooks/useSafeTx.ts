@@ -883,7 +883,7 @@ export function useSafeTx(chainId: number) {
               const description = [
                 options.reviewNotice,
                 viaSafe ? SAFE_NONCE_GUIDANCE : null,
-                journal && !writeRecoveryIsDurable() ? WRITE_RECOVERY_IN_TAB_LINE : null,
+                (journal || options.journaled) && !writeRecoveryIsDurable() ? WRITE_RECOVERY_IN_TAB_LINE : null,
               ]
                 .filter(Boolean)
                 .join('\n\n')

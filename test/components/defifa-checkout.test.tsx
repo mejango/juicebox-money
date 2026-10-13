@@ -95,6 +95,15 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(controls.verify).toHaveBeenCalledWith(wallet.client, expect.objectContaining({ account: ALICE, hook: HOOK, transaction: prepared().transaction }), expect.objectContaining({ transactionHash: sentHash(1) }))
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
+  it("says in its review when this browser can't remember pending transactions", async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError') })
+    await openReview()
+    expect(text(renderer.root)).toContain("This browser can't remember pending transactions. Check your wallet before repeating one.")
+  })
+  it('says nothing about remembering when storage works', async () => {
+    await openReview()
+    expect(text(renderer.root)).not.toContain("This browser can't remember")
+  })
   it('drops an unsent review when the connected account changes', async () => {
     await openReview()
     await act(async () => wallet.connect(BOB))

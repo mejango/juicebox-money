@@ -66,6 +66,14 @@ describe('original native action recovery', () => {
     expect(host.textContent).toContain('Fresh NFT controls')
   })
 
+  it('offers the checked-wallet exit for a Safe reservation with no hash', async () => {
+    await save(false, true); await render()
+    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet. Send again'])
+    await click()
+    expect(readDefifaWriteRecovery(scope)).toBeNull()
+    expect(host.textContent).toContain('Fresh NFT controls')
+  })
+
   it('gives a saved hash still pending one line and no exit', async () => {
     await save(); await render()
     expect(host.textContent).toContain('Still pending in your wallet. Speed it up or cancel it there.')
