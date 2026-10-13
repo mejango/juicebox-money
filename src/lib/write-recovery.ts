@@ -108,19 +108,21 @@ export async function heldWriteState(
   return used?.value ? 'dropped' : 'pending'
 }
 
-/** A held write's receipt is rechecked this often until a finalized block includes it. */
+/** A held write's receipt is rechecked this often until it is verified (a revert, until final). */
 const FINALITY_POLL_MS = 15_000
 /** About an hour; after that the next send of the call checks the chain again. */
 const FINALITY_ATTEMPTS = 240
 const finalizing = new Map<string, ReturnType<typeof setTimeout> | undefined>()
 
 /**
- * Release a held write once its receipt is authenticated (the SDK's
- * {@link verifyReviewedWriteReceipt}) and included at a canonical finalized
- * block. Until then the hold stays, so a reorg can't let the call be sent
- * twice. It runs outside any component: closing the flow doesn't stop it.
+ * Release a held write once the SDK authenticates its receipt
+ * ({@link verifyReviewedWriteReceipt}). A success releases it at once: the
+ * user saw it run, so sending the same call again is a new action. A revert
+ * releases it only once a canonical finalized block includes it, so a retry
+ * can't double it if a reorg brings the original back. It runs outside any
+ * component: closing the flow doesn't stop it.
  */
-export function releaseWhenFinal(
+export function releaseVerified(
   journal: WriteRecovery,
   record: ReviewedWriteRecoveryRecord,
   client: ReviewedWriteReceiptClient,
@@ -131,22 +133,16 @@ export function releaseWhenFinal(
   let attempts = 0
   const check = async () => {
     try {
+      // The SDK proves a failure only at a finalized block, and throws until then.
       await verifyReviewedWriteReceipt(client, record, receipt)
-      const final = await atCanonicalFinalizedBlock(client, async finalized => {
-        if (finalized < receipt.blockNumber) return false
-        const block = await client.getBlock({ blockNumber: receipt.blockNumber })
-        return block.hash?.toLowerCase() === receipt.blockHash.toLowerCase()
-      })
-      if (final?.value) {
-        await journal.withLock(async () => {
-          const saved = journal.read()
-          if (saved?.id !== record.id) return
-          // A hash kept only in memory after a failed save is committed before it is cleared.
-          journal.clear(saved.hash ? journal.submitted(saved.hash, saved) : saved)
-        }, true)
-        finalizing.delete(record.id)
-        return
-      }
+      await journal.withLock(async () => {
+        const saved = journal.read()
+        if (saved?.id !== record.id) return
+        // A hash kept only in memory after a failed save is committed before it is cleared.
+        journal.clear(saved.hash ? journal.submitted(saved.hash, saved) : saved)
+      }, true)
+      finalizing.delete(record.id)
+      return
     } catch {
       // Not proven yet, or the node can't say: look again.
     }

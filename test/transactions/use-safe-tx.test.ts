@@ -536,7 +536,7 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
-  it('shows an earlier hash the chain mined instead of sending again, and keeps the hold until a finalized block includes it', async () => {
+  it('shows an earlier hash the chain mined instead of sending again, and a verified success releases it at once', async () => {
     vi.useFakeTimers()
     try {
       const first = await renderHook()
@@ -549,7 +549,8 @@ describe('useSafeTx', () => {
       const BLOCK = `0x${'55'.repeat(32)}` as Hex
       const mined = { hash: HASH, chainId: 10, from: ALICE, to: BOB, input: '0x', nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 }
       const receipt = { status: 'success' as const, transactionHash: HASH, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] }
-      let finalized = 4n
+      // Finality never arrives in this test: a verified success needs none.
+      const finalized = 4n
       mocks.publicClient = {
         ...mocks.publicClient,
         getChainId: vi.fn(async () => 10),
@@ -572,25 +573,55 @@ describe('useSafeTx', () => {
       // The dialog has its result at once; the hold stays in the background.
       expect(reopened.ref.current).toMatchObject({ phase: 'success', error: null })
 
-      // Before finality the same call still isn't sent again.
+      // The user saw it run: sending the same call again is a new action, sent at once, before finality.
       mocks.receipt = { data: undefined, isError: false }
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
       await act(async () => reopened.ref.current!.reset())
       await act(async () => {
         await reopened.ref.current!.send(request, reviewedByAlice)
       })
-      expect(mocks.writeContract).toHaveBeenCalledOnce()
-
-      // Once a finalized block includes it, the hold ends and the call can be sent again.
-      finalized = 6n
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(16_000)
-      })
-      await act(async () => reopened.ref.current!.reset())
-      await act(async () => {
-        await reopened.ref.current!.send(request, reviewedByAlice)
-      })
+      expect(finalized).toBe(4n)
       expect(mocks.writeContract).toHaveBeenCalledTimes(2)
       await act(async () => reopened.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('holds a retry after a reverted receipt until a finalized block includes it, then sends it', async () => {
+    vi.useFakeTimers()
+    try {
+      const BLOCK = `0x${'55'.repeat(32)}` as Hex
+      const reverted = { status: 'reverted' as const, transactionHash: HASH, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] }
+      let finalized = 4n
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getChainId: vi.fn(async () => 10),
+        getTransaction: vi.fn(async () => ({ hash: HASH, chainId: 10, from: ALICE, to: BOB, input: '0x', nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 })),
+        getTransactionReceipt: vi.fn(async () => reverted),
+        getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint }) => args.blockTag === 'finalized'
+          ? { number: finalized, hash: `0x${'66'.repeat(32)}`, timestamp: 1n }
+          : { number: args.blockNumber, hash: args.blockNumber === 5n ? BLOCK : `0x${'66'.repeat(32)}` }),
+      } as typeof mocks.publicClient
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: reverted, isError: false }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      expect(hook.ref.current).toMatchObject({ phase: 'error' })
+
+      // Not final yet: a reorg could bring it back, so the retry shows it again instead.
+      mocks.receipt = { data: undefined, isError: false }
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      await act(async () => hook.ref.current!.reset())
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+
+      finalized = 6n
+      await act(async () => { await vi.advanceTimersByTimeAsync(16_000) })
+      await act(async () => hook.ref.current!.reset())
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
     } finally {
       vi.useRealTimers()
     }

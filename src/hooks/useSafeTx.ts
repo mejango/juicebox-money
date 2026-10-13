@@ -8,7 +8,7 @@ import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import {
   openWriteRecovery,
   readWriteRecovery,
-  releaseWhenFinal,
+  releaseVerified,
   WRITE_RECOVERY_IN_TAB_LINE,
   heldWriteState,
   writeNonceEvidence,
@@ -669,10 +669,10 @@ export function useSafeTx(chainId: number) {
   useEffect(() => {
     const current = heldRef.current
     if (!current || !receiptData || current.record.hash?.toLowerCase() !== receiptData.transactionHash.toLowerCase()) return
-    // The flow shows the result now; its hold stays until a finalized block
-    // includes the receipt, so a reorg can't let it run twice.
+    // The flow shows the result now. The hold ends once the receipt is
+    // verified, and after a revert only at finality, so a reorg can't double a retry.
     showHeld(null)
-    if (publicClient) releaseWhenFinal(current.journal, current.record, publicClient as never, receiptData as TransactionReceipt)
+    if (publicClient) releaseVerified(current.journal, current.record, publicClient as never, receiptData as TransactionReceipt)
   }, [receiptData, publicClient, showHeld])
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
