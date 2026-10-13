@@ -1167,7 +1167,7 @@ export async function relayrPay({
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
   if (isSafeConnection(wagmiConfig)) {
-    throw new Error('Pay for relayed transactions from an ordinary wallet. Nothing was sent.')
+    throw new Error('Pay the network fee from an ordinary wallet. Nothing was sent.')
   }
   if (sent.length >= MAX_RELAYR_SENT_PAYMENTS) {
     throw new Error('This Relayr quote was paid too many times to pay again. Keep it pending; do not pay again.')

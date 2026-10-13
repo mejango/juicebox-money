@@ -71,6 +71,7 @@ import {
   usableSafeConfirmations,
   type SafeQueuedTransaction,
 } from "@bananapus/nana-sdk-core/safe-service";
+import { LoadingText } from "@/components/ui/LoadingText";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useSafeConnection } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
@@ -798,6 +799,16 @@ function initialPaymentIndex(payments: readonly RelayrPayment[]): number {
   return connected >= 0 ? connected : payments.length === 1 ? 0 : -1;
 }
 
+/** The footer line for a read-only phase that advances on its own: spinner and animated text, no button. */
+function LoadingStatus({ children }: { children: string }) {
+  return (
+    <p role="status" className="flex items-center gap-2 text-sm text-smoke-600">
+      <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-smoke-300 border-t-smoke-700 motion-reduce:animate-none" />
+      <LoadingText text={children} />
+    </p>
+  );
+}
+
 const PHASE_LABELS: Record<SafeRelayrPhase, string> = {
   reviewing: 'Review the Safe executions…',
   quoting: 'Getting payment options…',
@@ -1507,10 +1518,12 @@ export function SafeQueueCard({
               Done
             </button>
           </div>
+        ) : recovery && (busy === "recover-bundle" || watchingBundle) ? (
+          <LoadingStatus>{phase ? PHASE_LABELS[phase] : "Checking…"}</LoadingStatus>
         ) : recovery ? (
           <div className="flex justify-end">
-            <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null || watchingBundle} className="btn-primary min-h-[42px] px-5 text-sm">
-              {busy || watchingBundle ? phase ? PHASE_LABELS[phase] : "Checking…" : recoveryResult?.state === "ready" && !savedAccountNotice(recoveryResult.session) ? "Review saved quote" : RELAYR_UUID_RE.test(recovery.bundleUuid ?? "") ? "Check execution status" : "Check Safe nonces"}
+            <button type="button" onClick={() => void recoverPaidBundle()} disabled={busy !== null} className="btn-primary min-h-[42px] px-5 text-sm">
+              {busy && phase ? PHASE_LABELS[phase] : busy ? "Checking…" : recoveryResult?.state === "ready" && !savedAccountNotice(recoveryResult.session) ? "Review saved quote" : RELAYR_UUID_RE.test(recovery.bundleUuid ?? "") ? "Check execution status" : "Check Safe nonces"}
             </button>
           </div>
         ) : error && !batchReview && !busy ? (
@@ -1520,10 +1533,7 @@ export function SafeQueueCard({
             </button>
           </div>
         ) : preparingBatch ? (
-          <p role="status" className="flex items-center gap-2 text-sm text-smoke-600">
-            <span aria-hidden="true" className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-smoke-300 border-t-smoke-700 motion-reduce:animate-none" />
-            {phase ? PHASE_LABELS[phase] : "Checking…"}
-          </p>
+          <LoadingStatus>{phase ? PHASE_LABELS[phase] : "Checking…"}</LoadingStatus>
         ) : (
           <div className="flex flex-col gap-2 sm:flex-row">
             <div className="relative min-w-0 flex-1">
@@ -1533,7 +1543,7 @@ export function SafeQueueCard({
                 </span>
               ) : null}
               <select
-                aria-label="Pay on"
+                aria-label="Pay network fee on"
                 value={paymentIndex}
                 onChange={(event) => setPaymentIndex(Number(event.target.value))}
                 disabled={!!busy}

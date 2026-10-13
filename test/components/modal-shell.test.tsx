@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { LoadingText } from '@/components/ui/LoadingText'
+import { withFailedStep } from '@/components/ui/TxSteps'
 import { topLayerDialogs } from '../dialog-shim'
 
 let container: HTMLDivElement
@@ -249,6 +250,39 @@ describe('a confirm hosted in the shell', () => {
   })
 })
 
+describe('the transaction confirm while a read-only phase runs', () => {
+  const base = { open: true, title: 'Confirm', steps: [{ title: 'Check' }], activeIndex: 0, onConfirm: () => {}, onClose: () => {} }
+
+  it('drops its buttons when there is no action, leaving only Close', () => {
+    render(<TxConfirmDialog {...base} action={null} busy status="Checking the transactions…" />)
+    const dialog = only()
+    expect([...dialog.querySelectorAll('button')].map(button => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close'])
+    expect(dialog.querySelector('footer')).toBeNull()
+    expect(dialog.querySelector('[role="status"] .loading-dots')).not.toBeNull()
+  })
+
+  it('keeps Cancel for work that can be stopped, and nothing else', () => {
+    const onCancel = vi.fn()
+    render(<TxConfirmDialog {...base} action={null} busy onCancel={onCancel} status="Getting the quote…" />)
+    const buttons = [...only().querySelectorAll('footer button')]
+    expect(buttons.map(button => button.textContent)).toEqual(['Cancel'])
+    act(() => (buttons[0] as HTMLButtonElement).click())
+    expect(onCancel).toHaveBeenCalledOnce()
+  })
+
+  it('brings the buttons back when an action returns', () => {
+    render(<TxConfirmDialog {...base} action="Retry" />)
+    expect([...only().querySelectorAll('footer button')].map(button => button.textContent)).toEqual(['Cancel', 'Retry'])
+  })
+
+  it('lets a tall dialog scroll from its top at 640 px and wider', () => {
+    render(<TxConfirmDialog {...base} action="Confirm" />)
+    const dialog = only()
+    expect(dialog.className).not.toMatch(/items-center/)
+    expect(dialog.querySelector('section')!.className).toContain('sm:my-auto')
+  })
+})
+
 describe('modal body scroll lock', () => {
   function Stack({ inner }: { inner: boolean }) {
     return (
@@ -333,5 +367,21 @@ describe('ModalDialog', () => {
     })
     pressEscape()
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('TxSteps failed steps', () => {
+  it('shows × and a status on the failed step, and keeps earlier steps done', () => {
+    render(<TxConfirmDialog open title="Confirm" action="Retry" onConfirm={() => {}} onClose={() => {}} activeIndex={1}
+      steps={withFailedStep([{ title: 'Approve' }, { title: 'Mint' }, { title: 'Done' }], 1, true)} />)
+    const items = [...only().querySelectorAll('li[data-state]')]
+    expect(items.map(item => item.getAttribute('data-state'))).toEqual(['complete', 'failed', 'pending'])
+    expect(items[1].textContent).toContain('×')
+    expect(items[1].textContent).toContain('Failed')
+  })
+
+  it('leaves the steps alone when nothing failed', () => {
+    const steps = [{ title: 'Approve' }]
+    expect(withFailedStep(steps, 0, false)).toBe(steps)
   })
 })

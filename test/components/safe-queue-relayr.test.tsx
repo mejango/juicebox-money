@@ -508,7 +508,7 @@ describe('Safe queue Relayr execution', () => {
     expect(button(/^Pay$/).props.disabled).toBe(true)
     const select = renderer.root.findByType('select')
     expect(select.props.value).toBe(-1)
-    expect(select.props['aria-label']).toBe('Pay on')
+    expect(select.props['aria-label']).toBe('Pay network fee on')
     expect(renderer.root.findAllByType('option').map(textOf)).toEqual([
       'Choose a chain',
       ...quote([]).payment_info.map(relayrPaymentLabel),
@@ -1258,6 +1258,24 @@ describe('Safe queue Relayr execution', () => {
       expect(button(/Check Safe nonces/).props.disabled).toBe(false)
     },
   )
+
+  it('shows a running nonce check as a status line instead of a disabled button', async () => {
+    mocks.request.mockResolvedValue(`0x${'5'.padStart(64, '0')}`)
+    await publicationWithLostQuote(true)
+    await click(/View existing bundle/)
+    let release!: () => void
+    const answer = new Promise<string>(resolve => { release = () => resolve(`0x${'5'.padStart(64, '0')}`) })
+    mocks.request.mockClear().mockImplementation(() => answer)
+    let checking!: Promise<void>
+    await act(async () => {
+      checking = button(/Check Safe nonces/).props.onClick()
+      await vi.waitFor(() => expect(mocks.request).toHaveBeenCalled())
+    })
+    const dialog = renderer.root.findByType('dialog')
+    expect(dialog.findAllByType('button').map(node => node.props['aria-label'] ?? textOf(node))).toEqual(['Close'])
+    expect(textOf(dialog.findByProps({ role: 'status' }))).toMatch(/…$/)
+    await act(async () => { release(); await checking })
+  })
 
   it('retains unknown funding even when every saved nonce is canonically consumed', async () => {
     mocks.request.mockResolvedValue(`0x${'6'.padStart(64, '0')}`)

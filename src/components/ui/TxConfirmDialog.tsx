@@ -57,7 +57,8 @@ export function TxConfirmDialog({
   steps: readonly TxStep[]
   activeIndex: number
   stepsIntro?: string
-  action: string
+  /** Null while a read-only phase advances on its own; closing stays available. */
+  action: string | null
   actionDisabled?: boolean
   cancelLabel?: string
   onConfirm: () => void
@@ -95,7 +96,7 @@ export function TxConfirmDialog({
       className={
         host
           ? 'w-full bg-bone'
-          : 'w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl'
+          : 'w-full max-w-lg overflow-hidden rounded-2xl border border-smoke-300 bg-bone shadow-2xl sm:my-auto'
       }
     >
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
@@ -138,42 +139,46 @@ export function TxConfirmDialog({
                 intro={stepsIntro}
                 className="rounded-xl border border-smoke-200 bg-white p-3"
               />
-              {status ? <p role="status" className="text-sm text-bluebs-700">{typeof status === 'string' ? <LoadingText text={transactionMessage(status)} active={busy || undefined} /> : status}</p> : null}
+              {status ? <p role="status" className="text-sm text-bluebs-700">{typeof status === 'string' ? <LoadingText text={transactionMessage(status)} active={busy || action === null || undefined} /> : status}</p> : null}
             </>
           )}
           {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? transactionMessage(error) : error}</p> : null}
         </div>
-        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
-          {complete ? (
-            <button
-              type="button"
-              className="btn-primary min-h-[44px] px-5 text-sm"
-              onClick={onClose}
-            >
-              Done
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                className="btn-secondary min-h-[44px] px-5 text-sm"
-                disabled={busy && !onCancel}
-                onClick={busy ? onCancel : onClose}
-              >
-                {cancelLabel}
-              </button>
+        {complete || action || (busy && onCancel) ? (
+          <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
+            {complete ? (
               <button
                 type="button"
                 className="btn-primary min-h-[44px] px-5 text-sm"
-                disabled={busy || preparing || actionDisabled}
-                aria-busy={preparing || undefined}
-                onClick={onConfirm}
+                onClick={onClose}
               >
-                {action}
+                Done
               </button>
-            </>
-          )}
-        </footer>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn-secondary min-h-[44px] px-5 text-sm"
+                  disabled={busy && !onCancel}
+                  onClick={busy ? onCancel : onClose}
+                >
+                  {cancelLabel}
+                </button>
+                {action ? (
+                  <button
+                    type="button"
+                    className="btn-primary min-h-[44px] px-5 text-sm"
+                    disabled={busy || preparing || actionDisabled}
+                    aria-busy={preparing || undefined}
+                    onClick={onConfirm}
+                  >
+                    {action}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </footer>
+        ) : null}
     </section>
   )
   if (host) return createPortal(section, host)
@@ -182,7 +187,7 @@ export function TxConfirmDialog({
       onClose={onClose}
       dismissible={!busy}
       labelledBy={titleId}
-      className="items-start justify-center px-3 py-6 sm:items-center"
+      className="items-start justify-center px-3 py-6"
     >
       {section}
     </ModalDialog>
