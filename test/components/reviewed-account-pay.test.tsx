@@ -330,7 +330,7 @@ describe('a payment from a Safe', () => {
   const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
 
   const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
   const UNCONFIRMED =
     'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
   const panelSays = (line: string) => host.textContent?.includes(line) ?? false

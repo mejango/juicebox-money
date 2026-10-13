@@ -586,7 +586,7 @@ describe('a call stamped at send time', () => {
 
 describe('a Safe proposal awaiting its signers', () => {
   const EXPIRED = "This Safe proposal's deadline passed. Review it again."
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
+  const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
 
   it.each([
     ['its deadline passed before the Safe ran it', 'expired', EXPIRED],
@@ -613,6 +613,39 @@ describe('a Safe proposal awaiting its signers', () => {
     await act(async () => flow.tx.reset())
     await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps waiting for the execution once a finalized block shows the Safe ran it', async () => {
+    const execute = signersDecide()
+    let watchEnds!: (end: string) => void
+    mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    watchEnds('executed')
+    await settle()
+    expect(flow.tx.phase).toBe('submitted')
+    execute()
+    await settle()
+    expect(flow.tx.phase).toBe('success')
+  })
+
+  it("says the Safe ran it and releases its action when its execution can't be read", async () => {
+    let fail!: (reason: Error) => void
+    mocks.waitForSafeExecutionHash.mockImplementation(() => new Promise((_, reject) => (fail = reject)))
+    let watchEnds!: (end: string) => void
+    mocks.watchSafeProposal.mockImplementationOnce(() => new Promise(resolve => (watchEnds = resolve)))
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    watchEnds('executed')
+    await settle()
+    fail(new Error('Safe service unavailable'))
+    await settle()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', busy: false, notice: 'Your Safe ran this transaction.' })
+    await act(async () => flow.tx.reset())
+    await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
   })
 
   it('stops being watched once its execution is known', async () => {
@@ -914,7 +947,7 @@ describe("a Safe proposal's last look at the chain", () => {
     const resumed = await mount()
     await resumed.send()
     await settle()
-    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Safe moved past this proposal without running it. Review it again.' })
+    expect(resumed.tx).toMatchObject({ phase: 'error', error: 'Another Safe transaction used this nonce. Propose it again to run it.' })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 

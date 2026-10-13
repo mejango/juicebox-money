@@ -26,6 +26,8 @@ import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { captureWalletContext } from '@/lib/wallet-context'
 import {
   gasWithHeadroom,
+  SAFE_PROPOSAL_EXECUTED_LINE,
+  SAFE_PROPOSAL_REPLACED_LINE,
   SubmittedContractWriteError,
   SubmittedWritePersistenceError,
   waitForTrackedReceipt,
@@ -200,8 +202,10 @@ type ProposalPhase =
   | 'unproven'
   /** Its deadline passed before the Safe ran it, so the contract refuses it now. */
   | 'expired'
-  /** The Safe's nonce moved past it without running it. */
+  /** Another Safe transaction used its nonce, proven at a finalized block. */
   | 'replaced'
+  /** The chain shows the Safe ran it, and its execution can't be read here. */
+  | 'ran'
 
 /** How a flow shows each: in flight, with the Safe, or settled. */
 const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
@@ -214,13 +218,13 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   failed: 'error',
   expired: 'error',
   replaced: 'error',
+  ran: 'submitted',
 }
 
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
-const SAFE_PROPOSAL_REPLACED = 'Safe moved past this proposal without running it. Review it again.'
 /** A receipt still missing this long after its execution was first seen is not coming. */
 const RECEIPT_HORIZON_MS = 60 * 60_000
 
@@ -313,7 +317,7 @@ function startFollowingProposal(key: string, client: FollowClient, reply: boolea
  * until dismissed. It ends with a result, or once it can no longer run.
  */
 function holdsCall(proposal: SafeProposal | undefined): proposal is SafeProposal {
-  return !!proposal && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
+  return !!proposal && proposal.phase !== 'ran' && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
 }
 
 /** The execution a proposal awaiting its signers runs in, or how it ends before it runs. */
@@ -322,14 +326,18 @@ type Outcome = { executionHash: Hex } | { phase: ProposalPhase; message: string 
 /**
  * Waits for the proposal's execution, from Safe's service and the chain, and
  * where the service lists the proposal, watches it: it ends early when its
- * deadline passes before the Safe ran it, or when the Safe's nonce moves past
- * it ({@link watchSafeProposal}). Whichever answers first stops the other.
+ * deadline passes before the Safe ran it, or when a finalized block shows
+ * another Safe transaction used its nonce ({@link watchSafeProposal}). When
+ * that block shows the Safe ran it, its execution hash is still awaited; if
+ * that can't be read, it ends as ran. Whichever answers first stops the other.
  */
 async function awaitExecution(
   { chainId, safe, proposalHash }: SafeProposal,
   client: FollowClient,
 ): Promise<Outcome> {
   const stop = new AbortController()
+  /** A finalized block showed the Safe ran it: an unreadable execution still ends it. */
+  let ranOnChain = false
   const executed = waitForSafeExecutionHash(chainId, proposalHash, { client, signal: stop.signal }).then(
     (executionHash): Outcome => ({ executionHash }),
     async (reason: unknown): Promise<Outcome> => {
@@ -337,15 +345,19 @@ async function awaitExecution(
       const reported = await reportedSafeExecution(reason, chainId, safe, proposalHash)
       return reported
         ? { executionHash: reported }
-        : { phase: 'unproven', message: `${SAFE_PROPOSAL_UNCONFIRMED} ${friendlyTxError(reason)}` }
+        : ranOnChain
+          ? { phase: 'ran', message: SAFE_PROPOSAL_EXECUTED_LINE }
+          : { phase: 'unproven', message: `${SAFE_PROPOSAL_UNCONFIRMED} ${friendlyTxError(reason)}` }
     },
   )
   const ended = hasSafeService(chainId)
     ? watchSafeProposal(client, chainId, safe, proposalHash, stop.signal).then(
-        (end): Outcome =>
+        (end): Outcome | Promise<Outcome> =>
           end === 'expired'
             ? { phase: 'expired', message: SAFE_PROPOSAL_EXPIRED }
-            : { phase: 'replaced', message: SAFE_PROPOSAL_REPLACED },
+            : end === 'replaced'
+              ? { phase: 'replaced', message: SAFE_PROPOSAL_REPLACED_LINE }
+              : ((ranOnChain = true), executed),
       )
     : new Promise<never>(() => {})
   try {
@@ -613,7 +625,7 @@ export function useSafeTx(chainId: number) {
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
       : proposal?.phase === 'confirming'
         ? SAFE_EXECUTION_CONFIRMING
-        : proposal?.phase === 'unproven'
+        : proposal?.phase === 'unproven' || proposal?.phase === 'ran'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null
   const sendRef = useRef<(request: TxRequest, options: TxSendOptions) => Promise<Hex | null>>(async () => null)
