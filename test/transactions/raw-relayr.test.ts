@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
-import type { RawRelayrState } from '@/lib/raw-relayr-lifecycle'
+import { RawQuoteNotObtainedError, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
 import type { RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 
 const account = '0x1111111111111111111111111111111111111111' as Address
@@ -15,7 +15,7 @@ vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
 vi.mock('@/lib/relayr', () => ({ withRelayrScopeLock: (_key: string, run: () => Promise<void>) => run() }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ getTransaction: mocks.transaction, getTransactionReceipt: mocks.receipt, getBlock: mocks.block }) }))
 vi.mock('@/lib/raw-relayr-lifecycle', async original => ({ ...(await original<typeof import('@/lib/raw-relayr-lifecycle')>()), runRawRelayrLifecycle: mocks.lifecycle }))
-import { loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
+import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
 
 let scope = 0
 const calls = [{ chainId: 1, target, data: '0x1234' as Hex }, { chainId: 1, target, data: '0x5678' as Hex }]
@@ -93,4 +93,81 @@ it('keeps an empty retained recovery record ambiguous instead of treating it as 
   await expect(run()).rejects.toThrow()
   expect(mocks.lifecycle).not.toHaveBeenCalled()
   expect(window.localStorage.getItem(`jb-raw-relayr-v1:${scope}`)).toBe('')
+})
+
+it('drops the saved bundle when no quote was obtained, since nothing was reserved or paid', async () => {
+  mocks.lifecycle.mockImplementationOnce(async ({ session, saveState: persist }: { session: RawRelayrState; saveState: (s: RawRelayrState, beforeWrite?: boolean) => void }) => {
+    session.phase = 'publishing'
+    persist(session, true)
+    throw new RawQuoteNotObtainedError('Cancelled. Nothing was paid.')
+  })
+  await expect(run()).rejects.toBeInstanceOf(RawQuoteNotObtainedError)
+  expect(loadRawRelayrSession(String(scope))).toBeNull()
+})
+
+it('treats a bundle saved before its quote arrived as releasable, never one that has a quote', async () => {
+  mocks.lifecycle.mockImplementationOnce(async ({ session, saveState: persist }: { session: RawRelayrState; saveState: (s: RawRelayrState, beforeWrite?: boolean) => void }) => {
+    session.phase = 'publishing'
+    persist(session, true)
+    throw new Error('connection lost')
+  })
+  await expect(run()).rejects.toThrow('connection lost')
+  expect(loadRawRelayrSession(String(scope))?.phase).toBe('publishing')
+  expect(await isRawRelayrSessionReleased(String(scope))).toBe(true)
+})
+
+it('reports each attempt as it is found and checked', async () => {
+  const seen: string[][] = []
+  await runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: vi.fn().mockResolvedValue(undefined), onAttempts: states => seen.push([...states]) })
+  expect(seen[0]).toEqual(['checking', 'checking'])
+  expect(seen.at(-1)).toEqual(['confirmed', 'confirmed'])
+})
+
+it('reports a reverted attempt without hiding the others', async () => {
+  mocks.receipt.mockImplementation(({ hash: h }: { hash: Hex }) => ({ transactionHash: h, status: h === hash(2) ? 'reverted' : 'success', blockHash, blockNumber: 12n }))
+  const seen: string[][] = []
+  await runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: vi.fn().mockResolvedValue(undefined), onAttempts: states => seen.push([...states]) })
+  expect(seen.at(-1)).toEqual(['confirmed', 'reverted'])
+})
+
+it('verifies each available destination while polling and keeps going past an unresolved first attempt', async () => {
+  const seen: string[][] = []
+  mocks.lifecycle.mockImplementation(async ({ session, entries, saveState: persist }: { session: RawRelayrState; entries: RelayrEntry[]; saveState: (s: RawRelayrState) => void }) => {
+    session.quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001', payment_info: [], transactions: [], expectedTransactions: entries.map((entry, i) => ({ chain: entry.chain, entry, txUuid: `uuid-${i}` })) }
+    // Only the second destination has a hash yet.
+    session.records = [{ tx_uuid: 'uuid-1', request: entries[1], status: { state: 'success', data: { hash: hash(2) } } }]
+    session.phase = 'executing'
+    persist(session)
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await expect(runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: vi.fn(), onAttempts: states => seen.push([...states]) })).rejects.toThrow('unresolved')
+  expect(seen.at(-1)).toEqual(['waiting', 'confirmed'])
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
+})
+
+it('keeps verifying later destinations after one receipt read fails, and holds the bundle', async () => {
+  mocks.receipt.mockImplementation(({ hash: h }: { hash: Hex }) => {
+    if (h === hash(1)) throw new Error('RPC unavailable')
+    return { transactionHash: h, status: 'success', blockHash, blockNumber: 12n }
+  })
+  const seen: string[][] = []
+  const complete = vi.fn()
+  await expect(runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: complete, onAttempts: states => seen.push([...states]) })).rejects.toThrow('RPC unavailable')
+  expect(seen.at(-1)).toEqual(['checking', 'confirmed'])
+  expect(complete).not.toHaveBeenCalled()
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
+})
+
+it('holds the bundle when a block proven during polling is reorged out before completion', async () => {
+  const original = mocks.lifecycle.getMockImplementation()!
+  mocks.lifecycle.mockImplementation(async args => {
+    await original(args)
+    // Early proofs were read; Relayr keeps reporting the same hashes after the reorg.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    mocks.block.mockResolvedValue({ hash: hash(99) })
+  })
+  const complete = vi.fn()
+  await expect(run(complete)).rejects.toThrow('canonical')
+  expect(complete).not.toHaveBeenCalled()
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
 })

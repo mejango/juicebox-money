@@ -8,7 +8,7 @@ import {
   useEnclosingModalCard,
   useHoldEnclosingModal,
 } from '@/components/ui/ModalShell'
-import { TxSteps } from '@/components/ui/TxSteps'
+import { TxSteps, type TxStep } from '@/components/ui/TxSteps'
 import { LoadingText } from '@/components/ui/LoadingText'
 import { transactionMessage } from '@/lib/transaction-message'
 
@@ -40,6 +40,7 @@ export function TxConfirmDialog({
   actionDisabled = false,
   cancelLabel = 'Cancel',
   onConfirm,
+  onCancel,
   busy = false,
   complete = false,
   preparing = false,
@@ -53,13 +54,15 @@ export function TxConfirmDialog({
   rows?: readonly TxConfirmRow[]
   /** Extra body content under the rows (warnings, notes, custom grids). */
   children?: ReactNode
-  steps: readonly { key?: string; title: ReactNode; detail?: string }[]
+  steps: readonly TxStep[]
   activeIndex: number
   stepsIntro?: string
   action: string
   actionDisabled?: boolean
   cancelLabel?: string
   onConfirm: () => void
+  /** Stops the work in progress without cost; the Cancel button stays live while busy. */
+  onCancel?: () => void
   busy?: boolean
   complete?: boolean
   /** Rows and steps are still being read; `status` says what is happening. */
@@ -154,8 +157,8 @@ export function TxConfirmDialog({
               <button
                 type="button"
                 className="btn-secondary min-h-[44px] px-5 text-sm"
-                disabled={busy}
-                onClick={onClose}
+                disabled={busy && !onCancel}
+                onClick={busy ? onCancel : onClose}
               >
                 {cancelLabel}
               </button>

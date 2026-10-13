@@ -3,7 +3,7 @@
 import { transactionMessage } from '@/lib/transaction-message'
 import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { formatUnits, isAddressEqual, type Address } from 'viem'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
@@ -14,12 +14,15 @@ import { getProjectsByRefs } from '@/lib/bendystraw'
 import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 import { LoadingText } from '@/components/ui/LoadingText'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
+import type { RawAttempt } from '@/lib/raw-relayr'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
-import { isProjectBatchDraft, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { isReplaceableProjectBatch, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 const subscribeHydration = () => () => {}
 const clientHydrated = () => true
 const serverHydrated = () => false
+const ATTEMPT_LABEL: Record<RawAttempt, string> = { waiting: 'Waiting', checking: 'Checking result', confirmed: 'Confirmed', reverted: 'Reverted' }
+const ATTEMPT_STATE = { waiting: 'pending', checking: 'active', confirmed: 'complete', reverted: 'failed' } as const
 const amountLabel = ({ payment, decimals, symbol }: ReviewedPayment) => decimals === null
   ? 'Amount unavailable'
   : `${formatUnits(BigInt(payment.amount), decimals)} ${symbol}`
@@ -42,16 +45,34 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [savedSelection, setSavedSelection] = useState<ProjectBatch | null>(null)
   const [needsReview, setNeedsReview] = useState(false)
   const [replaceDraft, setReplaceDraft] = useState<{ scope: string; id: string } | undefined>()
-  const recovery = saved && !isProjectBatchDraft(saved) ? saved : null
+  const recovery = saved && !isReplaceableProjectBatch(saved) ? saved : null
   const [error, setError] = useState<string | null>(null)
   // Discard abandons the saved batch, so the payments are reviewed again from live state (ruling R114 (f)).
   const discard = useRelayrDiscard(() => setError(null), () => { setOpen(false); setCalls(null); setSaved(null) })
   const [status, setStatus] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, string>>({})
+  const [attempts, setAttempts] = useState<Record<string, RawAttempt>>({})
+  // Cancelling is free until the fee quote is saved; after that the payment is next.
+  const [cancellable, setCancellable] = useState(false)
+  const cancelQuote = useRef<AbortController | null>(null)
   useEffect(() => {
     try { setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not read saved payment actions.') }
   }, [chainId, projectId, chains])
+
+  // A quote that never arrived, or expired unfunded, releases itself: nothing was paid.
+  const recoveryId = recovery?.id
+  const recoveryScope = recovery?.scope
+  useEffect(() => {
+    if (!recoveryId || !recoveryScope) return
+    let current = true
+    void (async () => {
+      try {
+        if (await recheckProjectBatch(recoveryScope, recoveryId) && current) setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      } catch { /* a batch another tab is working on stays as it is */ }
+    })()
+    return () => { current = false }
+  }, [recoveryId, recoveryScope, chainId, projectId, chains])
 
   const pending = useQuery({
     queryKey: ['pendingPayments', 'destination-inventory', chainId, projectId, chains],
@@ -118,13 +139,13 @@ export function PendingPayments({ chainId, projectId, chains }: {
     if (!isConnected || !address) { openSignIn(); return }
     try {
       const found = loadPendingPaymentBatch([[chainId, projectId], ...chains])
-      const journal = found && !isProjectBatchDraft(found) ? found : null
+      const journal = found && !isReplaceableProjectBatch(found) ? found : null
       setReplaceDraft(found && !journal ? { scope: found.scope, id: found.id } : undefined)
       setSaved(found)
       setSavedSelection(journal); setNeedsReview(false)
       setCalls(journal?.calls ?? payments.map(payment => pendingPaymentCall(payment, address)))
       setAccount(journal?.account ?? address)
-      setOpen(true); setComplete(false); setError(null); setStatus(null)
+      setOpen(true); setComplete(false); setError(null); setStatus(null); setAttempts({})
       setOutcomes(Object.fromEntries((journal?.completedIds ?? []).map(id => [id, 'Previously handled in this saved batch. The refreshed pending list shows whether routing is still needed.'])))
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not review pending payments.') }
   }
@@ -133,15 +154,25 @@ export function PendingPayments({ chainId, projectId, chains }: {
     if (!account || !isAddressEqual(account, address)) { setError('Reconnect the wallet that reviewed these payments.'); return }
     let recovered = false
     const recover = (batch: ProjectBatch | null) => {
-      if (!batch || batch.status !== 'pending' || !batch.account || isProjectBatchDraft(batch) ||
+      if (!batch || batch.status !== 'pending' || !batch.account || isReplaceableProjectBatch(batch) ||
           !isAddressEqual(batch.account, address) || (savedSelection && batch.id !== savedSelection.id)) return
       setSavedSelection(batch); setCalls(batch.calls); setSaved(batch)
       setNeedsReview(false); recovered = true
     }
-    setBusy(true); setError(null); discard.capture(null)
+    setBusy(true); setError(null); discard.capture(null); setCancellable(true)
+    const cancel = new AbortController()
+    cancelQuote.current = cancel
     try {
       const result = await runProjectBatch({ scope: savedSelection?.scope ?? scope, action: savedSelection?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: savedSelection?.id, replaceDraft,
-        title: 'Retry payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: flowSignal(),
+        title: 'Retry payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: AbortSignal.any([flowSignal(), cancel.signal]),
+        onBeforePayment: () => setCancellable(false),
+        onAttempts: states => {
+          setAttempts(states)
+          const results = Object.values(states)
+          const checked = results.filter(state => state === 'confirmed' || state === 'reverted').length
+          const reverted = results.filter(state => state === 'reverted').length
+          if (checked) setStatus(`${checked} of ${results.length} attempts checked. ${results.length - checked} remaining.${reverted ? ` ${reverted} reverted.` : ''}`)
+        },
         reconcileUnsubmitted: async call => {
           const outcome = await reconcilePendingPayment(call)
           if (outcome) setOutcomes(previous => ({ ...previous, [call.id]: outcome }))
@@ -174,7 +205,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     } finally {
       // Replacement consumes the old draft identity. Reopen to bind any new recovery journal.
       if (replaceDraft) { if (!recovered) setNeedsReview(true); setReplaceDraft(undefined) }
-      setBusy(false)
+      setBusy(false); setCancellable(false); cancelQuote.current = null
       await queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
     }
   }
@@ -226,10 +257,18 @@ export function PendingPayments({ chainId, projectId, chains }: {
       {error && !open ? <p className="mt-2 text-sm text-red-600">{transactionMessage(error)}</p> : null}
     </details>
     <TxConfirmDialog open={open} title={complete ? 'Payments finished' : 'Retry payments'} rows={reviewedRows}
-      steps={(calls ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)}: ${call.label}` }))}
-      stepsIntro="Retry the original payments. You pay network fees only. Payments may remain pending; a final failed attempt may return them to the source project."
-      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={needsReview && !complete ? 'Close this review and reopen pending payments to review the current batch.' : status} error={discard.active ? null : error}
+      steps={(calls ?? []).map(call => {
+        const attempt = attempts[call.id]
+        return { key: call.id, title: `${chainName(call.chainId)}: ${call.label}`,
+          ...(attempt ? { state: ATTEMPT_STATE[attempt], status: ATTEMPT_LABEL[attempt] } : {}) }
+      })}
+      stepsIntro="Pay network fees only. Each payment has its own result."
+      activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
       action={savedSelection ? 'Resume saved batch' : 'Retry'} actionDisabled={needsReview || !calls?.length || discard.active}
-      onConfirm={() => void submit()} onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>{discard.element}</TxConfirmDialog>
+      onConfirm={() => void submit()} onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
+      onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>
+      {needsReview && !complete && !busy ? <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" onClick={() => { setOpen(false); discard.reset(); begin(available) }}>Review again</button> : null}
+      {discard.element}
+    </TxConfirmDialog>
   </section>
 }

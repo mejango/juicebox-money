@@ -45,7 +45,8 @@ vi.mock('@/lib/raw-relayr', () => ({
   runRawRelayrCalls: mocks.rawRelayr,
 }))
 
-import { projectBatchRecoveryReason, recheckProjectBatch, isProjectBatchDraft, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
+import { RawQuoteNotObtainedError } from '@/lib/raw-relayr-lifecycle'
+import { projectBatchRecoveryReason, recheckProjectBatch, isProjectBatchDraft, isReplaceableProjectBatch, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
   type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 /** A flow that never ends, for runs whose signal is not under test. */
@@ -976,5 +977,65 @@ describe('untouched draft replacement', () => {
     mocks[store].set('project-batch:draft:0', {})
     expect(isProjectBatchDraft(draft)).toBe(false)
     await expect(run([call()], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('may already be underway')
+  })
+})
+
+describe('routing attempts that must not strand the user', () => {
+  const routing = (suffix = 'a') => ({ ...call(1, suffix), value: 0n, relayr: 'permissionless' as const })
+  function seed(overrides: Partial<ProjectBatch> = {}) {
+    const draft: ProjectBatch = { version: 1, id: 'hashless', scope, action, account: ACCOUNT,
+      title: 'Retry', status: 'pending', calls: [routing()], completedIds: [], rounds: [[routing().id]],
+      submissions: {}, relayrRounds: [], ...overrides }
+    const encoded = JSON.stringify(draft, (_key, value) => typeof value === 'bigint' ? { $projectBatchBigInt: String(value) } : value)
+    window.localStorage.setItem('jb-project-batch:v1:journal:hashless', encoded)
+    window.localStorage.setItem(`jb-project-batch:v1:alias:${scope}`, 'hashless')
+    return draft
+  }
+
+  it('lets a fresh review replace routing payments whose wallet attempt returned no hash', async () => {
+    const draft = seed({ submissions: { [routing().id]: { kind: 'direct' } } })
+    expect(isProjectBatchDraft(draft)).toBe(false)
+    expect(isReplaceableProjectBatch(draft)).toBe(true)
+    mocks.review.mockRejectedValue(new Error('stop at review'))
+    await expect(run([routing(), routing('b')], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('stop at review')
+    expect(JSON.parse(window.localStorage.getItem('jb-project-batch:v1:journal:hashless')!).abandoned).toBe(true)
+  })
+
+  it.each([
+    ['a hash was returned', { submissions: { [routing().id]: { kind: 'direct' as const, hash: HASH } } }],
+    ['a Safe proposal exists', { submissions: { [routing().id]: { kind: 'safe' as const, hash: HASH } } }],
+    ['a payment was handled', { submissions: { [routing().id]: { kind: 'direct' as const } }, completedIds: [routing().id] }],
+    ['a paid bundle is saved', { submissions: { [routing().id]: { kind: 'direct' as const } }, relayrRounds: [0] }],
+  ])('keeps holding when %s', async (_name, changes) => {
+    const draft = seed(changes)
+    expect(isReplaceableProjectBatch(draft)).toBe(false)
+    await expect(run([routing()], { replaceDraft: { scope, id: draft.id } })).rejects.toThrow('may already be underway')
+  })
+
+  it('keeps holding a hashless wallet attempt on calls that are not permissionless routing', () => {
+    const draft = seed({ calls: [call()], rounds: [[call().id]], submissions: { [call().id]: { kind: 'direct' } } })
+    expect(isReplaceableProjectBatch(draft)).toBe(false)
+  })
+
+  it('abandons the saved batch when the quote request ends with nothing reserved', async () => {
+    mocks.rawRelayr.mockRejectedValue(new RawQuoteNotObtainedError('Cancelled. Nothing was paid.'))
+    await expect(run([routing()])).rejects.toThrow('Nothing was paid')
+    expect(loadProjectBatch(scope)).toBeNull()
+  })
+
+  it('hands the cancel signal to the quote and reports payment and attempt progress', async () => {
+    const cancel = new AbortController()
+    const beforePayment = vi.fn()
+    const attempts = vi.fn()
+    mocks.rawRelayr.mockImplementation(async options => {
+      expect(options.signal).toBe(cancel.signal)
+      await options.reverify()
+      options.onQuoted()
+      options.onAttempts(['checking', 'confirmed'])
+      await options.onComplete(options.calls.map(() => ({ status: 'success', logs: [] })))
+    })
+    await run([routing('a'), routing('b')], { signal: cancel.signal, onBeforePayment: beforePayment, onAttempts: attempts })
+    expect(beforePayment).toHaveBeenCalledTimes(1)
+    expect(attempts).toHaveBeenCalledWith({ [routing('a').id]: 'checking', [routing('b').id]: 'confirmed' })
   })
 })

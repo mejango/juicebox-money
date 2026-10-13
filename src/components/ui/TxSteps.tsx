@@ -1,3 +1,14 @@
+export type TxStep = {
+  /** Stable list key; falls back to the title when it is a plain string. */
+  key?: string
+  title: React.ReactNode
+  detail?: string
+  /** Shown beside the title, for progress that arrives per step. */
+  status?: React.ReactNode
+  /** Overrides sequential progress when results arrive out of order. */
+  state?: 'pending' | 'active' | 'complete' | 'failed'
+}
+
 /**
  * The wallet-prompt queue for a multi-transaction flow, shown before the first
  * prompt so a signer knows how many are coming and why. Steps are strictly
@@ -11,12 +22,7 @@ export function TxSteps({
   ariaLabel,
   className = 'mt-3 rounded-xl border border-smoke-200 bg-white p-3',
 }: {
-  steps: readonly {
-    /** Stable list key; falls back to the title when it is a plain string. */
-    key?: string
-    title: React.ReactNode
-    detail?: string
-  }[]
+  steps: readonly TxStep[]
   activeIndex: number
   intro?: string
   ariaLabel?: string
@@ -32,37 +38,46 @@ export function TxSteps({
       </p>
       <ol className="mt-3 space-y-2">
         {steps.map((step, index) => {
-          const complete = activeIndex > index
-          const active = activeIndex === index
+          const state = step.state ?? (activeIndex > index ? 'complete' : activeIndex === index ? 'active' : 'pending')
+          const complete = state === 'complete'
+          const active = state === 'active'
+          const failed = state === 'failed'
           return (
             <li
               key={step.key ?? String(step.title)}
-              data-state={complete ? 'complete' : active ? 'active' : 'pending'}
+              data-state={state}
               aria-current={active ? 'step' : undefined}
               className="flex items-start gap-2 text-sm"
             >
               <span
                 aria-hidden="true"
                 className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs ${
-                  complete
+                  failed
+                    ? 'border-red-600 bg-red-50 text-red-700'
+                    : complete
                     ? 'border-melon-400 bg-melon-400 text-ink'
                     : active
                       ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700'
                       : 'border-smoke-300 text-smoke-500'
                 }`}
               >
-                {complete ? '✓' : index + 1}
+                {failed ? '×' : complete ? '✓' : index + 1}
               </span>
               <span className="min-w-0 flex-1">
-                <span
-                  className={
-                    active ? 'font-medium text-ink' : 'block text-smoke-600'
-                  }
-                >
-                  <span className="sr-only">
-                    Step {index + 1} of {steps.length}:{' '}
+                <span className={step.status ? 'flex items-baseline justify-between gap-3' : undefined}>
+                  <span
+                    className={
+                      active ? 'font-medium text-ink' : 'block text-smoke-600'
+                    }
+                  >
+                    <span className="sr-only">
+                      Step {index + 1} of {steps.length}:{' '}
+                    </span>
+                    {step.title}
                   </span>
-                  {step.title}
+                  {step.status ? (
+                    <span className={`shrink-0 text-xs font-medium ${failed ? 'text-red-700' : 'text-ink'}`}>{step.status}</span>
+                  ) : null}
                 </span>
                 {step.detail ? (
                   <span className="mt-0.5 block text-xs text-smoke-500">

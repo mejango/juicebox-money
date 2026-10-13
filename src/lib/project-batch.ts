@@ -26,7 +26,8 @@ import {
 import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'
+import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls, type RawAttempt } from '@/lib/raw-relayr'
+import { RawQuoteNotObtainedError } from '@/lib/raw-relayr-lifecycle'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -116,14 +117,35 @@ function readBatch(scope: string): ProjectBatch | null {
 const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
 const savedRelayrRound = (scope: string) => loadRelayrPendingSession(scope) ?? loadRawRelayrSession(scope)
 
+/** No relay session or journal entry shows that anything left this browser. */
+function withoutRelayEvidence(batch: ProjectBatch): boolean {
+  return (batch.relayrPublished?.length ?? 0) === 0 && batch.relayrRounds.length === 0 &&
+    Object.keys(batch.relayrCallIds ?? {}).length === 0 &&
+    batch.rounds.every((_round, index) => !hasRelayrPendingEvidence(relayrScopeOf(batch, index)) &&
+      !loadRawRelayrSession(relayrScopeOf(batch, index)))
+}
+
 /** Only an untouched local intent may be replaced; zero receipts alone proves nothing. */
 export function isProjectBatchDraft(batch: ProjectBatch): boolean {
   try {
     return batch.status === 'pending' && !batch.abandoned && batch.completedIds.length === 0 &&
-      Object.keys(batch.submissions).length === 0 && batch.relayrRounds.length === 0 &&
-      (batch.relayrPublished?.length ?? 0) === 0 && Object.keys(batch.relayrCallIds ?? {}).length === 0 &&
-      batch.rounds.every((_round, index) => !hasRelayrPendingEvidence(relayrScopeOf(batch, index)) &&
-        !loadRawRelayrSession(relayrScopeOf(batch, index)))
+      Object.keys(batch.submissions).length === 0 && withoutRelayEvidence(batch)
+  } catch { return false }
+}
+
+/**
+ * An untouched intent, or routing payments whose only attempt is a direct wallet
+ * request that returned no hash. The router refuses a payment it has already
+ * handled, so a fresh review cannot run one twice; the old journal stays abandoned.
+ */
+export function isReplaceableProjectBatch(batch: ProjectBatch): boolean {
+  if (isProjectBatchDraft(batch)) return true
+  try {
+    const attempts = Object.values(batch.submissions)
+    return batch.status === 'pending' && !batch.abandoned && batch.completedIds.length === 0 &&
+      batch.calls.every(call => call.relayr === 'permissionless') &&
+      attempts.length > 0 && attempts.every(attempt => attempt.kind === 'direct' && !attempt.hash) &&
+      withoutRelayEvidence(batch)
   } catch { return false }
 }
 
@@ -136,7 +158,7 @@ export function projectBatchRecoveryReason(batch: ProjectBatch): string {
     for (let round = 0; round < batch.rounds.length; round++) {
       const session = loadRawRelayrSession(relayrScopeOf(batch, round))
       if (session?.phase === 'quoted') return 'A quote is saved. Re-check it to see whether it expired without funding.'
-      if (session?.phase === 'publishing') return 'The request started, but its quote response was not saved. Its outcome is unknown.'
+      if (session?.phase === 'publishing') return 'The fee quote did not arrive. Nothing was paid.'
       if (session) return 'A funding or execution attempt is saved. Resume it to verify its outcome before starting another batch.'
     }
   } catch { return 'Saved recovery data could not be verified. Keep it until its status can be checked.' }
@@ -341,7 +363,7 @@ async function safeExecution(
 }
 
 export async function runProjectBatch({
-  scope, action, account, calls, expectedBatchId, replaceDraft, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress, signal,
+  scope, action, account, calls, expectedBatchId, replaceDraft, title = 'Review project actions', reverify, reconcileUnsubmitted, reconcileObsoleteSafe, acceptRevertedTransactions = false, verifyCompletion, onProgress, onBeforePayment, onAttempts, signal,
 }: {
   scope: string
   action: string
@@ -367,6 +389,10 @@ export async function runProjectBatch({
   /** Application events may report a failed distribution despite a successful outer receipt. */
   verifyCompletion?: (call: ProjectBatchCall, receipt: TransactionReceipt) => Promise<void>
   onProgress?: (progress: { message: string; completed: number; total: number; round: number; rounds: number }) => void
+  /** Nothing left to cancel without cost: the fee quote is saved, or this run needs no quote. */
+  onBeforePayment?: () => void
+  /** Display only: each routing payment's progress, by call id. */
+  onAttempts?: (attempts: Record<string, RawAttempt>) => void
 }): Promise<ProjectBatch> {
   assertNoViewAs()
   if (typeof navigator === 'undefined' || !navigator.locks) {
@@ -383,13 +409,13 @@ export async function runProjectBatch({
     throw new Error('Each reviewed project call must have a unique identifier.')
   }
   const draft = replaceDraft ? readBatch(replaceDraft.scope) : null
-  if (replaceDraft && (!calls || expectedBatchId || draft?.id !== replaceDraft.id || !isProjectBatchDraft(draft))) {
+  if (replaceDraft && (!calls || expectedBatchId || draft?.id !== replaceDraft.id || !isReplaceableProjectBatch(draft))) {
     throw new Error('This saved batch may already be underway. Reopen pending payments to resume it.')
   }
   const scopes = [...new Set([...aliases({ scope, action, calls: proposedCalls }), ...(draft ? aliases(draft) : [])])].sort()
   return locked(scopes, async () => {
     const replacing = replaceDraft ? readBatch(replaceDraft.scope) : null
-    if (replaceDraft && (replacing?.id !== replaceDraft.id || !isProjectBatchDraft(replacing) ||
+    if (replaceDraft && (replacing?.id !== replaceDraft.id || !isReplaceableProjectBatch(replacing) ||
       encode(aliases(replacing)) !== encode(aliases(draft!)))) {
       throw new Error('This saved batch changed in another tab. Reopen pending payments to resume it.')
     }
@@ -489,7 +515,8 @@ export async function runProjectBatch({
           }
           try {
             await runRawRelayrCalls({ calls: rawCalls, account, pendingScope: relayrScope,
-              preferredPaymentChainId: startChainId,
+              preferredPaymentChainId: startChainId, signal, onQuoted: onBeforePayment,
+              onAttempts: attempts => onAttempts?.(Object.fromEntries(rawCalls.map((item, index) => [item.id, attempts[index]]))),
               reverify: async () => { checkAccount(); await mapConcurrentChecks(rawCalls, async call => { await reverify?.(call) }); checkAccount() },
               onProgress: progress => { notePublished(); report(progress.message, round) },
               onComplete: async receipts => {
@@ -506,6 +533,7 @@ export async function runProjectBatch({
         pending = pending.filter(call => !journal.completedIds.includes(call.id))
         if (!pending.length) continue
       }
+      onBeforePayment?.()
       const boundRelayIds = journal.relayrCallIds?.[String(round)]
       let relayCalls = boundRelayIds ? pending.filter(call => boundRelayIds.includes(call.id)) : []
       const savedRelay = loadRelayrPendingSession(relayrScope)
@@ -677,6 +705,8 @@ export async function runProjectBatch({
     return journal
     } catch (error) {
       if (batch) {
+        // An unsigned quote request that returned nothing reserved nothing: the next review starts clean.
+        if (error instanceof RawQuoteNotObtainedError && !Object.keys(batch.submissions).length) { batch.abandoned = true; persist(batch) }
         if (isDefiniteWalletRejection(error)) {
           let changed = false
           for (const [id, submission] of Object.entries(batch.submissions)) {

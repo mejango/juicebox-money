@@ -2,7 +2,7 @@
 
 import { isAddressEqual, type Address, type Hex } from 'viem'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
-import { RelayrPaymentSubmittedError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
+import { RelayrPaymentSubmittedError, RelayrQuoteTimeoutError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
 import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 export type RawRelayrState = {
@@ -13,6 +13,14 @@ export type RawRelayrState = {
   paymentHash?: Hex
   paymentChainId?: number
   records: RelayrTransactionRecord[]
+}
+
+/** Unsigned routing calls wait this long for a quote; a 14-call batch took about 154 s. */
+const RAW_QUOTE_TIMEOUT_MS = 300_000
+
+/** No quote was obtained for calls that carry no signature: nothing is reserved, so the user may start over. */
+export class RawQuoteNotObtainedError extends Error {
+  readonly name = 'RawQuoteNotObtainedError'
 }
 
 export function assertRawQuoteBindings(quote: RelayrQuote, entries: RelayrEntry[], changedCallMessage = 'The original quote changed a reviewed call.'): void {
@@ -45,7 +53,7 @@ export async function isExpiredUnfundedRawQuote(session: RawRelayrState, chains:
 }
 
 /** Shared raw-call funding lifecycle. Owners durably save every transition before external writes. */
-export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, changedCallMessage, lostQuoteMessage }: {
+export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, changedCallMessage, lostQuoteMessage, releasable = false, signal, onQuoted }: {
   session: S
   entries: RelayrEntry[]
   saveState: (session: S, beforeWrite?: boolean) => void
@@ -54,6 +62,15 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
   changedCallMessage?: string
   lostQuoteMessage?: string
   preferredPaymentChainId?: number
+  /**
+   * Retryable routing calls: the quote may take minutes and be cancelled, and a
+   * quote that never arrived is released. Other owners keep the 45 s hold.
+   */
+  releasable?: boolean
+  /** Stops a releasable quote request; once the quote is saved, cancelling does nothing. */
+  signal?: AbortSignal
+  /** The quote is saved and the next step is the fee payment. */
+  onQuoted?: () => void
 }): Promise<unknown> {
   const persist = (beforeWrite = false) => save(session, beforeWrite)
       const requestQuote = async () => {
@@ -62,7 +79,16 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
         session.phase = 'publishing'
         delete session.quote
         persist(true)
-        session.quote = await relayrPostBundle(entries)
+        try { session.quote = await relayrPostBundle(entries, releasable ? { timeoutMs: RAW_QUOTE_TIMEOUT_MS, signal } : {}) }
+        catch (error) {
+          if (!releasable) throw error
+          // The calls are unsigned, so a quote that never arrived reserves nothing.
+          session.phase = 'reviewed'
+          try { persist() } catch { /* a bundle still saved as publishing is released by the same proof */ }
+          throw new RawQuoteNotObtainedError(signal?.aborted ? 'Cancelled. Nothing was paid.'
+            : error instanceof RelayrQuoteTimeoutError ? 'The fee quote took too long. Nothing was paid. Try again.'
+            : error instanceof Error ? error.message : 'The fee quote could not be requested. Nothing was paid.', { cause: error })
+        }
         assertRawQuoteBindings(session.quote!, entries, changedCallMessage)
         session.phase = 'quoted'
         persist()
@@ -98,6 +124,9 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
       const quote = session.quote
       if (!quote) throw new Error(lostQuoteMessage ?? 'The original quote response is unavailable. Keep this attempt pending; requesting another bundle could execute duplicate calls.')
       assertRawQuoteBindings(session.quote!, entries, changedCallMessage)
+      // Cancelling after the quote was saved keeps it saved; only the payment is skipped.
+      if (releasable && signal?.aborted) throw new Error('Cancelled before the fee payment. Nothing was paid.')
+      onQuoted?.()
       let paidNow = false
       if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {
         let payment: RelayrPayment | undefined
@@ -107,7 +136,7 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           payment = relayrRetryOption(session.payments, quote.payment_info)
         } else {
           const payments = relayrPaymentOptions(quote, chains)
-          if (!payments.length) throw new Error('Relayr returned no payment option in the destinations’ network family.')
+          if (!payments.length) throw new Error('No fee payment option is available in the destinations’ network family.')
           const fundingChain = await requireFundingChainSelection(payments.map(payment => ({ chainId: payment.chain, label: relayrPaymentLabel(payment) })), preferredPaymentChainId)
           payment = payments.find(item => item.chain === fundingChain)
           if (!payment) throw new Error('Choose one of the quoted funding chains.')
@@ -165,7 +194,7 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           session.phase = 'payment-reverted'
           persist()
         })
-        if (!confirmed) throw new Error('The submitted Relayr payment cannot be confirmed yet. Keep the saved bundle pending; do not pay again.')
+        if (!confirmed) throw new Error('The fee payment cannot be confirmed yet. Do not pay again.')
       }
       let pollError: unknown
       try {

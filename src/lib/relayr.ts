@@ -361,15 +361,22 @@ class RelayrHttpTimeoutError extends Error {
   readonly name = 'RelayrHttpTimeoutError'
 }
 
+/** The quote request ran out of time; nothing was signed or paid. */
+export class RelayrQuoteTimeoutError extends Error {
+  readonly name = 'RelayrQuoteTimeoutError'
+}
+
 async function relayrFetch(
   url: string,
   init: RequestInit | undefined,
   timeoutMs: number,
+  cancel?: AbortSignal,
 ): Promise<Response> {
   try {
+    const timeout = AbortSignal.timeout(Math.max(1, timeoutMs))
     return await fetch(url, {
       ...init,
-      signal: AbortSignal.timeout(Math.max(1, timeoutMs)),
+      signal: cancel ? AbortSignal.any([timeout, cancel]) : timeout,
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') {
@@ -1055,9 +1062,11 @@ async function signForwardedRequest(
  */
 export async function relayrPostBundle(
   transactions: RelayrEntry[],
+  { timeoutMs = RELAYR_QUOTE_TIMEOUT_MS, signal }: { timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<RelayrQuote> {
   const request = relayrBundleRequest(transactions)
   let response: Response
+  const deadline = Date.now() + timeoutMs
   try {
     response = await relayrFetch(
       `${RELAYR_API}/v1/bundle/prepaid`,
@@ -1066,17 +1075,33 @@ export async function relayrPostBundle(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request),
       },
-      RELAYR_QUOTE_TIMEOUT_MS,
+      timeoutMs,
+      signal,
     )
   } catch (error) {
     if (error instanceof RelayrHttpTimeoutError) {
-      throw new Error(
+      throw new RelayrQuoteTimeoutError(
         'Relayr did not return a quote in time. Nothing was paid; it is safe to try again.',
       )
     }
     throw error
   }
-  return bindRelayrQuote(response, request)
+  // Binding may read the bundle back: that read shares the caller's deadline and cancel.
+  const bound = await bindRelayrQuote(response, request, {
+    fetch: async (input, init) => {
+      try { return await relayrFetch(String(input), init, deadline - Date.now(), signal) }
+      catch (error) {
+        if (error instanceof RelayrHttpTimeoutError) throw new RelayrQuoteTimeoutError('Relayr did not return a quote in time. Nothing was paid; it is safe to try again.')
+        throw error
+      }
+    },
+  }).catch(error => {
+    // The binding read treats a cancelled fetch as a missing record; the cancel is the cause.
+    signal?.throwIfAborted()
+    throw error
+  })
+  signal?.throwIfAborted()
+  return bound
 }
 
 export function relayrPaymentLabel(payment: RelayrPayment): string {
