@@ -157,3 +157,17 @@ it('keeps verifying later destinations after one receipt read fails, and holds t
   expect(complete).not.toHaveBeenCalled()
   expect(loadRawRelayrSession(String(scope))).not.toBeNull()
 })
+
+it('holds the bundle when a block proven during polling is reorged out before completion', async () => {
+  const original = mocks.lifecycle.getMockImplementation()!
+  mocks.lifecycle.mockImplementation(async args => {
+    await original(args)
+    // Early proofs were read; Relayr keeps reporting the same hashes after the reorg.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    mocks.block.mockResolvedValue({ hash: hash(99) })
+  })
+  const complete = vi.fn()
+  await expect(run(complete)).rejects.toThrow('canonical')
+  expect(complete).not.toHaveBeenCalled()
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
+})

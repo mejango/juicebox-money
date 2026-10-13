@@ -189,7 +189,8 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     }
     const missing = session.calls.findIndex((_call, index) => !proven[index])
     if (missing !== -1) throw readErrors.get(missing) ?? pollError ?? new Error('Some routing transactions remain unresolved. Check this saved bundle before retrying.')
-    const receipts = proven as TransactionReceipt[]
+    // Early proofs only feed the display: completion needs every receipt canonical now, read once in parallel.
+    const receipts = await Promise.all(session.calls.map((call, index) => verifyDestination(call, destinationHash(index)!)))
     session.phase = 'complete'
     save(session)
     await onComplete(receipts)
