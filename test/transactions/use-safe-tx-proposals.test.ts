@@ -630,7 +630,13 @@ describe('a Safe proposal awaiting its signers', () => {
     expect(flow.tx.phase).toBe('success')
   })
 
-  it("says the Safe ran it and releases its action when its execution can't be read", async () => {
+  it("says the Safe ran it and never proposes it again, across reset and reload, when its execution can't be read", async () => {
+    const values = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+    })
     let fail!: (reason: Error) => void
     mocks.waitForSafeExecutionHash.mockImplementation(() => new Promise((_, reject) => (fail = reject)))
     let watchEnds!: (end: string) => void
@@ -643,9 +649,23 @@ describe('a Safe proposal awaiting its signers', () => {
     await settle()
     fail(new Error('Safe service unavailable'))
     await settle()
-    expect(flow.tx).toMatchObject({ phase: 'submitted', busy: false, notice: 'Your Safe ran this transaction.' })
+    const RAN = { phase: 'submitted', busy: false, settled: true, notice: 'Your Safe ran this transaction.' }
+    expect(flow.tx).toMatchObject(RAN)
+
+    // Done, then open it again: it is rechecked, never proposed again.
     await act(async () => flow.tx.reset())
-    await expect(flow.send()).resolves.toBe(SECOND_PROPOSAL)
+    await expect(flow.send()).resolves.toBe(PROPOSAL)
+    await settle()
+    expect(flow.tx).toMatchObject(RAN)
+
+    // A reload: the page's registry starts empty, the browser remembers it.
+    vi.resetModules()
+    ;({ useSafeTx } = await import('@/hooks/useSafeTx'))
+    const reloaded = await mount()
+    await expect(reloaded.send()).resolves.toBe(PROPOSAL)
+    await settle()
+    expect(reloaded.tx).toMatchObject(RAN)
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it('stops being watched once its execution is known', async () => {

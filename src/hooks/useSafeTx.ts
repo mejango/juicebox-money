@@ -7,6 +7,7 @@ import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import {
   openWriteRecovery,
+  readWriteRecovery,
   releaseWhenFinal,
   WRITE_RECOVERY_IN_TAB_LINE,
   heldWriteState,
@@ -18,6 +19,8 @@ import {
   BaseError,
   encodeFunctionData,
   isHash,
+  keccak256,
+  stringToHex,
   type Abi,
   type Address,
   type Hex,
@@ -303,11 +306,74 @@ function updateProposal(key: string, next: Partial<SafeProposal>): void {
   if (!current) return
   proposals.set(key, { ...current, ...next })
   notifyProposals()
+  if (next.phase === 'ran') void rememberRan(key)
+  else if (next.phase && SHOWN_AS[next.phase] !== 'pending' && SHOWN_AS[next.phase] !== 'submitted') void forgetRan(key)
+}
+
+/**
+ * A proposal the chain shows the Safe ran, whose execution can't be read, is
+ * kept in the browser by its held call: closing, resetting or reloading never
+ * lets the same action be proposed again. A later attempt rechecks it.
+ */
+function ranScope(chainId: number, safe: Address, key: string) {
+  return { chainId, account: safe, namespace: `safe-ran:${keccak256(stringToHex(key)).slice(2)}` }
+}
+
+function ranRecovery(proposal: SafeProposal, key: string): WriteRecovery {
+  return openWriteRecovery({ ...ranScope(proposal.chainId, proposal.safe, key), safe: true, call: proposal.call })
+}
+
+async function rememberRan(key: string): Promise<void> {
+  const proposal = proposals.get(key)
+  if (!proposal) return
+  const journal = ranRecovery(proposal, key)
+  await journal.withLock(async () => {
+    if (journal.read()) return
+    journal.reserve()
+    journal.submitted(proposal.proposalHash)
+  }, true).catch(() => {
+    // Storage refused: the session registry still holds it.
+  })
+}
+
+async function forgetRan(key: string): Promise<void> {
+  const proposal = proposals.get(key)
+  if (!proposal) return
+  const journal = ranRecovery(proposal, key)
+  await journal.withLock(async () => {
+    const saved = journal.read()
+    if (saved) journal.clear(saved)
+  }, true).catch(() => {})
+}
+
+/** A ran proposal saved before a reload, back in the registry so it is shown, rechecked and never proposed again. */
+function restoreRan(chainId: number, safe: Address, key: string): void {
+  if (proposals.has(key)) return
+  let saved: ReturnType<typeof readWriteRecovery> = null
+  try {
+    saved = readWriteRecovery(ranScope(chainId, safe, key))
+  } catch {
+    return
+  }
+  if (!saved?.hash) return
+  proposals.set(key, {
+    chainId,
+    safe,
+    call: { to: saved.call.to, data: saved.call.data, value: BigInt(saved.call.value) },
+    proposalHash: saved.hash,
+    phase: 'ran',
+    executionHash: null,
+    receipt: null,
+    message: SAFE_PROPOSAL_EXECUTED_LINE,
+  })
+  notifyProposals()
 }
 
 /** A distinct execution hash cannot make the original Safe proposal safe to repeat. */
 function unconfirmedProposal(key: string, message = SAFE_PROPOSAL_UNCONFIRMED): Partial<SafeProposal> {
   const proposal = proposals.get(key)
+  // The chain showed the Safe ran it: an unreadable recheck leaves it so.
+  if (proposal?.phase === 'ran') return {}
   const knownProposal = proposal?.executionHash &&
     proposal.executionHash.toLowerCase() !== proposal.proposalHash.toLowerCase()
   return { phase: knownProposal ? 'awaiting' : 'unproven', message }
@@ -327,7 +393,7 @@ function startFollowingProposal(key: string, client: FollowClient, reply: boolea
  * until dismissed. It ends with a result, or once it can no longer run.
  */
 function holdsCall(proposal: SafeProposal | undefined): proposal is SafeProposal {
-  return !!proposal && proposal.phase !== 'ran' && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
+  return !!proposal && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
 }
 
 /** The execution a proposal awaiting its signers runs in, or how it ends before it runs. */
@@ -392,7 +458,8 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   let execution = reply ? await atOnceExecution(client, proposalHash) : null
   let executionHash = execution ? proposalHash : null
   if (!executionHash) {
-    updateProposal(key, { phase: 'awaiting' })
+    // A recheck of one the Safe ran keeps saying so while it looks.
+    if (proposal.phase !== 'ran') updateProposal(key, { phase: 'awaiting' })
     const awaited = await awaitExecution(proposal, client)
     if ('executionHash' in awaited) executionHash = awaited.executionHash
     // An execution returned at once that the node learned only after the probe
@@ -784,6 +851,7 @@ export function useSafeTx(chainId: number) {
             // An action the Safe already has, from this session or its own queue,
             // is shown as it is and never proposed again.
             const key = proposalKey(request.chainId, account, sentCall)
+            restoreRan(request.chainId, account, key)
             const held = proposals.get(key)
             let queued: Awaited<ReturnType<typeof findPendingSafeAppProposal>> = null
             if (!holdsCall(held) && hasSafeService(request.chainId)) {
@@ -795,7 +863,8 @@ export function useSafeTx(chainId: number) {
               if (queued) {
                 const { proposalHash, call } = queued
                 recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
-              } else if (held?.phase === 'awaiting') {
+              } else if (held?.phase === 'awaiting' || held?.phase === 'ran') {
+                // Awaiting, or ran with its execution unread: look again, never propose again.
                 startFollowingProposal(key, publicClient, false)
               }
               inFlightRef.current = false
