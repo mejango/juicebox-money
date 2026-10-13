@@ -1,7 +1,7 @@
 'use client'
 
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
-import { withFailedStep } from '@/components/ui/TxSteps'
+import { withFailedStep, withUnconfirmedStep } from '@/components/ui/TxSteps'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -465,10 +465,14 @@ export function MarketEditPanel({
       preparing={!reviewed}
       title={batchProposed || run.proposed ? 'Proposed to Safe' : done ? 'Market updated' : 'Confirm edit'}
       rows={reviewed ? reviewRows(reviewed) : []}
-      steps={withFailedStep(
+      steps={withUnconfirmedStep(
+        withFailedStep(
         (reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label })),
         run.index,
         stopped && tx.phase === 'error',
+      ),
+        run.index,
+        tx.phase === 'unconfirmed',
       )}
       activeIndex={run.running || stopped ? run.index : -1}
       stepsIntro={
@@ -485,7 +489,7 @@ export function MarketEditPanel({
       }
       onConfirm={stopped ? resume : startRun}
       busy={busy}
-      complete={done !== null || batchProposed || run.proposed}
+      complete={done !== null || batchProposed || run.proposed || run.unconfirmed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}

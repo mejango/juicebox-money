@@ -16,6 +16,22 @@ export function withFailedStep(steps: readonly TxStep[], index: number, failed: 
 }
 
 /**
+ * A suspended run keeps the step whose receipt is unread marked: the steps before it are done, it stays
+ * current with a short status, and the ones after it wait. Explicit states keep a finished dialog from
+ * ticking it off.
+ */
+export function withUnconfirmedStep(steps: readonly TxStep[], index: number, unconfirmed: boolean): readonly TxStep[] {
+  if (!unconfirmed) return steps
+  return steps.map((step, at) =>
+    at < index
+      ? { ...step, state: 'complete' }
+      : at === index
+        ? { ...step, state: 'active', status: 'Not confirmed yet' }
+        : { ...step, state: 'pending' },
+  )
+}
+
+/**
  * The wallet-prompt queue for a multi-transaction flow, shown before the first
  * prompt so a signer knows how many are coming and why. Steps are strictly
  * sequential: everything before `activeIndex` is done, and a flow that has

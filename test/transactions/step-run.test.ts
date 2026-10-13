@@ -329,4 +329,21 @@ describe('useStepRun', () => {
     })
     expect(run.ref.current).toMatchObject({ running: false })
   })
+
+  it('suspends on an unconfirmed step, sends nothing more, and finishes when its receipt shows up', async () => {
+    const run = await renderRun()
+    await act(async () => run.ref.current!.start(['approve', 'mint']))
+    await run.answer(H1)
+    await run.confirm(H1, 10n)
+    await run.answer(H2)
+    await run.engine({ phase: 'unconfirmed', hash: H2 })
+    expect(run.ref.current).toMatchObject({ running: false, index: 1, unconfirmed: true })
+    expect(run.send).toHaveBeenCalledTimes(2)
+    expect(run.onFinish).not.toHaveBeenCalled()
+
+    await run.confirm(H2, 11n)
+    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
+    expect(run.ref.current).toMatchObject({ running: false, unconfirmed: false })
+    expect(run.send).toHaveBeenCalledTimes(2)
+  })
 })

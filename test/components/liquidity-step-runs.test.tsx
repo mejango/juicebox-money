@@ -514,3 +514,62 @@ describe('a liquidity run keeps its modal open while a send is in flight', () =>
     expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
   })
 })
+
+describe('a liquidity run whose step could not be confirmed yet', () => {
+  const LINE = "Couldn't confirm yet. Check https://etherscan.io/tx/0xabc before sending again."
+
+  async function expectReleased(stepsDone: number) {
+    const confirmDialog = host.querySelector('[data-tx-confirm]')!
+    expect(confirmDialog.textContent).toContain(LINE)
+    // Done is the only action, and the shell closes.
+    expect([...confirmDialog.querySelectorAll('footer button')].map(button => button.textContent)).toEqual(['Done'])
+    const states = [...confirmDialog.querySelectorAll('li[data-state]')].map(item => item.getAttribute('data-state'))
+    expect(states.slice(0, stepsDone).every(state => state === 'complete')).toBe(true)
+    expect(states[stepsDone]).toBe('active')
+    expect(confirmDialog.querySelectorAll('li[data-state]')[stepsDone].textContent).toContain('Not confirmed yet')
+    await tryToLeave()
+    expect(hostClose).toHaveBeenCalled()
+    // Nothing else is sent while the step is unresolved.
+    expect(engine.send).toHaveBeenCalledTimes(stepsDone + 1)
+  }
+
+  it('add liquidity', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    await confirm()
+    await land(H1, H2)
+    await act(async () => engine.answer(H3))
+    await act(async () => engine.unconfirm(LINE))
+    await expectReleased(2)
+  })
+
+  it('edit position', async () => {
+    await render(() => (
+      <EditPositionPanel chainId={1} projectId={7} pool={POOL as never} positionManager={POSITION_MANAGER}
+        position={TOKEN_SIDE} sym="TKN" floor={null} onClose={() => {}} onDone={() => {}} />
+    ))
+    await settle()
+    await review('Edit position')
+    await confirm()
+    await land(H1, H2)
+    await act(async () => engine.answer(H3))
+    await act(async () => engine.unconfirm(LINE))
+    await expectReleased(2)
+  })
+
+  it('edit market', async () => {
+    await render(() => (
+      <MarketEditPanel chainId={1} projectId={7} pool={POOL as never} positionManager={POSITION_MANAGER}
+        sides={{ tokenSide: TOKEN_SIDE, pairSide: PAIR_SIDE }} sym="TKN" floor={0.5} onClose={() => {}} onDone={() => {}} />
+    ))
+    await settle()
+    await review('Edit the market')
+    await confirm()
+    await land(H1)
+    await act(async () => engine.answer(H2))
+    await act(async () => engine.unconfirm(LINE))
+    await expectReleased(1)
+  })
+})

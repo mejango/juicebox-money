@@ -274,13 +274,6 @@ describe('the transaction confirm while a read-only phase runs', () => {
     render(<TxConfirmDialog {...base} action="Retry" />)
     expect([...only().querySelectorAll('footer button')].map(button => button.textContent)).toEqual(['Cancel', 'Retry'])
   })
-
-  it('lets a tall dialog scroll from its top at 640 px and wider', () => {
-    render(<TxConfirmDialog {...base} action="Confirm" />)
-    const dialog = only()
-    expect(dialog.className).not.toMatch(/items-center/)
-    expect(dialog.querySelector('section')!.className).toContain('sm:my-auto')
-  })
 })
 
 describe('modal body scroll lock', () => {

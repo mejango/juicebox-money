@@ -16,6 +16,9 @@ import type { useSafeTx } from '@/hooks/useSafeTx'
  * belongs to the steps it started with: `stoppedOn` and `resume` answer only
  * for those, so a plan reviewed since can never continue an older one.
  *
+ * A step whose receipt could not be read suspends the run on Done the same way:
+ * the engine keeps that step locked, and the run goes on once its receipt shows.
+ *
  * A step proposed to a Safe ends the run on Done. When the Safe executes it
  * while the engine still shows it, it counts as that step's confirmation: the
  * run finishes after the last step, and otherwise stops at the next step,
@@ -84,6 +87,15 @@ export function useStepRun<Step>({
     const executed = !running && current.proposed !== null && tx.phase === 'success'
     if ((!running && !executed) || current.holding) return
     if (running && tx.phase === 'error') {
+      setAccepted(null)
+      halt()
+      return
+    }
+    // A step whose receipt could not be read ends the run the same way: it is
+    // suspended on that step, nothing else is sent, and when the receipt shows
+    // the step succeeded the run goes on as it does after an executed proposal.
+    if (running && tx.phase === 'unconfirmed') {
+      current.proposed = current.index
       setAccepted(null)
       halt()
       return
@@ -215,6 +227,8 @@ export function useStepRun<Step>({
     index,
     /** The run ended on a step proposed to a Safe: the confirm ends on Done. */
     proposed,
+    /** The run is suspended on a step whose receipt could not be read: the confirm ends on Done and nothing is resent. */
+    unconfirmed: !running && tx.phase === 'unconfirmed',
     /** The run through these exact steps stopped before its last step confirmed, so `resume` continues it. */
     stoppedOn: (steps: readonly Step[] | undefined): boolean =>
       !running &&

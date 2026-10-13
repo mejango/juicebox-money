@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react'
 import type { Hex } from 'viem'
 import { vi } from 'vitest'
 
-type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'submitted' | 'success' | 'error'
+type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'unconfirmed' | 'submitted' | 'success' | 'error'
 type EngineState = {
   phase: Phase
   hash: Hex | null
@@ -57,11 +57,11 @@ function fakeSafeTx() {
           snapshot.phase === 'simulating' ||
           snapshot.phase === 'signing' ||
           snapshot.phase === 'pending',
-        settled: snapshot.phase === 'success' || snapshot.phase === 'submitted',
+        settled: snapshot.phase === 'success' || snapshot.phase === 'submitted' || snapshot.phase === 'unconfirmed',
         isSafe: false,
         safeProposalHash: null,
         safeNonceGuidance: null,
-        confirmationUncertain: false,
+        confirmationUncertain: snapshot.phase === 'unconfirmed',
         send,
         reset,
         dismiss,
@@ -79,6 +79,10 @@ function fakeSafeTx() {
     /** The send went to a Safe, which has not settled it: its confirm can end, showing `notice`. */
     propose(notice: string) {
       set({ phase: 'submitted', notice })
+    },
+    /** The receipt watch gave up on the sent step: it may still land, and the engine keeps it locked. */
+    unconfirm(error: string) {
+      set({ phase: 'unconfirmed', error })
     },
     fail(error: string) {
       set({ phase: 'error', error })

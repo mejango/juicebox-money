@@ -6,6 +6,13 @@ import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import {
+  holdUnconfirmedSend,
+  liftUnconfirmedSend,
+  subscribeUnconfirmedSends,
+  unconfirmedSend,
+  unconfirmedSendsVersion,
+} from '@/lib/unconfirmed-sends'
+import {
   BaseError,
   encodeFunctionData,
   isHash,
@@ -250,6 +257,11 @@ function notifyProposals(): void {
 function proposalKey(chainId: number, safe: Address, call: SafeAppCall): string {
   const held = heldCall(call)
   return `${chainId}:${safe.toLowerCase()}:${held.to.toLowerCase()}:${held.value ?? 0n}:${held.data.toLowerCase()}`
+}
+
+/** The key an unconfirmed send is held under: one exact call from one account on one chain. */
+function sentKey(chainId: number, account: Address, call: SafeAppCall): string {
+  return `send:${proposalKey(chainId, account, call)}`
 }
 
 function updateProposal(key: string, next: Partial<SafeProposal>): void {
@@ -529,6 +541,25 @@ export function useSafeTx(chainId: number) {
   const unconfirmed = !shownKey && phase === 'pending' && receipt.isError && !receiptData
   const unconfirmedRef = useRef(false)
   unconfirmedRef.current = unconfirmed
+  // The exact call this hook last sent, so its lock can outlive this hook.
+  const sentRef = useRef<{ key: string; chainId: number } | null>(null)
+  // A call held by an earlier hook (its dialog closed and unmounted it): this
+  // hook refused to send it again and shows the same line.
+  const [blockedKey, setBlockedKey] = useState<string | null>(null)
+  useSyncExternalStore(subscribeUnconfirmedSends, unconfirmedSendsVersion, unconfirmedSendsVersion)
+  const held = !shownKey && blockedKey ? unconfirmedSend(blockedKey) : undefined
+  const heldHash = unconfirmed ? hash : (held?.hash ?? null)
+  const heldChainId = unconfirmed ? (sentRef.current?.chainId ?? chainId) : (held?.chainId ?? chainId)
+  useEffect(() => {
+    const sent = sentRef.current
+    if (!sent || !hash) return
+    if (unconfirmed && publicClient) {
+      holdUnconfirmedSend(sent.key, { hash, chainId: sent.chainId }, publicClient)
+    } else if (receiptData) {
+      liftUnconfirmedSend(sent.key)
+      sentRef.current = null
+    }
+  }, [unconfirmed, hash, receiptData, publicClient])
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
@@ -542,7 +573,7 @@ export function useSafeTx(chainId: number) {
       ? 'success'
       : receiptReverted
         ? 'error'
-        : unconfirmed
+        : unconfirmed || held
           ? 'unconfirmed'
           : phase
   const notice =
@@ -559,8 +590,8 @@ export function useSafeTx(chainId: number) {
       : null
     : receiptReverted
       ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
-      : unconfirmed
-        ? `Couldn't confirm yet. Check ${(hash && explorerTxUrl(chainId, hash)) || hash || 'the explorer'} before sending again.`
+      : unconfirmed || held
+        ? `Couldn't confirm yet. Check ${(heldHash && explorerTxUrl(heldChainId, heldHash)) || heldHash || 'the explorer'} before sending again.`
         : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
@@ -615,7 +646,18 @@ export function useSafeTx(chainId: number) {
       try {
         /** The exact call simulated and sent, which a Safe execution must run. */
         let sentCall = callOf(request)
-        if (viaSafe) {
+        if (!viaSafe) {
+          // A send of this exact call whose receipt was never read is still held,
+          // even when the hook that sent it is gone.
+          const key = sentKey(request.chainId, account, sentCall)
+          if (unconfirmedSend(key)) {
+            inFlightRef.current = false
+            setBlockedKey(key)
+            return null
+          }
+          setBlockedKey(null)
+          sentRef.current = { key, chainId: request.chainId }
+        } else {
           // An action the Safe already has, from this session or its own queue,
           // is shown as it is and never proposed again.
           const key = proposalKey(request.chainId, account, sentCall)
@@ -760,6 +802,7 @@ export function useSafeTx(chainId: number) {
     setError(null)
     setHash(null)
     setShownKey(null)
+    setBlockedKey(null)
   }, [])
 
   /**
@@ -784,20 +827,20 @@ export function useSafeTx(chainId: number) {
       effectivePhase === 'signing' ||
       effectivePhase === 'pending',
     /** The confirm can end on Done: the transaction succeeded, it is with a Safe, or its confirmation could not be read. */
-    settled: effectivePhase === 'success' || effectivePhase === 'submitted' || unconfirmed,
+    settled: effectivePhase === 'success' || effectivePhase === 'submitted' || effectivePhase === 'unconfirmed',
     /** The one line a `submitted` confirm shows. */
     notice,
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
-    hash: shownKey ? (proposal?.executionHash ?? null) : hash,
+    hash: shownKey ? (proposal?.executionHash ?? null) : (hash ?? held?.hash ?? null),
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
     receipt: shownKey ? (proposal?.receipt ?? null) : (receiptData ?? null),
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: shownKey
       ? proposal?.phase === 'unproven' || (proposal?.phase === 'awaiting' && !!proposal.message)
-      : unconfirmed,
+      : unconfirmed || !!held,
     send,
     reset,
     dismiss,
