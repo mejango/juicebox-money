@@ -94,7 +94,7 @@ async function verifyDestination(call: SavedCall, hash: Hex): Promise<Transactio
 }
 
 /** What the saved quote and Relayr's records show of each attempt; `results` are receipts already proven. */
-function attemptStates(session: RawRelayrSession, results: TransactionReceipt['status'][]): RawAttempt[] {
+function attemptStates(session: RawRelayrSession, results: (TransactionReceipt['status'] | undefined)[]): RawAttempt[] {
   return session.calls.map((_call, index) => {
     if (results[index]) return results[index] === 'success' ? 'confirmed' : 'reverted'
     const id = session.quote?.expectedTransactions?.[index]?.txUuid.toLowerCase()
@@ -138,15 +138,40 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     }
     assertAccount()
     const entries = relayrBundleRequest(session.calls.map(entryOf)).transactions
-    const report = (results: TransactionReceipt['status'][] = []) => {
-      try { onAttempts?.(attemptStates(session, results)) } catch { /* a display observer cannot interrupt routing */ }
+    // Each destination is proven on its own, by reviewed call index, as soon as Relayr reports its hash.
+    const proven: (TransactionReceipt | undefined)[] = []
+    const reading = new Set<number>()
+    const readErrors = new Map<number, unknown>()
+    const report = () => {
+      try { onAttempts?.(attemptStates(session, proven.map(receipt => receipt?.status))) } catch { /* a display observer cannot interrupt routing */ }
     }
+    const destinationHash = (index: number): Hex | null => {
+      const call = session.calls[index]
+      const binding = session.quote?.expectedTransactions?.[index]
+      if (!binding) return null
+      const matching = session.records.filter(record => record.tx_uuid?.toLowerCase() === binding.txUuid.toLowerCase() && relayrRecordChain(record) === call.chainId)
+      const record = matching.length === 1 ? matching[0] : undefined
+      const hash = record && relayrDestinationHash(record)
+      const request = record?.request
+      if (!hash || !request || request.chain !== call.chainId || !isAddressEqual(request.target, call.target) ||
+          request.data.toLowerCase() !== call.data.toLowerCase() || BigInt(request.value) !== 0n || (request.virtual_nonce ?? 0) !== (entries[index].virtual_nonce ?? 0)) return null
+      return hash
+    }
+    const prove = async (index: number) => {
+      const hash = destinationHash(index)
+      if (!hash || proven[index] || reading.has(index)) return
+      reading.add(index)
+      try { proven[index] = await verifyDestination(session.calls[index], hash); readErrors.delete(index) }
+      catch (error) { readErrors.set(index, error) }
+      finally { reading.delete(index); report() }
+    }
+    const proveAvailable = () => { for (let index = 0; index < session.calls.length; index++) void prove(index) }
     let pollError: unknown
     if (session.phase !== 'complete') {
       try {
         pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, assertAccount, releasable: true, signal, onQuoted,
           reverify: async () => { assertAccount(); await reverify(); assertAccount() },
-          saveState: (next, beforeWrite) => { session = next; save(session, beforeWrite); onProgress?.({ message: session.phase === 'executing' ? 'Routing payments…' : 'Getting the fee quote…' }); report() },
+          saveState: (next, beforeWrite) => { session = next; save(session, beforeWrite); onProgress?.({ message: session.phase === 'executing' ? 'Routing payments…' : 'Getting the fee quote…' }); report(); proveAvailable() },
         })
       } catch (error) {
         if (error instanceof RawQuoteNotObtainedError) forget(pendingScope)
@@ -155,21 +180,16 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     }
     if (!session.quote) throw new Error('The original routing quote is unavailable. Keep this bundle pending.')
     assertRawQuoteBindings(session.quote, entries)
-    const receipts: TransactionReceipt[] = []
+    // A failed read of one destination never hides the others; the bundle stays held until all are proven.
     for (let index = 0; index < session.calls.length; index++) {
-      const call = session.calls[index]
-      const binding = session.quote.expectedTransactions[index]
-      const matching = session.records.filter(record => record.tx_uuid?.toLowerCase() === binding.txUuid.toLowerCase() && relayrRecordChain(record) === call.chainId)
-      const record = matching.length === 1 ? matching[0] : undefined
-      const hash = record && relayrDestinationHash(record)
-      const request = record?.request
-      if (!hash || !request || request.chain !== call.chainId || !isAddressEqual(request.target, call.target) ||
-          request.data.toLowerCase() !== call.data.toLowerCase() || BigInt(request.value) !== 0n || (request.virtual_nonce ?? 0) !== (entries[index].virtual_nonce ?? 0)) {
-        throw pollError ?? new Error('Some routing transactions remain unresolved. Check this saved bundle before retrying.')
-      }
-      receipts.push(await verifyDestination(call, hash))
-      report(receipts.map(receipt => receipt.status))
+      while (reading.has(index)) await new Promise(resolve => setTimeout(resolve, 0))
+      // Records that changed since a destination was proven void that proof.
+      if (proven[index] && destinationHash(index)?.toLowerCase() !== proven[index]!.transactionHash.toLowerCase()) delete proven[index]
+      await prove(index)
     }
+    const missing = session.calls.findIndex((_call, index) => !proven[index])
+    if (missing !== -1) throw readErrors.get(missing) ?? pollError ?? new Error('Some routing transactions remain unresolved. Check this saved bundle before retrying.')
+    const receipts = proven as TransactionReceipt[]
     session.phase = 'complete'
     save(session)
     await onComplete(receipts)

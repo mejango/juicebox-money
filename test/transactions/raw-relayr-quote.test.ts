@@ -37,3 +37,19 @@ it('releases an unsigned quote request that returned nothing, so nothing is left
   expect(session.quote).toBeUndefined()
   expect(saved.at(-1)).toBe('reviewed')
 })
+
+it('never moves on to payment when the caller cancelled after the quote was saved, and keeps the quote', async () => {
+  const cancel = new AbortController()
+  mocks.post.mockImplementation(async () => {
+    cancel.abort()
+    return { bundle_uuid: 'b', payment_info: [], transactions: [], expectedTransactions: [{ chain: 1, entry: { ...entries[0], virtual_nonce: 0 }, txUuid: 'u', }] }
+  })
+  const onQuoted = vi.fn()
+  const session: RawRelayrState = { account, phase: 'reviewed', records: [] }
+  const failure = await runRawRelayrLifecycle({ session, entries: [{ ...entries[0], virtual_nonce: 0 }], signal: cancel.signal, releasable: true, onQuoted,
+    assertAccount: () => {}, reverify: async () => {}, saveState: () => {} }).catch((error: unknown) => error) as Error
+  expect(failure).not.toBeInstanceOf(RawQuoteNotObtainedError)
+  expect(failure.message).toContain('Nothing was paid')
+  expect(onQuoted).not.toHaveBeenCalled()
+  expect(session.quote).toBeDefined()
+})

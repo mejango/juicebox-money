@@ -129,3 +129,31 @@ it('reports a reverted attempt without hiding the others', async () => {
   await runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: vi.fn().mockResolvedValue(undefined), onAttempts: states => seen.push([...states]) })
   expect(seen.at(-1)).toEqual(['confirmed', 'reverted'])
 })
+
+it('verifies each available destination while polling and keeps going past an unresolved first attempt', async () => {
+  const seen: string[][] = []
+  mocks.lifecycle.mockImplementation(async ({ session, entries, saveState: persist }: { session: RawRelayrState; entries: RelayrEntry[]; saveState: (s: RawRelayrState) => void }) => {
+    session.quote = { bundle_uuid: '00000000-0000-0000-0000-000000000001', payment_info: [], transactions: [], expectedTransactions: entries.map((entry, i) => ({ chain: entry.chain, entry, txUuid: `uuid-${i}` })) }
+    // Only the second destination has a hash yet.
+    session.records = [{ tx_uuid: 'uuid-1', request: entries[1], status: { state: 'success', data: { hash: hash(2) } } }]
+    session.phase = 'executing'
+    persist(session)
+    await new Promise(resolve => setTimeout(resolve, 0))
+  })
+  await expect(runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: vi.fn(), onAttempts: states => seen.push([...states]) })).rejects.toThrow('unresolved')
+  expect(seen.at(-1)).toEqual(['waiting', 'confirmed'])
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
+})
+
+it('keeps verifying later destinations after one receipt read fails, and holds the bundle', async () => {
+  mocks.receipt.mockImplementation(({ hash: h }: { hash: Hex }) => {
+    if (h === hash(1)) throw new Error('RPC unavailable')
+    return { transactionHash: h, status: 'success', blockHash, blockNumber: 12n }
+  })
+  const seen: string[][] = []
+  const complete = vi.fn()
+  await expect(runRawRelayrCalls({ calls, account, pendingScope: String(scope), reverify: mocks.reverify, onComplete: complete, onAttempts: states => seen.push([...states]) })).rejects.toThrow('RPC unavailable')
+  expect(seen.at(-1)).toEqual(['checking', 'confirmed'])
+  expect(complete).not.toHaveBeenCalled()
+  expect(loadRawRelayrSession(String(scope))).not.toBeNull()
+})

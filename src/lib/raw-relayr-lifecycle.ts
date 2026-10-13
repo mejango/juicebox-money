@@ -124,6 +124,8 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
       const quote = session.quote
       if (!quote) throw new Error(lostQuoteMessage ?? 'The original quote response is unavailable. Keep this attempt pending; requesting another bundle could execute duplicate calls.')
       assertRawQuoteBindings(session.quote!, entries, changedCallMessage)
+      // Cancelling after the quote was saved keeps it saved; only the payment is skipped.
+      if (releasable && signal?.aborted) throw new Error('Cancelled before the fee payment. Nothing was paid.')
       onQuoted?.()
       let paidNow = false
       if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {

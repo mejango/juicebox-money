@@ -208,6 +208,9 @@ describe('pending payment review above activity', () => {
     expect(signal?.aborted).toBe(false)
     await act(async () => dialog().onCancel!())
     expect(signal?.aborted).toBe(true)
+    // The dialog is idle at once, while the quote request winds down.
+    expect(dialog().busy).toBe(false)
+    expect(dialog().onCancel).toBeUndefined()
     await act(async () => { release() })
   })
 
