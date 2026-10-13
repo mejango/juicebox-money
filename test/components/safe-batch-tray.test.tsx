@@ -284,6 +284,29 @@ describe('Safe batch tray', () => {
     expect(window.localStorage.getItem(safeBatchStorageKey(1, 2))).toBeNull()
   })
 
+  it('marks the transaction that failed in a direct batch and keeps the ones before it done', async () => {
+    mocks.resolveRoute.mockResolvedValue({ kind: 'eoa', authorityKind: 'eoa' })
+    mocks.submit.mockImplementationOnce(async ({ onStep }: { onStep: (index: number) => void }) => {
+      onStep(0)
+      onStep(1)
+      throw new Error('The wallet rejected the request.')
+    })
+    seed()
+    render()
+    await settle()
+    click(button('Review and propose on Ethereum'))
+    await settle()
+    click(byAria('Move step 1 down'))
+    await settle()
+    click(button('Send 2 transactions'))
+    await settle()
+
+    const states = [...document.querySelectorAll('dialog ol[class*="space-y-2"] li[data-state]')].map(item => item.getAttribute('data-state'))
+    expect(states).toEqual(['complete', 'failed'])
+    expect(document.querySelector('dialog li[data-state="failed"]')?.textContent).toContain('Failed')
+    expect(document.querySelector('dialog [role="alert"]')?.textContent).toContain('The wallet rejected the request.')
+  })
+
   it('shows why submit is off next to the button and re-resolves the route on a wallet switch', async () => {
     const signer = mocks.wallet.address
     const reason = `The connected wallet is not a signer of ${SAFE}. Switch to a signer of this Safe.`

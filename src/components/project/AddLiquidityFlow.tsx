@@ -2,6 +2,7 @@
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { withFailedStep } from '@/components/ui/TxSteps'
 import {
   JB_CHAINS,
   type JBChainId,
@@ -932,11 +933,15 @@ function AddLiquidityForm({
                   : 'Add liquidity'
             }
             rows={rows}
-            steps={plan.steps.map((step, index) => ({
-              key: `${step.kind}:${index}`,
-              title: step.label,
-              detail: run.running && index === run.index ? runningDetail : undefined,
-            }))}
+            steps={withFailedStep(
+              plan.steps.map((step, index) => ({
+                key: `${step.kind}:${index}`,
+                title: step.label,
+                detail: run.running && index === run.index ? runningDetail : undefined,
+              })),
+              run.index,
+              stopped && tx.phase === 'error',
+            )}
             activeIndex={run.running || stopped ? run.index : -1}
             stepsIntro={
               liquidityBatchApplies(plan.steps)

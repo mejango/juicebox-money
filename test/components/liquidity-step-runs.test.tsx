@@ -332,6 +332,9 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     // Alice rejects the mint in her wallet: the run stops at step 3.
     await act(async () => engine.fail('Transaction cancelled.'))
     await act(async () => engine.answer(null))
+    // The step it stopped on says so; the two approvals before it stay done.
+    expect([...host.querySelectorAll('li[data-state]')].map(item => item.getAttribute('data-state'))).toEqual(['complete', 'complete', 'failed'])
+    expect(host.querySelector('li[data-state="failed"]')?.textContent).toContain('Failed')
 
     await replanAfterStop({
       reviewLabel: 'Add liquidity',

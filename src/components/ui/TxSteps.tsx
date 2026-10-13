@@ -9,6 +9,12 @@ export type TxStep = {
   state?: 'pending' | 'active' | 'complete' | 'failed'
 }
 
+/** The step a stopped run died on shows × and a short status; every other step keeps its sequential state. */
+export function withFailedStep(steps: readonly TxStep[], index: number, failed: boolean): readonly TxStep[] {
+  if (!failed) return steps
+  return steps.map((step, at) => (at === index ? { ...step, state: 'failed', status: 'Failed' } : step))
+}
+
 /**
  * The wallet-prompt queue for a multi-transaction flow, shown before the first
  * prompt so a signer knows how many are coming and why. Steps are strictly
