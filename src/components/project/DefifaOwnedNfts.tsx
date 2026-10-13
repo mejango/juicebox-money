@@ -82,7 +82,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     setSelected(new Set())
     setManual('')
     setContinuation(undefined)
-    if (!sent.current && !tx.hash && tx.phase !== 'pending' && tx.phase !== 'submitted' && !sending.current) {
+    if (!sent.current && !tx.hash && tx.phase !== 'pending' && tx.phase !== 'unconfirmed' && tx.phase !== 'submitted' && !sending.current) {
       setPlan(null)
       setPreparing(false)
       setError(null)

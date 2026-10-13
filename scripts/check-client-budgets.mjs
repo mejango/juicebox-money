@@ -240,7 +240,11 @@ const budgets = {
   // results, release of unquoted and hashless routing attempts, and a Review
   // again step measure 2582.0 KiB on the same toolchain against main's
   // 2581 KiB ceiling. Round only the aggregate to the next KiB.
-  allScripts: 2583 * KIB,
+  // Dialog UX round 2 (unconfirmed-send registry held across dialog unmount, the
+  // liquidity runs' suspend on unconfirmed, and the tall-confirm browser proof
+  // route) measures 2587.4 KiB on the Node 26.7 / npm 12 browser build. Round
+  // only the aggregate to the next KiB.
+  allScripts: 2588 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

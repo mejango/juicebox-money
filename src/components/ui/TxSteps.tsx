@@ -9,6 +9,28 @@ export type TxStep = {
   state?: 'pending' | 'active' | 'complete' | 'failed'
 }
 
+/** The step a stopped run died on shows × and a short status; every other step keeps its sequential state. */
+export function withFailedStep(steps: readonly TxStep[], index: number, failed: boolean): readonly TxStep[] {
+  if (!failed) return steps
+  return steps.map((step, at) => (at === index ? { ...step, state: 'failed', status: 'Failed' } : step))
+}
+
+/**
+ * A suspended run keeps the step whose receipt is unread marked: the steps before it are done, it stays
+ * current with a short status, and the ones after it wait. Explicit states keep a finished dialog from
+ * ticking it off.
+ */
+export function withUnconfirmedStep(steps: readonly TxStep[], index: number, unconfirmed: boolean): readonly TxStep[] {
+  if (!unconfirmed) return steps
+  return steps.map((step, at) =>
+    at < index
+      ? { ...step, state: 'complete' }
+      : at === index
+        ? { ...step, state: 'active', status: 'Not confirmed yet' }
+        : { ...step, state: 'pending' },
+  )
+}
+
 /**
  * The wallet-prompt queue for a multi-transaction flow, shown before the first
  * prompt so a signer knows how many are coming and why. Steps are strictly

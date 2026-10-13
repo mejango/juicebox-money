@@ -74,6 +74,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
 }))
 
+import { clearUnconfirmedSends } from '@/lib/unconfirmed-sends'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
@@ -120,6 +121,7 @@ async function renderHook() {
 }
 
 beforeEach(() => {
+  clearUnconfirmedSends()
   displayQueries.clear()
   mocks.account = ALICE
   mocks.chainId = 1
@@ -431,11 +433,12 @@ describe('useSafeTx', () => {
     await act(async () => hook.renderer.unmount())
   })
 
-  it('keeps a receipt RPC error pending and prevents a duplicate send', async () => {
+  it('says it could not confirm yet once the receipt watch gives up, frees the dialog and still refuses a duplicate send', async () => {
     const hook = await renderHook()
     await act(async () => {
       await hook.ref.current!.send(request, reviewedByAlice)
     })
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', busy: true, confirmationUncertain: false })
 
     mocks.receipt = { data: undefined, isError: true }
     await act(async () => {
@@ -443,15 +446,145 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
-      busy: true,
+      phase: 'unconfirmed',
+      busy: false,
+      settled: true,
       confirmationUncertain: true,
     })
-    expect(hook.ref.current!.error).toMatch(/do not submit it again/i)
+    expect(hook.ref.current!.error).toMatch(/^Couldn't confirm yet/)
+    expect(hook.ref.current!.error).toMatch(/https:\/\/\S+\/tx\/0x/)
+    expect(hook.ref.current!.error).not.toMatch(/—|temporarily|Relayr/)
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the unconfirmed send locked through dismiss and reset, then settles when the receipt shows up', async () => {
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    const hash = hook.ref.current!.hash!
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+
+    await act(async () => hook.ref.current!.dismiss())
+    await act(async () => hook.ref.current!.reset())
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', hash, confirmationUncertain: true })
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+
+    mocks.receipt = { data: { status: 'success', transactionHash: hash }, isError: false }
+    await act(async () => {
+      hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, confirmationUncertain: false, error: null })
+    await act(async () => hook.ref.current!.reset())
+    expect(hook.ref.current).toMatchObject({ phase: 'idle', hash: null })
+    await act(async () => hook.renderer.unmount())
+  })
+
+  it('keeps an unconfirmed send locked after its dialog unmounts the hook, so reopening cannot send it twice', async () => {
+    const first = await renderHook()
+    await act(async () => {
+      await first.ref.current!.send(request, reviewedByAlice)
+    })
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => {
+      first.renderer.update(createElement(Harness, { ref: first.ref }))
+    })
+    expect(first.ref.current).toMatchObject({ phase: 'unconfirmed' })
+    await act(async () => first.renderer.unmount())
+
+    mocks.receipt = { data: undefined, isError: false }
+    const reopened = await renderHook()
+    await act(async () => {
+      await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+    expect(reopened.ref.current).toMatchObject({ phase: 'unconfirmed', busy: false, settled: true, hash: HASH })
+    expect(reopened.ref.current!.error).toMatch(/^Couldn't confirm yet\. Check .*0x/)
+    // A different call is not held by it.
+    await act(async () => {
+      await reopened.ref.current!.send({ ...request, args: [BOB, 2n] }, reviewedByAlice)
+    })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    await act(async () => reopened.renderer.unmount())
+  })
+
+  it('lifts that lock by itself once the receipt lands, with no hook mounted', async () => {
+    vi.useFakeTimers()
+    try {
+      const getTransactionReceipt = vi.fn().mockResolvedValue(null)
+      mocks.publicClient = { ...mocks.publicClient, getTransactionReceipt } as typeof mocks.publicClient
+      const first = await renderHook()
+      await act(async () => {
+        await first.ref.current!.send(request, reviewedByAlice)
+      })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => {
+        first.renderer.update(createElement(Harness, { ref: first.ref }))
+      })
+      await act(async () => first.renderer.unmount())
+      mocks.receipt = { data: undefined, isError: false }
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000)
+      })
+      expect(getTransactionReceipt).toHaveBeenCalled()
+      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 5n, transactionHash: HASH })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+
+      const reopened = await renderHook()
+      await act(async () => {
+        await reopened.ref.current!.send(request, reviewedByAlice)
+      })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => reopened.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps checking slowly after the fast lookups end, so the lock clears by itself', async () => {
+    vi.useFakeTimers()
+    try {
+      const getTransactionReceipt = vi.fn().mockResolvedValue(null)
+      mocks.publicClient = { ...mocks.publicClient, getTransactionReceipt } as typeof mocks.publicClient
+      const hook = await renderHook()
+      await act(async () => {
+        await hook.ref.current!.send(request, reviewedByAlice)
+      })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => {
+        hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150 * 4_000 + 100)
+      })
+      const fast = getTransactionReceipt.mock.calls.length
+      // The hook's 150 lookups, plus the held send's own, which keep going without it.
+      expect(fast).toBeGreaterThanOrEqual(150)
+      expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
+
+      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 9n, transactionHash: hook.ref.current!.hash })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(getTransactionReceipt.mock.calls.length).toBeGreaterThan(fast)
+      expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
+      await act(async () => hook.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([

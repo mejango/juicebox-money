@@ -827,7 +827,7 @@ describe('Relayr quote and payment boundaries', () => {
 
   it('refuses to pay from a Safe, whose execution no proof can read as this payment', async () => {
     mocks.isSafeConnection.mockReturnValue(true)
-    await expect(pay(payment, [1])).rejects.toThrow('Pay for relayed transactions from an ordinary wallet. Nothing was sent.')
+    await expect(pay(payment, [1])).rejects.toThrow('Pay the network fee from an ordinary wallet. Nothing was sent.')
     expect(mocks.requireReview).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })

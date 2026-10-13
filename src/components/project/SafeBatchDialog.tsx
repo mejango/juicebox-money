@@ -8,6 +8,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { withFailedStep } from '@/components/ui/TxSteps'
 import { clientFor, readAuthorityOf } from '@/lib/authority'
 import { truncateAddress } from '@/lib/format'
 import {
@@ -166,12 +167,14 @@ export function SafeBatchDialog({
   ]
 
   const onchainApproval = route?.kind === 'safe-owner' && !hasSafeService(chainId)
-  const walletSteps =
+  const submittedSteps =
     route?.kind === 'eoa'
       ? steps.map(step => ({ key: step.id, title: `${step.label} on ${chainName(chainId)}` }))
       : onchainApproval
         ? [{ key: 'proposal', title: `Approve batch of ${count} call${count === 1 ? '' : 's'} onchain` }]
         : [{ key: 'proposal', title: `Propose batch of ${count} call${count === 1 ? '' : 's'} to Safe` }]
+  // A submit that stopped on an error names the step it stopped on.
+  const walletSteps = withFailedStep(submittedSteps, activeIndex, !!error && !busy && !complete && activeIndex >= 0)
 
   const update = (next: BatchStep[]) => {
     if (!batch || busy || complete) return
