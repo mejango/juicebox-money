@@ -9,8 +9,10 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { withRelayrScopeLock } from '@/lib/relayr'
 import { relayrBundleRequest, relayrDestinationHash, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
-import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
+import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, RawQuoteNotObtainedError, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
 
+/** One routing attempt's progress, in the reviewed order. */
+export type RawAttempt = 'waiting' | 'checking' | 'confirmed' | 'reverted'
 export type RawRelayrCall = { chainId: number; target: Address; data: Hex; value?: bigint; gas?: bigint }
 type SavedCall = { chainId: number; target: Address; data: Hex; value: '0'; gas?: string }
 export type RawRelayrSession = RawRelayrState & { version: 1; scope: string; calls: SavedCall[] }
@@ -57,9 +59,17 @@ function save(session: RawRelayrSession, beforeWrite = false): void {
   authoritative.delete(saved.scope)
 }
 
+function forget(scope: string): void {
+  window.localStorage.removeItem(PREFIX + scope)
+  memory.delete(scope)
+  authoritative.delete(scope)
+}
+
 /** Caller holds the raw scope lock while consuming this read-only proof. */
 export async function isRawRelayrSessionReleased(scope: string): Promise<boolean> {
   const session = loadRawRelayrSession(scope)
+  // Unsigned calls whose quote never arrived reserve nothing and cannot have been paid.
+  if (session && !session.quote) return session.phase === 'reviewed' || session.phase === 'publishing'
   if (!session?.quote) return false
   const entries = relayrBundleRequest(session.calls.map(entryOf)).transactions
   assertRawQuoteBindings(session.quote, entries)
@@ -83,13 +93,29 @@ async function verifyDestination(call: SavedCall, hash: Hex): Promise<Transactio
   return receipt
 }
 
+/** What the saved quote and Relayr's records show of each attempt; `results` are receipts already proven. */
+function attemptStates(session: RawRelayrSession, results: TransactionReceipt['status'][]): RawAttempt[] {
+  return session.calls.map((_call, index) => {
+    if (results[index]) return results[index] === 'success' ? 'confirmed' : 'reverted'
+    const id = session.quote?.expectedTransactions?.[index]?.txUuid.toLowerCase()
+    const record = id ? session.records.find(item => item.tx_uuid?.toLowerCase() === id && relayrRecordChain(item) === session.calls[index].chainId) : undefined
+    return record && relayrDestinationHash(record) ? 'checking' : 'waiting'
+  })
+}
+
 /** Only permissionless, zero-value calls belong here. The owner reviews and validates their semantic eligibility. */
-export async function runRawRelayrCalls({ calls, account, pendingScope, preferredPaymentChainId, reverify, onProgress, onComplete }: {
+export async function runRawRelayrCalls({ calls, account, pendingScope, preferredPaymentChainId, reverify, signal, onQuoted, onAttempts, onProgress, onComplete }: {
   calls: RawRelayrCall[]
   account: Address
   pendingScope: string
   preferredPaymentChainId?: number
   reverify: () => Promise<void>
+  /** Cancels the fee quote request, until the quote is saved. */
+  signal?: AbortSignal
+  /** The quote is saved and the fee payment is next. */
+  onQuoted?: () => void
+  /** Display only: each attempt's progress in the reviewed order. */
+  onAttempts?: (attempts: RawAttempt[]) => void
   onProgress?: (progress: { message: string }) => void
   onComplete: (receipts: TransactionReceipt[]) => Promise<void>
 }): Promise<void> {
@@ -112,12 +138,20 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     }
     assertAccount()
     const entries = relayrBundleRequest(session.calls.map(entryOf)).transactions
+    const report = (results: TransactionReceipt['status'][] = []) => {
+      try { onAttempts?.(attemptStates(session, results)) } catch { /* a display observer cannot interrupt routing */ }
+    }
     let pollError: unknown
     if (session.phase !== 'complete') {
-      pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, assertAccount,
-        reverify: async () => { assertAccount(); await reverify(); assertAccount() },
-        saveState: (next, beforeWrite) => { session = next; save(session, beforeWrite); onProgress?.({ message: session.phase === 'executing' ? 'Routing payments…' : 'Preparing routing bundle…' }) },
-      })
+      try {
+        pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, assertAccount, releasable: true, signal, onQuoted,
+          reverify: async () => { assertAccount(); await reverify(); assertAccount() },
+          saveState: (next, beforeWrite) => { session = next; save(session, beforeWrite); onProgress?.({ message: session.phase === 'executing' ? 'Routing payments…' : 'Getting the fee quote…' }); report() },
+        })
+      } catch (error) {
+        if (error instanceof RawQuoteNotObtainedError) forget(pendingScope)
+        throw error
+      }
     }
     if (!session.quote) throw new Error('The original routing quote is unavailable. Keep this bundle pending.')
     assertRawQuoteBindings(session.quote, entries)
@@ -134,13 +168,12 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
         throw pollError ?? new Error('Some routing transactions remain unresolved. Check this saved bundle before retrying.')
       }
       receipts.push(await verifyDestination(call, hash))
+      report(receipts.map(receipt => receipt.status))
     }
     session.phase = 'complete'
     save(session)
     await onComplete(receipts)
     // The owner has durably recorded outcomes before the recovery journal is released.
-    window.localStorage.removeItem(PREFIX + pendingScope)
-    memory.delete(pendingScope)
-    authoritative.delete(pendingScope)
+    forget(pendingScope)
   })
 }

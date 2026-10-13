@@ -565,6 +565,21 @@ describe('Relayr quote and payment boundaries', () => {
     )
   })
 
+  it('waits as long as the caller allows for a quote, and stops when the caller cancels', async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout')
+    const cancel = new AbortController()
+    vi.mocked(fetch).mockImplementationOnce(async (_url, init) => {
+      expect(init?.signal?.aborted).toBe(false)
+      cancel.abort()
+      expect(init?.signal?.aborted).toBe(true)
+      throw new DOMException('aborted', 'AbortError')
+    })
+    await expect(relayrPostBundle([{ chain: 1, target: TARGET, data: '0x01', value: '0' }], { timeoutMs: 300_000, signal: cancel.signal }))
+      .rejects.toThrow(/aborted/)
+    expect(timeout).toHaveBeenCalledWith(300_000)
+    timeout.mockRestore()
+  })
+
   it('surfaces bounded Relayr HTTP detail', async () => {
     vi.mocked(fetch).mockResolvedValueOnce(response('bad quote', 503))
     await expect(relayrPostBundle([{ chain: 1, target: TARGET, data: '0x01', value: '0' }])).rejects.toThrow(

@@ -56,7 +56,7 @@ vi.mock('@/lib/project-batch', () => ({
   projectBatchScope: (action: string, chainId: number, projectId: number) => `${action}:${chainId}:${projectId}`,
   runProjectBatch: mocks.run,
   loadProjectBatch: mocks.loadExact,
-  isProjectBatchDraft: mocks.draft,
+  isReplaceableProjectBatch: mocks.draft,
   projectBatchRecoveryReason: () => 'A saved attempt needs recovery.',
   recheckProjectBatch: mocks.recheckBatch,
 }))
@@ -156,12 +156,11 @@ describe('pending payment review above activity', () => {
     mocks.run.mockRejectedValue(new Error('preflight failed'))
     await act(async () => dialog().onConfirm())
     expect(dialog().actionDisabled).toBe(true)
-    expect(dialog().status).toContain('reopen pending payments')
+    expect(dialog().status ?? '').not.toContain('reopen')
     await act(async () => dialog().onConfirm())
     expect(mocks.run).toHaveBeenCalledTimes(1)
-    await act(async () => dialog().onClose())
     mocks.load.mockReturnValue(null)
-    await act(async () => button('Retry').props.onClick())
+    await act(async () => button('Review again').props.onClick())
     expect(dialog().actionDisabled).toBe(false)
     await act(async () => dialog().onConfirm())
     expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
@@ -192,6 +191,69 @@ describe('pending payment review above activity', () => {
     expect(button('Retry')).toBeDefined()
     expect(mocks.run).not.toHaveBeenCalled()
   })
+  it('lets the user cancel a slow fee quote until the payment step', async () => {
+    mocks.rows = [row()]
+    await render()
+    await act(async () => button('Retry').props.onClick())
+    expect(dialog().onCancel).toBeUndefined()
+    let signal: AbortSignal | undefined
+    let release: () => void = () => {}
+    mocks.run.mockImplementation(async options => {
+      signal = options.signal
+      await new Promise<void>(resolve => { release = resolve })
+      return { status: 'complete' }
+    })
+    await act(async () => { void dialog().onConfirm() })
+    expect(dialog().onCancel).toBeTypeOf('function')
+    expect(signal?.aborted).toBe(false)
+    await act(async () => dialog().onCancel!())
+    expect(signal?.aborted).toBe(true)
+    await act(async () => { release() })
+  })
+
+  it('stops offering cancel once the fee payment is next', async () => {
+    mocks.rows = [row()]
+    await render()
+    await act(async () => button('Retry').props.onClick())
+    let release: () => void = () => {}
+    mocks.run.mockImplementation(async options => {
+      options.onBeforePayment()
+      await new Promise<void>(resolve => { release = resolve })
+      return { status: 'complete' }
+    })
+    await act(async () => { void dialog().onConfirm() })
+    expect(dialog().onCancel).toBeUndefined()
+    await act(async () => { release() })
+  })
+
+  it('shows each payment’s own result as it arrives', async () => {
+    mocks.rows = [row(), row(10)]
+    await render()
+    await act(async () => button('Retry').props.onClick())
+    const [first, second] = dialog().steps.map(step => step.key!)
+    let release: () => void = () => {}
+    mocks.run.mockImplementation(async options => {
+      options.onAttempts({ [first]: 'confirmed', [second]: 'reverted' })
+      await new Promise<void>(resolve => { release = resolve })
+      return { status: 'complete' }
+    })
+    await act(async () => { void dialog().onConfirm() })
+    expect(dialog().steps.map(step => [step.state, step.status])).toEqual([['complete', 'Confirmed'], ['failed', 'Reverted']])
+    expect(dialog().status).toBe('2 of 2 attempts checked. 0 remaining. 1 reverted.')
+    await act(async () => { release() })
+  })
+
+  it('releases a saved batch whose quote never arrived without being asked', async () => {
+    mocks.rows = [row()]
+    const saved = { id: 'saved', scope: 'legacy', calls: [], completedIds: [], status: 'pending' }
+    mocks.load.mockReturnValue(saved)
+    mocks.recheckBatch.mockImplementation(async () => { mocks.load.mockReturnValue(null); return true })
+    await render()
+    expect(mocks.recheckBatch).toHaveBeenCalledWith('legacy', 'saved')
+    expect(button('Re-check saved batch')).toBeUndefined()
+    expect(button('Retry')).toBeDefined()
+  })
+
   it('keeps persisted pending rows out of server markup until hydration', async () => {
     mocks.rows = [row()]
     expect(renderToString(createElement(PendingPayments, { chainId: 1, projectId: 17, chains: [] }))).toBe('')
@@ -334,8 +396,7 @@ describe('pending payment review above activity', () => {
     expect(dialog().title).toBe('Retry payments')
     expect(dialog().steps).toHaveLength(2)
     expect(dialog().stepsIntro).toContain('network fees only')
-    expect(dialog().stepsIntro).toContain('may remain pending')
-    expect(dialog().stepsIntro).toContain('return them to the source project')
+    expect(dialog().stepsIntro).toBe('Pay network fees only. Each payment has its own result.')
     expect(dialog().rows?.filter(item => item.label === 'Source').map(item => item.value)).toEqual(['Project 6', 'Project 6'])
     mocks.run.mockImplementation(async options => {
       expect(options.reverify).toBe(mocks.reverify)

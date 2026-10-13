@@ -236,7 +236,11 @@ const budgets = {
   // keeps create within its unchanged 513 KiB ceiling. Shared amount/cart
   // presentation adds 903 B, final 2,642,658 B (+2,510 B vs main).
   // Round only aggregate to its next KiB; every other gate stays fixed.
-  allScripts: 2581 * KIB,
+  // Pending-payment recovery: five-minute cancellable fee quotes, per-payment
+  // results, release of unquoted and hashless routing attempts, and a Review
+  // again step measure 2582.0 KiB on the same toolchain against main's
+  // 2581 KiB ceiling. Round only the aggregate to the next KiB.
+  allScripts: 2583 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
