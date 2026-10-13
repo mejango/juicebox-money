@@ -89,6 +89,7 @@ import {
   discardRelayrSession,
   readRelayrPendingSessionsForAuthorization,
   relayrQuoteReleased,
+  relayrSessionExpiresAt,
   resumeRelayrSession,
   type RelayrCall,
   type RelayrPendingSession,
@@ -110,7 +111,11 @@ const THIRD_UUID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
 const DESTINATION_HASHES = [DESTINATION_HASH, SECOND_DESTINATION_HASH, `0x${'12'.repeat(32)}`, `0x${'34'.repeat(32)}`] as Hex[]
 const DESTINATION_UUIDS = [OTHER_UUID, THIRD_UUID, 'bbbbbbbb-cccc-dddd-eeee-ffffffffffff', 'cccccccc-dddd-eeee-ffff-aaaaaaaaaaaa']
 const TESTNETS = [11155111, 11155420, 84532, 421614] as const
-const PAYMENT_DEADLINE = 4_000_000_000
+/** Quotes pay within minutes, well before the 2-hour signed requests stop running. */
+const PAYMENT_DEADLINE = Math.floor(Date.now() / 1000) + 600
+const REQUEST_DEADLINE = PAYMENT_DEADLINE + 2 * 60 * 60
+/** A quote's payment deadline 10 minutes from the clock, mocked or not, as Relayr quotes it. */
+const quoteDeadline = () => Math.floor(Date.now() / 1000) + 600
 const DISCARDABLE = 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.'
 const DISCARD_REFUSED = 'Only an action whose earlier signatures can no longer run can be discarded.'
 const CHANGED = 'The project changed since this review.'
@@ -161,7 +166,7 @@ function signedEntry(chain: JBChainId = 1): RelayrEntry {
       abi: erc2771ForwarderAbi,
       functionName: 'execute',
       args: [{ from: ALICE, to: TARGET, value: 5n, gas: 500_000n,
-        deadline: PAYMENT_DEADLINE, data: '0x1234', signature: `0x${'11'.repeat(65)}` }],
+        deadline: REQUEST_DEADLINE, data: '0x1234', signature: `0x${'11'.repeat(65)}` }],
     }),
     value: '5',
     virtual_nonce: 0,
@@ -377,12 +382,12 @@ describe('Relayr quote and payment boundaries', () => {
 
   it.each(['changed amount', 'expired deadline'] as const)('rechecks a quote with %s after persisting its attempt', async change => {
     const entered = deferred(), release = deferred()
-    const offered = paymentFor()
+    const offered = paymentFor({}, 1_800_000_600)
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
     const result = pay(offered, [1], { onSending: async () => { entered.resolve(); await release.promise } }).catch(error => error)
     await entered.promise
     if (change === 'changed amount') offered.amount = '101'
-    else now.mockReturnValue((PAYMENT_DEADLINE + 1) * 1000)
+    else now.mockReturnValue((1_800_000_600 + 1) * 1000)
     release.resolve()
     expect(await result).toMatchObject({ name: 'RelayrPaymentNotSentError', cause: expect.any(Error) })
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
@@ -1599,6 +1604,35 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 
+  it('signs each request for 2 hours, and dates a saved session by its signed requests', async () => {
+    installSuccessfulBundle()
+    vi.mocked(fetch).mockImplementationOnce(async () => { throw new DOMException('quote response lost', 'TimeoutError') })
+    const before = Math.floor(Date.now() / 1000)
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'two-hours' })).rejects.toThrow(/did not return a quote/i)
+    const deadline = Number(mocks.wallet.signTypedData.mock.calls[0][0].message.deadline)
+    expect(deadline - before).toBeGreaterThanOrEqual(RELAYR_FORWARDER_DEADLINE_SECONDS)
+    expect(deadline - before).toBeLessThan(RELAYR_FORWARDER_DEADLINE_SECONDS + 5)
+    const saved = loadRelayrPendingSession('two-hours')!
+    expect(relayrSessionExpiresAt(saved)).toBe(deadline * 1000)
+    // A session whose requests can't be read may have been signed for 47 hours.
+    expect(relayrSessionExpiresAt({ createdAt: 1_000 })).toBe(1_000 + 47 * 3600 * 1000)
+  })
+
+  it('waits out a saved publication with under 45 minutes left instead of quoting it with no payable option', async () => {
+    const posts = installSuccessfulBundle()
+    vi.mocked(fetch).mockImplementationOnce(async () => { throw new DOMException('quote response lost', 'TimeoutError') })
+    const options = { calls, account: ALICE, pendingScope: 'near-deadline' }
+    await expect(runRelayrCalls(options)).rejects.toThrow(/did not return a quote/i)
+    const deadline = Number(mocks.wallet.signTypedData.mock.calls[0][0].message.deadline)
+    vi.spyOn(Date, 'now').mockReturnValue((deadline - 44 * 60) * 1000)
+    await expect(runRelayrCalls(options)).rejects.toThrow(/^This action's earlier signature can still run until .+\. Try again after that\.$/)
+    expect(posts).toHaveLength(0)
+    vi.mocked(Date.now).mockReturnValue((deadline - 46 * 60) * 1000)
+    installSuccessfulBundle(() => [paymentFor({}, quoteDeadline())])
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps the original publication when its signature can no longer be verified', async () => {
     const posts = installSuccessfulBundle()
     mocks.requireFundingChainSelection.mockRejectedValueOnce(new Error('closed'))
@@ -2014,7 +2048,7 @@ describe('paying a reverted Relayr payment again', () => {
       vi.mocked(fetch).mockClear()
       const post = vi.mocked(fetch).getMockImplementation()!
       vi.mocked(fetch).mockImplementation(async (input, init) => init?.method === 'POST' && String(input).endsWith('/prepaid')
-        ? response({ ...await (await post(input, init)).json(), payment_info: [payment] })
+        ? response({ ...await (await post(input, init)).json(), payment_info: [paymentFor({}, quoteDeadline())] })
         : post(input, init))
       vi.mocked(Date.now).mockReturnValue((DEADLINE + 1) * 1_000)
       mocks.client.getBlock.mockImplementation(async ({ blockTag }: { blockTag?: string } = {}) => blockTag === 'finalized'
@@ -2236,7 +2270,7 @@ describe('unpaid Relayr quotes', () => {
   const REQUESTS_EXPIRED = START + (RELAYR_FORWARDER_DEADLINE_SECONDS + 60) * 1_000
   const calls: RelayrCall[] = [{ chainId: 1, target: TARGET, data: '0x1234', value: 5n }]
   const next = { calls: [{ chainId: 1 as const, target: BOB, data: '0x5678' as Hex }], account: ALICE, pendingScope: 'next-action' }
-  const quotes = (post: number) => [paymentFor({}, post === 0 ? DEADLINE : PAYMENT_DEADLINE)]
+  const quotes = (post: number) => [paymentFor({}, post === 0 ? DEADLINE : quoteDeadline())]
   let now: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
@@ -2319,7 +2353,7 @@ describe('unpaid Relayr quotes', () => {
   })
 
   it('release a publication whose quote response was lost once every request it published is dead at a finalized block (ruling R117)', async () => {
-    installSuccessfulBundle()
+    installSuccessfulBundle(() => [paymentFor({}, quoteDeadline())])
     vi.mocked(fetch).mockImplementationOnce(async () => { throw new DOMException('quote response lost', 'TimeoutError') })
     await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'lost' })).rejects.toThrow(/did not return a quote/)
     expect(loadRelayrPendingSession('lost')).toMatchObject({ paymentStatus: 'unpaid', bundleUuid: 'publication-pending' })
@@ -2411,7 +2445,7 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
     { chainId: 1, target: TARGET, data: '0x1234', value: 5n },
     { chainId: 10, target: BOB, data: '0x5678', value: 2n },
   ]
-  const quotes = (post: number) => [paymentFor({}, post === 0 ? DEADLINE : PAYMENT_DEADLINE)]
+  const quotes = (post: number) => [paymentFor({}, post === 0 ? DEADLINE : quoteDeadline())]
   let now: ReturnType<typeof vi.spyOn>
   /** The forwarder's nonce for Alice on each chain. */
   let nonces: Record<number, bigint>
@@ -2675,7 +2709,7 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
   })
 
   it('holds a reverted quote while Relayr cannot be read and another chain\'s old request can still run', async () => {
-    installSuccessfulBundle([payment])
+    installSuccessfulBundle([paymentFor({}, quoteDeadline())])
     mocks.paymentStatuses.set(HASH, 'reverted')
     await expect(action()).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
     expect(loadRelayrPendingSession('r114')).toMatchObject({ paymentStatus: 'reverted' })
@@ -2692,7 +2726,7 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
   })
 
   it('ends a reverted quote with Discard once every old request is spent, while Relayr cannot be read and another payment could still fund it', async () => {
-    installSuccessfulBundle([payment])
+    installSuccessfulBundle([paymentFor({}, quoteDeadline())])
     mocks.paymentStatuses.set(HASH, 'reverted')
     await expect(action()).rejects.toMatchObject({ name: 'RelayrPaymentRevertedError' })
     reverify.mockClear()

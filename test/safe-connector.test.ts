@@ -592,8 +592,9 @@ describe('a proposal awaiting its signers', () => {
       expect(ended).toBeUndefined()
       controller.abort()
       await aborted
-      // One look a minute: the Safe's nonce is read at most once a minute.
-      expect(client.request).toHaveBeenCalledTimes(15)
+      // One look a minute: the Safe's nonce is read at most once a minute. A
+      // passed look also asks for the finalized block, which this chain lacks.
+      expect(client.request.mock.calls.filter(([{ method }]) => method === 'eth_call')).toHaveLength(15)
     })
 
     it('stops looking when its signal aborts', async () => {

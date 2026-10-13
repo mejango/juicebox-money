@@ -1037,7 +1037,7 @@ describe('paying a reverted launch quote again', () => {
       await expired()
       const quoted = m.quote.getMockImplementation()!
       m.quote.mockImplementationOnce(async (signed: RelayrEntry[]) => ({ ...await quoted(signed),
-        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 3600)) }))
+        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 1200)) }))
       m.pay.mockImplementationOnce(paying)
       await run()
       expect(m.quote).toHaveBeenCalledTimes(2)
@@ -1056,7 +1056,7 @@ describe('paying a reverted launch quote again', () => {
         payment_info: [paymentFor(8453), paymentFor(1, NOW + 700)] }))
       await expired(NOW + 701)
       m.quote.mockImplementationOnce(async (signed: RelayrEntry[]) => ({ ...await quoted(signed),
-        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 3600)) }))
+        payment_info: offeredPaymentChains.map(chain => paymentFor(chain, NOW + 1200)) }))
       m.pay.mockImplementationOnce(paying)
       await run()
       expect(m.quote).toHaveBeenCalledTimes(2)

@@ -57,7 +57,7 @@ describe('rpc error text', () => {
     expect(transactionMessage('The Relayr entry differs from the selected Relayr option.')).toBe('The entry differs from the selected option.')
     expect(transactionMessage('Saved Relayr authorizations may still run.')).toBe('Saved authorizations may still run.')
     expect(transactionMessage('Relayr-reported; onchain proof pending')).toBe('Reported; onchain proof pending')
-    expect(transactionMessage("Relayr's response could not be verified. Keep the original bundle pending.")).toBe("The execution service's response could not be verified. Keep the original bundle pending.")
+    expect(transactionMessage("Relayr's response could not be verified. Keep the original bundle pending.")).toBe('The response could not be verified. Keep the original bundle pending.')
     expect(JSON.stringify(saved)).toBe(original)
     expect(transactionMessage('GS013 on Ethereum. Keep the original bundle pending.')).toBe('GS013 on Ethereum. Keep the original bundle pending.')
   })
