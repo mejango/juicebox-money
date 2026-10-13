@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
+import { explorerTxUrl } from '@/lib/chainDisplay'
 import {
   BaseError,
   encodeFunctionData,
@@ -53,6 +54,8 @@ const RECEIPT_WATCH_TIMEOUT_MS = 120_000
 const RECEIPT_POLL_INTERVAL_MS = 4_000
 /** ~10 minutes of direct lookups, matching the watcher's own retry horizon. */
 const RECEIPT_POLL_ATTEMPTS = 150
+/** After that, one lookup this often while the page is open. */
+const RECEIPT_SLOW_POLL_INTERVAL_MS = 45_000
 
 type PolledReceipt = NonNullable<
   Awaited<ReturnType<NonNullable<ReturnType<typeof usePublicClient>>['getTransactionReceipt']>>
@@ -64,6 +67,8 @@ export type TxPhase =
   | 'simulating'
   | 'signing'
   | 'pending'
+  /** The receipt watch gave up on a sent transaction: it may still land, so the send stays locked, but nothing is in flight to wait on. */
+  | 'unconfirmed'
   /** With a Safe, and not settled here: awaiting its signers, or its result unproven. */
   | 'submitted'
   | 'success'
@@ -481,24 +486,29 @@ export function useSafeTx(chainId: number) {
     if (typeof publicClient.getTransactionReceipt !== 'function') return
     let cancelled = false
     let attempts = 0
-    const timer = setInterval(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Fast at first, then slowly for as long as the page is open: an unconfirmed
+    // send stays locked, and this is what lifts the lock when its receipt lands.
+    const poll = () => {
       attempts += 1
-      if (attempts > RECEIPT_POLL_ATTEMPTS) {
-        clearInterval(timer)
-        return
-      }
       void publicClient
         .getTransactionReceipt({ hash })
         .then(found => {
-          if (cancelled || !found) return
-          clearInterval(timer)
-          setPolledReceipt(found)
+          if (cancelled) return
+          if (found) setPolledReceipt(found)
+          else schedule()
         })
-        .catch(() => undefined)
-    }, RECEIPT_POLL_INTERVAL_MS)
+        .catch(() => {
+          if (!cancelled) schedule()
+        })
+    }
+    const schedule = () => {
+      timer = setTimeout(poll, attempts < RECEIPT_POLL_ATTEMPTS ? RECEIPT_POLL_INTERVAL_MS : RECEIPT_SLOW_POLL_INTERVAL_MS)
+    }
+    schedule()
     return () => {
       cancelled = true
-      clearInterval(timer)
+      clearTimeout(timer)
     }
   }, [hash, publicClient])
   // React Query may retain the prior query's data while a new hash starts.
@@ -513,6 +523,12 @@ export function useSafeTx(chainId: number) {
   // error leaves it pending/unknown, so the UI never invites a duplicate
   // submission merely because confirmation could not be read.
   const receiptReverted = phase === 'pending' && receiptData?.status === 'reverted'
+  // The receipt watch gave up on a transaction that has a hash. It may still
+  // land, so the send stays locked against a repeat until its receipt proves
+  // it, but nothing is in flight to hold a dialog open for.
+  const unconfirmed = !shownKey && phase === 'pending' && receipt.isError && !receiptData
+  const unconfirmedRef = useRef(false)
+  unconfirmedRef.current = unconfirmed
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
   // its action goes out until it ends, or the user dismisses an unproven
@@ -526,7 +542,9 @@ export function useSafeTx(chainId: number) {
       ? 'success'
       : receiptReverted
         ? 'error'
-        : phase
+        : unconfirmed
+          ? 'unconfirmed'
+          : phase
   const notice =
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
@@ -535,12 +553,6 @@ export function useSafeTx(chainId: number) {
         : proposal?.phase === 'unproven'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null
-  // The receipt watch gave up on a transaction that has a hash. It may still
-  // land, so the send stays locked against a repeat until its receipt proves
-  // it, but nothing is in flight to hold a dialog open for.
-  const unconfirmed = !shownKey && phase === 'pending' && receipt.isError && !receiptData
-  const unconfirmedRef = useRef(false)
-  unconfirmedRef.current = unconfirmed
   const effectiveError = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -548,7 +560,7 @@ export function useSafeTx(chainId: number) {
     : receiptReverted
       ? `Transaction reverted onchain${hash ? ` (${hash})` : ''}.`
       : unconfirmed
-        ? `Couldn't confirm yet${hash ? ` (${hash})` : ''}. Check the explorer before sending again.`
+        ? `Couldn't confirm yet. Check ${(hash && explorerTxUrl(chainId, hash)) || hash || 'the explorer'} before sending again.`
         : error
   const awaitingProposal =
     proposal?.phase === 'checking' || proposal?.phase === 'awaiting' ? proposal.proposalHash : null
@@ -770,7 +782,7 @@ export function useSafeTx(chainId: number) {
     busy:
       effectivePhase === 'simulating' ||
       effectivePhase === 'signing' ||
-      (effectivePhase === 'pending' && !unconfirmed),
+      effectivePhase === 'pending',
     /** The confirm can end on Done: the transaction succeeded, it is with a Safe, or its confirmation could not be read. */
     settled: effectivePhase === 'success' || effectivePhase === 'submitted' || unconfirmed,
     /** The one line a `submitted` confirm shows. */

@@ -1278,12 +1278,15 @@ export function PayPanel({
     tx.phase === "simulating" ||
     tx.phase === "signing" ||
     tx.phase === "pending" ||
+    tx.phase === "unconfirmed" ||
     approveTx.phase === "simulating" ||
     approveTx.phase === "signing" ||
     approveTx.phase === "pending" ||
+    approveTx.phase === "unconfirmed" ||
     routerApproveTx.phase === "simulating" ||
     routerApproveTx.phase === "signing" ||
     routerApproveTx.phase === "pending" ||
+    routerApproveTx.phase === "unconfirmed" ||
     sequenceStarted ||
     !!sequenceSafeStage;
 

@@ -749,7 +749,7 @@ function GossipRow({
   // Mark in-flight the moment the tx enters the mempool; clear on failure;
   // re-mark and refetch once it lands.
   useEffect(() => {
-    if (tx.phase === 'pending' || tx.phase === 'submitted') onSyncSent(key)
+    if (tx.phase === 'pending' || tx.phase === 'unconfirmed' || tx.phase === 'submitted') onSyncSent(key)
     else if (tx.phase === 'error') onSyncCleared(key)
     else if (tx.phase === 'success') {
       onSyncSent(key)

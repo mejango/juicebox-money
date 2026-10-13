@@ -370,6 +370,17 @@ describe('ModalDialog', () => {
   })
 })
 
+describe('a confirm error that carries a link', () => {
+  it('turns an explorer address in the error into a link', () => {
+    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1} action={null} complete={false}
+      onConfirm={() => {}} onClose={() => {}} error="Couldn't confirm yet. Check https://etherscan.io/tx/0xabc before sending again." />)
+    const link = only().querySelector('[role="alert"] a')!
+    expect(link.getAttribute('href')).toBe('https://etherscan.io/tx/0xabc')
+    expect(link.getAttribute('rel')).toContain('noopener')
+    expect(only().querySelector('[role="alert"]')!.textContent).toBe("Couldn't confirm yet. Check https://etherscan.io/tx/0xabc before sending again.")
+  })
+})
+
 describe('TxSteps failed steps', () => {
   it('shows × and a status on the failed step, and keeps earlier steps done', () => {
     render(<TxConfirmDialog open title="Confirm" action="Retry" onConfirm={() => {}} onClose={() => {}} activeIndex={1}

@@ -680,7 +680,7 @@ export function CashOutPanel({
       }
       onConfirm={() => void cashOut()}
       busy={busy}
-      complete={success || tx.phase === 'submitted' || approveTx.phase === 'submitted'}
+      complete={success || tx.phase === 'submitted' || approveTx.phase === 'submitted' || tx.phase === 'unconfirmed' || approveTx.phase === 'unconfirmed'}
       status={
         tx.notice || approveTx.notice ? (
           (tx.notice ?? approveTx.notice)

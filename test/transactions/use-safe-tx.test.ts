@@ -444,13 +444,13 @@ describe('useSafeTx', () => {
     })
 
     expect(hook.ref.current).toMatchObject({
-      phase: 'pending',
+      phase: 'unconfirmed',
       busy: false,
       settled: true,
       confirmationUncertain: true,
     })
     expect(hook.ref.current!.error).toMatch(/^Couldn't confirm yet/)
-    expect(hook.ref.current!.error).toContain(hook.ref.current!.hash)
+    expect(hook.ref.current!.error).toMatch(/https:\/\/\S+\/tx\/0x/)
     expect(hook.ref.current!.error).not.toMatch(/—|temporarily|Relayr/)
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
@@ -471,7 +471,7 @@ describe('useSafeTx', () => {
 
     await act(async () => hook.ref.current!.dismiss())
     await act(async () => hook.ref.current!.reset())
-    expect(hook.ref.current).toMatchObject({ phase: 'pending', hash, confirmationUncertain: true })
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', hash, confirmationUncertain: true })
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
@@ -485,6 +485,38 @@ describe('useSafeTx', () => {
     await act(async () => hook.ref.current!.reset())
     expect(hook.ref.current).toMatchObject({ phase: 'idle', hash: null })
     await act(async () => hook.renderer.unmount())
+  })
+
+  it('keeps checking slowly after the fast lookups end, so the lock clears by itself', async () => {
+    vi.useFakeTimers()
+    try {
+      const getTransactionReceipt = vi.fn().mockResolvedValue(null)
+      mocks.publicClient = { ...mocks.publicClient, getTransactionReceipt } as typeof mocks.publicClient
+      const hook = await renderHook()
+      await act(async () => {
+        await hook.ref.current!.send(request, reviewedByAlice)
+      })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => {
+        hook.renderer.update(createElement(Harness, { ref: hook.ref }))
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150 * 4_000 + 100)
+      })
+      const fast = getTransactionReceipt.mock.calls.length
+      expect(fast).toBe(150)
+      expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
+
+      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 9n, transactionHash: hook.ref.current!.hash })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000)
+      })
+      expect(getTransactionReceipt.mock.calls.length).toBeGreaterThan(fast)
+      expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
+      await act(async () => hook.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each([

@@ -142,7 +142,7 @@ export function TxConfirmDialog({
               {status ? <p role="status" className="text-sm text-bluebs-700">{typeof status === 'string' ? <LoadingText text={transactionMessage(status)} active={busy || action === null || undefined} /> : status}</p> : null}
             </>
           )}
-          {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? transactionMessage(error) : error}</p> : null}
+          {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? <LinkedText text={transactionMessage(error)} /> : error}</p> : null}
         </div>
         {complete || action || (busy && onCancel) ? (
           <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
@@ -191,6 +191,23 @@ export function TxConfirmDialog({
     >
       {section}
     </ModalDialog>
+  )
+}
+
+/** An explorer address inside a message becomes a link, so the line can say where to look. */
+function LinkedText({ text }: { text: string }) {
+  return (
+    <>
+      {text.split(/(https:\/\/[^\s]+?)(?=[.,;]?(?:\s|$))/).map((part, index) =>
+        index % 2 ? (
+          <a key={index} href={part} target="_blank" rel="noopener noreferrer" className="underline">
+            {part}
+          </a>
+        ) : (
+          part
+        ),
+      )}
+    </>
   )
 }
 

@@ -699,7 +699,7 @@ function MoveFlow({
           step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
         }
         busy={busy}
-        complete={step === 4 || tx.phase === 'submitted'}
+        complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
         status={
           preparing ? (
             'Checking the route and your balances…'
