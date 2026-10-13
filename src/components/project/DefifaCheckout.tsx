@@ -148,7 +148,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       } }
       const hash = await sendRecoverableDefifaWrite({
         scope: { chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' },
-        request, safe: engine.isSafe, options, onRecord: record => { recoveryRecord.current = record },
+        request, safe: engine.isSafe, options, client, onRecord: record => { recoveryRecord.current = record },
         send: approving ? (request, options) => approvalTx.send(request, options) : (request, options) => mintTx.send(request, options),
       })
       if (hash) {

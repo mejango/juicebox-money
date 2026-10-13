@@ -578,7 +578,7 @@ describe('compatible basic funding', () => {
     const original = readDefifaWriteRecovery(scope)!
     expect(original.hash).toBeUndefined()
     await click('Close review')
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     await click('Add to balance')
@@ -603,20 +603,24 @@ describe('compatible basic funding', () => {
     } }
     const panel = <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
     await act(async () => root.render(panel))
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
-    expect(host.textContent).toContain('Retrying this NFT action is blocked')
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet. Check your wallet."))
+    expect(host.textContent).toContain('I checked my wallet. Send again')
     await click('Add to balance')
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
     const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Payment mode"]')!
     await act(async () => { mode.value = 'pay'; mode.dispatchEvent(new Event('change', { bubbles: true })) })
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     await act(async () => root.unmount())
     root = createRoot(host)
     await act(async () => root.render(panel))
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     expect(wallet.writeContract).not.toHaveBeenCalled()
+    // The user checked their wallet: the hold ends and the NFT form returns.
+    await click('I checked my wallet. Send again')
+    await waitUntil(() => !host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
+    expect(readDefifaWriteRecovery(scope)).toBeNull()
   })
 
   for (const identity of ['defifa', 'unknown'] as const) {

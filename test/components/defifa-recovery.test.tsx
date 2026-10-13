@@ -50,17 +50,20 @@ beforeEach(() => {
 afterEach(async () => { if (root) await act(async () => root!.unmount()); root = undefined; queries?.clear(); document.body.innerHTML = ''; localStorage.clear() })
 
 describe('original native action recovery', () => {
-  it('retains hashless unknown after mode/tab unmount and reload without showing a new retry', async () => {
+  it('holds a hashless write across unmount and reload, with one line and the exit', async () => {
     await save(false); await render()
-    expect(host.textContent).toContain('wallet did not return a transaction identity')
+    expect(host.textContent).toContain("Your earlier NFT transfer hasn't confirmed yet. Check your wallet.")
     expect(host.textContent).not.toContain('Fresh NFT controls')
     expect(host.querySelector('input')).toBeNull()
-    expect(host.querySelector('button')).toBeNull()
+    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet. Send again'])
     await act(async () => root!.unmount()); root = undefined
     await render()
-    expect(host.textContent).toContain('Retrying this NFT action is blocked')
+    expect(host.textContent).toContain("Your earlier NFT transfer hasn't confirmed yet.")
     expect(readDefifaWriteRecovery(scope)?.hash).toBeUndefined()
     expect(m.verify).not.toHaveBeenCalled()
+    await click()
+    expect(readDefifaWriteRecovery(scope)).toBeNull()
+    expect(host.textContent).toContain('Fresh NFT controls')
   })
 
   it('recovers the known original request without a new quote and releases only after native proof', async () => {

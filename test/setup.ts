@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, vi } from 'vitest'
+import { clearTabWriteRecovery } from '@/lib/write-recovery'
 
 function blockedNetworkConstructor(transport: string) {
   return class {
@@ -11,6 +12,8 @@ function blockedNetworkConstructor(transport: string) {
 }
 
 beforeEach(() => {
+  // Writes held in a storage-less tab live in module memory: each test starts with none.
+  clearTabWriteRecovery()
   // React 19 requires test environments to opt into act() semantics
   // explicitly. Every renderer mutation in the component suites is wrapped
   // in act(), so advertise that contract and fail loudly if a future test is

@@ -1233,7 +1233,7 @@ export function PayPanel({
     if (!sequenceSafeStage) return;
     if (sequenceSafePhase === "error") {
       setSequenceSafeStage(null);
-      setSequenceError(sequenceSafeError ?? "The Safe action could not be completed.");
+      setSequenceError(typeof sequenceSafeError === "string" ? sequenceSafeError : "The Safe action could not be completed.");
       return;
     }
     if (sequenceSafePhase !== "success") return;

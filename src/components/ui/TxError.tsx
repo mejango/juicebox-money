@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import { transactionMessage } from '@/lib/transaction-message'
 
 /**
@@ -9,10 +10,12 @@ export function TxError({
   error,
   className = 'mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700',
 }: {
-  error: string | null | undefined
+  /** A message, or a held write's notice with its exit. */
+  error: string | ReactElement | null | undefined
   className?: string
 }) {
   if (!error) return null
+  if (typeof error !== 'string') return <p className={`wrap-anywhere ${className}`}>{error}</p>
   // Wallet errors carry unbroken hex; `wrap-anywhere` (unlike `break-words`)
   // also shrinks the min-content width, so one can't widen its container.
   return <p className={`wrap-anywhere ${className}`}>{transactionMessage(error)}</p>

@@ -203,7 +203,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     try {
       const hash = await sendRecoverableDefifaWrite({
         scope: { chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind },
-        request: plan.result.transaction, safe: tx.isSafe, send: (request, options) => tx.send(request, options),
+        request: plan.result.transaction, safe: tx.isSafe, client, send: (request, options) => tx.send(request, options),
         onRecord: record => { recovery.current = record; markWrite(record !== null) },
         options: {
         reviewedAccount: plan.account,

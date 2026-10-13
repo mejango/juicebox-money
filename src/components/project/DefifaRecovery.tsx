@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { getFunctionSelector, type Address, type Hex, type PublicClient } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { verifyReviewedWriteReceipt } from '@bananapus/nana-sdk-core/review'
+import { verifyReviewedWriteReceipt, WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
 import { DefifaNftTransactionRevertedError, restoreDefifaNftReceiptContext, verifyDefifaNftTransaction } from '@bananapus/nana-sdk-core/v6'
 import { reportedSafeExecution, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { explorerTxUrl } from '@/lib/chainDisplay'
@@ -13,7 +13,7 @@ import { chainName } from '@/lib/urn'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
-import { clearDefifaWriteRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
+import { abandonDefifaWriteRecovery, clearDefifaWriteRecovery, readDefifaWriteRecovery, resolveDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
 
@@ -50,6 +50,27 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     return () => { window.removeEventListener('storage', refresh); window.removeEventListener(DEFIFA_RECOVERY_CHANGE_EVENT, refresh) }
   }, [queries])
   const original = saved.data?.[0]
+  // An ordinary write saved without a hash may be proven by the chain: its
+  // exact call at the nonce the account had when the wallet opened.
+  const unhashed = original && !original.record.hash && !original.record.safe ? original : undefined
+  const unhashedRef = useRef(unhashed)
+  unhashedRef.current = unhashed
+  const unhashedId = unhashed?.record.id
+  useEffect(() => {
+    const current = unhashedRef.current
+    if (!unhashedId || !current || !client) return
+    void resolveDefifaWriteRecovery(current.scope, current.record, client).catch(() => {
+      // Unread: the hold stays, with its exit.
+    })
+  }, [unhashedId, client])
+  const exit = () => {
+    if (!original) return
+    try {
+      abandonDefifaWriteRecovery(original.scope, original.record)
+    } catch (reason) {
+      setError(describe(reason))
+    }
+  }
   const verify = async () => {
     if (!original?.record.hash || !client || checking) return
     const generation = actor.current.generation
@@ -94,14 +115,13 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
   if (saved.isLoading) return <p role="status" className="text-sm">Checking saved NFT actions…</p>
   if (saved.isError) return <div role="alert" className="card space-y-3 p-5"><p>{describe(saved.error)}</p><button className="btn-secondary px-4 py-2" onClick={() => void saved.refetch()}>Retry saved action</button></div>
   if (original) return <div className="card space-y-3 p-5">
-    <span className="field-label">Original {actionLabel[original.scope.action]}</span>
-    <p className="text-sm">This action is retained until its original outcome can be verified.</p>
-    <p className="break-all text-sm">Account: {original.record.account}</p>
-    <p className="text-sm">Network: {chainName(original.scope.chainId)}</p>
-    {original.record.hash ? <>
-      <p className="break-all text-sm">{original.record.safe ? 'Safe proposal' : 'Transaction'}: {original.record.hash}</p>
-      <button type="button" className="btn-primary px-4 py-2" disabled={checking} onClick={() => void verify()}>{checking ? 'Checking original transaction…' : 'Check original transaction'}</button>
-    </> : <p className="text-sm">The wallet did not return a transaction identity. Check its activity before taking further action. Retrying this NFT action is blocked; funding and other projects remain available.</p>}
+    <span className="field-label">Earlier {actionLabel[original.scope.action]} on {chainName(original.scope.chainId)}</span>
+    <p className="text-sm">{writeHeldMessage(actionLabel[original.scope.action])}</p>
+    <div className="flex flex-wrap gap-2">
+      {original.record.hash ? <button type="button" className="btn-primary px-4 py-2" disabled={checking} onClick={() => void verify()}>{checking ? 'Checking original transaction…' : 'Check original transaction'}</button> : null}
+      <button type="button" className="btn-secondary px-4 py-2" disabled={checking} onClick={exit}>{WRITE_EXIT_LABEL}</button>
+    </div>
+    <p className="text-xs text-smoke-600">{writeExitMessage(original.record.call, actionLabel[original.scope.action])}</p>
     {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
   </div>
   return <>{resolved ? <p className="mb-3 text-sm">{resolved.failed ? 'Original transaction failed onchain.' : 'Original transaction verified onchain.'} <a className="underline" target="_blank" rel="noopener noreferrer" href={explorerTxUrl(resolved.chainId, resolved.hash) ?? undefined}>View original transaction</a></p> : null}{children}</>

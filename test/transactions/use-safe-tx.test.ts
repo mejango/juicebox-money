@@ -1,5 +1,5 @@
 import { QueryClient } from '@tanstack/react-query'
-import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
+import { createElement, createRef, forwardRef, isValidElement, useImperativeHandle, type ReactElement } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import {
   encodeFunctionData,
@@ -74,7 +74,6 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   findPendingSafeAppProposal: mocks.findPendingSafeAppProposal,
 }))
 
-import { clearUnconfirmedSends } from '@/lib/unconfirmed-sends'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
@@ -105,6 +104,12 @@ const execTransaction = (data: Hex = encodeFunctionData({ abi: ABI, functionName
 
 type SafeTxValue = ReturnType<typeof useSafeTx>
 
+/** The held write's notice in place of an error: its props, with the exit. */
+function heldNotice(error: SafeTxValue['error']) {
+  if (!isValidElement(error)) throw new Error(`Expected a held write's notice, got ${String(error)}`)
+  return (error as ReactElement<{ chainId: number; hash: Hex | null; value: string; onExit: () => void }>).props
+}
+
 const Harness = forwardRef<SafeTxValue>(function Harness(_, ref) {
   const value = useSafeTx(10)
   useImperativeHandle(ref, () => value, [value])
@@ -121,7 +126,6 @@ async function renderHook() {
 }
 
 beforeEach(() => {
-  clearUnconfirmedSends()
   displayQueries.clear()
   mocks.account = ALICE
   mocks.chainId = 1
@@ -451,9 +455,7 @@ describe('useSafeTx', () => {
       settled: true,
       confirmationUncertain: true,
     })
-    expect(hook.ref.current!.error).toMatch(/^Couldn't confirm yet/)
-    expect(hook.ref.current!.error).toMatch(/https:\/\/\S+\/tx\/0x/)
-    expect(hook.ref.current!.error).not.toMatch(/—|temporarily|Relayr/)
+    expect(heldNotice(hook.ref.current!.error)).toMatchObject({ chainId: 10, hash: HASH, value: '7' })
     await act(async () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
@@ -509,7 +511,7 @@ describe('useSafeTx', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
     expect(reopened.ref.current).toMatchObject({ phase: 'unconfirmed', busy: false, settled: true, hash: HASH })
-    expect(reopened.ref.current!.error).toMatch(/^Couldn't confirm yet\. Check .*0x/)
+    expect(heldNotice(reopened.ref.current!.error)).toMatchObject({ hash: HASH })
     // A different call is not held by it.
     await act(async () => {
       await reopened.ref.current!.send({ ...request, args: [BOB, 2n] }, reviewedByAlice)
@@ -518,43 +520,88 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
-  it('lifts that lock by itself once the receipt lands, with no hook mounted', async () => {
-    vi.useFakeTimers()
-    try {
-      const getTransactionReceipt = vi.fn().mockResolvedValue(null)
-      mocks.publicClient = { ...mocks.publicClient, getTransactionReceipt } as typeof mocks.publicClient
-      const first = await renderHook()
-      await act(async () => {
-        await first.ref.current!.send(request, reviewedByAlice)
-      })
-      mocks.receipt = { data: undefined, isError: true }
-      await act(async () => {
-        first.renderer.update(createElement(Harness, { ref: first.ref }))
-      })
-      await act(async () => first.renderer.unmount())
-      mocks.receipt = { data: undefined, isError: false }
+  it('releases the hold once the chain shows its hash mined, showing that result instead of sending again', async () => {
+    const first = await renderHook()
+    await act(async () => {
+      await first.ref.current!.send(request, reviewedByAlice)
+    })
+    mocks.receipt = { data: undefined, isError: true }
+    await act(async () => {
+      first.renderer.update(createElement(Harness, { ref: first.ref }))
+    })
+    await act(async () => first.renderer.unmount())
+    mocks.receipt = { data: undefined, isError: false }
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(120_000)
-      })
-      expect(getTransactionReceipt).toHaveBeenCalled()
-      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 5n, transactionHash: HASH })
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000)
-      })
+    // The earlier transaction landed while no flow was open.
+    mocks.publicClient = {
+      ...mocks.publicClient,
+      getChainId: vi.fn(async () => 10),
+      getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => ({ hash, from: ALICE, nonce: 3, blockNumber: 5n })),
+    } as typeof mocks.publicClient
+    const reopened = await renderHook()
+    await act(async () => {
+      await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(reopened.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
+    mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
+    await act(async () => {
+      reopened.renderer.update(createElement(Harness, { ref: reopened.ref }))
+    })
+    expect(reopened.ref.current).toMatchObject({ phase: 'success', error: null })
 
-      const reopened = await renderHook()
-      await act(async () => {
-        await reopened.ref.current!.send(request, reviewedByAlice)
-      })
-      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
-      await act(async () => reopened.renderer.unmount())
-    } finally {
-      vi.useRealTimers()
-    }
+    // Its receipt ended the hold: the same call can be sent again.
+    mocks.receipt = { data: undefined, isError: false }
+    await act(async () => reopened.ref.current!.reset())
+    await act(async () => {
+      await reopened.ref.current!.send(request, reviewedByAlice)
+    })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    await act(async () => reopened.renderer.unmount())
   })
 
-  it('keeps checking slowly after the fast lookups end, so the lock clears by itself', async () => {
+  it('holds a write the wallet may have sent without a hash, with one line and the exit that sends it again', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    const hook = await renderHook()
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', busy: false, settled: true, hash: null, confirmationUncertain: true })
+    const notice = heldNotice(hook.ref.current!.error)
+    expect(notice).toMatchObject({ chainId: 10, hash: null, value: '7' })
+
+    // Closing and reopening the flow does not release it.
+    await act(async () => hook.ref.current!.reset())
+    await act(async () => {
+      await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(hook.ref.current!.phase).toBe('unconfirmed')
+
+    // The user checked their wallet: the same send runs again.
+    await act(async () => {
+      heldNotice(hook.ref.current!.error).onExit()
+    })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
+    await act(async () => hook.renderer.unmount())
+  })
+
+  it('releases its hold when the wallet refuses the write', async () => {
+    mocks.writeContract.mockRejectedValueOnce(new UserRejectedRequestError(new Error('User rejected')))
+    const hook = await renderHook()
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    expect(hook.ref.current).toMatchObject({ phase: 'error', error: 'Transaction cancelled.' })
+    await act(async () => {
+      await hook.ref.current!.send(request, reviewedByAlice)
+    })
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+    await act(async () => hook.renderer.unmount())
+  })
+
+  it('keeps checking slowly after the fast lookups end, so the hold clears by itself', async () => {
     vi.useFakeTimers()
     try {
       const getTransactionReceipt = vi.fn().mockResolvedValue(null)
@@ -571,7 +618,7 @@ describe('useSafeTx', () => {
         await vi.advanceTimersByTimeAsync(150 * 4_000 + 100)
       })
       const fast = getTransactionReceipt.mock.calls.length
-      // The hook's 150 lookups, plus the held send's own, which keep going without it.
+      // The hook's 150 fast lookups.
       expect(fast).toBeGreaterThanOrEqual(150)
       expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
 
