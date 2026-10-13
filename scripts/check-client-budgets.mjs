@@ -251,7 +251,9 @@ const budgets = {
   // SDK 2.31.0 and the SDK's write recovery for every ordinary write (durable
   // holds, chain release, the exit) in place of that registry measure 2592.5 KiB
   // against 2587.4 KiB on the same toolchain. Round only the aggregate up.
-  allScripts: 2593 * KIB,
+  // Holding a write until its receipt is final, the pending line in place of
+  // the exit, and keeping a ran Safe proposal across reloads measure 2593.7 KiB.
+  allScripts: 2594 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
