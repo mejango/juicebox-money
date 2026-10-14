@@ -27,7 +27,7 @@ import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  permit2ApproveIntent,
+  approvalStepIntent,
 } from '@/lib/transaction-builders'
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
@@ -503,7 +503,8 @@ function AddLiquidityForm({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          { reviewedAccount },
+          // Its amount follows the live pool: held as a step of the user's action.
+          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -514,7 +515,7 @@ function AddLiquidityForm({
           amount: step.amount,
           expiration: step.expiration,
         })
-        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
+        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, p.posm) })
       }
       // Deadline is set at send time — everything that touches funds is
       // frozen inside unlockData. An EOA gets ~20 min like website; a Safe

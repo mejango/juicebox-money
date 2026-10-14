@@ -33,7 +33,7 @@ import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  permit2ApproveIntent,
+  approvalStepIntent,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -352,7 +352,8 @@ export function EditPositionPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          { reviewedAccount },
+          // Its amount follows the live pool: held as a step of the user's action.
+          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -363,7 +364,7 @@ export function EditPositionPanel({
           amount: step.amount,
           expiration: step.expiration,
         })
-        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
+        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, positionManager) })
       }
       // Everything that touches funds is frozen inside unlockData; only the
       // deadline is stamped at send time.

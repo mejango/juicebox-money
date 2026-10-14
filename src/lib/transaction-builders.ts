@@ -704,15 +704,43 @@ export function buildPermit2ApproveRequest({
   }
 }
 
-/**
- * A Permit2 approve(token, spender, amount, expiration)'s write intent: its
- * token, spender and amount. Its expiration restamps on every review, so it's left out.
- */
-export function permit2ApproveIntent(request: { chainId: number; args: readonly unknown[] }): string {
-  const [token, spender, amount] = request.args as readonly [string, string, bigint]
-  return writeIntentKey('permit2-approve', {
-    chainId: request.chainId, token: intent.address(token), spender: intent.address(spender), amount: BigInt(amount),
+// Write intents: one per user action, from what the user chose and the identity
+// of what is acted on. What the app picks (route, venue, quote, price, a clamp or
+// computed total) never goes in, so a retry after it changes is still held.
+
+type Chosen = { chainId: number; projectId: number; beneficiary: string; memo: string }
+
+/** A payment: the token the user pays with and the typed amount, whatever route (pay or swap) carries it. */
+export function paymentIntent(p: Chosen & { token: string; amount: bigint }): string {
+  return writeIntentKey('pay', {
+    chainId: p.chainId, projectId: p.projectId, token: intent.address(p.token), amount: p.amount,
+    beneficiary: intent.address(p.beneficiary), memo: p.memo,
   })
+}
+
+/** A checkout: the collection and the items the user chose, as sorted [tier, quantity] pairs; never its priced total. */
+export function checkoutIntent(p: Chosen & { token: string; hook: string; items: Record<number, number> }): string {
+  const items = Object.entries(p.items)
+    .filter(([, quantity]) => quantity > 0)
+    .map(([tierId, quantity]) => [Number(tierId), quantity])
+    .sort(([a], [b]) => a - b)
+  return writeIntentKey('checkout', {
+    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook), items, token: intent.address(p.token),
+    beneficiary: intent.address(p.beneficiary), memo: p.memo,
+  })
+}
+
+/** A cash-out of the typed amount, whatever venue (a pool sale or the terminal) serves it. */
+export function cashOutIntent(p: Omit<Chosen, 'memo'> & { token?: string | null; amount: bigint }): string {
+  return writeIntentKey('cash-out', {
+    chainId: p.chainId, projectId: p.projectId, token: p.token ? intent.address(p.token) : null, amount: p.amount,
+    beneficiary: intent.address(p.beneficiary),
+  })
+}
+
+/** An approval step of a user action: its parent intent, the step, token and spender; never its computed amount or expiration. */
+export function approvalStepIntent(parent: string, step: string, token: string, spender: string): string {
+  return writeIntentKey('approval', { parent, step, token: intent.address(token), spender: intent.address(spender) })
 }
 
 /** Exact final Uniswap V4 PositionManager call with frozen mint bytes/value. */

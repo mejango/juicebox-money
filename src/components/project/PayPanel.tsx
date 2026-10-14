@@ -73,8 +73,10 @@ import {
 import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
+  approvalStepIntent,
   buildErc20ApproveRequest,
-  permit2ApproveIntent,
+  checkoutIntent,
+  paymentIntent,
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
@@ -274,10 +276,12 @@ export function PayPanel({
   const { isConnected, address, openSignIn } = useWallet();
   const {
     quantities: cart,
+    chosen: chosenCart,
     items: cartItems,
     count: cartCount,
     setQuantity,
     registerItem,
+    reconcile,
     clear: clearCart,
   } = useShopCart();
 
@@ -657,16 +661,16 @@ export function PayPanel({
       });
       const quantity = cart[tier.id] ?? 0;
       const cap = tier.unlimited ? 99 : tier.remaining;
-      if (quantity > cap) setQuantity(tier.id, cap);
+      if (quantity > cap) reconcile(tier.id, cap);
     }
     // Only ever prune against a COMPLETE tier list. `shop` is now paged to completion, so an
     // id missing from it really is gone from the shop — but the guard stays explicit, because
     // the failure mode is destroying a shopper's cart, and it is silent.
     if (!shop.tiersComplete) return;
     for (const id of Object.keys(cart).map(Number)) {
-      if (!liveIds.has(id)) setQuantity(id, 0);
+      if (!liveIds.has(id)) reconcile(id, 0);
     }
-  }, [shop, cart, registerItem, setQuantity]);
+  }, [shop, cart, registerItem, reconcile]);
 
   const { data: shopCredits = 0n, isLoading: shopCreditsLoading } = useQuery({
     queryKey: ["payShopCredits", chainId, shop?.hook, address],
@@ -1312,6 +1316,14 @@ export function PayPanel({
   const preparePaymentSequence = (): PaymentSequenceAction[] => {
     if (!address || !context || !terminalAddress) return [];
     const actions: PaymentSequenceAction[] = [];
+    // One intent for what the user chose, whatever route, price or clamp the app applies.
+    const chosen = { chainId, projectId, token: context.token, beneficiary: address, memo: memo.trim() };
+    const paymentKey =
+      mode !== "pay"
+        ? writeIntentKey("add-to-balance", { chainId, projectId, token: intent.address(context.token), amount: amountRaw, memo: memo.trim() })
+        : metadata && shop
+          ? checkoutIntent({ ...chosen, hook: shop.hook, items: chosenCart })
+          : paymentIntent({ ...chosen, amount: amountRaw });
     if (needsApproval && approvalSpender) {
       actions.push({
         kind: "token-approval",
@@ -1322,6 +1334,7 @@ export function PayPanel({
           spender: approvalSpender,
           amount: amountRaw,
         }),
+        intent: approvalStepIntent(paymentKey, "token-approval", context.token, approvalSpender),
       });
     }
     if (needsPermit2Approval && swapDeployment?.universalRouter) {
@@ -1362,7 +1375,7 @@ export function PayPanel({
             args: request.args as unknown as readonly unknown[],
             label: "Authorize Uniswap swap router",
           },
-          intent: permit2ApproveIntent(request),
+          intent: approvalStepIntent(paymentKey, "router-approval", context.token, swapDeployment.universalRouter),
         });
       }
     }
@@ -1426,12 +1439,8 @@ export function PayPanel({
           : "Add to the project balance",
       request: paymentRequest,
       swapInputRoute: activeSwapQuote?.inputRoute,
-      // Its deadline restamps and its minimum re-quotes on retry: held by what the user chose.
-      intent: writeIntentKey(mode === "pay" ? (activeSwapQuote ? "pay-swap" : "pay") : "add-to-balance", {
-        chainId, projectId, terminal: intent.address(terminalAddress), token: intent.address(context.token), amount: amountRaw,
-        beneficiary: intent.address(address), memo: memo.trim(),
-        metadata: mode === "pay" && !activeSwapQuote && metadata ? intent.hex(metadata) : undefined,
-      }),
+      // Its deadline restamps, its minimum re-quotes and its route may change on retry: held by what the user chose.
+      intent: paymentKey,
     });
     return actions;
   };
@@ -1561,7 +1570,7 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedAccount: account },
+          { reviewedAccount: account, intent: tokenApproval.intent },
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1639,7 +1648,7 @@ export function PayPanel({
               args: request.args as unknown as readonly unknown[],
               label: "Authorize Uniswap swap router",
             },
-            intent: permit2ApproveIntent(request),
+            intent: approvalStepIntent(paymentAction.intent!, "router-approval", routerSignature.authorization.token, routerSignature.authorization.spender),
           };
           setSequenceActions(current =>
             current.map(action =>

@@ -43,7 +43,6 @@ import {
   buildInitializeBuybackPoolAuthorityCall,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  permit2ApproveIntent,
   buildProjectOwnershipAuthorityCall,
   buildProjectPowerAuthorityCall,
   buildRevnetOperatorAuthorityCall,
@@ -609,14 +608,6 @@ describe('remaining local transaction builders', () => {
     expect(retainedFloor(0n)).toBe(0n)
     expect(retainedFloor(1n)).toBe(1n)
     expect(retainedFloor(1_000n)).toBe(950n)
-  })
-
-  it("holds a Permit2 approval by its token, spender and amount, never its restamped expiration", () => {
-    const approval = (amount: bigint, expiration: number, token: string = TOKEN) =>
-      permit2ApproveIntent(buildPermit2ApproveRequest({ chainId: CHAIN_ID, token: token as typeof TOKEN, positionManager: TERMINAL, amount, expiration }))
-    expect(approval(5n, 1)).toBe(approval(5n, 2))
-    expect(approval(5n, 1)).toBe(approval(5n, 1, TOKEN.toUpperCase().replace('0X', '0x')))
-    expect(approval(5n, 1)).not.toBe(approval(6n, 1))
   })
 
   it('wallet-action:authorize-the-uniswap-position-manager wallet-action:add-uniswap-v4-liquidity pins Permit2 approval and final PositionManager bytes, deadline, and value', () => {

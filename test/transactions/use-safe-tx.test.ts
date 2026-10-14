@@ -88,6 +88,7 @@ import { writeHolds } from '@/lib/write-holds'
 
 import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
+import { approvalStepIntent, cashOutIntent, checkoutIntent, paymentIntent } from '@/lib/transaction-builders'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -572,6 +573,38 @@ describe('useSafeTx', () => {
       expect(mocks.writeContract).toHaveBeenCalledOnce()
       otherTab.dispose()
       await act(async () => hook.renderer.unmount())
+    })
+
+    // One intent per user action: what the app picks (route, venue, price, computed amounts) never splits it.
+    const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
+    const HOOK = '0x4444444444444444444444444444444444444444' as Address
+    const payment = { chainId: 10, projectId: 7, token: BOB, amount: 5n, beneficiary: ALICE, memo: 'gm' }
+    it.each([
+      ['a payment whose route changed from pay to swap', paymentIntent(payment), paymentIntent({ ...payment })],
+      ['a checkout whose price moved, its items the same', checkoutIntent({ ...payment, hook: HOOK, items: { 2: 1, 1: 3 } }),
+        checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3, 2: 1 } })],
+      ['a cash-out whose venue changed from pool to terminal', cashOutIntent({ ...payment, token: BOB }), cashOutIntent({ ...payment, token: BOB })],
+      ['an approval step whose computed amount changed', approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL),
+        approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL)],
+    ])('refuses %s after a lost reply, before the wallet', async (_case, first, retry) => {
+      expect(retry).toBe(first)
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: first }) })
+      await act(async () => hook.ref.current!.reset())
+      // The retry's calldata differs (another route, venue, price or amount): its intent still holds it.
+      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, { ...reviewedByAlice, intent: retry }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('keeps different user choices apart', () => {
+      expect(paymentIntent({ ...payment, amount: 6n })).not.toBe(paymentIntent(payment))
+      expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
+      expect(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 2 } })).not.toBe(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }))
+      expect(cashOutIntent({ ...payment, token: BOB, amount: 6n })).not.toBe(cashOutIntent({ ...payment, token: BOB }))
+      expect(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:b', 'permit2', BOB, TERMINAL))
+      expect(approvalStepIntent('intent:a', 'erc20', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL))
     })
 
     it('keys an intent by the action and its chosen parameters only, in one place', () => {

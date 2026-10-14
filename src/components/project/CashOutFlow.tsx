@@ -43,11 +43,10 @@ import {
   isNativeToken,
   minimumDropNotice,
 } from '@/lib/cashOut'
-import { buildErc20ApproveRequest as buildTokenApproval, permit2ApproveIntent } from '@/lib/transaction-builders'
+import { approvalStepIntent, buildErc20ApproveRequest as buildTokenApproval, cashOutIntent } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { chainName } from '@/lib/urn'
 import Link from 'next/link'
 
@@ -509,6 +508,8 @@ export function CashOutPanel({
     if (!plan || !address || busy) return
     setErrorMsg(null)
     const reviewedAccount = plan.account
+    // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
+    const cashOutKey = cashOutIntent({ chainId, projectId, token: projectToken?.address, amount: cashOutCount, beneficiary: reviewedAccount })
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
@@ -539,7 +540,7 @@ export function CashOutPanel({
               args: approval.args as unknown as readonly unknown[],
               label: 'Approve swap router',
             },
-            { reviewedAccount, intent: permit2ApproveIntent(approval) },
+            { reviewedAccount, intent: approvalStepIntent(cashOutKey, 'router-approval', projectToken.address, approval.args[1] as string) },
           )
           return
         }
@@ -591,7 +592,7 @@ export function CashOutPanel({
           {
             reviewedAccount,
             // Its deadline and minimum regenerate on retry: held by what the user chose.
-            intent: writeIntentKey('pool-sell', { chainId, projectId, token: intent.address(projectToken.address), amount: cashOutCount, recipient: intent.address(reviewedAccount) }),
+            intent: cashOutKey,
             reviewNotice: minimumDropNotice({
               displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
@@ -609,9 +610,7 @@ export function CashOutPanel({
         reviewedAccount,
         reviewNotice: plan.reviewNotice,
         // Its minimum re-quotes on retry: held by what the user chose.
-        intent: writeIntentKey('cash-out', {
-          chainId, projectId, terminal: intent.address(plan.request.address), call: plan.request.functionName, amount: cashOutCount, beneficiary: intent.address(reviewedAccount),
-        }),
+        intent: cashOutKey,
       })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))

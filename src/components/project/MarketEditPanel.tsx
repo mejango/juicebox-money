@@ -35,7 +35,7 @@ import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  permit2ApproveIntent,
+  approvalStepIntent,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -287,7 +287,8 @@ export function MarketEditPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          { reviewedAccount },
+          // Its amount follows the live pool: held as a step of the user's action.
+          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
         )
       }
       if (step.kind === 'permit2-approve') {
@@ -298,7 +299,7 @@ export function MarketEditPanel({
           amount: step.amount,
           expiration: step.expiration,
         })
-        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
+        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, positionManager) })
       }
       return tx.send(
         buildModifyLiquiditiesRequest({
