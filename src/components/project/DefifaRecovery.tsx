@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { getFunctionSelector, type Address, type Hex, type PublicClient } from 'viem'
@@ -12,10 +12,10 @@ import { explorerTxUrl } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
 import { clearDefifaWriteRecovery, defifaWriteHold, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 /** How often a shown hold is asked again while this card is open. */
-const HOLD_RECHECK_MS = 60_000
 const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
 
@@ -55,34 +55,14 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
   // The SDK's write hold says what is held: its line, and the exit only for
   // a state that offers it (no known hash, a dropped one, a replaced Safe nonce).
   const [held, setHeld] = useState<WriteHeldState | null>(null)
-  const originalRef = useRef(original)
-  originalRef.current = original
   const originalId = original?.record.id
-  const clientRef = useRef(client)
-  clientRef.current = client
-  const hasClient = !!client
-  /** Ask the hold again: on show, on a timer while shown, and after a manual check. */
-  const recheck = useRef<() => void>(() => {})
-  useEffect(() => {
-    const current = originalRef.current
-    const client = clientRef.current
-    if (!originalId || !current || !client) return
-    let live = true
-    const hold = defifaWriteHold(current.scope, current.record)
-    const show = (state: Awaited<ReturnType<typeof hold.state>>) => {
-      if (!live) return
-      if (state.status === 'clear') notifyRecovery()
-      else setHeld(state)
-    }
-    // Another tab, or the hold's own follow, may change it.
-    const stop = hold.subscribe(show)
-    const check = () => { void hold.state(client as never).then(show, () => {}) }
-    recheck.current = check
-    check()
-    // An exit can become due with time (a hash unseen for 30 minutes).
-    const timer = setInterval(check, HOLD_RECHECK_MS)
-    return () => { live = false; stop(); clearInterval(timer); recheck.current = () => {} }
-  }, [originalId, hasClient])
+  // One hold per saved attempt, asked at once, on a timer while shown, and after a manual check.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the attempt; its evidence changes within it
+  const hold = useMemo(() => (original ? defifaWriteHold(original.scope, original.record) : undefined), [originalId])
+  const recheck = useWriteHoldWatch(client ? hold : undefined, client as never, state => {
+    if (state.status === 'clear') notifyRecovery()
+    else setHeld(state)
+  }, { checkNow: true })
   const shownHeld = held && original && held.record.id === original.record.id ? held : null
   const exit = async () => {
     if (!original || !client || !shownHeld?.exit) return
@@ -135,7 +115,7 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     } catch (reason) { if (actor.current.generation === generation) setError(describe(reason)) }
     finally {
       if (actor.current.generation === generation) setChecking(false)
-      recheck.current()
+      recheck()
     }
   }
   if (active || !account) return children

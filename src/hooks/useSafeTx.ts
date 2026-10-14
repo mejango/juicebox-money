@@ -24,6 +24,7 @@ import {
   useWriteContract,
 } from 'wagmi'
 import { useWallet } from '@/hooks/useWallet'
+import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { submitReviewedContractWrite } from '@/lib/contract-write'
 import { captureWalletContext } from '@/lib/wallet-context'
 import {
@@ -37,6 +38,7 @@ import {
   WriteHoldBusyError,
   WriteHoldNonceError,
   type WriteHeldState,
+  type WriteHoldClient,
   type WriteHoldSettled,
   type WriteHoldGate,
   type WriteHoldHandle,
@@ -66,8 +68,6 @@ import {
   type SafeAppCall,
 } from '@/lib/safe-connector'
 
-/** How often a shown hold is asked again, so an exit that becomes due with time appears. */
-const HOLD_RECHECK_MS = 60_000
 /** How long the block-subscription watcher gets before its silence is reported. */
 const RECEIPT_WATCH_TIMEOUT_MS = 120_000
 const RECEIPT_POLL_INTERVAL_MS = 4_000
@@ -700,26 +700,17 @@ export function useSafeTx(chainId: number) {
   }, [watchGaveUp, showHeld])
   // While a hold is shown, another tab or the hold's own follow may change it.
   const shownHold = phase === 'unconfirmed' ? held?.hold : undefined
-  useEffect(() => {
-    if (!shownHold || !publicClient) return
-    // Asked again while shown, so an exit that becomes due with time appears.
-    const timer = setInterval(() => { void shownHold.state(publicClient as never).catch(() => {}) }, HOLD_RECHECK_MS)
-    return () => clearInterval(timer)
-  }, [shownHold, publicClient])
-  useEffect(() => {
-    if (!shownHold) return
-    return shownHold.subscribe(state => {
-      const current = heldRef.current
-      if (!current || current.hold !== shownHold) return
-      if (exitingRef.current === shownHold) {
-        if (state.status === 'clear' && state.settled) exitSettledRef.current = state.settled
-        return
-      }
-      if (state.status === 'clear') {
-        if (!receiptShownRef.current) endHeld(state.settled)
-      } else showHoldState(current, state)
-    })
-  }, [shownHold, endHeld, showHoldState])
+  useWriteHoldWatch(shownHold, publicClient as WriteHoldClient | undefined, state => {
+    const current = heldRef.current
+    if (!current || current.hold !== shownHold) return
+    if (exitingRef.current === shownHold) {
+      if (state.status === 'clear' && state.settled) exitSettledRef.current = state.settled
+      return
+    }
+    if (state.status === 'clear') {
+      if (!receiptShownRef.current) endHeld(state.settled)
+    } else showHoldState(current, state)
+  })
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
   // the signers decide, and when its result can't be proven here; no send of
