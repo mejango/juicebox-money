@@ -84,7 +84,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'
 import { LAUNCH_SESSION_KEY, loadLaunchSession } from '@/lib/launch-session'
 import { launchHold } from '@/lib/launch-hold'
-import { DRAFT_KEY } from '@/lib/draft'
 
 let host: HTMLDivElement
 let root: Root
@@ -310,7 +309,7 @@ describe('a saved launch restored on the create page', () => {
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
-  it('keeps a launched chain its own project when another chain is retired through the check: it leaves the selection, and nothing of the old launch stays to pin from', async () => {
+  it('keeps the journal of a launch with a completed chain when another chain is retired through the check: the rest resumes as the same project', async () => {
     // Chain 1 launched; chain 10 was signing with no hold of its own when the page closed.
     localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
       transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
@@ -322,11 +321,35 @@ describe('a saved launch restored on the create page', () => {
     await settle()
     await act(async () => button('I checked it. Launch again')!.click())
     await settle()
-    // The old launch (its salt) is gone, so the next launch pins a fresh one...
-    expect(loadLaunchSession()).toBeNull()
-    // ...for chain 10 only: chain 1 keeps its project and leaves the selection (the form saves it).
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
-    expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!).chains).toEqual([10])
+    // A journal holding a completed chain is never deleted: chain 1 keeps its project, chain 10 is retired.
+    const journal = loadLaunchSession()
+    expect(journal?.salt).toBe(SALT)
+    expect(journal?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
+    expect(journal?.statuses[10]).toMatchObject({ phase: 'failed' })
+    expect(journal?.statuses[10]?.txHash).toBeUndefined()
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('refuses a stale check once another tab completed that chain, even saved as done without settled, and keeps the journal', async () => {
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' }, 10: { projectName: 'Launch' } }, chains: [1, 10],
+      statuses: { 1: { phase: 'signing' }, 10: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    const checked = button('I checked it. Launch again')
+    expect(checked, 'the check').toBeDefined()
+    // Meanwhile another tab completed chain 1 (a main-era success: done, no settled flag) and chain 10 failed.
+    const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
+    session.statuses = { 1: { phase: 'done', projectId: 5 }, 10: { phase: 'failed' } }
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
+    await act(async () => checked!.click())
+    await settle()
+    const journal = loadLaunchSession()
+    expect(journal, 'the journal').not.toBeNull()
+    expect(journal?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 

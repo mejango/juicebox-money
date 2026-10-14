@@ -69,6 +69,7 @@ import {
 import {
   abandonLaunchSession,
   discardUnreadableLaunchSession,
+  isLaunchChainSuccess,
   canAbandonRelayrLaunch,
   canAbandonDirectLaunch,
   completeLaunchSession,
@@ -2173,6 +2174,21 @@ export function CreateForm() {
     setConfirmOpen(false);
   };
 
+  /**
+   * Takes the strict journal as the truth (another tab may have completed or failed chains) and
+   * reports whether the shown chain is a saved success, which a check or an exit never retires.
+   */
+  const keptSuccess = (journal: LaunchSession) => {
+    const shown = launchHeldRef.current;
+    statusesRef.current = journal.statuses;
+    setStatuses(journal.statuses);
+    const status = shown ? journal.statuses[shown.chainId] : undefined;
+    if (!isLaunchChainSuccess(status)) return false;
+    setLaunchHeld(null);
+    setLaunchError(status?.phase === "done" ? null : LAUNCH_SETTLED_CONFIRMING_LINE);
+    return true;
+  };
+
   /** The user checked their wallet: the hold decides whether this launch is sent again. */
   const exitLaunchHeld = async () => {
     const shown = launchHeldRef.current;
@@ -2181,11 +2197,7 @@ export function CreateForm() {
     // nothing, and keeps the attempt and its action.
     const journal = readLaunchForRetirement();
     if (!journal) return;
-    if (journal.statuses[shown.chainId]?.settled) {
-      setLaunchHeld(null);
-      setLaunchError(LAUNCH_SETTLED_CONFIRMING_LINE);
-      return;
-    }
+    if (keptSuccess(journal)) return;
     if (shown.hold && shown.state) {
       const client = getPublicClient(config, { chainId: shown.chainId as SupportedChainId }) as PublicClient;
       launchExitingRef.current = true;
@@ -2207,11 +2219,7 @@ export function CreateForm() {
     // success saved here or by another tab is never retired by a check or an exit.
     const latest = readLaunchForRetirement();
     if (!latest) return;
-    if (latest.statuses[shown.chainId]?.settled) {
-      setLaunchHeld(null);
-      setLaunchError(LAUNCH_SETTLED_CONFIRMING_LINE);
-      return;
-    }
+    if (keptSuccess(latest)) return;
     // The user took the exit (or checked it): the saved submission retires, so neither a
     // new launch nor abandoning this one asks for proof of it again.
     updateStatus(shown.chainId, {
@@ -2220,12 +2228,11 @@ export function CreateForm() {
     });
     setLaunchHeld(null);
     setLaunchError(null);
-    // A deliberate new launch never reuses the retired attempt's salt (as revnet): its
-    // launch is retired too and the form reopens; the next launch pins a fresh salt.
-    // Chains that already launched stay their own project, so they leave the selection.
-    const launched = selected.filter(id => statusesRef.current[id]?.phase === "done");
+    // A journal holding a completed chain is never deleted: the rest resumes as the same project.
+    if (latest.chains.some(id => latest.statuses[id]?.phase === "done")) return;
+    // Otherwise a deliberate new launch never reuses the retired attempt's salt (as revnet):
+    // its launch is retired too and the form reopens; the next launch pins a fresh salt.
     await abandonLaunch();
-    if (launched.length > 0) setSelected(current => current.filter(id => !launched.includes(id)));
   };
 
   const recoverSafeSetup = async (chainId: number, cancelled = false) => {

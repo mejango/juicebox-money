@@ -98,17 +98,22 @@ function reviver(_key: string, value: unknown): unknown {
     : value
 }
 
+/** A saved success: settled by its hold, or completed (`done`, including records saved before `settled` existed). */
+export function isLaunchChainSuccess(status: { phase?: unknown; settled?: unknown } | undefined): boolean {
+  return status?.settled === true || status?.phase === 'done'
+}
+
 export function saveLaunchSession(session: LaunchSession): boolean {
   if (typeof window === 'undefined') return false
   try {
     const existing = window.localStorage.getItem(LAUNCH_SESSION_KEY)
     if (existing) {
-      const saved = JSON.parse(existing, reviver) as { salt?: unknown; statuses?: Record<number, { settled?: unknown } | undefined> }
+      const saved = JSON.parse(existing, reviver) as { salt?: unknown; statuses?: Record<number, { phase?: unknown; settled?: unknown } | undefined> }
       if (typeof saved.salt === 'string' && saved.salt !== session.salt) return false
       // A saved success is never overwritten by a copy without it (invariant D).
       for (const [chainId, status] of Object.entries(saved.statuses ?? {})) {
         const next = session.statuses[Number(chainId)]
-        if (status?.settled === true && !next?.settled && next?.phase !== 'done') return false
+        if (isLaunchChainSuccess(status) && !isLaunchChainSuccess(next)) return false
       }
     }
     window.localStorage.setItem(
@@ -316,7 +321,7 @@ export function recordLaunchChainStatus(
   if (!session || (expectedSalt && session.salt !== expectedSalt) || !session.chains.includes(chainId)) return false
   // A saved success is never overwritten by anything but its own progress (invariant D).
   const saved = session.statuses[chainId]
-  if (saved?.settled && !status.settled && status.phase !== 'done') return false
+  if (isLaunchChainSuccess(saved) && !isLaunchChainSuccess(status)) return false
   const multisigSetup = status.multisigSetup ?? session.statuses[chainId]?.multisigSetup
   return saveLaunchSession({
     ...session,
