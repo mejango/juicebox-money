@@ -842,6 +842,28 @@ describe('a Safe proposal an app journal holds (Defifa)', () => {
   })
 })
 
+describe('a queued Safe proposal this app adopts', () => {
+  it('is saved in its write hold, so after it ends unproven and Done, a send the queue no longer matches proposes nothing and shows the exit', async () => {
+    const queuedHash = canonicalSafeTxHash(10, SAFE, safeProposalFor({ to: BOB, data: callData, value: 7n }, 5))
+    mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: queuedHash, call: { to: BOB, data: callData, value: 7n } })
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    const flow = await mount()
+    await expect(flow.send()).resolves.toBe(queuedHash)
+    await settle()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    await act(async () => flow.tx.dismiss())
+    // The queue lookup misses it now: the write hold still holds it.
+    await flow.send()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
+    // Only the accepted exit proposes it.
+    await act(async () => (flow.tx.error as ReactElement<{ onExit?: () => void }>).props.onExit!())
+    await settle()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+})
+
 describe('a queued Safe proposal an app journal adopts (Defifa)', () => {
   it("reports the adopted proposal's unproven end to the journal's hold, so its exit appears and accepting it proposes exactly once more", async () => {
     const { defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite } = await import('@/lib/defifa-write-recovery')

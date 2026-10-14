@@ -913,6 +913,29 @@ export function useSafeTx(chainId: number) {
                 return null
               }
             }
+            if (queued && !options.heldBy) {
+              // An adopted proposal is saved in its write hold, as a sent one is,
+              // so its end, a dismissal or a reload never let it be proposed again
+              // without the user's exit.
+              const adopt = safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
+              const adopted = queued
+              try {
+                await adopt.send(publicClient as never, async gate => {
+                  await gate.beforeSend(adopted.call)
+                  gate.afterSubmit(adopted.proposalHash, adopted.tx)
+                })
+              } catch (error) {
+                // Already held: the same proposal follows as before; another is shown as held.
+                if (!(error instanceof WriteHeldError) || error.state.record.hash !== adopted.proposalHash.toLowerCase()) {
+                  inFlightRef.current = false
+                  if (error instanceof WriteHeldError) {
+                    showHoldState({ hold: adopt, request, options, proposalKey: key }, error.state)
+                    return null
+                  }
+                  throw error
+                }
+              }
+            }
             if (holdsCall(held) || queued) {
               registerExternalHold(key, options.heldBy, publicClient)
               if (queued) {
