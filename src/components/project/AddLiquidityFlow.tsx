@@ -235,6 +235,15 @@ function activeSides(
 
 // ----------------------------------------------------------------- component --
 
+type AmountEntry = 'typed' | 'max' | 'filled'
+
+/** An amount in a write intent: what was typed, or Max as all of it; a side filled from the other is left out (null). */
+function amountKey(entry: AmountEntry, amount: bigint, mode: string): bigint | 'max' | null {
+  if (entry === 'max') return 'max'
+  // In amounts mode both fields are the user's; elsewhere a filled side follows the price.
+  return entry === 'filled' && mode !== 'amounts' ? null : amount
+}
+
 export function AddLiquidityFlow({
   chainId,
   projectId,
@@ -398,6 +407,11 @@ function AddLiquidityForm({
   const [maxStr, setMaxStr] = useState('')
   const [tokStr, setTokStr] = useState('')
   const [pairStr, setPairStr] = useState('')
+  /**
+   * How each amount was chosen, for the write intent: typed, Max (all of it,
+   * whatever the balance is by then), or filled from the other side.
+   */
+  const [entries, setEntries] = useState<Record<'tok' | 'pair', AmountEntry>>({ tok: 'typed', pair: 'typed' })
   const seededRef = useRef(false)
 
   // Seed the default range once the pool price is known (website lpDefaultRange).
@@ -610,7 +624,10 @@ function AddLiquidityForm({
 
   // In amounts mode both fields are free-typed (the range absorbs the ratio);
   // in range mode the classic counterpart autofill keeps them coupled.
-  const onAmountInput = (side: 'tok' | 'pair', v: string) => {
+  const onAmountInput = (side: 'tok' | 'pair', v: string, entry: AmountEntry = 'typed') => {
+    setEntries(current => mode === 'amounts'
+      ? { ...current, [side]: entry }
+      : side === 'tok' ? { tok: entry, pair: 'filled' } : { tok: 'filled', pair: entry })
     if (mode !== 'amounts') {
       if (side === 'tok') setTok(v)
       else setPairAmt(v)
@@ -623,14 +640,14 @@ function AddLiquidityForm({
 
   const tokMax = () => {
     if (!balances) return
-    onAmountInput('tok', formatUnits(balances.tok, 18))
+    onAmountInput('tok', formatUnits(balances.tok, 18), 'max')
   }
   const pairMax = () => {
     if (!balances) return
     // Keep ~0.001 native for gas only when the pair IS native.
     const buf = pair.isNative ? 1_000_000_000_000_000n : 0n
     const v = balances.pair > buf ? balances.pair - buf : 0n
-    onAmountInput('pair', formatUnits(v, pairDec))
+    onAmountInput('pair', formatUnits(v, pairDec), 'max')
   }
 
   // Re-label the token symbol for a step's ERC-20 token.
@@ -760,7 +777,8 @@ function AddLiquidityForm({
         // one price). Elsewhere the range follows the pool price, which moves.
         intent: writeIntentKey(mode === 'market' ? 'add-market-liquidity' : 'add-liquidity', {
           chainId, positionManager: intent.address(posm), pool: intent.hex(fresh.poolId), account: intent.address(address),
-          mode, pairAmount, tokenAmount,
+          mode,
+          token: amountKey(entries.tok, tokenAmount, mode), pair: amountKey(entries.pair, pairAmount, mode),
           ...(mode === 'range' ? { min: String(pa), max: String(pb) } : {}),
         }),
         display: {

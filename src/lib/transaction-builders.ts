@@ -730,8 +730,8 @@ export function checkoutIntent(p: Chosen & { token: string; hook: string; items:
   })
 }
 
-/** A cash-out of the typed amount, whatever venue (a pool sale or the terminal) serves it. */
-export function cashOutIntent(p: Omit<Chosen, 'memo'> & { token?: string | null; amount: bigint }): string {
+/** A cash-out of the typed amount (or Max, as 'max'), whatever venue (a pool sale or the terminal) serves it. */
+export function cashOutIntent(p: Omit<Chosen, 'memo'> & { token?: string | null; amount: bigint | 'max' }): string {
   return writeIntentKey('cash-out', {
     chainId: p.chainId, projectId: p.projectId, token: p.token ? intent.address(p.token) : null, amount: p.amount,
     beneficiary: intent.address(p.beneficiary),

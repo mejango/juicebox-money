@@ -8,6 +8,8 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useMemo, useState } from 'react'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { intentAmount, useChosenAmount } from '@/hooks/useChosenAmount'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -32,7 +34,7 @@ export function BurnTokensFlow({
 }) {
   const { address, isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
-  const [amount, setAmount] = useState('')
+  const { amount, setAmount, max: amountIsMax, fillMax } = useChosenAmount()
   const [memo, setMemo] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<ReturnType<
@@ -113,6 +115,8 @@ export function BurnTokensFlow({
         {
           // The holder whose tokens the reviewed request burns.
           reviewedAccount: plan.args[0],
+          // Max is all of the balance, whatever it is by a retry.
+          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: String(plan.args[1]), amount: intentAmount(amountIsMax, tokenCount) }),
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])
@@ -171,7 +175,7 @@ export function BurnTokensFlow({
         type="button"
         className="btn-secondary mt-2 text-xs"
         disabled={balance === undefined || balance === 0n}
-        onClick={() => setAmount(balance ? formatUnits(balance, 18) : '')}
+        onClick={() => (balance ? fillMax(formatUnits(balance, 18)) : setAmount(''))}
       >
         Use max
       </button>

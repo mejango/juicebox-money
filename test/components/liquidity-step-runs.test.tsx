@@ -28,7 +28,7 @@ const H1 = `0x${'a1'.repeat(32)}` as Hex
 const H2 = `0x${'a2'.repeat(32)}` as Hex
 const H3 = `0x${'a3'.repeat(32)}` as Hex
 
-const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 } }))
+const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 }, balance: 10n ** 30n }))
 
 /** The plan's own bytes name the account they were reviewed for. */
 const unlockDataFor = (account: string) => (account === ALICE ? '0xaa' : '0xbb') as Hex
@@ -148,7 +148,7 @@ const PAIR_SIDE = { tokenId: 8n, tickLower: -200, tickUpper: 0, liquidity: 1n, p
 const client = {
   readContract: async ({ functionName, args }: { functionName: string; args?: readonly unknown[] }) => {
     if (functionName === 'allowance') return args?.length === 3 ? [0n, 0, 0] : 0n
-    if (functionName === 'balanceOf') return 10n ** 30n
+    if (functionName === 'balanceOf') return m.balance
     throw new Error(`Unexpected read ${functionName}`)
   },
   getBalance: async () => 10n ** 30n,
@@ -168,6 +168,7 @@ let make: () => ReactElement
 beforeEach(() => {
   m.account = ALICE
   m.range = { minPrice: 0.5, maxPrice: 2 }
+  m.balance = 10n ** 30n
   engine.restart()
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   host = document.createElement('div')
@@ -625,6 +626,32 @@ describe("a liquidity write's hold key", () => {
     const first = await typed('1', '2')
     expect(await typed('1.0', '2.00')).toBe(first)
     expect(await typed('1.1', '2')).not.toBe(first)
+  })
+
+  it('keys Max as the choice of all, so a moved balance is the same add', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    const max = () => {
+      const [tokMax] = buttons().filter(button => button.textContent === 'Max')
+      expect(tokMax.disabled).toBe(false)
+      return tokMax
+    }
+    await waitFor('input[aria-label="TKN amount"]')
+    await act(async () => max().click())
+    await review('Add liquidity')
+    const first = await finalIntent()
+    // The balance moved while that attempt is unresolved; Max again fills another number.
+    m.balance = 10n ** 29n
+    await act(async () => { await queryClient.refetchQueries({ queryKey: ['lpBalances'] }) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    await act(async () => max().click())
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="TKN amount"]')!.value).toBe('100000000000')
+    await review('Add liquidity')
+    expect(await finalIntent()).toBe(first)
+    // Typing that same number is a typed amount, another add.
+    await typeInto('TKN amount', '100000000000.0')
+    await review('Add liquidity')
+    expect(await finalIntent()).not.toBe(first)
   })
 
   it('tells a re-fit of the market from keeping its ranges', async () => {

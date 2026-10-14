@@ -18,6 +18,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { intentAmount, useChosenAmount } from '@/hooks/useChosenAmount'
 import {
   erc20Abi,
   formatUnits,
@@ -89,7 +90,7 @@ export function MoveCard({
 
   const [from, setFrom] = useState<number>(chainId)
   const [to, setTo] = useState<number | null>(null)
-  const [amount, setAmount] = useState('')
+  const { amount, setAmount, max: amountIsMax, fillMax } = useChosenAmount()
 
   const fromPid = useMemo(() => {
     const mapped = chains.find(([cid]) => cid === from)?.[1]
@@ -249,7 +250,7 @@ export function MoveCard({
                   <button
                     onClick={() =>
                       src?.erc20Balance != null &&
-                      setAmount(formatUnits(src.erc20Balance, 18))
+                      fillMax(formatUnits(src.erc20Balance, 18))
                     }
                     className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
                   >
@@ -280,6 +281,7 @@ export function MoveCard({
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}
+              amountIsMax={amountIsMax}
               maxBalance={src.erc20Balance}
               account={address}
             />
@@ -300,6 +302,7 @@ function MoveFlow({
   sucker,
   projectToken,
   amount,
+  amountIsMax,
   maxBalance,
   account,
 }: {
@@ -310,6 +313,8 @@ function MoveFlow({
   sucker: Address
   projectToken: Address
   amount: bigint
+  /** The user chose Max: the intent keys all of it, not this amount. */
+  amountIsMax: boolean
   maxBalance: bigint
   account: Address
 }) {
@@ -519,7 +524,7 @@ function MoveFlow({
       reviewedAccount: review.account,
       // Its minimum re-quotes on a fresh review: held by what the user chose to move.
       intent: writeIntentKey('bridge-prepare', {
-        chainId: from, sucker: intent.address(review.sucker), token: intent.address(review.token), amount: review.amount, beneficiary: intent.address(review.account),
+        chainId: from, sucker: intent.address(review.sucker), token: intent.address(review.token), amount: intentAmount(amountIsMax, review.amount), beneficiary: intent.address(review.account),
       }),
     })
   }
