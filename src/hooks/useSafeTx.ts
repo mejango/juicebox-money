@@ -266,6 +266,8 @@ type HeldWrite = {
   options: TxSendOptions
   /** What the hold last said; none while this flow's own send is in flight or followed. */
   state: WriteHeldState | null
+  /** A Safe proposal's registry key: an accepted exit drops the registry's entry too. */
+  proposalKey?: string
 }
 
 /** A Safe write is held by its call with stamped fields blanked, as the registry keys it. */
@@ -285,6 +287,9 @@ async function settleSafeHold(key: string, client: FollowClient): Promise<void> 
   try {
     if ((proposal.phase === 'success' || proposal.phase === 'failed') && proposal.receipt) {
       await hold.onReceipt(proposal.receipt, client as never, { calls: [proposal.call] })
+    } else if (proposal.phase === 'unproven') {
+      // The follower gave up: the hold offers the exit, and later evidence still settles it.
+      await hold.onUnproven(client as never, proposal.proposalHash)
     } else if (proposal.phase === 'ran') {
       await hold.onExecuted(client as never, proposal.executionHash ?? undefined)
     } else if (proposal.phase === 'expired' || proposal.phase === 'replaced') {
@@ -688,6 +693,24 @@ export function useSafeTx(chainId: number) {
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null)
   const sendRef = useRef<(request: TxRequest, options: TxSendOptions) => Promise<Hex | null>>(async () => null)
+  /** The send this flow last made, which a held Safe proposal's exit repeats. */
+  const lastSendRef = useRef<{ request: TxRequest; options: TxSendOptions } | null>(null)
+  // A Safe proposal this flow shows whose follower ended unproven: the hold's
+  // line and exit replace the registry's notice.
+  const unprovenKey = shownKey && proposal?.phase === 'unproven' ? shownKey : null
+  useEffect(() => {
+    const shown = unprovenKey ? proposals.get(unprovenKey) : undefined
+    const last = lastSendRef.current
+    if (!unprovenKey || !shown || !publicClient || !last) return
+    let live = true
+    const hold = safeHoldOf(shown, unprovenKey)
+    void hold.onUnproven(publicClient as never, shown.proposalHash).then(state => {
+      if (!live || state.status === 'clear') return
+      setShownKey(null)
+      showHoldState({ hold, ...last, proposalKey: unprovenKey }, state)
+    }, () => {})
+    return () => { live = false }
+  }, [unprovenKey, publicClient, showHoldState])
   /**
    * The user checked their wallet: the hold asks the chain once more and
    * releases exactly the state the user saw, then the same send runs again,
@@ -711,6 +734,7 @@ export function useSafeTx(chainId: number) {
           setHash(null)
           setPhase('idle')
           inFlightRef.current = false
+          if (current.proposalKey && proposals.delete(current.proposalKey)) notifyProposals()
           void sendRef.current(current.request, current.options)
         } else if (state.status === 'clear') endHeld(state.settled ?? exitSettledRef.current)
         else showHoldState(current, state)
@@ -777,6 +801,7 @@ export function useSafeTx(chainId: number) {
         return null
       }
       inFlightRef.current = true
+      lastSendRef.current = { request, options }
       setError(null)
       setHash(null)
       setShownKey(null)
@@ -789,6 +814,8 @@ export function useSafeTx(chainId: number) {
       const account = options.reviewedAccount
       const assertOriginalWallet = captureWalletContext(wagmiConfig, { account, chainId: request.chainId })
       let hold: WriteHoldHandle | undefined
+      /** A Safe proposal's registry key, which an accepted exit clears. */
+      let safeKey: string | undefined
       /** The wallet may have been opened: whatever the send throws, the hold is asked. */
       let reachedWallet = false
       try {
@@ -799,6 +826,7 @@ export function useSafeTx(chainId: number) {
         // ordinary one by its exact call, a Safe proposal by its held call.
         // A Safe proposal this session follows is also shown by the registry.
         const key = proposalKey(request.chainId, account, sentCall)
+        if (viaSafe) safeKey = key
         if (!options.journaled) {
           hold = viaSafe
             ? safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
@@ -814,6 +842,16 @@ export function useSafeTx(chainId: number) {
               // Reading Safe's queue takes a moment: the flow shows it checking.
               setPhase('simulating')
               queued = await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
+            }
+            if (held?.phase === 'unproven') {
+              // Unproven here: the hold decides, with its line and exit.
+              const hold = safeHoldOf(held, key)
+              const state = await hold.onUnproven(publicClient as never, held.proposalHash).catch(() => hold.peek())
+              if (state.status !== 'clear') {
+                inFlightRef.current = false
+                showHoldState({ hold, request, options, proposalKey: key }, state)
+                return null
+              }
             }
             if (holdsCall(held) || queued) {
               if (queued) {
@@ -955,7 +993,7 @@ export function useSafeTx(chainId: number) {
         }
         if (hold && e instanceof WriteHeldError) {
           // Held already: what the hold says, its line and its exit.
-          showHoldState({ hold, request, options }, e.state)
+          showHoldState({ hold, request, options, ...(safeKey ? { proposalKey: safeKey } : {}) }, e.state)
           return null
         }
         if (hold && reachedWallet && !(e instanceof WriteHoldBusyError || e instanceof WriteHoldNonceError)) {

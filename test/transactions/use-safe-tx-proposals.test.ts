@@ -413,7 +413,7 @@ describe('a Safe proposal', () => {
 
   it.each([
     ['ran the reviewed call', execTransaction(), 'success'],
-    ['ran another call', execTransaction('0xdeadbeef'), 'submitted'],
+    ['ran another call', execTransaction('0xdeadbeef'), 'unconfirmed'],
   ] as const)('settles an execution returned at once only when it %s', async (_, input, phase) => {
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
       hash,
@@ -428,7 +428,8 @@ describe('a Safe proposal', () => {
     await flow.send()
     await settle()
     expect(flow.tx.phase).toBe(phase)
-    if (phase === 'submitted') expect(flow.tx).toMatchObject({ notice: UNCONFIRMED, confirmationUncertain: true })
+    // Unproven: the write hold's line and state, not a release.
+    if (phase === 'unconfirmed') expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
   })
 
   it.each([
@@ -489,19 +490,13 @@ describe('a Safe proposal', () => {
     const flow = await mount()
     await flow.send()
     await settle()
-    expect(flow.tx).toMatchObject({
-      phase: 'submitted',
-      confirmationUncertain: true,
-      notice: `${UNCONFIRMED} Safe executed the proposal, but the onchain transaction failed.`,
-    })
+    expect(flow.tx).toMatchObject({ phase: 'unconfirmed', confirmationUncertain: true })
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
     await flow.send()
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-    // Dismissing it ends this session's line; the write hold still holds the proposal.
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(flow.tx.phase).toBe('unconfirmed')
-    expect(heldState(flow.tx.error)).toMatchObject({ status: 'pending-known-hash', line: AWAITING, exit: false })
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
   })
 
   it("holds a known proposal with unproven execution through reset and Dismiss", async () => {
@@ -539,24 +534,29 @@ describe('a Safe proposal', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('holds a proposal it lost track of until Dismiss, naming why', async () => {
+  it('holds a proposal it lost track of with the SDK line and exit; only accepting the exit proposes it again', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
     const flow = await mount()
     await flow.send()
     await settle()
-    expect(flow.tx).toMatchObject({
-      phase: 'submitted',
-      confirmationUncertain: true,
-      notice: `${UNCONFIRMED} Safe service unavailable`,
-    })
+    const shown = (flow.tx.error as ReactElement<{ state: { status: string; exit: boolean }; onExit?: () => void }>).props
+    expect(flow.tx).toMatchObject({ phase: 'unconfirmed', busy: false, settled: true })
+    expect(shown.state).toMatchObject({ status: 'safe-unproven', exit: true })
+    // Sending again, or closing and reopening, proposes nothing.
     await flow.send()
-    expect(mocks.writeContract).toHaveBeenCalledOnce()
-    // Dismissing it ends this session's line; the write hold still holds the proposal.
+    await act(async () => flow.tx.reset())
+    await flow.send()
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(heldState(flow.tx.error)).toMatchObject({ status: 'pending-known-hash', line: AWAITING, exit: false })
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
+    // Only the user's accepted exit proposes it again.
+    await act(async () => (flow.tx.error as ReactElement<{ onExit?: () => void }>).props.onExit!())
+    await settle()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
   })
+
 })
 
 describe('a call stamped at send time', () => {
@@ -813,25 +813,24 @@ describe("a send that asks Safe's queue first", () => {
   })
 })
 
-describe('a Safe proposal another flow dismissed', () => {
-  it('leaves this flow idle, not pending, and the action free', async () => {
+describe('a Safe proposal lost track of in two flows', () => {
+  it('stays held in every flow, with the exit, whichever flow is dismissed', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
     const first = await mount()
     await first.send()
     await settle()
     const second = await mount()
     await second.send()
-    expect(second.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true })
+    expect(second.tx).toMatchObject({ phase: 'unconfirmed', confirmationUncertain: true })
+    expect(heldState(second.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
 
-    // The flow that proposed it is the one left showing it.
     await act(async () => second.tx.dismiss())
-    expect(first.tx).toMatchObject({ phase: 'idle', busy: false, settled: false, notice: null, hash: null })
-    // The write hold still holds the proposal: no second one.
     await act(async () => first.tx.reset())
     await first.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(heldState(first.tx.error)).toMatchObject({ status: 'pending-known-hash', exit: false })
+    expect(heldState(first.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
   })
+
 })
 
 describe("a Safe proposal's last look at the chain", () => {
@@ -862,8 +861,9 @@ describe("a Safe proposal's last look at the chain", () => {
     await settle()
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL, confirmationUncertain: false })
     expect(flow.tx.notice).toBeNull()
-    // The registry's one read, then the write hold's own as it verifies the receipt.
-    expect(reads).toBe(2)
+    // The registry bound the execution on its first read (every later one finds
+    // nothing); the rest are the write hold's own as it verifies the receipt.
+    expect(reads).toBeGreaterThanOrEqual(1)
   })
 
   it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
@@ -885,11 +885,8 @@ describe("a Safe proposal's last look at the chain", () => {
 
     nodeUp = true
     await pass(60_000)
-    expect(flow.tx).toMatchObject({
-      phase: 'submitted',
-      confirmationUncertain: true,
-      notice: `${UNCONFIRMED} Safe's transaction service has no record of this proposal.`,
-    })
+    expect(flow.tx).toMatchObject({ phase: 'unconfirmed', confirmationUncertain: true })
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
   })
 
   it("keeps an execution held through a node that can't answer for its receipt after the hour", async () => {

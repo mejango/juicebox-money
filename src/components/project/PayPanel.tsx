@@ -1219,6 +1219,11 @@ export function PayPanel({
   // A Safe stage with the Safe says where it is in place of the stage's own line:
   // awaiting its signers, executed with its receipt still missing, or unproven.
   const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
+  // A stage the write hold holds (its follower couldn't prove it) shows the hold's line and exit.
+  const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "unconfirmed" ? sequenceSafeTx.error : null;
+  const panelTxError = [approveTx, routerApproveTx, tx]
+    .map(item => (sequenceSafeHeld && item === sequenceSafeTx ? null : item.error))
+    .find(Boolean) ?? null;
   // A stage another flow dismissed shows nothing any more.
   const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
   // An unproven or lost stage ends with its line: Dismiss releases its call and frees the panel.
@@ -2317,16 +2322,16 @@ export function PayPanel({
           . This form only sends to a recognized Juicebox payment contract.
         </p>
       ) : null}
-      {(approveTx.error ?? routerApproveTx.error ?? tx.error) ? (
+      {panelTxError ? (
         <p className="mt-3 text-sm text-red-600">
-          {approveTx.error ?? routerApproveTx.error ?? tx.error}
+          {panelTxError}
         </p>
       ) : null}
       {/* A Safe stage outlives its dialog: its line stays until it ends or is dismissed. */}
       {sequenceSafeStage && !sequenceOpen ? (
         <div className="mt-3 flex items-start justify-between gap-3">
           <p className="text-sm text-smoke-700">
-            {sequenceSafeNotice ??
+            {sequenceSafeHeld ?? sequenceSafeNotice ??
               (sequenceSafeLost ? SAFE_PROPOSAL_UNCONFIRMED : "Submitted. Confirming onchain…")}
           </p>
           {sequenceSafeReleasable ? (
@@ -2395,7 +2400,7 @@ export function PayPanel({
             ).length,
           )}
           status={sequenceSafeNotice ?? sequenceStatus}
-          error={sequenceError ?? routerApproveTx.error}
+          error={sequenceError ?? sequenceSafeHeld ?? routerApproveTx.error}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
           action={mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}

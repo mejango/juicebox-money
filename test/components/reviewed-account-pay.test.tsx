@@ -331,11 +331,12 @@ describe('a payment from a Safe', () => {
 
   const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
   const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
-  const UNCONFIRMED =
-    'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
+  /** The write hold's line for a proposal its follower couldn't prove. */
+  const UNPROVEN = "This Safe transaction couldn't be confirmed here. Check your Safe, then send again."
+  const EXIT = 'I checked my wallet. Send again'
   const panelSays = (line: string) => host.textContent?.includes(line) ?? false
 
-  it("keeps a proposed payment's line on the panel after Done, and frees the panel by Dismiss once it can't be proven", async () => {
+  it("keeps a proposed payment's line on the panel after Done, and once it can't be proven shows the hold's line, where only the exit pays again", async () => {
     m.safe = true
     let lose!: (reason: Error) => void
     m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
@@ -354,15 +355,22 @@ describe('a payment from a Safe', () => {
     expect(button('Pay').disabled).toBe(true)
     expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Dismiss')).toBe(false)
 
-    // Safe's service is lost before its execution can be read.
+    // Safe's service is lost before its execution can be read: the hold's line and its exit.
     await act(async () => lose(new Error('Safe service unavailable')))
-    await waitUntil(() => panelSays('Safe service unavailable'))
-    expect(panelSays(`${UNCONFIRMED} Safe service unavailable`)).toBe(true)
-    expect(button('Pay').disabled).toBe(true)
+    await waitUntil(() => panelSays(UNPROVEN))
+    expect(panelSays(UNPROVEN)).toBe(true)
+    expect([...host.querySelectorAll('button')].some(item => item.textContent === EXIT)).toBe(true)
 
+    // Dismissing frees the panel, but paying again proposes nothing: only the exit does.
     await click('Dismiss')
-    expect(panelSays(UNCONFIRMED)).toBe(false)
     expect(button('Pay').disabled).toBe(false)
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => panelSays(UNPROVEN))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await click(EXIT)
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
   })
 
   it('frees a panel whose proposed payment another panel dismissed, by its own Dismiss', async () => {
@@ -381,16 +389,15 @@ describe('a payment from a Safe', () => {
     await waitUntil(() => !!panelButton('second', 'Done'))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     await act(async () => lose(new Error('Safe service unavailable')))
-    await waitUntil(() => panel('second').textContent?.includes('Safe service unavailable') ?? false)
+    await waitUntil(() => panel('second').textContent?.includes(UNPROVEN) ?? false)
     await clickIn('second', 'Done')
-    expect(panelButton('second', 'Pay')!.disabled).toBe(false)
 
-    // Released there, the first panel's stage is lost: its line says so, and Dismiss frees it.
+    // Both panels show the hold's line, and dismissing frees a panel without proposing again.
     await waitUntil(() => !!panelButton('first', 'Dismiss'))
-    expect(panel('first').textContent).toContain(UNCONFIRMED)
-    expect(panelButton('first', 'Pay')!.disabled).toBe(true)
+    expect(panel('first').textContent).toContain(UNPROVEN)
     await clickIn('first', 'Dismiss')
     expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
   })
 
   it("shows on the panel why a router authorization proposed to the Safe ended after Done", async () => {
@@ -442,20 +449,17 @@ describe('a payment from a Safe', () => {
     m.waitForSafeExecutionHash = () => Promise.reject(new Error('Safe service unavailable'))
     await reviewPayment()
     await click('Confirm & Pay')
-    await waitUntil(() => dialogStatus()?.includes('Safe service unavailable') ?? false)
+    await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    expect(dialogStatus()).toBe(
-      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. Safe service unavailable',
-    )
 
     await click('Done')
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // Dismissed after its line, the write hold still holds the same approval: it is not proposed again.
+    // The write hold still holds the same approval: it is not proposed again.
     await click('Pay')
     await click('Confirm & Pay')
-    await waitUntil(() => !!host.textContent?.includes('Proposed to your Safe'))
+    await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
   })
 })
