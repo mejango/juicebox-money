@@ -370,5 +370,63 @@ describe('a saved launch restored on the create page', () => {
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: HASH, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
+
+  it("refuses a check while the journal can't be read, keeping the attempt, its button and a success another tab saved", async () => {
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    // Another tab saves the launch's success; then this tab's read of the journal fails.
+    const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
+    session.statuses[1] = { phase: 'confirming', txHash: HASH, settled: true }
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
+    const read = Storage.prototype.getItem
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      if (key === LAUNCH_SESSION_KEY) throw new Error('storage unavailable')
+      return read.call(this, key)
+    })
+    await act(async () => button('I checked it. Launch again')!.click())
+    await settle()
+    expect(host.textContent).toContain("Couldn't check this transaction. Try again.")
+    expect(button('I checked it. Launch again')).toBeDefined()
+    vi.mocked(Storage.prototype.getItem).mockRestore()
+    // Nothing was written over the saved success.
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH, settled: true })
+  })
+
+  it("after a failed read, offers a warned Continue anyway that discards the unreadable record and reopens the form", async () => {
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    // Never offered first.
+    expect(button('I checked my wallet. Continue anyway')).toBeUndefined()
+    const read = Storage.prototype.getItem
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
+      if (key === LAUNCH_SESSION_KEY) throw new Error('storage unavailable')
+      return read.call(this, key)
+    })
+    await act(async () => button('I checked it. Launch again')!.click())
+    await settle()
+    expect(host.textContent).toContain("Couldn't check this transaction. Try again.")
+    expect(host.textContent).toContain("This browser can't read its saved transactions. Check your wallet before sending again.")
+    const anyway = button('I checked my wallet. Continue anyway')
+    expect(anyway, 'the warned continue').toBeDefined()
+    await act(async () => anyway!.click())
+    await settle()
+    vi.mocked(Storage.prototype.getItem).mockRestore()
+    // The unreadable record is gone and the form reopens: the next launch pins a fresh salt.
+    expect(loadLaunchSession()).toBeNull()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
 })
 

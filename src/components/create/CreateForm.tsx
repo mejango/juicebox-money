@@ -68,6 +68,7 @@ import {
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
+  discardUnreadableLaunchSession,
   canAbandonRelayrLaunch,
   canAbandonDirectLaunch,
   completeLaunchSession,
@@ -236,6 +237,10 @@ const LAUNCH_CHECK_LINE = "Check this launch in your wallet before launching aga
  * once its event names the project.
  */
 const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
+/** The journal couldn't be read right before a retirement: nothing is retired or written. */
+const LAUNCH_UNREADABLE_LINE = "Couldn't check this transaction. Try again.";
+/** Shown with the warned discard, only after a strict read failed in the same action. */
+const LAUNCH_UNREADABLE_WARNING = "This browser can't read its saved transactions. Check your wallet before sending again.";
 
 function deriveSymbol(name: string): string {
   const words = name
@@ -493,6 +498,8 @@ export function CreateForm() {
     setLaunchHeldState(next);
   };
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** A strict journal read failed in this action: the warned discard is offered. */
+  const [launchUnreadable, setLaunchUnreadable] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
   // validation throws inside launch()'s try.
@@ -1870,7 +1877,16 @@ export function CreateForm() {
         }
         // A competing tab can save a wallet request while this tab reviews.
         // A rejected preparation must never clear that other request's hold.
-        const saved = loadLaunchSession();
+        // Read strictly: nothing is written after a read that failed.
+        let saved: ReturnType<typeof loadLaunchSession>;
+        try {
+          saved = loadLaunchSession({ strict: true });
+        } catch {
+          setLaunchError(LAUNCH_UNREADABLE_LINE);
+          setLaunchUnreadable(true);
+          setPhase("failed");
+          return;
+        }
         const live = saved?.statuses[chainId];
         if (saved && saved.salt !== pinned.salt) {
           setLaunchError("The saved launch changed. Recover the original launch before continuing.");
@@ -1939,7 +1955,17 @@ export function CreateForm() {
   };
 
   const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
-    const session = loadLaunchSession() ?? restoredSessionRef.current;
+    let session: ReturnType<typeof loadLaunchSession>;
+    try {
+      // Read strictly: a launch never runs, or writes, on a stale copy of an unreadable journal.
+      session = loadLaunchSession({ strict: true }) ?? restoredSessionRef.current;
+    } catch {
+      setLaunchError(LAUNCH_UNREADABLE_LINE);
+      setLaunchUnreadable(true);
+      setPhase("failed");
+      return;
+    }
+    setLaunchUnreadable(false);
     if (session && session.salt !== pinned.salt) {
       setLaunchError("Another tab has a different launch in progress. Return to that tab to continue.");
       setPhase("failed");
@@ -2111,10 +2137,55 @@ export function CreateForm() {
     },
   );
 
+  /**
+   * The launch journal, read strictly right before a retirement: null (and a refusal
+   * shown) when it can't be read or is gone, so nothing is written after an unreadable read.
+   */
+  const readLaunchForRetirement = () => {
+    try {
+      const journal = loadLaunchSession({ strict: true });
+      if (journal) {
+        setLaunchUnreadable(false);
+        return journal;
+      }
+    } catch {
+      setLaunchUnreadable(true);
+    }
+    setLaunchError(LAUNCH_UNREADABLE_LINE);
+    return null;
+  };
+
+  /** The user checked their wallet: drop the unreadable journal and reopen the form; the next launch pins a fresh salt. */
+  const discardUnreadableLaunch = () => {
+    if (!discardUnreadableLaunchSession()) {
+      setLaunchError("Could not cancel this deployment. Restore browser storage and try again.");
+      return;
+    }
+    restoredSessionRef.current = null;
+    pinnedRef.current = null;
+    statusesRef.current = {};
+    setStatuses({});
+    setLaunchHeld(null);
+    setLaunchUnreadable(false);
+    setLaunchError(null);
+    setRelayrProgress(null);
+    setPhase("form");
+    setConfirmOpen(false);
+  };
+
   /** The user checked their wallet: the hold decides whether this launch is sent again. */
   const exitLaunchHeld = async () => {
     const shown = launchHeldRef.current;
     if (!shown) return;
+    // The journal decides, read strictly: one that can't be read retires nothing, writes
+    // nothing, and keeps the attempt and its action.
+    const journal = readLaunchForRetirement();
+    if (!journal) return;
+    if (journal.statuses[shown.chainId]?.settled) {
+      setLaunchHeld(null);
+      setLaunchError(LAUNCH_SETTLED_CONFIRMING_LINE);
+      return;
+    }
     if (shown.hold && shown.state) {
       const client = getPublicClient(config, { chainId: shown.chainId as SupportedChainId }) as PublicClient;
       launchExitingRef.current = true;
@@ -2132,9 +2203,11 @@ export function CreateForm() {
         return;
       }
     }
-    // Right before retiring, the journal decides: a success saved here or by another tab is
-    // never retired by a check or an exit; it stays confirming.
-    if (loadLaunchSession()?.statuses[shown.chainId]?.settled) {
+    // Right before retiring, the journal decides again (the exit may have taken a while): a
+    // success saved here or by another tab is never retired by a check or an exit.
+    const latest = readLaunchForRetirement();
+    if (!latest) return;
+    if (latest.statuses[shown.chainId]?.settled) {
       setLaunchHeld(null);
       setLaunchError(LAUNCH_SETTLED_CONFIRMING_LINE);
       return;
@@ -2187,7 +2260,8 @@ export function CreateForm() {
    */
   const abandonLaunch = async () => {
     const abandon = () => {
-      const session = loadLaunchSession() ?? restoredSessionRef.current;
+      // Read strictly: an unreadable journal is never abandoned on a stale copy.
+      const session = loadLaunchSession({ strict: true }) ?? restoredSessionRef.current;
       if (session && session.salt !== pinnedRef.current?.salt &&
           session.salt !== restoredSessionRef.current?.salt) {
         throw new Error("Another tab started a different launch. Return to that tab to continue.");
@@ -2762,6 +2836,14 @@ export function CreateForm() {
             </button>
           </span>
         )
+      ) : null}
+      {launchUnreadable ? (
+        <span className="block space-y-2 text-smoke-800">
+          <span className="block">{LAUNCH_UNREADABLE_WARNING}</span>
+          <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={discardUnreadableLaunch}>
+            I checked my wallet. Continue anyway
+          </button>
+        </span>
       ) : null}
       {interruptedSetups.map(chainId => (
         <div key={chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3 text-xs text-smoke-700">

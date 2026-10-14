@@ -103,8 +103,13 @@ export function saveLaunchSession(session: LaunchSession): boolean {
   try {
     const existing = window.localStorage.getItem(LAUNCH_SESSION_KEY)
     if (existing) {
-      const salt = (JSON.parse(existing) as { salt?: unknown }).salt
-      if (typeof salt === 'string' && salt !== session.salt) return false
+      const saved = JSON.parse(existing, reviver) as { salt?: unknown; statuses?: Record<number, { settled?: unknown } | undefined> }
+      if (typeof saved.salt === 'string' && saved.salt !== session.salt) return false
+      // A saved success is never overwritten by a copy without it (invariant D).
+      for (const [chainId, status] of Object.entries(saved.statuses ?? {})) {
+        const next = session.statuses[Number(chainId)]
+        if (status?.settled === true && !next?.settled && next?.phase !== 'done') return false
+      }
     }
     window.localStorage.setItem(
       LAUNCH_SESSION_KEY,
@@ -301,8 +306,17 @@ export function recordLaunchChainStatus(
   status: LaunchChainStatus,
   expectedSalt?: Hex,
 ): boolean {
-  const session = loadLaunchSession()
+  let session: LaunchSession | null
+  try {
+    // Read strictly: nothing is written after a read that failed.
+    session = loadLaunchSession({ strict: true })
+  } catch {
+    return false
+  }
   if (!session || (expectedSalt && session.salt !== expectedSalt) || !session.chains.includes(chainId)) return false
+  // A saved success is never overwritten by anything but its own progress (invariant D).
+  const saved = session.statuses[chainId]
+  if (saved?.settled && !status.settled && status.phase !== 'done') return false
   const multisigSetup = status.multisigSetup ?? session.statuses[chainId]?.multisigSetup
   return saveLaunchSession({
     ...session,
@@ -354,6 +368,20 @@ export function canAbandonDirectLaunch(session: LaunchSession): boolean {
  * deterministically-reverting config would otherwise loop on Retry forever
  * with no exit short of hand-clearing localStorage.
  */
+/**
+ * Drops a journal that can't be read, after the user confirmed they checked their wallet.
+ * The only path that removes a record without reading it first.
+ */
+export function discardUnreadableLaunchSession(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.removeItem(LAUNCH_SESSION_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function abandonLaunchSession(expectedSalt?: `0x${string}`): boolean {
   if (typeof window === 'undefined') return false
   try {
