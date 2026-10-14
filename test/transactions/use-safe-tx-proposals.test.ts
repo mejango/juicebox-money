@@ -887,7 +887,8 @@ describe('a Safe proposal an app journal holds (Defifa)', () => {
     await settle()
     const record = readDefifaWriteRecovery(scope)!
     const hold = defifaWriteHold(scope, record)
-    expect(hold.peek()).toMatchObject({ status: 'safe-unproven', exit: true })
+    // Read from storage alone it offers no exit; the chain's answer below does.
+    expect(hold.peek()).toMatchObject({ status: 'safe-unproven', exit: false })
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ type: DEFIFA_RECOVERY_CHANGE_EVENT }))
     const shown = await hold.state(mocks.publicClient as never)
     expect(shown).toMatchObject({ status: 'safe-unproven', exit: true })

@@ -1,5 +1,8 @@
 'use client'
 
+import { keccak256, stringToHex } from 'viem'
+import { writeIntentKey } from '@/lib/write-intent'
+
 import { getAccount } from '@wagmi/core'
 import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
@@ -18,6 +21,7 @@ import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
 import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
+  safeBatchHold,
   type SequenceCall,
 } from '@/lib/safe-batch-connector'
 import {
@@ -300,16 +304,24 @@ export async function submitSafeBatch({
   const sequence = sequenceOf(steps)
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
+    // These calls carry no restamped fields: the batch is held by its exact calls.
+    const intent = writeIntentKey('safe-batch', {
+      chainId, safe: authority, calls: keccak256(stringToHex(JSON.stringify(sequence.map(call => [call.to, call.data, String(call.value ?? 0n)])))),
+    })
     const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
+      intent,
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
     const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
     const receipt = await waitForTrackedReceipt(client, executionHash)
+    // The batch's hold verifies the execution on its own evidence (a failure only once final).
+    await safeBatchHold({ chainId, safe: authority, intent, calls: sequence })
+      .onReceipt(receipt, client as never, { calls: sequence, batch: true }).catch(() => null)
     const failure = 'The batch reverted after Safe execution.'
     if (receipt.status !== 'success') throw new Error(failure)
     await requireSafeProposalSuccess(

@@ -5,6 +5,7 @@ import logoIcon from '@/assets/brand/logo-icon.svg'
 import { SiteFooter } from '@/components/SiteFooter'
 import { SiteNavigation } from '@/components/SiteNavigation'
 import { Providers } from '@/providers/Providers'
+import { HeldWritesNotice } from '@/components/ui/HeldWritesNotice'
 import { ScrollToTop } from '@/components/ScrollToTop'
 
 const siteOrigin =
@@ -134,6 +135,7 @@ export default function RootLayout({
           <main id="main-content" tabIndex={-1} className="flex-1 scroll-mt-28">{children}</main>
 
           <SiteFooter />
+          <HeldWritesNotice />
 
         </Providers>
       </body>

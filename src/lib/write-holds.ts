@@ -1,4 +1,16 @@
-import { createWriteHold, type WriteHoldHandle, type WriteHoldSettled, type WriteHoldState } from '@bananapus/nana-sdk-core/review'
+import {
+  createWriteHold,
+  WriteHeldError,
+  WriteHoldBusyError,
+  type WriteHeldState,
+  type WriteHoldClient,
+  type WriteHoldGate,
+  type WriteHoldHandle,
+  type WriteHoldSettled,
+  type WriteHoldState,
+} from '@bananapus/nana-sdk-core/review'
+import { keccak256, stringToHex, type Address, type Hex, type TransactionReceipt } from 'viem'
+import { heldCall, type SafeAppCall } from '@/lib/safe-connector'
 
 /**
  * The app's one SDK write hold: every wallet write is held through it
@@ -31,12 +43,104 @@ export function settledLine(settled?: WriteHoldSettled): string {
   return 'Your earlier transaction went through.'
 }
 
+/** A write held outside any flow's own dialog (an authority call, a Safe batch), shown app-wide with its exit. */
+export type ShownHeldWrite = { chainId: number; hold: WriteHoldHandle; state: WriteHeldState }
+
+const shownHeld = new Map<string, ShownHeldWrite>()
+const heldListeners = new Set<() => void>()
+let heldSnapshot: ShownHeldWrite[] = []
+
+function heldChanged() {
+  heldSnapshot = [...shownHeld.values()]
+  for (const listener of heldListeners) listener()
+}
+
+/** Show a held write app-wide, by its saved attempt; a newer state of it replaces the older. */
+export function showHeldWrite(chainId: number, hold: WriteHoldHandle, state: WriteHeldState): void {
+  shownHeld.set(state.record.id, { chainId, hold, state })
+  heldChanged()
+}
+
+/** Stop showing a held write, once it ended or its exit was taken. */
+export function forgetHeldWrite(id: string): void {
+  if (shownHeld.delete(id)) heldChanged()
+}
+
+export function subscribeHeldWrites(listener: () => void): () => void {
+  heldListeners.add(listener)
+  return () => { heldListeners.delete(listener) }
+}
+
+/** Every write shown as held app-wide. */
+export function heldWritesSnapshot(): ShownHeldWrite[] {
+  return heldSnapshot
+}
+
 /**
- * What a hold's saved record says, without asking the chain, for display only:
- * never an exit. Exits come only from state() and exit(), which ask the chain
- * first.
+ * Hand one wallet write to the SDK's write hold, the one rule every module
+ * that opens a wallet outside useSafeTx follows: it refuses a held call
+ * (WriteHeldError), holds the call from just before the wallet opens, and a
+ * write that may have reached the wallet stays held, shown app-wide with its
+ * exit, whatever the send throws.
  */
-export function peekHeld(hold: WriteHoldHandle): WriteHoldState {
-  const state = hold.peek()
-  return state.status === 'clear' ? state : ({ ...state, exit: false } as unknown as WriteHoldState)
+export async function sendUnderHold(
+  chainId: number,
+  hold: WriteHoldHandle,
+  client: WriteHoldClient,
+  send: (gate: WriteHoldGate) => Promise<Hex>,
+): Promise<Hex> {
+  let reached = false
+  try {
+    return await hold.send(client, gate => send({
+      ...gate,
+      beforeSend: async actualCall => {
+        await gate.beforeSend(actualCall)
+        reached = true
+      },
+    }))
+  } catch (error) {
+    if (error instanceof WriteHeldError) showHeldWrite(chainId, hold, error.state)
+    else if (reached && !(error instanceof WriteHoldBusyError)) {
+      const now = await hold.state(client).catch(() => null)
+      if (now && now.status !== 'clear') showHeldWrite(chainId, hold, now)
+    }
+    throw error
+  }
+}
+
+/**
+ * After a held write's receipt (or Safe execution receipt): the hold verifies
+ * it. Anything but this hash's settlement keeps it held and shown, and throws
+ * the hold's line, so no caller reports success from the receipt alone.
+ */
+export async function settleUnderHold(
+  chainId: number,
+  hold: WriteHoldHandle,
+  client: WriteHoldClient,
+  receipt: TransactionReceipt,
+  proof?: Parameters<WriteHoldHandle['onReceipt']>[2],
+): Promise<void> {
+  const state = await hold.onReceipt(receipt, client, proof).catch(() => hold.peek())
+  if (state.status === 'clear') {
+    if (settledHashOf(state.settled) === receipt.transactionHash.toLowerCase()) return
+    throw new Error(WRITE_RELEASED_LINE)
+  }
+  showHeldWrite(chainId, hold, state)
+  throw new Error(state.line)
+}
+
+/** A Safe proposal's key: its chain, Safe and exact call with any field stamped at send time blanked. */
+export function safeProposalKey(chainId: number, safe: Address, call: SafeAppCall): string {
+  const held = heldCall(call)
+  return `${chainId}:${safe.toLowerCase()}:${held.to.toLowerCase()}:${held.value ?? 0n}:${held.data.toLowerCase()}`
+}
+
+/** A Safe write is held by that key, so a re-stamped proposal of the same call is the same hold. */
+export function safeHoldNamespace(key: string): string {
+  return `safe:${keccak256(stringToHex(key)).slice(2)}`
+}
+
+/** The hold over a Safe app write of `call`, shared by every module that proposes it. */
+export function safeWriteHold(chainId: number, safe: Address, call: SafeAppCall): WriteHoldHandle {
+  return writeHolds.open({ chainId, account: safe, safe: true, namespace: safeHoldNamespace(safeProposalKey(chainId, safe, call)), call })
 }

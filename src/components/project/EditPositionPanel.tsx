@@ -437,6 +437,7 @@ export function EditPositionPanel({
           unlockData: p.plan.unlockData,
           value: p.plan.value,
           title: FINAL_STEP[p.plan.kind],
+          intent: p.intent,
         })
         setBatchProposed(true)
       } catch (e) {

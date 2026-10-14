@@ -74,6 +74,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
+import { heldWritesSnapshot } from '@/lib/write-holds'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -107,6 +108,21 @@ const SAFE_PROPOSAL_SUCCESS = {
   address: SAFE,
   topics: [toEventSelector('ExecutionSuccess(bytes32,uint256)'), HASH],
   data: `0x${'00'.repeat(32)}` as Hex,
+}
+
+/** Every receipt the chain shows is mined in canonical block 1, bound to its transaction, so a write hold can verify it. */
+function receiptsAre(make: (hash: Hex) => { transactionHash: Hex; status: string; logs: { address: Address; topics: Hex[]; data: Hex }[] }) {
+  const at = { blockHash: HASH, blockNumber: 1n, transactionIndex: 0 }
+  const shown = async (hash: Hex) => {
+    const receipt = make(hash)
+    const sent = await mocks.client.getTransaction({ hash }).catch(() => null) as { from?: Address; to?: Address } | null
+    return {
+      ...receipt, ...at, from: sent?.from, to: sent?.to,
+      logs: receipt.logs.map(log => ({ ...log, ...at, removed: false, transactionHash: hash })),
+    }
+  }
+  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => shown(hash))
+  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => shown(hash))
 }
 
 function response(body: unknown, status = 200): Response {
@@ -167,7 +183,7 @@ beforeEach(() => {
     throw new Error(`Unexpected read ${input.functionName}`)
   })
   // A Safe app's execution logs the Safe's ExecutionSuccess for its proposal.
-  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+  receiptsAre(hash => ({
     transactionHash: hash,
     status: 'success',
     logs: [SAFE_PROPOSAL_SUCCESS],
@@ -178,15 +194,16 @@ beforeEach(() => {
   // A destination hash holds its signed call; any other hash, the transaction the wallet last sent.
   const transactionOf = (hash: Hex) => {
     const entry = entries[[DESTINATION_HASH, SECOND_DESTINATION_HASH].indexOf(hash)]
-    if (entry) return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n }
+    if (entry) return { hash, to: entry.target, input: entry.data, value: BigInt(entry.value), chainId: entry.chain, blockHash: HASH, blockNumber: 1n, transactionIndex: 0 }
     const [sent] = mocks.wallet.sendTransaction.mock.calls.at(-1) ?? []
-    return { hash, chainId: 1, from: sent?.account, to: sent?.to, input: sent?.data, value: sent?.value, blockHash: HASH, blockNumber: 1n }
+    return { hash, chainId: mocks.chainId, from: sent?.account, to: sent?.to, input: sent?.data, value: sent?.value, blockHash: HASH, blockNumber: 1n, transactionIndex: 0 }
   }
   mocks.client.getCode.mockResolvedValue(PAYMENT_RUNTIME)
   mocks.client.getTransaction.mockImplementation(async ({ hash }) => transactionOf(hash))
-  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }) => ({ transactionHash: hash,
-    to: transactionOf(hash).to, status: 'success', blockHash: HASH, blockNumber: 1n, logs: [SAFE_PROPOSAL_SUCCESS] }))
-  mocks.client.getBlock.mockResolvedValue({ hash: HASH })
+  mocks.client.getBlock.mockImplementation(async ({ blockTag, blockNumber }: { blockTag?: string; blockNumber?: bigint } = {}) =>
+    blockTag === 'finalized' ? { number: 100n, hash: `0x${'f1'.repeat(32)}`, timestamp: 1n } : { number: blockNumber ?? 100n, hash: HASH })
+  mocks.client.getBlockNumber.mockResolvedValue(100n)
+  Object.assign(mocks.client, { getTransactionCount: vi.fn(async () => 3), getChainId: vi.fn(async () => mocks.chainId) })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
     if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
@@ -217,6 +234,39 @@ beforeEach(() => {
       })
     }
     throw new Error(`Unexpected request: ${url}`)
+  })
+})
+
+describe('an authority write held by its write hold', () => {
+  const calls = () => [{ chainId: 11155111 as const, authority: ALICE, target: TARGET, data: '0x1234' as Hex }]
+  beforeEach(() => {
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.client.getBlockNumber.mockResolvedValue(100n)
+    Object.assign(mocks.client, { getTransactionCount: vi.fn(async () => 3), getChainId: vi.fn(async () => 11155111) })
+  })
+
+  it('holds a direct write whose wallet reply was lost: the next run sends nothing and offers the exit, which allows exactly one more', async () => {
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    await expect(runAuthorityCalls({ signal: flow, calls: calls() })).rejects.toThrow()
+    await expect(runAuthorityCalls({ signal: flow, calls: calls() })).rejects.toThrow()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+    const [shown] = heldWritesSnapshot()
+    expect(shown.state).toMatchObject({ status: 'held-no-hash', exit: true })
+    await expect(shown.hold.exit(shown.state, { checkedWallet: true }, mocks.client as never)).resolves.toMatchObject({ released: true })
+    await runAuthorityCalls({ signal: flow, calls: calls() })
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('holds a Safe app write whose reply was lost, the same way', async () => {
+    mocks.isSafeConnection.mockReturnValue(true)
+    mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', owners: [ALICE], threshold: 1n })
+    mocks.readMatchingAuthorityIdentities.mockResolvedValue({ source: { kind: 'safe' }, destination: { kind: 'safe' }, matches: true })
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    const safeCalls = [{ chainId: 11155111 as const, authority: ALICE, target: TARGET, data: '0x1234' as Hex }]
+    await expect(runAuthorityCalls({ signal: flow, calls: safeCalls })).rejects.toThrow()
+    await expect(runAuthorityCalls({ signal: flow, calls: safeCalls })).rejects.toThrow()
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+    expect(heldWritesSnapshot()[0]?.state).toMatchObject({ exit: true })
   })
 })
 
@@ -710,7 +760,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
     // A nonzero safeTxGas set in Safe makes a failed call log ExecutionFailure
     // (Safe 1.3 puts the safeTxHash in the data) inside a successful receipt.
-    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    receiptsAre(hash => ({
       transactionHash: hash,
       status: 'success',
       logs: [
@@ -745,7 +795,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     mocks.readAuthorityIdentity.mockResolvedValue({ kind: 'safe', threshold: 2, owners: [ALICE] })
     mocks.connectedWallet.mockResolvedValueOnce({ wallet: mocks.wallet, account: SAFE })
     mocks.client.estimateGas.mockResolvedValue(21_000n)
-    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    receiptsAre(hash => ({
       transactionHash: hash,
       status: 'success',
       logs: [],
@@ -773,13 +823,17 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     // Safe{Wallet} executed at once and returned the execution's own hash; the
     // Safe's event names a safeTxHash this app never saw.
     mocks.waitForSafeExecutionHash.mockResolvedValue(HASH)
-    mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }) => ({
+    receiptsAre(hash => ({
       transactionHash: hash,
       status: 'success',
       logs: [{ ...SAFE_PROPOSAL_SUCCESS, topics: [SAFE_PROPOSAL_SUCCESS.topics[0], `0x${'ef'.repeat(32)}`] }],
     }))
     mocks.client.getTransaction.mockImplementation(async ({ hash }) => ({
       hash,
+      chainId: 1,
+      blockHash: HASH,
+      blockNumber: 1n,
+      transactionIndex: 0,
       from: ALICE,
       to: SAFE,
       input: encodeFunctionData({
@@ -1134,7 +1188,7 @@ describe('One safety-check review per project batch', () => {
   // Each receipt belongs to the exact call the wallet last sent.
   const receiptsProveSends = () => mocks.client.getTransaction.mockImplementation(async ({ hash }) => {
     const [sent] = mocks.wallet.sendTransaction.mock.calls.at(-1)!
-    return { hash, chainId: 1, from: sent.account, to: sent.to, input: sent.data, value: sent.value, blockHash: HASH }
+    return { hash, chainId: 1, from: sent.account, to: sent.to, input: sent.data, value: sent.value, blockHash: HASH, blockNumber: 1n, transactionIndex: 0 }
   })
 
   beforeEach(() => {

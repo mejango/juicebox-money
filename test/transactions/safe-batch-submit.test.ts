@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
     readContract: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getTransaction: vi.fn(),
+    getChainId: vi.fn(async () => 1),
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 3),
+    getTransactionReceipt: vi.fn(async () => null),
+    getBlock: vi.fn(async () => ({ number: 100n, hash: `0x${'aa'.repeat(32)}`, timestamp: 1n })),
   },
   wallet: { signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -63,6 +68,7 @@ import {
   packMultiSend,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
+import { forgetHeldWrite, heldWritesSnapshot } from '@/lib/write-holds'
 import {
   authorityCallForStep,
   batchActionLabel,
@@ -378,6 +384,13 @@ describe('Safe owner batch', () => {
   })
 })
 
+/** Each attempt below starts after the earlier proposal ended elsewhere: its write hold is gone. */
+function earlierProposalEnded() {
+  const tab = globalThis as unknown as Record<symbol, Map<string, string> | undefined>
+  tab[Symbol.for('nana-sdk:held-writes')]?.clear()
+  for (const shown of heldWritesSnapshot()) forgetHeldWrite(shown.state.record.id)
+}
+
 describe('Safe app batch', () => {
   it('reviews the calls, sends one wallet_sendCalls batch and tracks the proposal to execution', async () => {
     mocks.account = SAFE
@@ -475,6 +488,7 @@ describe('Safe app batch', () => {
     ).resolves.toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
 
     // Nor does it prove this batch ran.
+    earlierProposalEnded()
     mocks.waitForTrackedReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: EXECUTION,
@@ -492,6 +506,7 @@ describe('Safe app batch', () => {
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
     )
 
+    earlierProposalEnded()
     mocks.waitForTrackedReceipt.mockResolvedValueOnce({
       status: 'success',
       transactionHash: EXECUTION,
@@ -545,6 +560,7 @@ describe('Safe app batch', () => {
     await expect(submit()).resolves.toEqual({ kind: 'safe-app', safeTxHash: EXECUTION, executionHash: EXECUTION })
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
 
+    earlierProposalEnded()
     ran([...calls].reverse())
     await expect(submit()).rejects.toThrow(
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',

@@ -804,6 +804,7 @@ function AddLiquidityForm({
           unlockData: p.mint.unlockData,
           value: p.mint.value,
           title: p.market ? 'Make the market' : 'Add liquidity',
+          intent: p.intent,
         })
         setBatchStatus(LIQUIDITY_BATCH_PROPOSED)
         setDone(true)

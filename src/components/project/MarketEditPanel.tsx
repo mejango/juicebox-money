@@ -367,6 +367,7 @@ export function MarketEditPanel({
           unlockData: p.plan.unlockData,
           value: p.plan.value,
           title: 'Edit the market',
+          intent: p.intent,
         })
         setBatchProposed(true)
       } catch (e) {

@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { peekHeld, repeatsWithoutExit, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { repeatsWithoutExit, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -317,7 +317,7 @@ export function MintShopItemModal({
         } catch {
           // Its execution can't be followed here: the hold keeps the mint and
           // offers the checked-wallet exit; later evidence still settles it.
-          const state = await hold.onUnproven(client as never, proposal).catch(() => peekHeld(hold))
+          const state = await hold.onUnproven(client as never, proposal).catch(() => hold.peek())
           if (state.status !== 'clear') showHeld(hold, state)
           else setPhase('uncertain')
           return
@@ -327,7 +327,7 @@ export function MintShopItemModal({
       const receipt = await waitForTrackedReceipt(client, submitted)
       outcomeKnown = true
       // The hold releases a verified success at once, a failure only at finality.
-      const verified = hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => peekHeld(hold))
+      const verified = hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => hold.peek())
       if (receipt.status !== 'success') throw new Error('The mint failed.')
       if (proposal) {
         // Only the Safe's ExecutionSuccess for this proposal confirms the
@@ -367,7 +367,7 @@ export function MintShopItemModal({
       }
       if (hold && reachedWallet && !outcomeKnown) {
         // The wallet may have sent it without saying so: the hold says what is held.
-        const now = await hold.state(getPublicClient(config, { chainId: chainId as SupportedChainId }) as never).catch(() => peekHeld(hold))
+        const now = await hold.state(getPublicClient(config, { chainId: chainId as SupportedChainId }) as never).catch(() => hold.peek())
         if (now.status !== 'clear') {
           showHeld(hold, now)
           return
