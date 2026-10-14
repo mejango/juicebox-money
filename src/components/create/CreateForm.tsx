@@ -975,6 +975,7 @@ export function CreateForm() {
         : {}),
       ...(next.directSafeCall ? { directSafeCall: next.directSafeCall } : {}),
       ...(next.held ? { held: true as const } : {}),
+      ...(next.settled ? { settled: true as const } : {}),
       ...(next.projectId !== undefined ? { projectId: next.projectId } : {}),
     }, pinnedRef.current?.salt ?? restoredSessionRef.current?.salt);
     if (!persisted) throw new Error("Launch progress could not be saved. Restore browser storage before continuing.");
@@ -1595,7 +1596,12 @@ export function CreateForm() {
         launchHoldRef.current = launchHold({
           chainId, account: address!, safe: !!proposal || viaSafe, salt: pinned.salt, projectUri: pinned.projectUri, call: savedCall,
         });
-        if (hash) {
+        if (hash && priorStatus?.settled) {
+          // A success saved before: it stays confirming, whatever a read says now (invariant D).
+          settledByHold = true;
+          proposal = undefined;
+          updateStatus(chainId, { phase: "confirming", error: undefined });
+        } else if (hash) {
           // A saved submission: the hold decides before anything is sent or discarded.
           updateStatus(chainId, { phase: "confirming", error: undefined });
           const recovered = await recoverSavedLaunch(
@@ -1618,7 +1624,8 @@ export function CreateForm() {
           settledByHold = true;
           hash = recovered.hash;
           proposal = undefined;
-          updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: undefined });
+          // The authenticated success is saved with its hash before any domain read.
+          updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: undefined, settled: true });
         } else {
           const resume = await launchResumeGate(launchHoldRef.current, client as never, priorStatus);
           if (resume.kind === "held" || resume.kind === "unverified") {
@@ -1636,7 +1643,8 @@ export function CreateForm() {
             // The hold proved this launch ran: follow it, never send it again.
             settledByHold = true;
             hash = resume.hash;
-            updateStatus(chainId, { phase: "confirming", txHash: hash, unverifiedSend: undefined });
+            // The authenticated success is saved with its hash before any domain read.
+            updateStatus(chainId, { phase: "confirming", txHash: hash, unverifiedSend: undefined, settled: true });
           }
         }
         if (!hash) {
@@ -2123,6 +2131,13 @@ export function CreateForm() {
         }
         return;
       }
+    }
+    // Right before retiring, the journal decides: a success saved here or by another tab is
+    // never retired by a check or an exit; it stays confirming.
+    if (loadLaunchSession()?.statuses[shown.chainId]?.settled) {
+      setLaunchHeld(null);
+      setLaunchError(LAUNCH_SETTLED_CONFIRMING_LINE);
+      return;
     }
     // The user took the exit (or checked it): the saved submission retires, so neither a
     // new launch nor abandoning this one asks for proof of it again.

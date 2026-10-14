@@ -84,6 +84,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'
 import { LAUNCH_SESSION_KEY, loadLaunchSession } from '@/lib/launch-session'
 import { launchHold } from '@/lib/launch-hold'
+import { DRAFT_KEY } from '@/lib/draft'
 
 let host: HTMLDivElement
 let root: Root
@@ -266,7 +267,7 @@ describe('a saved launch restored on the create page', () => {
     await act(async () => (button('Check again') ?? button('Try again'))!.click())
     await settle()
     expect(m.waitReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hash: NEW_HASH }))
-    expect(journalAtChecks).toEqual({ phase: 'confirming', txHash: NEW_HASH, held: true })
+    expect(journalAtChecks).toEqual({ phase: 'confirming', txHash: NEW_HASH, held: true, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
@@ -306,6 +307,67 @@ describe('a saved launch restored on the create page', () => {
     expect(button('I checked my wallet. Send again')).toBeUndefined()
     expect(button('Cancel deployment')).toBeUndefined()
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: NEW_HASH })
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('keeps a launched chain its own project when another chain is retired through the check: it leaves the selection, and nothing of the old launch stays to pin from', async () => {
+    // Chain 1 launched; chain 10 was signing with no hold of its own when the page closed.
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' }, 10: { projectName: 'Launch' } }, chains: [1, 10],
+      statuses: { 1: { phase: 'done', projectId: 5 }, 10: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    await act(async () => button('I checked it. Launch again')!.click())
+    await settle()
+    // The old launch (its salt) is gone, so the next launch pins a fresh one...
+    expect(loadLaunchSession()).toBeNull()
+    // ...for chain 10 only: chain 1 keeps its project and leaves the selection (the form saves it).
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 700)) })
+    expect(JSON.parse(localStorage.getItem(DRAFT_KEY)!).chains).toEqual([10])
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('keeps a launch whose success was saved confirming after a reload, even when its settlement can no longer be read', async () => {
+    // The hold proved this launch before the reload; its record is gone and the node can't answer now.
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'confirming', txHash: HASH, settled: true } }, createdAt: Date.now(),
+    }))
+    m.client = { ...emptyNode(), getTransaction: async () => { throw new Error('node down') }, getChainId: async () => { throw new Error('node down') } }
+    m.waitReceipt.mockRejectedValue(new Error('node down'))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    expect(host.textContent).toContain('Your launch went through. Its project is still confirming.')
+    expect(button('I checked it. Launch again')).toBeUndefined()
+    expect(button('I checked my wallet. Send again')).toBeUndefined()
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: HASH, settled: true })
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('refuses a stale check action once another tab saved the launch as a success', async () => {
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    const checked = button('I checked it. Launch again')
+    expect(checked, 'the check').toBeDefined()
+    // Meanwhile another tab proved the launch and saved its success.
+    const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
+    session.statuses[1] = { phase: 'confirming', txHash: HASH, settled: true }
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
+    await act(async () => checked!.click())
+    await settle()
+    // A saved success is never retired: the launch record and its hash stay.
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: HASH, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 })

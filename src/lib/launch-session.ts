@@ -47,6 +47,11 @@ export type LaunchChainStatus = {
   unverifiedSend?: true
   /** Its wallet request was reserved under the SDK write hold (launch-hold), which decides what is out. */
   held?: true
+  /**
+   * The hold authenticated `txHash` as this launch's success, saved before any domain read:
+   * from then on it stays confirming, and neither a check nor an exit retires it.
+   */
+  settled?: true
   /** Safe setup is resumable independently of the non-idempotent project launch. */
   multisigSetup?: {
     phase: 'signing' | 'confirming' | 'done' | 'failed'
@@ -261,6 +266,7 @@ function coerceStatus(value: unknown): LaunchChainStatus {
     ...(directSafeCall ? { directSafeCall } : {}),
     ...(wasSigning || status.unverifiedSend === true ? { unverifiedSend: true as const } : {}),
     ...(status.held === true ? { held: true as const } : {}),
+    ...(status.settled === true && txHash ? { settled: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
     ...(typeof status.projectId === 'number'
