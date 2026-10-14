@@ -611,6 +611,22 @@ describe("a liquidity write's hold key", () => {
     expect(await finalIntent()).not.toBe(first)
   })
 
+  it('keys typed range bounds by their value, so 1 and 1.0 are one add', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await review('By price range')
+    const typed = async (min: string, max: string) => {
+      await typeInto('Range minimum in ETH per TKN', min)
+      await typeInto('Range maximum in ETH per TKN', max)
+      await typeInto('TKN amount', '1')
+      await review('Add liquidity')
+      return finalIntent()
+    }
+    const first = await typed('1', '2')
+    expect(await typed('1.0', '2.00')).toBe(first)
+    expect(await typed('1.1', '2')).not.toBe(first)
+  })
+
   it('tells a re-fit of the market from keeping its ranges', async () => {
     await render(() => (
       <MarketEditPanel chainId={1} projectId={7} pool={{ ...POOL, issuance: 2 } as never} positionManager={POSITION_MANAGER}
