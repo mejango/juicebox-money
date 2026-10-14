@@ -730,7 +730,15 @@ export function useSafeTx(chainId: number) {
           setSettledNotice(WRITE_RELEASED_LINE)
           setPhase('submitted')
         }
-      } else retry = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
+      } else {
+        // The hold offers its exit (a receipt it can't verify past the mined window):
+        // show it, with its exit, and keep checking behind it. Never busy without one.
+        if (state.exit && !repeatsWithoutExit(heldRef.current?.state, state)) {
+          showHeld({ ...current, state })
+          setPhase('unconfirmed')
+        }
+        retry = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
+      }
     }
     void check()
     return () => { live = false; clearTimeout(retry) }

@@ -88,7 +88,8 @@ import { writeHolds } from '@/lib/write-holds'
 
 import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { approvalStepIntent, bridgeSendIntent, bridgeSyncIntent, moveIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
+import { approvalStepIntent, bridgeSendIntent, bridgeSyncIntent, moveIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, decimalKey, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
+import { useChosen } from '@/hooks/useChosen'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -635,6 +636,34 @@ describe('useSafeTx', () => {
       })
     })
 
+    it('keeps a deliberate merge blocked: an app refill shares the typed key, so its send waits for the exit', async () => {
+      // The user typed 5; the app then refilled the field to 7. The key keeps the 5 the user chose.
+      let field!: ReturnType<typeof useChosen<string>>
+      const Probe = () => { field = useChosen('', 'amount'); return null }
+      let probe!: TestRenderer.ReactTestRenderer
+      await act(async () => { probe = TestRenderer.create(createElement(Probe)) })
+      await act(async () => field.set('5'))
+      const typed = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
+      await act(async () => field.fill('7'))
+      const refilled = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
+      expect(refilled).toBe(typed)
+      await act(async () => probe.unmount())
+
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: typed }) })
+      await act(async () => hook.ref.current!.reset())
+      // The refilled send is another call, still held by the merged intent: blocked, with the exit.
+      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 7n] as const }, { ...reviewedByAlice, intent: refilled }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
     it('keeps different user choices apart', () => {
       expect(paymentIntent({ ...payment, amount: '6' })).not.toBe(paymentIntent(payment))
       expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
@@ -687,6 +716,35 @@ describe('useSafeTx', () => {
       await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(hook.ref.current!.phase).toBe('success')
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it("shows the hold's exit once a receipt it can't verify passes the mined window, and keeps checking behind it", async () => {
+      // The node returns a receipt, but doesn't show its block canonical: the hold can't verify it.
+      let canonical = false
+      chainWith(HASH, () => canonical)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: receiptFor(HASH), isError: false }
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+      try {
+        await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        // Held while the hold can't tell: pending, no exit yet.
+        expect(hook.ref.current!.phase).toBe('pending')
+        await act(async () => { await vi.advanceTimersByTimeAsync(31 * 60_000) })
+        // Past the mined window the hold offers its exit: the flow shows it, never busy forever.
+        expect(hook.ref.current!.phase).toBe('unconfirmed')
+        const shown = heldNotice(hook.ref.current!.error)
+        expect(shown.status).toBe('held-unchecked')
+        expect(shown.onExit).toBeTypeOf('function')
+        // Behind it, the settlement checks go on: once the chain shows it, it settles.
+        canonical = true
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        expect(hook.ref.current!.phase).toBe('success')
+      } finally {
+        vi.useRealTimers()
+      }
       await act(async () => hook.renderer.unmount())
     })
 
