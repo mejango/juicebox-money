@@ -48,6 +48,10 @@ function createFakeWallet() {
       return new Promise<Receipt>(resolve => awaiting.set(key, [...(awaiting.get(key) ?? []), resolve]))
     }),
     getBalance: vi.fn(async () => 10n ** 30n),
+    getChainId: vi.fn(async () => 1),
+    /** The account's next nonce, read before each wallet send. */
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 0),
     /** No write is a transaction the chain shows: a Safe app's reply is its proposal's hash. */
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }): Promise<never> => {
       throw new TransactionNotFoundError({ hash })

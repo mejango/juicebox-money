@@ -78,13 +78,14 @@ describe('SDK-owned native write recovery', () => {
     expect(readDefifaWriteRecovery(scope)).toBeNull()
   })
 
-  it('refuses a writer when durable storage cannot reserve the original call', async () => {
+  it("holds the original call in this tab's memory where durable storage is refused", async () => {
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage unavailable') })
     const wallet = vi.fn()
     await expect(sendRecoverableDefifaWrite({ scope, request, safe: false, options: { reviewedAccount: ACCOUNT }, send: async (_request, options) => {
       await options.beforeWrite?.(); wallet(); return HASH
-    } })).rejects.toThrow('Storage unavailable')
-    expect(wallet).not.toHaveBeenCalled()
+    } })).resolves.toBe(HASH)
+    expect(wallet).toHaveBeenCalledOnce()
+    expect(readDefifaWriteRecovery(scope)?.hash).toBe(HASH)
   })
 
   it('coordinates simultaneous tabs through the SDK lock and clears only the exact retained record', async () => {

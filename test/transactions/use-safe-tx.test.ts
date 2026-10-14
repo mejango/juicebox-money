@@ -25,7 +25,15 @@ const mocks = vi.hoisted(() => ({
   connectorUid: 'reviewed-wallet',
   centerWallet: false,
   connected: true,
-  publicClient: { simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
+  publicClient: {
+    simulateContract: vi.fn(),
+    estimateContractGas: vi.fn(),
+    getTransaction: vi.fn(),
+    getChainId: vi.fn(async () => 10),
+    // The account's next nonce, read before each wallet send.
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 3),
+  },
   receipt: { data: undefined, isError: false } as {
     data?: {
       status: 'success' | 'reverted'
@@ -76,7 +84,8 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 
 import { useSafeTx } from '@/hooks/useSafeTx'
-import { openWriteRecovery } from '@/lib/write-recovery'
+import { writeHolds } from '@/lib/write-holds'
+import { createBrowserWriteRecovery, createHeldWriteStorage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -109,7 +118,15 @@ type SafeTxValue = ReturnType<typeof useSafeTx>
 /** The held write's notice in place of an error: its props, with the exit. */
 function heldNotice(error: SafeTxValue['error']) {
   if (!isValidElement(error)) throw new Error(`Expected a held write's notice, got ${String(error)}`)
-  return (error as ReactElement<{ chainId: number; hash: Hex | null; value: string; onExit: () => void }>).props
+  const { chainId, state, onExit } = (error as ReactElement<{ chainId: number; state: WriteHeldState; onExit?: () => void }>).props
+  return {
+    chainId,
+    status: state.status,
+    line: state.line,
+    hash: ('hash' in state ? state.hash : state.record.hash) ?? null,
+    value: state.record.call.value,
+    onExit,
+  }
 }
 
 const Harness = forwardRef<SafeTxValue>(function Harness(_, ref) {
@@ -536,7 +553,7 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
-  it('shows an earlier hash the chain mined instead of sending again, and a verified success releases it at once', async () => {
+  it('releases a held write the chain shows mined successfully, before finality, so the same call sends again', async () => {
     vi.useFakeTimers()
     try {
       const first = await renderHook()
@@ -561,24 +578,10 @@ describe('useSafeTx', () => {
           : { number: args.blockNumber, hash: args.blockNumber === 5n ? BLOCK : `0x${'66'.repeat(32)}` }),
       } as typeof mocks.publicClient
       const reopened = await renderHook()
+      mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
+      // The chain shows it ran, before finality: sending the same call again is the user's new action.
       await act(async () => {
-        await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
-      })
-      expect(mocks.writeContract).toHaveBeenCalledOnce()
-      expect(reopened.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
-      mocks.receipt = { data: receipt, isError: false }
-      await act(async () => {
-        reopened.renderer.update(createElement(Harness, { ref: reopened.ref }))
-      })
-      // The dialog has its result at once; the hold stays in the background.
-      expect(reopened.ref.current).toMatchObject({ phase: 'success', error: null })
-
-      // The user saw it run: sending the same call again is a new action, sent at once, before finality.
-      mocks.receipt = { data: undefined, isError: false }
-      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      await act(async () => reopened.ref.current!.reset())
-      await act(async () => {
-        await reopened.ref.current!.send(request, reviewedByAlice)
+        await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBe(EXECUTION_HASH)
       })
       expect(finalized).toBe(4n)
       expect(mocks.writeContract).toHaveBeenCalledTimes(2)
@@ -694,8 +697,8 @@ describe('useSafeTx', () => {
 
     // Tab B records the wallet's hash for the same attempt.
     const OTHER = `0x${'ef'.repeat(32)}` as Hex
-    const journal = openWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: {
-      to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+    const journal = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: {
+      to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } }, { storage: createHeldWriteStorage() })
     await journal.withLock(async () => { journal.submitted(OTHER, journal.read()!) })
 
     await act(async () => { shown.onExit!() })
@@ -757,11 +760,50 @@ describe('useSafeTx', () => {
 
     // The user checked their wallet: the same send runs again.
     await act(async () => {
-      heldNotice(hook.ref.current!.error).onExit()
+      heldNotice(hook.ref.current!.error).onExit!()
     })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     expect(hook.ref.current).toMatchObject({ phase: 'pending', hash: HASH })
     await act(async () => hook.renderer.unmount())
+  })
+
+  describe('a hold that settles while its exit is open', () => {
+    const INPUT = () => ({ chainId: 10, account: ALICE, safe: false, call: {
+      to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n } })
+    /** Another tab, or the chain, ends the held write. */
+    async function endElsewhere() {
+      const journal = createBrowserWriteRecovery(INPUT(), { storage: createHeldWriteStorage() })
+      await journal.withLock(async () => { journal.clear(journal.read()!) })
+    }
+
+    it('sends nothing when the hold clears before the exit is accepted', async () => {
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await endElsewhere()
+      // A look at the hold (a poll, another flow) sees it clear while the exit is open.
+      await act(async () => { await writeHolds.open(INPUT()).state(mocks.publicClient as never) })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('sends nothing when the hold has cleared by the time the exit is accepted', async () => {
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      const shown = heldNotice(hook.ref.current!.error)
+      await endElsewhere()
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      await act(async () => hook.renderer.unmount())
+    })
   })
 
   it('releases its hold when the wallet refuses the write', async () => {
@@ -877,7 +919,8 @@ describe('useSafeTx', () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(4_100)
       })
-      expect(getTransactionReceipt).toHaveBeenCalledTimes(2)
+      // Two lookups, then the write hold's own read as it verifies the receipt.
+      expect(getTransactionReceipt).toHaveBeenCalledTimes(3)
       expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
       expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 77n })
     } finally {

@@ -253,7 +253,9 @@ const budgets = {
   // against 2587.4 KiB on the same toolchain. Round only the aggregate up.
   // Holding a write until its receipt is final, the pending line in place of
   // the exit, and keeping a ran Safe proposal across reloads measure 2593.7 KiB.
-  allScripts: 2594 * KIB,
+  // SDK 2.32.0's write hold controller (its Safe proposal follow, the exits and
+  // every held state) in place of the app's own glue measures 2597.4 KiB.
+  allScripts: 2598 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

@@ -1,44 +1,43 @@
 'use client'
 
-import { WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage } from '@bananapus/nana-sdk-core/review'
+import { WRITE_EXIT_LABEL, writeExitMessage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { explorerTxUrl } from '@/lib/chainDisplay'
-import { WRITE_PENDING_LINE } from '@/lib/write-recovery'
 
 /**
- * A wallet write with no confirmed result. With `onExit` (no known hash, or a
- * hash proven dropped): the SDK's one line and the exit that sends it again
- * once the user checked their wallet. Without it (a hash still pending): one
- * line saying the wallet speeds it up or cancels it. A link when there is a
- * hash. Inline elements only, so it can sit in a dialog's alert line.
+ * A held write as the SDK's write hold says: its one line, a link when it has
+ * a hash, and, for a state that offers it, the exit with what sending again
+ * costs. Inline elements only, so it can sit in a dialog's alert line.
  */
-export function WriteHeldNotice({ chainId, hash, value, action, onExit }: {
+export function WriteHeldNotice({ chainId, state, onExit }: {
   chainId: number
-  hash: string | null
-  value?: bigint | string
-  /** A noun for the write, as the line names it: "transaction" by default. */
-  action?: string
+  state: WriteHeldState
+  /** Given only for a state with `exit: true`. */
   onExit?: () => void
 }) {
+  const hash = 'hash' in state ? state.hash : state.record.hash
   const url = hash ? explorerTxUrl(chainId, hash) : null
-  const link = url ? (
-    <>
-      {' '}
-      <a href={url} target="_blank" rel="noopener noreferrer" className="underline">
-        View transaction
-      </a>
-    </>
-  ) : null
-  if (!onExit) return <span className="block text-smoke-800">{WRITE_PENDING_LINE}{link}</span>
+  const warning = 'warning' in state && state.warning ? state.warning : writeExitMessage(state.record.call)
   return (
     <span className="block space-y-2 text-smoke-800">
       <span className="block">
-        {writeHeldMessage(action)}
-        {link}
+        {state.line}
+        {url ? (
+          <>
+            {' '}
+            <a href={url} target="_blank" rel="noopener noreferrer" className="underline">
+              View transaction
+            </a>
+          </>
+        ) : null}
       </span>
-      <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={onExit}>
-        {WRITE_EXIT_LABEL}
-      </button>
-      <span className="block text-xs text-smoke-600">{writeExitMessage({ value }, action)}</span>
+      {onExit ? (
+        <>
+          <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={onExit}>
+            {WRITE_EXIT_LABEL}
+          </button>
+          <span className="block text-xs text-smoke-600">{warning}</span>
+        </>
+      ) : null}
     </span>
   )
 }

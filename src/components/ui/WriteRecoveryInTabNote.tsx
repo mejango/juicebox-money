@@ -1,9 +1,9 @@
 'use client'
 
-import { WRITE_RECOVERY_IN_TAB_LINE, writeRecoveryIsDurable } from '@/lib/write-recovery'
+import { writeHolds } from '@/lib/write-holds'
 
-/** A parent review's line where the browser can't keep held writes past this tab (private browsing). */
+/** A parent review's line while held writes last only in this tab (private browsing): the SDK's. */
 export function WriteRecoveryInTabNote() {
-  if (writeRecoveryIsDurable()) return null
-  return <p className="text-sm text-smoke-600">{WRITE_RECOVERY_IN_TAB_LINE}</p>
+  const line = writeHolds.reviewLine()
+  return line ? <p className="text-sm text-smoke-600">{line}</p> : null
 }

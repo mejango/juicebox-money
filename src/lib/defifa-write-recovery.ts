@@ -1,23 +1,35 @@
-import { writeHeldMessage, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
+import {
+  createBrowserWriteRecovery,
+  createHeldWriteStorage,
+  readBrowserWriteRecovery,
+  readReviewedWriteNonce,
+  writeHeldMessage,
+  type ReviewedWriteRecoveryInput,
+  type ReviewedWriteRecoveryRecord,
+} from '@bananapus/nana-sdk-core/review'
 import { encodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
-import { openWriteRecovery, readWriteRecovery, writeNonceEvidence } from '@/lib/write-recovery'
+import { writeHolds } from '@/lib/write-holds'
+
+/** The SDK's held-write storage, shared with every write hold: the browser's, or this tab's memory. */
+const storage = createHeldWriteStorage()
+const openJournal = (input: ReviewedWriteRecoveryInput) => createBrowserWriteRecovery(input, { storage })
 
 export type DefifaWriteAction = 'pay' | 'cash-out' | 'transfer'
 export type DefifaRecoveryScope = { chainId: number; projectId: number; account: Address; action: DefifaWriteAction }
 export const DEFIFA_RECOVERY_QUERY_PREFIX = ['defifa-write-recovery'] as const
 export const DEFIFA_RECOVERY_CHANGE_EVENT = 'defifa-write-recovery'
-const notifyRecovery = () => { globalThis.dispatchEvent?.(new Event(DEFIFA_RECOVERY_CHANGE_EVENT)) }
+export const notifyRecovery = () => { globalThis.dispatchEvent?.(new Event(DEFIFA_RECOVERY_CHANGE_EVENT)) }
 
 /** Approval and mint are successive legs of one pay intent, never two journals. */
 const defifaWriteNamespace = (scope: DefifaRecoveryScope) => `defifa:${scope.action}:${scope.projectId}`
 
 export function readDefifaWriteRecovery(scope: DefifaRecoveryScope) {
-  return readWriteRecovery({ chainId: scope.chainId, account: scope.account, namespace: defifaWriteNamespace(scope) })
+  return readBrowserWriteRecovery({ chainId: scope.chainId, account: scope.account, namespace: defifaWriteNamespace(scope) }, { storage })
 }
 
 function reopenDefifaWriteRecovery(scope: DefifaRecoveryScope, record: ReviewedWriteRecoveryRecord) {
-  return openWriteRecovery({ ...record, namespace: defifaWriteNamespace(scope) })
+  return openJournal({ ...record, namespace: defifaWriteNamespace(scope) })
 }
 
 export class PendingDefifaWriteError extends Error {
@@ -40,7 +52,7 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
   if (request.chainId !== scope.chainId || options.reviewedAccount.toLowerCase() !== scope.account.toLowerCase()) {
     throw new Error('The recovery scope does not match the reviewed account and network.')
   }
-  const journal = openWriteRecovery({
+  const journal = openJournal({
     chainId: scope.chainId, account: scope.account, safe, namespace: defifaWriteNamespace(scope),
     call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
   })
@@ -62,7 +74,8 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
       ...options,
       journaled: true,
       beforeWrite: async () => {
-        reserved = journal.reserve(undefined, safe ? undefined : await writeNonceEvidence(client, scope.account))
+        const evidence = safe || !client ? undefined : await readReviewedWriteNonce(client, scope.account).catch(() => undefined)
+        reserved = journal.reserve(undefined, evidence)
         onRecord?.(reserved)
         notifyRecovery()
         try {
@@ -92,36 +105,20 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
   })
 }
 
-/**
- * The user checked their wallet: the saved action is released so a new one
- * can be reviewed. Only that exact record is released.
- */
-export function abandonDefifaWriteRecovery(scope: DefifaRecoveryScope, record: ReviewedWriteRecoveryRecord) {
-  reopenDefifaWriteRecovery(scope, record).abandon(record, { checkedWallet: true })
-  notifyRecovery()
-}
-
-/**
- * Check a saved ordinary write against the chain: its hash once mined, or its
- * exact call at the nonce it was sent at. Null once nothing is held any more.
- */
-export async function resolveDefifaWriteRecovery(
-  scope: DefifaRecoveryScope,
-  record: ReviewedWriteRecoveryRecord,
-  client: Parameters<ReturnType<typeof openWriteRecovery>['resolve']>[0],
-) {
-  const journal = reopenDefifaWriteRecovery(scope, record)
-  const check = await journal.withLock(() => journal.resolve(client), true)
-  if (check && check.status !== 'pending') notifyRecovery()
-  return check
+/** The SDK's write hold over a saved Defifa action: its state, its line and the user's exit. */
+export function defifaWriteHold(scope: DefifaRecoveryScope, record: ReviewedWriteRecoveryRecord) {
+  return writeHolds.open({ chainId: record.chainId, account: record.account, safe: record.safe, namespace: defifaWriteNamespace(scope), call: record.call })
 }
 
 /** Call only after the exact original write's success or finalized failure was authenticated. */
 export async function clearDefifaWriteRecovery(scope: DefifaRecoveryScope, record: ReviewedWriteRecoveryRecord) {
   const journal = reopenDefifaWriteRecovery(scope, record)
   await journal.withLock(async () => {
+    // The same attempt may carry chain evidence the write hold added since (its sent nonce).
+    const current = journal.read()
+    const latest = current?.id === record.id ? current : record
     // A wallet-returned identity can be retained by the SDK's volatile overlay after a failed durable update.
-    const committed = record.hash ? journal.submitted(record.hash, record) : record
+    const committed = latest.hash ? journal.submitted(latest.hash, latest) : latest
     journal.clear(committed)
   })
   notifyRecovery()

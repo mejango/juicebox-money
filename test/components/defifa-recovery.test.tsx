@@ -17,7 +17,12 @@ const EXECUTION = `0x${'b'.repeat(64)}` as Hex
 const scope = { chainId: 8453, projectId: 27, account: ACCOUNT, action: 'transfer' as DefifaWriteAction }
 const request: TxRequest = { chainId: 8453, address: HOOK, abi: erc721Abi, functionName: 'safeTransferFrom', args: [ACCOUNT, RECIPIENT, 123n] }
 const m = vi.hoisted(() => ({ receipt: vi.fn(), restore: vi.fn(), verify: vi.fn(), approval: vi.fn(), safe: vi.fn(), reported: vi.fn() }))
-vi.mock('wagmi', () => ({ usePublicClient: () => ({ getTransactionReceipt: m.receipt }) }))
+vi.mock('wagmi', () => ({ usePublicClient: () => ({
+  getTransactionReceipt: m.receipt,
+  getChainId: async () => 8453,
+  // The node knows the saved hash and it hasn't been mined yet.
+  getTransaction: async ({ hash }: { hash: Hex }) => ({ hash, from: ACCOUNT, nonce: 0, blockNumber: null }),
+}) }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), restoreDefifaNftReceiptContext: m.restore, verifyDefifaNftTransaction: m.verify }))
 vi.mock('@bananapus/nana-sdk-core/review', async original => ({ ...await original(), verifyReviewedWriteReceipt: m.approval }))
 vi.mock('@/lib/safe-connector', () => ({ waitForSafeExecutionHash: m.safe, reportedSafeExecution: m.reported }))
@@ -127,7 +132,8 @@ describe('original native action recovery', () => {
     await settle()
     expect(signal.aborted).toBe(true)
     expect(readDefifaWriteRecovery(scope)?.hash).toBe(HASH)
-    expect(m.receipt).not.toHaveBeenCalled()
+    // No execution's receipt was read (the write hold only asks whether the reply ran at once).
+    expect(m.receipt).not.toHaveBeenCalledWith({ hash: EXECUTION })
     expect(m.verify).not.toHaveBeenCalled()
   })
 

@@ -435,7 +435,7 @@ describe('a payment from a Safe', () => {
     expect(button('Pay').disabled).toBe(false)
   })
 
-  it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
+  it("ends an approval whose result can't be proven on Done, freeing the panel, and keeps the call held", async () => {
     m.safe = true
     m.token = 'erc20'
     // Safe's service is lost before the approval's execution can be read.
@@ -452,14 +452,11 @@ describe('a payment from a Safe', () => {
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // Dismissed after its line, the same approval can be proposed again.
+    // Dismissed after its line, the write hold still holds the same approval: it is not proposed again.
     await click('Pay')
     await click('Confirm & Pay')
-    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
-    expect(wallet.writes()).toEqual([
-      { functionName: 'approve', account: ALICE },
-      { functionName: 'approve', account: ALICE },
-    ])
+    await waitUntil(() => !!host.textContent?.includes('Proposed to your Safe'))
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
   })
 })
 

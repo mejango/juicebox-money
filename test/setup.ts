@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, vi } from 'vitest'
-import { clearTabWriteRecovery } from '@/lib/write-recovery'
 
 function blockedNetworkConstructor(transport: string) {
   return class {
@@ -12,9 +11,12 @@ function blockedNetworkConstructor(transport: string) {
 }
 
 beforeEach(() => {
-  // Writes held in a storage-less tab live in module memory, and in a DOM
-  // environment's storage until finality: each test starts with none.
-  clearTabWriteRecovery()
+  // Writes held in a storage-less tab live in the SDK's tab memory, and in a
+  // DOM environment's storage: each test starts with none.
+  const tab = globalThis as unknown as Record<symbol, unknown>
+  const memory = tab[Symbol.for('nana-sdk:held-writes')] as Map<string, string> | undefined
+  ;(tab[Symbol.for('nana-sdk:held-writes-seen')] as WeakMap<object, Map<string, string>> | undefined)?.get(memory ?? {})?.clear()
+  memory?.clear()
   try {
     const storage = globalThis.localStorage
     if (storage && typeof storage.key === 'function') {
