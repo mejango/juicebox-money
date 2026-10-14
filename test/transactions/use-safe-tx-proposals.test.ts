@@ -792,6 +792,7 @@ describe('a Safe proposal awaiting its signers', () => {
 })
 
 describe('an executed Safe proposal', () => {
+  const PENDING_RECEIPT = 'Executed by your Safe. Confirming it onchain.'
 
   /** Lets `ms` of time pass for the follow. */
   const pass = (ms: number) =>
@@ -816,14 +817,14 @@ describe('an executed Safe proposal', () => {
     await pass(0)
     expect(flow.tx).toMatchObject({ phase: 'pending', hash: EXECUTION })
 
-    // One tracked wait (about three minutes) found no receipt: unproven, the hold's state shows.
+    // One tracked wait (about three minutes) found no receipt: the friendly line, and no exit
+    // before the hold's window.
     await pass(4 * 60_000)
-    expect(flow.tx.phase).toBe('unconfirmed')
-    expect(heldState(flow.tx.error)).toBeTruthy()
+    expect(flow.tx).toMatchObject({ phase: 'submitted', notice: PENDING_RECEIPT, error: null })
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
-    expect(heldState(flow.tx.error)).toBeTruthy()
+    expect(flow.tx).toMatchObject({ notice: PENDING_RECEIPT, error: null })
 
     // Past the hold's window with no receipt the hold warns and offers its exit; the
     // flow shows it, never falls back to awaiting, and keeps checking behind it.
@@ -885,14 +886,14 @@ describe('an executed Safe proposal', () => {
   it('settles once its receipt arrives within the hour', async () => {
     const flow = await mount()
     await flow.send()
-    await pass(30 * 60_000)
-    expect(heldState(flow.tx.error)).toBeTruthy()
+    await pass(20 * 60_000)
+    expect(flow.tx).toMatchObject({ notice: PENDING_RECEIPT, error: null })
     mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, PROPOSAL),
     )
     await pass(5 * 60_000)
-    // The hold read the receipt behind its state and settled it: the flow says so, never held.
-    expect(flow.tx).toMatchObject({ notice: 'Your earlier transaction went through.', error: null })
+    // The hold read the receipt behind it and settled it: this flow's own write succeeded.
+    expect(flow.tx.phase).toBe('success')
   })
 })
 
@@ -1219,9 +1220,7 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     execute()
     await settle()
-    // Shown by the registry's result, or, where the flow showed the hold, by the hold's settlement.
-    if (topic === SUCCESS) expect(resumed.tx.phase === 'success' || resumed.tx.notice === 'Your earlier transaction went through.').toBe(true)
-    else expect(resumed.tx.phase).toBe('error')
+    expect(resumed.tx.phase).toBe(topic === SUCCESS ? 'success' : 'error')
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 

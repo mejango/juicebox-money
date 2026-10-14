@@ -287,6 +287,8 @@ type HeldWrite = {
   state: WriteHeldState | null
   /** A Safe proposal's registry key: an accepted exit drops the registry's entry too. */
   proposalKey?: string
+  /** This flow's own write, shown by its hold: a settlement of it is this flow's success. */
+  own?: boolean
 }
 
 
@@ -561,8 +563,10 @@ async function holdUntilResolved(key: string, client: FollowClient, { unproven, 
   }
   const receipt = known
   let shown: WriteHoldState | null = null
+  // An execution awaiting its receipt keeps the friendly line until the hold's exit is due.
+  const confirming = !receipt && !!executionHash
   const show = (state: WriteHoldState) => {
-    if (offersExit(shown, state) || (unproven && !shown && state.status !== 'clear')) {
+    if (offersExit(shown, state) || (unproven && !confirming && !shown && state.status !== 'clear')) {
       shown = state
       updateProposal(key, { phase: 'held', held: state as WriteHeldState })
     } else if (!shown) updateProposal(key, { phase: 'confirming' })
@@ -835,8 +839,14 @@ export function useSafeTx(chainId: number) {
         current.proposalKey ? proposals.get(current.proposalKey)?.executionHash : null,
       ]
         .filter(Boolean).map(hash => hash!.toLowerCase())
-      if (settledOn && own.includes(settledOn)) endHeld(state.settled)
-      else leaveHeld()
+      if (settledOn && own.includes(settledOn)) {
+        if (current.own && state.settled?.result === 'success') {
+          // This flow's own write finished: its success, as any send's.
+          showHeld(null)
+          inFlightRef.current = false
+          setPhase('success')
+        } else endHeld(state.settled)
+      } else leaveHeld()
     } else if (!repeatsWithoutExit(current.state, state)) showHoldState(current, state)
   })
 
@@ -901,7 +911,7 @@ export function useSafeTx(chainId: number) {
     if (!heldKey || !shown?.held || !last) return
     const hold = externalHolds.get(heldKey)?.hold ?? safeHoldOf(shown, heldKey)
     setShownKey(null)
-    showHoldState({ hold, ...last, proposalKey: heldKey }, shown.held)
+    showHoldState({ hold, ...last, proposalKey: heldKey, own: true }, shown.held)
   }, [heldKey, showHoldState])
   useEffect(() => {
     const shown = unprovenKey ? proposals.get(unprovenKey) : undefined
