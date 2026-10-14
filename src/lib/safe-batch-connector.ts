@@ -6,6 +6,7 @@ import { isHex, size, type Abi, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { reviewDescription, sendUnderHold, writeHolds } from '@/lib/write-holds'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -28,14 +29,17 @@ export type SequenceCall = BatchCall & {
   contractName?: string
 }
 
-/** The write hold over a Safe batch: by the user's intent, its first call as the record's call. */
+/**
+ * The write hold over a Safe batch: by the user's intent, with the whole batch
+ * (its MultiSendCallOnly call) as the hold's call, so another batch that only
+ * shares a call is never held by it.
+ */
 export function safeBatchHold({ chainId, safe, intent, calls }: {
   chainId: JBChainId; safe: Address; intent: string; calls: readonly BatchCall[]
 }) {
-  const [first] = calls
   return writeHolds.open({
     chainId, account: safe, safe: true, namespace: intent,
-    call: { to: first.to, data: first.data, value: first.value ?? 0n },
+    call: { to: MULTI_SEND_CALL_ONLY, data: encodeMultiSend(calls), value: 0n },
   })
 }
 

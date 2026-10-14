@@ -56,9 +56,7 @@ describe('a Safe batch held by its intent', () => {
     expect(m.sendCalls).toHaveBeenCalledTimes(2)
   })
 
-  // Known open: the SDK aliases a batch hold's record call, its first call, and verifies a batch
-  // only with that first call as the record's. This flips to passing once the SDK takes the whole batch.
-  it.fails('never holds another batch that only shares its first call, and still refuses its own retry', async () => {
+  it('never holds another batch that only shares its first call, and still refuses its own retry', async () => {
     const OTHER = `0x${'cd'.repeat(32)}` as Hex
     m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL }).mockResolvedValueOnce({ id: OTHER })
     const approveThen = (intent: string, data: Hex) => ({
