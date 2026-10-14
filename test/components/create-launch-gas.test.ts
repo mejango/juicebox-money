@@ -29,7 +29,8 @@ describe("direct launch Safe waits", () => {
     expect(source).toContain('const pageSignal = useUnmountSignal();')
     expect(source).toContain('const signal = pageSignal();')
     expect(source.match(/waitForSafeExecutionHash\(/g)).toHaveLength(2)
-    expect(source).toMatch(/waitForSafeExecutionHash\(\s*chainId,\s*proposal,\s*\{ signal \},\s*\)/)
+    // A saved proposal's recovery takes one look, under the page's signal, before its hold decides.
+    expect(source).toContain('waitForSafeExecutionHash(chainId, safeTxHash, { signal, lookMs: 15_000 })')
     expect(source).toContain('hash = await waitForSafeExecutionHash(chainId, proposal, { signal });')
     expect(source).toMatch(/prepareLaunchMultisigs\(\{[\s\S]*?\n\s+signal,\n\s+\}\);/)
   })

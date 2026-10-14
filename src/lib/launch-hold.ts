@@ -44,3 +44,41 @@ export async function launchResumeGate(
   if (settled && state.settled?.result === 'success') return { kind: 'settled', hash: settled as Hex }
   return status.held ? { kind: 'send' } : { kind: 'unverified' }
 }
+
+/**
+ * A chain's saved launch submission (its hash, or Safe proposal), recovered
+ * through its hold before anything is sent or discarded (the shared recovery rule):
+ * - `held`: the hold still holds it; show its state, with the SDK's warned exit when due;
+ * - `settled`: the hold proved it ran; follow that transaction (the domain checks);
+ * - `failed`: the hold proved it failed; the launch may be sent again;
+ * - `check`: it can't be checked here; the user checks it, and only that retires it.
+ * A record with no hold (the last release's, or cleared storage) is adopted by the hold
+ * first. A Safe proposal with no follower here gets one look for its execution, else
+ * its unproven end goes to the hold. Nothing here throws.
+ */
+export async function recoverSavedLaunch(
+  hold: WriteHoldHandle,
+  client: WriteHoldClient,
+  saved: { hash?: Hex; safeTxHash?: Hex },
+  lookForExecution?: (safeTxHash: Hex) => Promise<Hex | null>,
+): Promise<{ kind: 'held'; state: WriteHeldState } | { kind: 'settled'; hash: Hex } | { kind: 'failed' } | { kind: 'check'; reason: string }> {
+  try {
+    let state = await hold.state(client)
+    if (state.status === 'clear' && !state.settled) {
+      state = await hold.adopt(state, saved.safeTxHash ? { safe: { safeTxHash: saved.safeTxHash } } : { hash: saved.hash }, client)
+    }
+    if (saved.safeTxHash && state.status !== 'clear') {
+      const execution = await lookForExecution?.(saved.safeTxHash).catch(() => null)
+      state = execution
+        ? await hold.onExecuted(client, execution)
+        : await hold.onUnproven(client, saved.safeTxHash)
+    }
+    if (state.status !== 'clear') return { kind: 'held', state }
+    const settled = state.settled
+    if (settled && 'hash' in settled && settled.result === 'success') return { kind: 'settled', hash: settled.hash }
+    if (settled?.result === 'failed') return { kind: 'failed' }
+    return { kind: 'check', reason: 'This launch could not be checked here.' }
+  } catch (error) {
+    return { kind: 'check', reason: error instanceof Error ? error.message : String(error) }
+  }
+}
