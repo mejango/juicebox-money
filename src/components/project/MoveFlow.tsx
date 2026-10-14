@@ -1,7 +1,5 @@
 'use client'
 
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
-
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -44,7 +42,7 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalStepIntent, bridgeSendIntent, buildErc20ApproveRequest, decimalKey, moveIntent } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 /** The frozen, reviewed prepare: what the user confirms is exactly what's
@@ -61,6 +59,8 @@ type ReviewedMove = {
   backingSymbol: string
   infra: Infra
   account: Address
+  /** The move's write intent, frozen at review: its approval is a step of it. */
+  intent: string
 }
 
 /**
@@ -282,7 +282,7 @@ export function MoveCard({
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}
-              amountKey={amountField.key}
+              amountKey={amountField.key(decimalKey)}
               maxBalance={src.erc20Balance}
               account={address}
             />
@@ -314,8 +314,8 @@ function MoveFlow({
   sucker: Address
   projectToken: Address
   amount: bigint
-  /** How the write intent keys the amount: as typed, or Max as the user's choice of all. */
-  amountKey: (amount: bigint) => bigint | string
+  /** The amount as the write intent keys it (useChosen): the typed decimal, or Max as the user's choice of all. */
+  amountKey: string
   maxBalance: bigint
   account: Address
 }) {
@@ -484,6 +484,7 @@ function MoveFlow({
         backingSymbol,
         infra,
         account,
+        intent: moveIntent({ chainId: from, sucker, token, amount: amountKey, beneficiary: account }),
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
@@ -507,7 +508,7 @@ function MoveFlow({
         spender: review.sucker,
         amount: review.amount,
       }),
-      { reviewedAccount: review.account },
+      { reviewedAccount: review.account, intent: approvalStepIntent(review.intent, 'approve', review.projectToken, review.sucker) },
     )
   }
 
@@ -524,9 +525,7 @@ function MoveFlow({
     tx.send({ ...request, abi: request.abi as Abi }, {
       reviewedAccount: review.account,
       // Its minimum re-quotes on a fresh review: held by what the user chose to move.
-      intent: writeIntentKey('bridge-prepare', {
-        chainId: from, sucker: intent.address(review.sucker), token: intent.address(review.token), amount: amountKey(review.amount), beneficiary: intent.address(review.account),
-      }),
+      intent: review.intent,
     })
   }
 
@@ -558,7 +557,11 @@ function MoveFlow({
         token: review.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
+      await tx.send({ ...request, abi: request.abi as Abi }, {
+        reviewedAccount: review.account,
+        // Its fee requotes on retry: held by the outbox send itself.
+        intent: bridgeSendIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
+      })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')
     } finally {

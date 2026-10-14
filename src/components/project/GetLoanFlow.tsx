@@ -22,6 +22,7 @@ import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useState } from 'react'
 import { useChosen } from '@/hooks/useChosen'
+import { decimalKey } from '@/lib/transaction-builders'
 import {
   formatUnits,
   parseUnits,
@@ -218,7 +219,7 @@ export function GetLoanFlow({
         reviewedAccount: r.account,
         // Its minimum re-quotes on retry: held by the loan the user chose.
         intent: writeIntentKey('borrow', {
-          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: amountField.key(r.collateral), prepaid: r.prepaid, beneficiary: intent.address(r.account),
+          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: amountField.key(decimalKey), prepaid: r.prepaid, beneficiary: intent.address(r.account),
         }),
       })
     } catch (e) {

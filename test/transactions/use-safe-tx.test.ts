@@ -88,7 +88,7 @@ import { writeHolds } from '@/lib/write-holds'
 
 import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { approvalStepIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
+import { approvalStepIntent, bridgeSendIntent, bridgeSyncIntent, moveIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -578,12 +578,18 @@ describe('useSafeTx', () => {
     // One intent per user action: what the app picks (route, venue, price, computed amounts) never splits it.
     const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
     const HOOK = '0x4444444444444444444444444444444444444444' as Address
-    const payment = { chainId: 10, projectId: 7, token: BOB, amount: 5n, beneficiary: ALICE, memo: 'gm' }
+    const payment = { chainId: 10, projectId: 7, token: BOB, amount: '5', beneficiary: ALICE, memo: 'gm' }
     it.each([
       ['a payment whose route changed from pay to swap', paymentIntent(payment), paymentIntent({ ...payment })],
       ['a checkout whose price moved, its items the same', checkoutIntent({ ...payment, hook: HOOK, items: { 2: 1, 1: 3 } }),
         checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3, 2: 1 } })],
       ['a cash-out whose venue changed from pool to terminal', cashOutIntent(payment), cashOutIntent({ ...payment })],
+      ['a bridge send whose fee was requoted', bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE }),
+        bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE })],
+      ['a sync whose fee was requoted', bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE }), bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE })],
+      ["a move's approval after Max refilled another balance",
+        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK),
+        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK)],
       ['an approval step whose computed amount changed', approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL),
         approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL)],
     ])('refuses %s after a lost reply, before the wallet', async (_case, first, retry) => {
@@ -607,16 +613,19 @@ describe('useSafeTx', () => {
 
     describe("a pay panel's intent", () => {
       const base = {
-        mode: 'pay' as const, chainId: 10, projectId: 7, hook: HOOK, beneficiary: ALICE, memo: 'gm', amount: 5n,
+        mode: 'pay' as const, chainId: 10, projectId: 7, hook: HOOK, beneficiary: ALICE, memo: 'gm', amount: '5',
         token: { from: 'typed' as const, value: BOB }, chosenCart: {}, cartCount: 0, checkoutReady: false,
       }
       it('blocks a checkout whose every item was pruned, never falling through to a payment', () => {
         expect(payPanelIntent({ ...base, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
+        // Even once the shop stops resolving its hook.
+        expect(payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
+        expect('blocked' in payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 2, checkoutReady: true })).toBe(true)
       })
       it('keys a checkout by the preserved choice, whatever its clamped cart or total', () => {
-        const checkout = payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 2, checkoutReady: true, amount: 9n })
+        const checkout = payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 2, checkoutReady: true, amount: '9' })
         expect(checkout).toEqual({ key: checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }) })
-        expect(payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 3, checkoutReady: true, amount: 12n })).toEqual(checkout)
+        expect(payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 3, checkoutReady: true, amount: '12' })).toEqual(checkout)
       })
       it("keeps the user's currency through an automatic fallback, and an untouched default as auto", () => {
         // The app switched to another currency: the key still names the user's pick.
@@ -627,10 +636,10 @@ describe('useSafeTx', () => {
     })
 
     it('keeps different user choices apart', () => {
-      expect(paymentIntent({ ...payment, amount: 6n })).not.toBe(paymentIntent(payment))
+      expect(paymentIntent({ ...payment, amount: '6' })).not.toBe(paymentIntent(payment))
       expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
       expect(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 2 } })).not.toBe(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }))
-      expect(cashOutIntent({ ...payment, amount: 6n })).not.toBe(cashOutIntent(payment))
+      expect(cashOutIntent({ ...payment, amount: '6' })).not.toBe(cashOutIntent(payment))
       expect(cashOutIntent({ ...payment, amount: 'policy:max' })).not.toBe(cashOutIntent(payment))
       expect(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:b', 'permit2', BOB, TERMINAL))
       expect(approvalStepIntent('intent:a', 'erc20', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL))

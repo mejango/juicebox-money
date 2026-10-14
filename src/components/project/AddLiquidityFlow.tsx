@@ -28,6 +28,7 @@ import {
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
   approvalStepIntent,
+  decimalKey,
 } from '@/lib/transaction-builders'
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
@@ -748,8 +749,8 @@ function AddLiquidityForm({
         intent: writeIntentKey(mode === 'market' ? 'add-market-liquidity' : 'add-liquidity', {
           chainId, positionManager: intent.address(posm), pool: intent.hex(fresh.poolId), account: intent.address(address),
           mode,
-          token: tok.key(tokenAmount), pair: pairAmount_.key(pairAmount),
-          ...(mode === 'range' ? { range: bounds.key({ min: String(pa), max: String(pb) }) } : {}),
+          token: tok.key(decimalKey), pair: pairAmount_.key(decimalKey),
+          ...(mode === 'range' ? { range: bounds.key(b => ({ min: decimalKey(b.min), max: decimalKey(b.max) })) } : {}),
         }),
         display: {
           needTok,

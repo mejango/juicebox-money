@@ -39,6 +39,8 @@ const m = vi.hoisted(() => ({
   queries: {} as Record<string, unknown>,
   realNativeRecovery: false,
   nativePrepared: null as unknown,
+  /** Drive the real shop cart, not the empty stand-in. */
+  realCart: false,
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -110,9 +112,11 @@ vi.mock('@/hooks/useTokenBalances', () => ({
   }),
 }))
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
-vi.mock('@/components/project/ShopCartProvider', () => ({
-  useShopCart: () => ({ quantities: {}, chosen: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, reconcile: () => {}, clear: () => {} }),
-}))
+vi.mock('@/components/project/ShopCartProvider', async original => {
+  const actual = await original<typeof import('@/components/project/ShopCartProvider')>()
+  const empty = { quantities: {}, chosen: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, reconcile: () => {}, clear: () => {} }
+  return { ...actual, useShopCart: () => (m.realCart ? actual.useShopCart() : empty) }
+})
 vi.mock('@/providers/preload-para', () => ({ preloadParaHost: () => {} }))
 vi.mock('@/components/project/MarketSection', () => ({ resolveMarket: vi.fn() }))
 vi.mock('@/components/project/Tabs', () => ({ replaceProjectTabHash: () => {} }))
@@ -191,6 +195,7 @@ beforeEach(() => {
   m.queries = {}
   m.realNativeRecovery = false
   m.nativePrepared = null
+  m.realCart = false
   displayQueries.clear()
   localStorage.clear()
   m.watchSafeProposal = () => new Promise(() => {})
@@ -312,6 +317,72 @@ describe('a payment whose receipt watch gives up', () => {
     await click('Confirm & Pay')
     await waitUntil(() => host.textContent?.includes('Still pending in your wallet.') ?? false)
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+  })
+})
+
+describe('a held payment whose token the app switched', () => {
+  it('refuses the same typed amount in the currency the app fell back to, before the wallet', async () => {
+    m.safe = true
+    let lose!: (reason: Error) => void
+    m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
+    await reviewPayment('7')
+    await click('Confirm & Pay')
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
+    await click('Done')
+    await act(async () => lose(new Error('Safe service unavailable')))
+    const UNPROVEN = "This Safe transaction couldn't be confirmed here. Check your Safe, then send again."
+    await waitUntil(() => host.textContent?.includes(UNPROVEN) ?? false)
+    await click('Dismiss')
+    // The ETH route went away: the panel falls back to USDC (6 decimals) on its own.
+    m.token = 'erc20'
+    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+    await reviewPayment('7')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1 || (host.textContent?.includes(UNPROVEN) ?? false))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+  })
+})
+
+describe('a checkout whose items are all gone', () => {
+  it('never pays without them, even once the shop stops resolving, until the cart is cleared', async () => {
+    m.realCart = true
+    const tier = (remaining: number) => ({
+      id: 1, price: 10n ** 15n, discountPercent: 0, remaining, initial: 10, unlimited: false,
+      cantBuyWithCredits: false, name: 'Hat', description: null, image: null,
+    })
+    const shopWith = (remaining: number) => ({
+      data: { tiersComplete: true, hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(remaining)] },
+    })
+    m.queries.payShop = shopWith(5)
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    let cart!: ReturnType<typeof useShopCart>
+    function Probe() {
+      cart = useShopCart()
+      return null
+    }
+    const panel = () => (
+      <ShopCartProvider>
+        <Probe />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+      </ShopCartProvider>
+    )
+    await act(async () => root.render(panel()))
+    await act(async () => cart.setQuantity(1, 2))
+    // Every hat sold elsewhere: the cart is pruned, the choice kept. Then the shop stops resolving.
+    m.queries.payShop = shopWith(0)
+    await act(async () => root.render(panel()))
+    m.queries.payShop = { data: null }
+    m.queries.payShopRoutes = { data: undefined, isLoading: false }
+    await act(async () => root.render(panel()))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
+    expect(cart.count).toBe(0)
+    expect(cart.chosen).toEqual({ 1: 2 })
+    const pay = [...host.querySelectorAll('button')].find(item => item.textContent === 'Pay')!
+    expect(pay.disabled).toBe(true)
+    await act(async () => pay.click())
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 })
 

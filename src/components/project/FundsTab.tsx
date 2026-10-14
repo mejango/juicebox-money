@@ -61,7 +61,7 @@ import {
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-import { buildUseAllowanceRequest } from '@/lib/transaction-builders'
+import { buildUseAllowanceRequest, decimalKey } from '@/lib/transaction-builders'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -979,7 +979,7 @@ function FundsTxFlow({
         min,
         account: address,
         intent: writeIntentKey('use-allowance', {
-          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: amountField.key(parsedAmount), currency: line.currency, beneficiary: intent.address(address),
+          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: amountField.key(decimalKey), currency: line.currency, beneficiary: intent.address(address),
         }),
       })
     } catch (e) {

@@ -44,7 +44,7 @@ import {
   isNativeToken,
   minimumDropNotice,
 } from '@/lib/cashOut'
-import { approvalStepIntent, buildErc20ApproveRequest as buildTokenApproval, cashOutIntent } from '@/lib/transaction-builders'
+import { approvalStepIntent, buildErc20ApproveRequest as buildTokenApproval, cashOutIntent, decimalKey } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
@@ -511,7 +511,7 @@ export function CashOutPanel({
     setErrorMsg(null)
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
-    const cashOutKey = cashOutIntent({ chainId, projectId, amount: amountField.key(cashOutCount), beneficiary: reviewedAccount })
+    const cashOutKey = cashOutIntent({ chainId, projectId, amount: amountField.key(decimalKey), beneficiary: reviewedAccount })
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {

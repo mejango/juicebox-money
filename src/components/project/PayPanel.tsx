@@ -74,6 +74,7 @@ import {
   buildAddToBalanceRequest,
   approvalStepIntent,
   buildErc20ApproveRequest,
+  decimalKey,
   payPanelIntent,
 } from "@/lib/transaction-builders";
 import { useChosen } from "@/hooks/useChosen";
@@ -939,7 +940,7 @@ export function PayPanel({
 
   const payPlan = address
     ? payPanelIntent({
-        mode, chainId, projectId, hook: shop?.hook, amount: amountRaw, token: tokenChoice,
+        mode, chainId, projectId, hook: shop?.hook, amount: decimalKey(debouncedAmount), token: tokenChoice,
         chosenCart, cartCount, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
       })
     : null;

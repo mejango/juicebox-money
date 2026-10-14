@@ -37,6 +37,7 @@ import {
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
   approvalStepIntent,
+  decimalKey,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -261,7 +262,7 @@ export function MarketEditPanel({
         intent: writeIntentKey('edit-market', {
           chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId),
           account: intent.address(connectedAddress),
-          token: tokTarget.key(tokenAmount), pair: pairTarget.key(pairAmount), refit: refitChoice.key(refit),
+          token: tokTarget.key(decimalKey), pair: pairTarget.key(decimalKey), refit: refitChoice.key(),
         }),
       }
       replaceReviewed(built)

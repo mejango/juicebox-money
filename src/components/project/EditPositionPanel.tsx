@@ -35,6 +35,7 @@ import {
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
   approvalStepIntent,
+  decimalKey,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -332,8 +333,8 @@ export function EditPositionPanel({
         intent: writeIntentKey('edit-position', {
           chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId), tokenId: position.tokenId,
           account: intent.address(connectedAddress),
-          token: tokTarget.key(tokenAmount), pair: pairTarget.key(pairAmount),
-          range: bounds.key(range ? { min: String(range.pa), max: String(range.pb) } : null),
+          token: tokTarget.key(decimalKey), pair: pairTarget.key(decimalKey),
+          range: bounds.key(b => ({ min: decimalKey(b.min), max: decimalKey(b.max) })),
         }),
       }
       replaceReviewed(built)

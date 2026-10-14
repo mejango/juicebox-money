@@ -711,11 +711,26 @@ export function buildPermit2ApproveRequest({
 
 type Chosen = { chainId: number; projectId: number; beneficiary: string; memo: string }
 
+/**
+ * An amount in a key: the canonical decimal the user typed ("1", "1.0" and
+ * "01.00" are "1"), never units scaled by a token's decimals, which change when
+ * the app falls back to another token. Text that isn't a decimal stays as is.
+ */
+// ponytail: app-side until the SDK's writeIntentKey takes typed decimals (Homerun has the same need).
+export function decimalKey(text: string): string {
+  const trimmed = text.trim()
+  const match = /^(\d*)(?:\.(\d*))?$/.exec(trimmed)
+  if (!match || (!match[1] && !match[2])) return trimmed
+  const whole = match[1].replace(/^0+/, '') || '0'
+  const fraction = (match[2] ?? '').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole
+}
+
 /** A token in a key: its address, or a provenance marker (useChosen) such as `auto:token`. */
 const tokenKey = (token: string) => (isAddress(token, { strict: false }) ? intent.address(token) : token)
 
 /** A payment: the token the user pays with and the typed amount, whatever route (pay or swap) carries it. */
-export function paymentIntent(p: Chosen & { token: string; amount: bigint }): string {
+export function paymentIntent(p: Chosen & { token: string; amount: string }): string {
   return writeIntentKey('pay', {
     chainId: p.chainId, projectId: p.projectId, token: tokenKey(p.token), amount: p.amount,
     beneficiary: intent.address(p.beneficiary), memo: p.memo,
@@ -747,6 +762,7 @@ export function cashOutIntent(p: Omit<Chosen, 'memo'> & { amount: bigint | strin
 }
 
 export const CART_PRUNED_LINE = 'These items are no longer available. Change or clear your cart.'
+const CHECKOUT_NOT_READY_LINE = 'Choose a currency these items can be paid in.'
 
 /**
  * The pay panel's write intent. With items chosen it is always the checkout of
@@ -757,7 +773,8 @@ export const CART_PRUNED_LINE = 'These items are no longer available. Change or 
 export function payPanelIntent(p: Chosen & {
   mode: 'pay' | 'addbalance'
   hook?: string | null
-  amount: bigint
+  /** The typed amount, as decimalKey keys it. */
+  amount: string
   token: { from: string; value: string | null }
   chosenCart: Record<number, number>
   cartCount: number
@@ -768,10 +785,10 @@ export function payPanelIntent(p: Chosen & {
   if (p.mode !== 'pay') {
     return { key: writeIntentKey('add-to-balance', { chainId: p.chainId, projectId: p.projectId, token: tokenKey(token), amount: p.amount, memo: p.memo }) }
   }
-  const chose = Object.values(p.chosenCart).some(quantity => quantity > 0)
-  if (chose && p.hook) {
+  // Items chosen: a checkout of them or nothing, until the user changes or clears the cart.
+  if (Object.values(p.chosenCart).some(quantity => quantity > 0)) {
     if (p.cartCount === 0) return { blocked: CART_PRUNED_LINE }
-    if (!p.checkoutReady) return { blocked: 'Choose a currency these items can be paid in.' }
+    if (!p.checkoutReady || !p.hook) return { blocked: CHECKOUT_NOT_READY_LINE }
     return { key: checkoutIntent({ ...p, hook: p.hook, token, items: p.chosenCart }) }
   }
   return { key: paymentIntent({ ...p, token }) }
@@ -783,6 +800,26 @@ export function redeemItemsIntent(p: { chainId: number; projectId: number; hook:
     chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook),
     tokenIds: [...p.tokenIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), holder: intent.address(p.holder),
   })
+}
+
+/** A move to another chain: the bridge, the backing token, the amount as chosen (useChosen) and beneficiary; never the reclaim minimum it quotes. */
+export function moveIntent(p: { chainId: number; sucker: string; token: string; amount: bigint | string; beneficiary: string }): string {
+  return writeIntentKey('bridge-prepare', {
+    chainId: p.chainId, sucker: intent.address(p.sucker), token: intent.address(p.token), amount: p.amount,
+    beneficiary: intent.address(p.beneficiary),
+  })
+}
+
+/** Sending a bridge's queued outbox for a token: the bridge and token, by this account; never the fee it requotes. */
+export function bridgeSendIntent(p: { chainId: number; sucker: string; token: string; account: string }): string {
+  return writeIntentKey('bridge-send', {
+    chainId: p.chainId, sucker: intent.address(p.sucker), token: intent.address(p.token), account: intent.address(p.account),
+  })
+}
+
+/** Syncing a bridge's accounting data: the bridge, by this account; never the fee it requotes. */
+export function bridgeSyncIntent(p: { chainId: number; sucker: string; account: string }): string {
+  return writeIntentKey('bridge-sync', { chainId: p.chainId, sucker: intent.address(p.sucker), account: intent.address(p.account) })
 }
 
 /** An approval step of a user action: its parent intent, the step, token and spender; never its computed amount or expiration. */

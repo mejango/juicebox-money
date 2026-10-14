@@ -650,10 +650,27 @@ describe("a liquidity write's hold key", () => {
     expect(host.querySelector<HTMLInputElement>('input[aria-label="TKN amount"]')!.value).toBe('100000000000')
     await review('Add liquidity')
     expect(await finalIntent()).toBe(first)
-    // Typing that same number is a typed amount, another add.
+    // Retyping that same number keeps the choice (useChosen); another number is another add.
     await typeInto('TKN amount', '100000000000.0')
     await review('Add liquidity')
+    expect(await finalIntent()).toBe(first)
+    await typeInto('TKN amount', '99')
+    await review('Add liquidity')
     expect(await finalIntent()).not.toBe(first)
+  })
+
+  it('keeps typed amounts as keyed when the app refills the other side with the same number', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await typeInto('ETH amount', '1')
+    await review('By price range')
+    await review('Add liquidity')
+    const first = await finalIntent()
+    // Re-entered as 1.0: the app refills the other side, numerically unchanged.
+    await typeInto('TKN amount', '1.0')
+    await review('Add liquidity')
+    expect(await finalIntent()).toBe(first)
   })
 
   it('keys untouched range bounds by how they were set, never their numbers', async () => {

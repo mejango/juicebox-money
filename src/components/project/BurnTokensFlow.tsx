@@ -10,6 +10,7 @@ import {
 import { useMemo, useState } from 'react'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { useChosen } from '@/hooks/useChosen'
+import { decimalKey } from '@/lib/transaction-builders'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -117,7 +118,7 @@ export function BurnTokensFlow({
           // The holder whose tokens the reviewed request burns.
           reviewedAccount: plan.args[0],
           // Max is all of the balance, whatever it is by a retry.
-          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: String(plan.args[1]), amount: amountField.key(tokenCount) }),
+          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: String(plan.args[1]), amount: amountField.key(decimalKey) }),
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])
