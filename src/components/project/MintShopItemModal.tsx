@@ -42,6 +42,7 @@ import {
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { settledLine, writeHolds } from '@/lib/write-holds'
+import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
@@ -97,8 +98,22 @@ export function MintShopItemModal({
   /** The mint the SDK's write hold holds, kept across closing and reopening this modal. */
   const [held, setHeld] = useState<{ hold: WriteHoldHandle; state: WriteHeldState } | null>(null)
   const holdRef = useRef<WriteHoldHandle | null>(null)
+  /** The hold whose exit the user accepted: its answer, not what it reports meanwhile, decides. */
+  const exitingRef = useRef<WriteHoldHandle | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+
+  // A shown hold stays current: an exit that becomes due appears, and one that clears ends it.
+  useWriteHoldWatch(phase === 'held' ? held?.hold : undefined,
+    getPublicClient(config, { chainId: chainId as SupportedChainId }) as never,
+    state => {
+      if (!held || exitingRef.current === held.hold) return
+      if (state.status === 'clear') {
+        setHeld(null)
+        setMessage(settledLine(state.settled))
+        setPhase('uncertain')
+      } else setHeld({ hold: held.hold, state })
+    })
 
   const busy = ['checking', 'sending', 'confirming'].includes(phase)
   const maxQuantity = Math.max(0, Math.min(50, remaining))
@@ -347,7 +362,9 @@ export function MintShopItemModal({
   const exitHeld = async () => {
     if (!held?.state.exit) return
     const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as never
+    exitingRef.current = held.hold
     const { released, state } = await held.hold.exit(held.state, { checkedWallet: true }, client)
+      .finally(() => { exitingRef.current = null })
     if (released) {
       setHeld(null)
       await handleConfirm()

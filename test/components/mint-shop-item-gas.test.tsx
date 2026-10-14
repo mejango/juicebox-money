@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { encodeFunctionData, toEventSelector, zeroAddress, type Abi, type Address, type Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, TransactionNotFoundError, zeroAddress, type Abi, type Address, type Hex } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -149,6 +149,30 @@ function executesSentMint(data?: Hex) {
 
 
 describe('a free mint held by the write hold', () => {
+  it('shows the exit once it becomes due after a receipt timeout, without reopening, and accepting it mints exactly once more', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      // The wallet returns a hash the network never sees, and its receipt watch times out.
+      mocks.write.mockResolvedValueOnce(`0x${'cd'.repeat(32)}`)
+      mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
+      mocks.receipt.mockRejectedValueOnce(new Error('The receipt could not be read in time.'))
+      await mint()
+      expect(mocks.write).toHaveBeenCalledOnce()
+      expect(JSON.stringify(renderer.toJSON())).toContain('Still pending in your wallet.')
+      expect(JSON.stringify(renderer.toJSON())).not.toContain('I checked my wallet. Send again')
+
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(60_000) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(JSON.stringify(renderer.toJSON())).toContain('I checked my wallet. Send again')
+      await click('I checked my wallet. Send again')
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.write).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('offers the exit when a proposed mint can no longer be followed, and accepting it proposes exactly once more', async () => {
     mocks.safe = true
     mocks.waitSafe.mockRejectedValueOnce(new Error('Safe service unavailable'))
