@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, vi } from 'vitest'
+import { resetSafeRelayrForTests, resetWriteHoldsForTests } from '@bananapus/nana-sdk-core/testing'
 
 function blockedNetworkConstructor(transport: string) {
   return class {
@@ -11,14 +12,11 @@ function blockedNetworkConstructor(transport: string) {
 }
 
 beforeEach(() => {
-  // Writes held in a storage-less tab live in the SDK's tab memory, and in a
-  // DOM environment's storage: each test starts with none.
-  const tab = globalThis as unknown as Record<symbol, unknown>
-  const memory = tab[Symbol.for('nana-sdk:held-writes')] as Map<string, string> | undefined
-  ;(tab[Symbol.for('nana-sdk:held-writes-seen')] as WeakMap<object, Map<string, string>> | undefined)?.get(memory ?? {})?.clear()
-  memory?.clear()
-  // A lock an earlier test's never-settling write still holds is that page's, not this one's.
-  ;(tab[Symbol.for('nana-sdk:write-lock-queues')] as Map<string, unknown> | undefined)?.clear()
+  // Each test is a fresh page: no hold followers, tab memory, write locks or
+  // Safe Relayr watches from an earlier one (the SDK's own resets).
+  resetWriteHoldsForTests()
+  resetSafeRelayrForTests()
+  // A DOM environment's storage keeps saved writes: each test starts with none.
   try {
     const storage = globalThis.localStorage
     if (storage && typeof storage.key === 'function') {

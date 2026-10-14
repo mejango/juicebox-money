@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { offersExit, repeatsWithoutExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
+import { offersExit, hidesShownExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -849,7 +849,7 @@ export function useSafeTx(chainId: number) {
           setPhase('success')
         } else endHeld(state.settled)
       } else leaveHeld()
-    } else if (!repeatsWithoutExit(current.state, state)) showHoldState(current, state)
+    } else if (!hidesShownExit(current.state, state)) showHoldState(current, state)
   })
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
@@ -959,7 +959,10 @@ export function useSafeTx(chainId: number) {
           const own = current.state?.record.hash?.toLowerCase()
           if (settled && (!own || settledHashOf(settled) === own)) endHeld(settled)
           else leaveHeld()
-        } else showHoldState(current, state)
+        } else if (!hidesShownExit(current.state, state)) {
+          // A contended exit (checked: false) never hides the exit already shown.
+          showHoldState(current, state)
+        }
       },
       () => {
         // Unreadable: the hold stays, as last shown.

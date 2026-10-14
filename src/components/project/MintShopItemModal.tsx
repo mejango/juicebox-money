@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { repeatsWithoutExit, reviewDescription, sameReservation, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { hidesShownExit, reviewDescription, sameReservation, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -118,7 +118,7 @@ export function MintShopItemModal({
     state => {
       if (!held || exitingRef.current === held.hold || !sameReservation(held.state, state)) return
       if (state.status !== 'clear') {
-        if (!repeatsWithoutExit(held.state, state)) setHeld({ hold: held.hold, state })
+        if (!hidesShownExit(held.state, state)) setHeld({ hold: held.hold, state })
         return
       }
       setHeld(null)
@@ -398,7 +398,7 @@ export function MintShopItemModal({
       setHeld(null)
       setMessage(settledLine(state.settled))
       setPhase('uncertain')
-    } else showHeld(held.hold, state)
+    } else if (!hidesShownExit(held.state, state)) showHeld(held.hold, state)
   }
 
   const settled = phase === 'done' || phase === 'uncertain' || phase === 'held'

@@ -8,7 +8,7 @@ import { publicClient } from '@/lib/wallet-core'
 import {
   forgetHeldWrite,
   heldWritesSnapshot,
-  repeatsWithoutExit,
+  hidesShownExit,
   sameReservation,
   showHeldWrite,
   subscribeHeldWrites,
@@ -35,7 +35,7 @@ function HeldWrite({ item }: { item: ShownHeldWrite }) {
   const show = (state: WriteHoldState) => {
     if (!sameReservation(item.state, state)) return
     if (state.status === 'clear') forgetHeldWrite(id)
-    else if (state.record.id === id && !repeatsWithoutExit(item.state, state)) showHeldWrite(item.chainId, item.hold, state)
+    else if (state.record.id === id && !hidesShownExit(item.state, state)) showHeldWrite(item.chainId, item.hold, state)
   }
   useWriteHoldWatch(item.hold, client as never, show)
   const exit = async () => {

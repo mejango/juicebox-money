@@ -13,7 +13,7 @@ import { chainName } from '@/lib/urn'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
-import { repeatsWithoutExit } from '@/lib/write-holds'
+import { hidesShownExit } from '@/lib/write-holds'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
 import { clearDefifaWriteRecovery, defifaWriteHold, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 /** How often a shown hold is asked again while this card is open. */
@@ -62,7 +62,7 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
   const hold = useMemo(() => (original ? defifaWriteHold(original.scope, original.record) : undefined), [originalId])
   const recheck = useWriteHoldWatch(client ? hold : undefined, client as never, state => {
     if (state.status === 'clear') notifyRecovery()
-    else setHeld(current => (repeatsWithoutExit(current, state) ? current : state))
+    else setHeld(current => (hidesShownExit(current, state) ? current : state))
   }, { checkNow: true })
   const shownHeld = held && original && held.record.id === original.record.id ? held : null
   const exit = async () => {
@@ -71,7 +71,7 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
       // The hold asks the chain once more; a changed state stays held.
       const { released, state } = await defifaWriteHold(original.scope, original.record).exit(shownHeld, { checkedWallet: true }, client as never)
       if (released || state.status === 'clear') notifyRecovery()
-      else setHeld(state)
+      else setHeld(current => (hidesShownExit(current, state) ? current : state))
     } catch (reason) {
       setError(describe(reason))
     }
