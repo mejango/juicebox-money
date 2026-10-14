@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyClaimFeesKey, legacyRemoveLpKey } from '@/lib/legacy-intents'
 import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
@@ -364,6 +365,7 @@ function ChainLpRows({
         reviewedAccount: account,
         // Its deadline restamps on retry: held as a change to these positions.
         intent: liquidityIntent({ chainId, pool: pool.poolId, positions: positions.map(position => position.tokenId) }),
+        legacy: [legacyClaimFeesKey({ chainId, positionManager, account, positions: positions.map(position => position.tokenId) })],
       },
     )
     refresh()
@@ -434,6 +436,7 @@ function ChainLpRows({
         reviewedAccount: frozen.account,
         // Its deadline restamps and its minimums re-read on retry: held as a change to this position.
         intent: liquidityIntent({ chainId, pool: pool.poolId, positions: [frozen.position.tokenId] }),
+        legacy: [legacyRemoveLpKey({ chainId, positionManager, tokenId: frozen.position.tokenId, account: frozen.account })],
       },
     )
     refresh()

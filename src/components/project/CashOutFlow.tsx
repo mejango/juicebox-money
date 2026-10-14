@@ -45,6 +45,7 @@ import {
 } from '@/lib/cashOut'
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyCashOutKeys } from '@/lib/legacy-intents'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
@@ -511,6 +512,8 @@ export function CashOutPanel({
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
     const cashOutKey = cashOutIntent({ chainId, project: projectId, holder: reviewedAccount, beneficiary: reviewedAccount })
+    // The last release's keys for this cash-out: an attempt it left unresolved still holds it.
+    const cashOutLegacy = legacyCashOutKeys({ chainId, projectId, amount, beneficiary: reviewedAccount })
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
@@ -524,7 +527,10 @@ export function CashOutPanel({
               spender: swapDeployment.permit2,
               amount: cashOutCount,
             }),
-            { reviewedAccount, intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
+            {
+              reviewedAccount,
+              intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }),
+            },
           )
           return
         }
@@ -541,7 +547,10 @@ export function CashOutPanel({
               args: approval.args as unknown as readonly unknown[],
               label: 'Approve swap router',
             },
-            { reviewedAccount, intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: approval.args[1] as string }) },
+            {
+              reviewedAccount,
+              intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: approval.args[1] as string }),
+            },
           )
           return
         }
@@ -594,6 +603,7 @@ export function CashOutPanel({
             reviewedAccount,
             // Its deadline and minimum regenerate on retry: held by what the user chose.
             intent: cashOutKey,
+            legacy: cashOutLegacy,
             reviewNotice: minimumDropNotice({
               displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
@@ -612,6 +622,7 @@ export function CashOutPanel({
         reviewNotice: plan.reviewNotice,
         // Its minimum re-quotes on retry: held by what the user chose.
         intent: cashOutKey,
+        legacy: cashOutLegacy,
       })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))

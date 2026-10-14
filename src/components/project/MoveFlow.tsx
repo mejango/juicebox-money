@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyBridgeSendKey, legacyMoveKeys } from '@/lib/legacy-intents'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -61,6 +62,8 @@ type ReviewedMove = {
   account: Address
   /** The move's write intent, frozen at review: its approval is a step of it. */
   intent: string
+  /** The keys the last release built for this move (legacy-intents). */
+  legacy: string[]
 }
 
 /**
@@ -281,6 +284,7 @@ export function MoveCard({
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}
+              amountText={amount}
               maxBalance={src.erc20Balance}
               account={address}
             />
@@ -301,6 +305,7 @@ function MoveFlow({
   sucker,
   projectToken,
   amount,
+  amountText,
   maxBalance,
   account,
 }: {
@@ -311,6 +316,8 @@ function MoveFlow({
   sucker: Address
   projectToken: Address
   amount: bigint
+  /** The amount as the user typed it, for the last release's keys. */
+  amountText: string
   maxBalance: bigint
   account: Address
 }) {
@@ -480,6 +487,7 @@ function MoveFlow({
         infra,
         account,
         intent: bridgeIntent({ chainId: from, sucker, token, account }),
+        legacy: legacyMoveKeys({ chainId: from, sucker, token, amount: amountText, beneficiary: account }),
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
@@ -503,7 +511,10 @@ function MoveFlow({
         spender: review.sucker,
         amount: review.amount,
       }),
-      { reviewedAccount: review.account, intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }) },
+      {
+        reviewedAccount: review.account,
+        intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }),
+      },
     )
   }
 
@@ -521,6 +532,7 @@ function MoveFlow({
       reviewedAccount: review.account,
       // Its minimum re-quotes on a fresh review: held by what the user chose to move.
       intent: review.intent,
+      legacy: review.legacy,
     })
   }
 
@@ -556,6 +568,7 @@ function MoveFlow({
         reviewedAccount: review.account,
         // Its fee requotes on retry: held by the outbox send itself.
         intent: bridgeIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
+        legacy: [legacyBridgeSendKey({ chainId: from, sucker: review.sucker, token: review.token, account: review.account })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')

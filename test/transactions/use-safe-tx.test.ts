@@ -89,6 +89,7 @@ import { writeHolds } from '@/lib/write-holds'
 import { approvalIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { redeemItemsIntent } from '@/lib/transaction-builders'
+import { legacyCashOutKeys, legacyEditMarketKeys, legacyPayKeys } from '@/lib/legacy-intents'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -601,6 +602,35 @@ describe('useSafeTx', () => {
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it.each([
+      ['a cash-out', () => ({
+        legacy: legacyCashOutKeys({ chainId: 10, projectId: 7, amount: '5', beneficiary: ALICE }),
+        key: cashOutIntent({ ...project, holder: ALICE, beneficiary: ALICE }),
+      })],
+      ['a payment', () => ({
+        legacy: legacyPayKeys({ mode: 'pay', chainId: 10, projectId: 7, amount: '1.0', token: BOB, cart: {}, checkoutReady: false, beneficiary: ALICE, memo: '' }),
+        key: payIntent({ ...project, beneficiary: ALICE }),
+      })],
+      ['a market edit', () => ({
+        legacy: legacyEditMarketKeys({ chainId: 10, positionManager: TERMINAL, pool: POOL, account: ALICE, tokText: '1', pairText: '2', refit: false }),
+        key: liquidityIntent({ chainId: 10, pool: POOL, positions: [] }),
+      })],
+    ])("refuses %s under its new key while an attempt the last release saved under its old key is unresolved, until the exit", async (_case, keys) => {
+      const { legacy, key } = keys()
+      // The last release (origin/main) saved this attempt under its own namespace, with its own calldata; the reply was lost.
+      const oldCall = { to: BOB, data: encodeFunctionData({ abi: swapAbi, functionName: 'swap', args: [BOB, 5n, 1_000n] }), value: 7n }
+      const old = writeHolds.open({ chainId: 10, account: ALICE, safe: false, call: oldCall, namespace: legacy.at(-1)! })
+      await old.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+      const hook = await renderHook()
+      // The retry regenerated its calldata and is keyed by the SDK builder now.
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent: key, legacy }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      await act(async () => { heldNotice(hook.ref.current!.error).onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
       await act(async () => hook.renderer.unmount())
     })
 

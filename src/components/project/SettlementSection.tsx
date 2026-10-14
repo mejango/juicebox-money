@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyBridgeSendKey } from '@/lib/legacy-intents'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
@@ -616,6 +617,7 @@ function MovementGroup({
       await tx.send({ ...request, abi: request.abi as Abi }, {
         reviewedAccount: address,
         intent: bridgeIntent({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address }),
+        legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')

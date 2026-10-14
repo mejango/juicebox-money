@@ -11,6 +11,7 @@ import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyEditPositionKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import {
@@ -64,6 +65,8 @@ type Reviewed = {
   copy: { lead: string; detail: string; tech: string }
   /** The write hold key: a change to these positions in this pool. */
   intent: string
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy: string[]
 }
 
 /** A target prefilled at full precision, so an untouched field asks for exactly what the position holds. */
@@ -317,7 +320,14 @@ export function EditPositionPanel({
             : undefined,
       })
       // A change to this position in this pool, whatever targets, range or Fit.
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy, intent: liquidityIntent({ chainId, pool: market.poolId, positions: [position.tokenId] }) }
+      const built: Reviewed = {
+        account: connectedAddress, pool: market, plan, steps, copy,
+        intent: liquidityIntent({ chainId, pool: market.poolId, positions: [position.tokenId] }),
+        legacy: legacyEditPositionKeys({
+          chainId, positionManager, pool: market.poolId, tokenId: position.tokenId, account: connectedAddress,
+          tokText, pairText, min: minText, max: maxText,
+        }),
+      }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(
@@ -376,6 +386,7 @@ export function EditPositionPanel({
           simulationBlockNumber: confirmedAt,
           // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
           intent: p.intent,
+          legacy: p.legacy,
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
           // position or drift beyond the reviewed maxima still aborts first.
@@ -439,6 +450,7 @@ export function EditPositionPanel({
           value: p.plan.value,
           title: FINAL_STEP[p.plan.kind],
           intent: p.intent,
+          legacy: p.legacy,
         })
         setBatchProposed(true)
       } catch (e) {

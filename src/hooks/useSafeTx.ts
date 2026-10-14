@@ -134,6 +134,11 @@ export type TxSendOptions = {
    */
   intent?: string
   /**
+   * The namespaces an earlier release keyed this action by (legacy-intents):
+   * an attempt it left unresolved still holds this one until its exit.
+   */
+  legacy?: readonly string[]
+  /**
    * The write hold over that journal's record. A Safe follower's outcomes
    * (unproven, executed, a receipt) go to it, and `onChange` tells the app.
    */
@@ -292,14 +297,16 @@ type HeldWrite = {
 
 
 /** Safe proposals sent under an intent key, by registry key: their hold is the intent's. */
-const intentHolds = new Map<string, string>()
+const intentHolds = new Map<string, { intent: string; legacy: readonly string[] }>()
 
 function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, key: string): WriteHoldHandle {
-  const intent = intentHolds.get(key)
+  const keyed = intentHolds.get(key)
   const call = { chainId: proposal.chainId, account: proposal.safe, safe: true, call: proposal.call }
-  // Under an intent, the held-call namespace #128 shipped is its legacy key: an attempt held there still holds it.
-  return intent
-    ? writeHolds.open({ ...call, namespace: intent }, { legacy: [safeHoldNamespace(key)] })
+  // Under an intent, the held-call namespace #128 shipped is a legacy key, and so is any
+  // namespace an earlier release keyed this action by (legacy-intents): an attempt held
+  // there still holds it.
+  return keyed
+    ? writeHolds.open({ ...call, namespace: keyed.intent }, { legacy: [safeHoldNamespace(key), ...keyed.legacy] })
     : writeHolds.open({ ...call, namespace: safeHoldNamespace(key) })
 }
 
@@ -1054,10 +1061,13 @@ export function useSafeTx(chainId: number) {
         const key = proposalKey(request.chainId, account, sentCall)
         if (viaSafe) safeKey = key
         if (!options.journaled) {
-          if (viaSafe && options.intent) intentHolds.set(key, options.intent)
+          if (viaSafe && options.intent) intentHolds.set(key, { intent: options.intent, legacy: options.legacy ?? [] })
           hold = viaSafe
             ? safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
-            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) })
+            : writeHolds.open(
+                { chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) },
+                { legacy: options.legacy ? [...options.legacy] : [] },
+              )
         }
         {
           if (viaSafe) {

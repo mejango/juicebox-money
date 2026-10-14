@@ -11,6 +11,7 @@ import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyEditMarketKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { bandPrices } from '@/lib/edit-liquidity'
@@ -66,6 +67,8 @@ type Reviewed = {
   steps: Step[]
   /** The write hold key: a change to these positions in this pool. */
   intent: string
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy: string[]
 }
 
 function parseAmount(text: string, decimals: number, symbol: string): bigint {
@@ -253,8 +256,12 @@ export function MarketEditPanel({
         'Edit the market',
       )
       // A change to the market's positions in this pool, whatever targets or re-fit.
-      const positions = [sides.tokenSide?.tokenId, sides.pairSide?.tokenId].filter((id): id is bigint => id != null)
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, intent: liquidityIntent({ chainId, pool: market.poolId, positions }) }
+      // Pool-wide (no positions), as revnet keys a market edit: it conflicts with the same actions in both apps.
+      const built: Reviewed = {
+        account: connectedAddress, pool: market, plan, steps,
+        intent: liquidityIntent({ chainId, pool: market.poolId, positions: [] }),
+        legacy: legacyEditMarketKeys({ chainId, positionManager, pool: market.poolId, account: connectedAddress, tokText, pairText, refit }),
+      }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(
@@ -311,6 +318,7 @@ export function MarketEditPanel({
           simulationBlockNumber: confirmedAt,
           // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
           intent: p.intent,
+          legacy: p.legacy,
           reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
           reverify: async () => {
             if (!client) return
@@ -372,6 +380,7 @@ export function MarketEditPanel({
           value: p.plan.value,
           title: 'Edit the market',
           intent: p.intent,
+          legacy: p.legacy,
         })
         setBatchProposed(true)
       } catch (e) {

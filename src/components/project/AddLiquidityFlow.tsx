@@ -44,6 +44,7 @@ import {
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyAddLiquidityKeys } from '@/lib/legacy-intents'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   POSITION_MANAGER_BY_CHAIN,
@@ -126,6 +127,8 @@ type Plan = {
   market: boolean
   /** The write hold key: a new position (or market) in this pool, whatever amounts or range. */
   intent: string
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy: string[]
   /** Frozen display figures — must equal what the frozen `mint` sends. */
   display: {
     needTok: bigint
@@ -536,6 +539,7 @@ function AddLiquidityForm({
           simulationBlockNumber: confirmedAt,
           // Its deadline restamps and a fresh plan re-prices it: held as a change to this pool.
           intent: p.intent,
+          legacy: p.legacy,
         },
       )
     },
@@ -758,6 +762,10 @@ function AddLiquidityForm({
         market: mode === 'market',
         // A new position in this pool (none existing yet): the SDK's liquidity key.
         intent: liquidityIntent({ chainId, pool: fresh.poolId, positions: [] }),
+        legacy: legacyAddLiquidityKeys({
+          market: mode === 'market', chainId, positionManager: posm, pool: fresh.poolId, account: address,
+          mode, tokText: tokStr, pairText: pairStr, min: minStr, max: maxStr,
+        }),
         display: {
           needTok,
           needPair,
@@ -806,6 +814,7 @@ function AddLiquidityForm({
           value: p.mint.value,
           title: p.market ? 'Make the market' : 'Add liquidity',
           intent: p.intent,
+          legacy: p.legacy,
         })
         setBatchStatus(LIQUIDITY_BATCH_PROPOSED)
         setDone(true)

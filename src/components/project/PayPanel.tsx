@@ -75,6 +75,7 @@ import {
   buildErc20ApproveRequest,
 } from "@/lib/transaction-builders";
 import { approvalIntent, payIntent } from "@bananapus/nana-sdk-core/review";
+import { legacyPayKeys } from "@/lib/legacy-intents";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
 import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
@@ -137,6 +138,8 @@ type PaymentTransactionAction = {
   swapInputRoute?: DirectPaySwapQuote["inputRoute"];
   /** The write hold key for an action whose calldata regenerates on retry (an expiration, a deadline, a quote). */
   intent?: string;
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy?: string[];
 };
 
 type PaymentSignatureAction = {
@@ -1316,6 +1319,11 @@ export function PayPanel({
     // Every payment to this project for this beneficiary: pay, checkout or add to balance,
     // whatever token, amount, route or cart.
     const paymentKey = payIntent({ chainId, project: projectId, beneficiary: address });
+    // The keys the last release built for this payment: an attempt it left unresolved still holds it.
+    const paymentLegacy = legacyPayKeys({
+      mode, chainId, projectId, hook: shop?.hook, amount: debouncedAmount, token: context.token,
+      cart, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
+    });
     if (needsApproval && approvalSpender) {
       actions.push({
         kind: "token-approval",
@@ -1433,6 +1441,7 @@ export function PayPanel({
       swapInputRoute: activeSwapQuote?.inputRoute,
       // Its deadline restamps, its minimum re-quotes and its route may change on retry: held by what the user chose.
       intent: paymentKey,
+      legacy: paymentLegacy,
     });
     return actions;
   };
@@ -1562,7 +1571,7 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedAccount: account, intent: tokenApproval.intent },
+          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy },
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1660,7 +1669,7 @@ export function PayPanel({
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
           routerApproval.request,
-          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent },
+          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent, legacy: routerApproval.legacy },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1702,6 +1711,7 @@ export function PayPanel({
         reviewedAccount: account,
         simulationBlockNumber: latestApprovalBlock,
         intent: paymentAction.intent,
+        legacy: paymentAction.legacy,
       });
       if (!paymentHash) throw new Error("Payment was cancelled.");
       if (tx.isSafe) {

@@ -74,4 +74,14 @@ describe('a Safe batch held by its intent', () => {
     await expect(proposeSafeBatch(approveThen('intent:a:test', '0xaaaa'))).rejects.toThrow()
     expect(m.sendCalls).toHaveBeenCalledTimes(2)
   })
+
+  it('refuses a batch while one the last release held under its old key (by its first call) is unresolved', async () => {
+    // origin/main held a Safe batch under its own key, with the batch's first call as the hold's call; the reply was lost.
+    const { writeHolds } = await import('@/lib/write-holds')
+    const old = writeHolds.open({ chainId: 10, account: SAFE, safe: true, namespace: 'intent:add-liquidity:old', call: { to: TARGET, data: '0x1234', value: 0n } })
+    await old.send(m.client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    m.sendCalls.mockResolvedValue({ id: PROPOSAL })
+    await expect(proposeSafeBatch({ ...batch(9), intent: 'intent:liquidity:new', legacy: ['intent:add-liquidity:old'] })).rejects.toThrow()
+    expect(m.sendCalls).not.toHaveBeenCalled()
+  })
 })

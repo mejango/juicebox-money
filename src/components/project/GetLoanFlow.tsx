@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyBorrowKeys } from '@/lib/legacy-intents'
 import { borrowIntent } from '@bananapus/nana-sdk-core/review'
 
 import {
@@ -216,6 +217,7 @@ export function GetLoanFlow({
         reviewedAccount: r.account,
         // Its minimum re-quotes on retry: held as this holder's borrow from the project.
         intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
+        legacy: legacyBorrowKeys({ chainId, projectId, token: r.ctxToken, collateral: amount, prepaid: r.prepaid, beneficiary: r.account }),
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')

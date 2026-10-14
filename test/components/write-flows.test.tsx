@@ -199,6 +199,7 @@ import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyCashOutKeys } from '@/lib/legacy-intents'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const AUTO_ISSUE_CALL = {
@@ -641,6 +642,25 @@ describe('cash-out write flow', () => {
     await act(async () => renderer.unmount())
     return options.intent
   }
+
+  it('passes the key the last release built for this cash-out as legacy, so its unresolved attempt still holds the retry', async () => {
+    vi.useFakeTimers()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(CashOutPanel, {
+        chainId: 1, projectId: 42, projectName: 'Safe Project',
+        accountingToken: '0x4444444444444444444444444444444444444444', accountingTokenSymbol: 'USDC',
+      }))
+    })
+    const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
+    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
+    const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { legacy?: string[] }]
+    expect(options.legacy).toEqual(legacyCashOutKeys({ chainId: 1, projectId: 42, amount: '2', beneficiary: ALICE }))
+    await act(async () => renderer.unmount())
+  })
 
   it("keys a cash-out by its project, never by a token address that loads later", async () => {
     // The symbol read failed: the cash-out still proceeds through the terminal.

@@ -157,6 +157,7 @@ const client = {
 
 import { engine } from '../support/lp-flow-harness'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyEditMarketKeys } from '@/lib/legacy-intents'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
@@ -648,12 +649,32 @@ describe("a liquidity write's hold key", () => {
     expect(await intentOf(editOf({ ...TOKEN_SIDE, tokenAmount: 2n * 10n ** 18n }), 'Edit position')).toBe(key)
   })
 
-  it('keys a market edit by its pool and both positions, whatever targets or re-fit', async () => {
-    const key = liquidityIntent({ chainId: 1, pool, positions: [PAIR_SIDE.tokenId, TOKEN_SIDE.tokenId] })
+  it('keys a market edit pool-wide (no positions), as revnet does, whatever targets or re-fit', async () => {
+    const key = liquidityIntent({ chainId: 1, pool, positions: [] })
     expect(await intentOf(market(TOKEN_SIDE), 'Edit the market')).toBe(key)
     expect(await intentOf(market(TOKEN_SIDE), 'Edit the market', async () => {
       await act(async () => host.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click())
     })).toBe(key)
+  })
+
+  it('passes the keys the last release built for a market edit as legacy', async () => {
+    await render(market(TOKEN_SIDE))
+    await settle()
+    await review('Edit the market')
+    await confirm()
+    for (let step = 0; step < 5; step++) {
+      const [request, options] = engine.send.mock.calls.at(-1)! as [{ functionName?: string }, { legacy?: string[] }]
+      if (request.functionName === 'modifyLiquidities') {
+        expect(options.legacy).toEqual(expect.arrayContaining(legacyEditMarketKeys({
+          chainId: 1, positionManager: POSITION_MANAGER, pool, account: ALICE, tokText: '1', pairText: '1', refit: false,
+        })))
+        return
+      }
+      const hash = `0x${String(step + 1).padStart(64, '0')}` as Hex
+      await act(async () => engine.answer(hash))
+      await act(async () => engine.confirm(hash, 10n + BigInt(step)))
+    }
+    throw new Error('The market edit never reached its final write.')
   })
 
   it("holds each approval step as a step of the liquidity action, never by its amount", async () => {

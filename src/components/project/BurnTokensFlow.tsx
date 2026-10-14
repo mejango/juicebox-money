@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyBurnKeys } from '@/lib/legacy-intents'
 import {
   JBCoreContracts,
   jbContractAddress,
@@ -116,6 +117,7 @@ export function BurnTokensFlow({
           reviewedAccount: plan.args[0],
           // Not an SDK builder yet: the holder's burn of the project's token, no amount.
           intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: plan.args[1] }),
+          legacy: legacyBurnKeys({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1], amount }),
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])

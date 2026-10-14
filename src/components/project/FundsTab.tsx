@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyAllowanceKeys } from '@/lib/legacy-intents'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
@@ -787,6 +788,8 @@ type ReviewedTx = {
   account: Address
   /** Its minimum re-quotes on retry: the write hold key of what the user chose. */
   intent: string
+  /** The keys the last release built for this payout (legacy-intents). */
+  legacy: string[]
 }
 
 function FundsTxFlow({
@@ -980,6 +983,7 @@ function FundsTxFlow({
         intent: writeIntentKey('use-allowance', {
           chainId, projectId, token: intent.address(ctx.token), currency: line.currency, beneficiary: intent.address(address),
         }),
+        legacy: legacyAllowanceKeys({ chainId, projectId, terminal, token: ctx.token, amount, currency: line.currency, beneficiary: address }),
       })
     } catch (e) {
       setFlowError(e instanceof FlowError ? e.message : shortError(e))
@@ -991,7 +995,7 @@ function FundsTxFlow({
   const handleConfirm = () => {
     if (!review || sending) return
     // The reviewed args embed the beneficiary: only that account may send them.
-    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent })
+    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent, legacy: review.legacy })
   }
 
   const closeReview = () => {

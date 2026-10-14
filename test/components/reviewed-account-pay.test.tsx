@@ -343,6 +343,22 @@ describe('a held payment whose token the app switched', () => {
   })
 })
 
+describe('a payment the last release left unresolved', () => {
+  it('refuses the same payment under the new project key until its exit', async () => {
+    // origin/main held this payment under its own key (token and typed amount), with its own calldata; the reply was lost.
+    const { legacyPayKeys } = await import('@/lib/legacy-intents')
+    const { writeHolds } = await import('@/lib/write-holds')
+    const [oldKey] = legacyPayKeys({ mode: 'pay', chainId: 1, projectId: 42, amount: '1', token: NATIVE, cart: {}, checkoutReady: false, beneficiary: ALICE, memo: '' })
+    const old = writeHolds.open({ chainId: 1, account: ALICE, safe: false, namespace: oldKey,
+      call: { to: TERMINAL, data: '0x1234', value: 10n ** 18n } })
+    await old.send(wallet.client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    await reviewPayment('1')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || (host.textContent?.includes('I checked my wallet. Send again') ?? false))
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+})
+
 describe('a checkout whose items are all gone', () => {
   it('just pays, under the same project key, once the cart is emptied', async () => {
     m.realCart = true

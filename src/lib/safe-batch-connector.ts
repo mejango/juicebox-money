@@ -34,13 +34,15 @@ export type SequenceCall = BatchCall & {
  * (its MultiSendCallOnly call) as the hold's call, so another batch that only
  * shares a call is never held by it.
  */
-export function safeBatchHold({ chainId, safe, intent, calls }: {
+export function safeBatchHold({ chainId, safe, intent, calls, legacy = [] }: {
   chainId: JBChainId; safe: Address; intent: string; calls: readonly BatchCall[]
+  /** The namespaces the last release keyed this batch by (legacy-intents). */
+  legacy?: readonly string[]
 }) {
   return writeHolds.open({
     chainId, account: safe, safe: true, namespace: intent,
     call: { to: MULTI_SEND_CALL_ONLY, data: encodeMultiSend(calls), value: 0n },
-  })
+  }, { legacy: [...legacy] })
 }
 
 /**
@@ -56,6 +58,7 @@ export async function proposeSafeBatch({
   calls,
   title,
   intent,
+  legacy,
 }: {
   chainId: JBChainId
   safe: Address
@@ -67,6 +70,8 @@ export async function proposeSafeBatch({
    * retry with regenerated deadlines or expirations waits for the exit.
    */
   intent: string
+  /** The namespaces the last release keyed this batch by: an attempt it left unresolved still holds it. */
+  legacy?: readonly string[]
 }): Promise<Hex> {
   assertNoViewAs()
   if (!calls.length) throw new Error('A batch needs at least one call.')
@@ -97,7 +102,7 @@ export async function proposeSafeBatch({
     requireUnchanged: true,
     changedError: SAFE_CONNECTION_CHANGED,
   })
-  const hold = safeBatchHold({ chainId, safe, intent, calls })
+  const hold = safeBatchHold({ chainId, safe, intent, calls, legacy })
   return sendUnderHold(chainId, hold, client as unknown as WriteHoldClient, async gate => {
     await gate.beforeSend()
     let id: string

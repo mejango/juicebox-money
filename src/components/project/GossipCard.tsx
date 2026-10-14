@@ -1,5 +1,6 @@
 'use client'
 
+import { legacyBridgeSyncKey } from '@/lib/legacy-intents'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
@@ -808,6 +809,7 @@ function GossipRow({
         reviewedAccount: address,
         // A sync moves no token: keyed by the sucker alone (the zero address as its token).
         intent: bridgeIntent({ chainId: targetChainId, sucker: peer.syncSucker, token: zeroAddress, account: address }),
+        legacy: [legacyBridgeSyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')
