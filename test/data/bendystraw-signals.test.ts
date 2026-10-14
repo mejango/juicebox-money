@@ -110,9 +110,10 @@ describe("a Bendystraw read's signal", () => {
     ['@/lib/pending-payments#fetchPendingPayments', signal => fetchPendingPayments(8453, 11, { signal })],
   ]
 
+  // Scans the whole browser build's source: slow on a loaded machine.
   it('covers every reader the browser uses', () => {
     expect(readers.map(([id]) => id).sort()).toEqual([...readersTheBrowserUses()].sort())
-  })
+  }, 60_000)
 
   it.each(readers)('%s sends nothing once its caller has left, and says so', async (_name, read) => {
     vi.stubGlobal('window', {})

@@ -46,7 +46,10 @@ const budgets = {
     // 38104405718 measures 441.0 KiB rounded and exceeds that exact ceiling;
     // preserve the same build graph and round its measured cost to 442 KiB.
     // Project/create/aggregate/largest/style/lazy gates remain unchanged.
-    '/page': 442 * KIB,
+    // The app-wide held-write notice (its registry and lazy list loader in the
+    // root layout, so every route can show an authority or batch hold with its
+    // exit) measures home 442.9 KiB. Round this route up, with CI headroom.
+    '/page': 444 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
@@ -83,7 +86,9 @@ const budgets = {
     // IndexedDB lock fallback, nonce evidence and the held-write notice with its
     // exit, in place of the in-memory registry) measures create 513.3 KiB on the
     // Node 26.7 / npm 12 browser build. Round only this route up to the next KiB.
-    '/create/page': 514 * KIB,
+    // The same root-layout notice, plus authority writes and Safe batches held
+    // through the write hold, measure create 515.4 KiB. Round up.
+    '/create/page': 516 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -264,7 +269,9 @@ const budgets = {
   // 2600.9 KiB: round up, with headroom for CI.
   // Intent keys for writes whose calldata regenerates on retry (deadlines,
   // Permit2 expirations, quotes) measure 2601.7 KiB: round up, with CI headroom.
-  allScripts: 2604 * KIB,
+  // Central holds for authority writes and Safe batches, the app-wide notice
+  // (lazy) and SDK 2.34.1 measure 2609.7 KiB: round up, with CI headroom.
+  allScripts: 2612 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

@@ -15,7 +15,7 @@ const client = vi.hoisted(() => ({
 }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => client }))
 
-import { HeldWritesNotice } from '@/components/ui/HeldWritesNotice'
+import HeldWritesList from '@/components/ui/HeldWritesList'
 import { heldWritesSnapshot, sendUnderHold, writeHolds } from '@/lib/write-holds'
 
 describe('writes held outside a flow', () => {
@@ -28,7 +28,7 @@ describe('writes held outside a flow', () => {
     const host = document.createElement('div')
     document.body.append(host)
     const root = createRoot(host)
-    await act(async () => root.render(<HeldWritesNotice />))
+    await act(async () => root.render(<HeldWritesList />))
     expect(host.textContent).toContain("Your earlier transaction hasn't confirmed yet. Check your wallet.")
     const exit = [...host.querySelectorAll('button')].find(button => button.textContent === 'I checked my wallet. Send again')!
     await act(async () => { exit.click() })
