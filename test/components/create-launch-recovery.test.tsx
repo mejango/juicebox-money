@@ -8,7 +8,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { parseAbi, type Address, type Hex } from 'viem'
+import { encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -20,6 +20,10 @@ const m = vi.hoisted(() => ({
   writeContract: vi.fn(),
   review: vi.fn(),
   client: {} as Record<string, unknown>,
+  /** The domain checks' first read of a launch it follows: its receipt. */
+  waitReceipt: vi.fn(),
+  /** The creation fee read a fresh send needs (never recovery). */
+  fee: vi.fn(),
 }))
 
 vi.mock('next/image', () => ({ default: () => null }))
@@ -36,7 +40,7 @@ vi.mock('wagmi/actions', async original => ({
   ...(await original<typeof import('wagmi/actions')>()),
   getAccount: () => ({ address: ALICE, chainId: 1, connector: { uid: 'reviewed-wallet' } }),
   getPublicClient: () => m.client,
-  waitForTransactionReceipt: vi.fn(() => new Promise(() => {})),
+  waitForTransactionReceipt: (...args: unknown[]) => m.waitReceipt(...args),
 }))
 vi.mock('@wagmi/core', async original => ({
   ...(await original<typeof import('@wagmi/core')>()),
@@ -52,7 +56,7 @@ vi.mock('@/lib/safe-connector', async original => ({
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
   ...(await original<typeof import('@bananapus/nana-sdk-core/v6')>()),
-  getProjectCreationFee: async () => 0n,
+  getProjectCreationFee: (...args: unknown[]) => m.fee(...args),
 }))
 vi.mock('@/lib/launch', async original => ({
   ...(await original<typeof import('@/lib/launch')>()),
@@ -79,6 +83,7 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'
 import { LAUNCH_SESSION_KEY, loadLaunchSession } from '@/lib/launch-session'
+import { launchHold } from '@/lib/launch-hold'
 
 let host: HTMLDivElement
 let root: Root
@@ -106,7 +111,42 @@ function saveEarlierLaunch() {
   }))
 }
 
-const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)
+const BLOCK = `0x${'b1'.repeat(32)}` as Hex
+/** The launch call the form builds (buildLaunchRequest is mocked above). */
+const LAUNCH_CALL = { to: DEPLOYER, data: encodeFunctionData({ abi: parseAbi(['function launch(uint256 salt)']), functionName: 'launch', args: [1n] }), value: 0n }
+
+/** A node that shows `hash` mined, successfully, in its canonical block. */
+function minedNode(hash: Hex) {
+  const known = async ({ hash: asked }: { hash: Hex }) => asked.toLowerCase() === hash.toLowerCase()
+  return {
+    getChainId: async () => 1,
+    getBlockNumber: async () => 100n,
+    getTransactionCount: async () => 4,
+    getTransaction: async (args: { hash: Hex }) => {
+      if (!await known(args)) throw Object.assign(new Error('not found'), { name: 'TransactionNotFoundError' })
+      return { hash, chainId: 1, from: ALICE, to: DEPLOYER, input: LAUNCH_CALL.data, value: 0n, nonce: 3, blockHash: BLOCK, blockNumber: 1n, transactionIndex: 0 }
+    },
+    getTransactionReceipt: async (args: { hash: Hex }) => {
+      if (!await known(args)) throw Object.assign(new Error('missing'), { name: 'TransactionReceiptNotFoundError' })
+      return { transactionHash: hash, status: 'success', blockHash: BLOCK, blockNumber: 1n, transactionIndex: 0, from: ALICE, to: DEPLOYER, logs: [] }
+    },
+    getBlock: async ({ blockTag, blockNumber }: { blockTag?: string; blockNumber?: bigint } = {}) =>
+      blockTag === 'finalized'
+        ? { number: 100n, hash: `0x${'f1'.repeat(32)}`, timestamp: 1n }
+        : { number: blockNumber ?? 100n, hash: blockNumber === 1n ? BLOCK : `0x${'f2'.repeat(32)}` },
+    request: async () => null,
+  }
+}
+
+async function mount() {
+  const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  await act(async () => root.render(<QueryClientProvider client={queries}><CreateForm /></QueryClientProvider>))
+  await settle()
+}
+
+const button = (label: string) =>
+  [...host.querySelectorAll('[data-tx-confirm] button'), ...host.querySelectorAll('button')]
+    .find(item => item.textContent === label) as HTMLButtonElement | undefined
 
 async function settle() {
   for (let i = 0; i < 20; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
@@ -116,6 +156,8 @@ beforeEach(() => {
   localStorage.clear()
   m.client = emptyNode()
   m.writeContract.mockReset()
+  m.waitReceipt.mockReset().mockImplementation(() => new Promise(() => {}))
+  m.fee.mockReset().mockResolvedValue(0n)
   m.review.mockReset().mockRejectedValue(Object.assign(new Error('Review cancelled.'), { name: 'TransactionReviewCancelledError' }))
   host = document.createElement('div')
   document.body.append(host)
@@ -158,4 +200,67 @@ describe('a saved launch restored on the create page', () => {
     expect(m.review).toHaveBeenCalled()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
+
+  it('follows a launch whose settlement lands during the exit: no send, and the saved submission is never released', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    saveEarlierLaunch()
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
+    await settle()
+    const exit = button('I checked my wallet. Send again')
+    expect(exit, 'the warned exit').toBeDefined()
+    // The launch mines just as the user takes the exit: the exit's own check settles it.
+    m.client = minedNode(HASH)
+    await act(async () => exit!.click())
+    await settle()
+    // Recovery follows the settled launch into its domain checks: its receipt, never a new send.
+    expect(m.waitReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hash: HASH }))
+    expect(m.review).not.toHaveBeenCalled()
+    expect(m.writeContract).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH })
+    // It follows once: one resume, not one per report of the settled hold.
+    expect(m.waitReceipt).toHaveBeenCalledOnce()
+  })
+
+  it("saves a settled launch's hash into the journal before its domain checks run", async () => {
+    // The hold saved and settled this launch's hash; the page reloaded before the journal saved it.
+    const NEW_HASH = `0x${'ef'.repeat(32)}` as Hex
+    m.client = minedNode(NEW_HASH)
+    const hold = launchHold({ chainId: 1, account: ALICE, safe: false, salt: SALT, projectUri: 'ipfs://launch', call: LAUNCH_CALL })
+    await hold.send(m.client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(NEW_HASH); return NEW_HASH })
+    await hold.state(m.client as never)
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing', held: true } }, createdAt: Date.now(),
+    }))
+    let journalAtChecks: unknown
+    m.waitReceipt.mockImplementation(() => {
+      journalAtChecks = loadLaunchSession()?.statuses[1]
+      return new Promise(() => {})
+    })
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    expect(m.waitReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hash: NEW_HASH }))
+    expect(journalAtChecks).toEqual({ phase: 'confirming', txHash: NEW_HASH, held: true })
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it("reaches a saved launch's recovery even when the fee a fresh send needs can't be read", async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    m.fee.mockRejectedValue(new Error('fee read failed'))
+    saveEarlierLaunch()
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
+    await settle()
+    // The hold decides, with its exit, whatever preparation for a fresh send can't do.
+    expect(button('I checked my wallet. Send again'), 'the warned exit').toBeDefined()
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
 })
+

@@ -28,8 +28,10 @@ export function launchHold({ chainId, account, safe, salt, projectUri, call }: {
  * request may already be out:
  * - `held`: the hold still holds it; show its state, with the SDK's warned exit when due;
  * - `settled`: the hold proved it ran; follow that transaction, never send again;
- * - `unverified`: an earlier release left it with no hold of its own; the user checks their wallet first;
- * - `send`: nothing is out (the user took the exit), so it may send.
+ * - `unverified`: the hold has no record of it (an earlier release's, cleared storage, or released
+ *   elsewhere without the journal recording that exit); the user checks their wallet first;
+ * - `send`: the hold proved it failed. A journal-recorded exit or check retires the submission
+ *   before this is asked, so it isn't asked then.
  */
 export async function launchResumeGate(
   hold: WriteHoldHandle,
@@ -42,7 +44,9 @@ export async function launchResumeGate(
   if (state.status !== 'clear') return { kind: 'held', state }
   const settled = settledHashOf(state.settled)
   if (settled && state.settled?.result === 'success') return { kind: 'settled', hash: settled as Hex }
-  return status.held ? { kind: 'send' } : { kind: 'unverified' }
+  // A proven failure retires it. Anything else (no record: never saved, cleared, or released
+  // elsewhere without the journal hearing of it) is no proof that nothing is out: the user checks.
+  return state.settled?.result === 'failed' ? { kind: 'send' } : { kind: 'unverified' }
 }
 
 /**

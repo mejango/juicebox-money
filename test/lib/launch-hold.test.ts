@@ -36,7 +36,16 @@ describe('a launch under the write hold', () => {
     expect(gate).toMatchObject({ kind: 'held', state: { exit: true } })
     if (gate.kind !== 'held') throw new Error('held')
     await expect(hold.exit(gate.state, { checkedWallet: true }, client as never)).resolves.toMatchObject({ released: true })
-    expect(await launchResumeGate(hold, client as never, resumed)).toEqual({ kind: 'send' })
+    // The exit, recorded in the journal (its submission retired), is what permits the send.
+    expect(await launchResumeGate(hold, client as never, { phase: 'failed' })).toEqual({ kind: 'send' })
+    // A journal that still says the request may be out asks for the check: a missing record is no proof.
+    expect(await launchResumeGate(hold, client as never, resumed)).toEqual({ kind: 'unverified' })
+  })
+
+  it('never takes a missing hold record as permission to send a submission the journal held', async () => {
+    const hold = launchHold({ ...launch, projectUri: 'ipfs://no-record' })
+    expect(await launchResumeGate(hold, client as never, { phase: 'pending', unverifiedSend: true, held: true }))
+      .toEqual({ kind: 'unverified' })
   })
 
   it('offers an explicit check for a launch an earlier release left unverified with no hold of its own', async () => {
