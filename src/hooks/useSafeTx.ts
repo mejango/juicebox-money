@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { peekHeld, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
+import { peekHeld, repeatsWithoutExit, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -787,7 +787,7 @@ export function useSafeTx(chainId: number) {
       const own = (current.state?.record.hash ?? hashRef.current)?.toLowerCase()
       if (own && settledHashOf(state.settled) === own) endHeld(state.settled)
       else leaveHeld()
-    } else showHoldState(current, state)
+    } else if (!repeatsWithoutExit(current.state, state)) showHoldState(current, state)
   })
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while

@@ -10,6 +10,15 @@ export const writeHolds = createWriteHold()
 /** A hold that cleared with no settlement this flow can claim (an exit elsewhere): neutral, never a result. */
 export const WRITE_RELEASED_LINE = 'This transaction is no longer held here. Check your wallet before sending it again.'
 
+/**
+ * Whether `next` only repeats `shown` without its exit (a replay, or a saved
+ * state read before the chain was asked): the exit `shown` already offers stays.
+ */
+export function repeatsWithoutExit(shown: WriteHoldState | null | undefined, next: WriteHoldState): boolean {
+  return !!shown && shown.status !== 'clear' && next.status !== 'clear' && shown.exit && !next.exit &&
+    (shown.status as string) === next.status && JSON.stringify(shown.record) === JSON.stringify(next.record)
+}
+
 /** The hash a settlement names, lowercased, or null (an expiry names none). */
 export function settledHashOf(settled?: WriteHoldSettled): string | null {
   return settled && 'hash' in settled ? settled.hash.toLowerCase() : null
@@ -29,5 +38,5 @@ export function settledLine(settled?: WriteHoldSettled): string {
  */
 export function peekHeld(hold: WriteHoldHandle): WriteHoldState {
   const state = hold.peek()
-  return state.status === 'clear' ? state : ({ ...state, exit: false } as WriteHoldState)
+  return state.status === 'clear' ? state : ({ ...state, exit: false } as unknown as WriteHoldState)
 }

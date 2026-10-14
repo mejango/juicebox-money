@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { peekHeld, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { peekHeld, repeatsWithoutExit, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -118,7 +118,7 @@ export function MintShopItemModal({
     state => {
       if (!held || exitingRef.current === held.hold) return
       if (state.status !== 'clear') {
-        setHeld({ hold: held.hold, state })
+        if (!repeatsWithoutExit(held.state, state)) setHeld({ hold: held.hold, state })
         return
       }
       setHeld(null)
