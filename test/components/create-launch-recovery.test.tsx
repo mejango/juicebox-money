@@ -193,11 +193,32 @@ describe('a saved launch restored on the create page', () => {
     expect(exit, 'the warned exit').toBeDefined()
     await act(async () => exit!.click())
     await settle()
-    // Only the exit retires the saved submission; the resend then opens a fresh review (cancelled here).
-    expect(loadLaunchSession()?.statuses[1]?.txHash).toBeUndefined()
-    // Retired, it no longer keeps the launch from being cancelled.
-    expect(button('Cancel deployment')).toBeDefined()
-    expect(m.review).toHaveBeenCalled()
+    // Only the exit retires the saved submission, and with it the retired attempt's launch
+    // (its salt): the form reopens, and launching again is a new launch with a fresh salt.
+    expect(loadLaunchSession()).toBeNull()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(m.review).not.toHaveBeenCalled()
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it("retires a launch the user checked, even on a single chain, so launching again uses a fresh salt", async () => {
+    // An earlier visit was signing with no hold of its own: the user is asked to check it.
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
+    }))
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    const checked = button('I checked it. Launch again')
+    expect(checked, 'the check').toBeDefined()
+    await act(async () => checked!.click())
+    await settle()
+    // The retired attempt's salt is never reused: its launch record is gone, the form reopens.
+    expect(loadLaunchSession()).toBeNull()
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(m.review).not.toHaveBeenCalled()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
@@ -260,6 +281,31 @@ describe('a saved launch restored on the create page', () => {
     await settle()
     // The hold decides, with its exit, whatever preparation for a fresh send can't do.
     expect(button('I checked my wallet. Send again'), 'the warned exit').toBeDefined()
+    expect(m.writeContract).not.toHaveBeenCalled()
+  })
+
+  it("keeps a settled launch whose project can't be read confirming: only Check again, never a check, discard or resend", async () => {
+    const NEW_HASH = `0x${'ef'.repeat(32)}` as Hex
+    m.client = minedNode(NEW_HASH)
+    const hold = launchHold({ chainId: 1, account: ALICE, safe: false, salt: SALT, projectUri: 'ipfs://launch', call: LAUNCH_CALL })
+    await hold.send(m.client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(NEW_HASH); return NEW_HASH })
+    await hold.state(m.client as never)
+    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+      plans: { 1: { projectName: 'Launch' } }, chains: [1],
+      statuses: { 1: { phase: 'signing', held: true } }, createdAt: Date.now(),
+    }))
+    // Its receipt names no project.
+    m.waitReceipt.mockResolvedValue({ transactionHash: NEW_HASH, status: 'success', blockNumber: 1n, logs: [] })
+    await mount()
+    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await settle()
+    expect(host.textContent).toContain('Your launch went through. Its project is still confirming.')
+    expect(button('Check again')).toBeDefined()
+    expect(button('I checked it. Launch again')).toBeUndefined()
+    expect(button('I checked my wallet. Send again')).toBeUndefined()
+    expect(button('Cancel deployment')).toBeUndefined()
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: NEW_HASH })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 })

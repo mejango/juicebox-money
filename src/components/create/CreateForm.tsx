@@ -230,6 +230,12 @@ type ChainStatus = LaunchChainStatus & {
 
 /** A launch an earlier release left unverified, with no hold of its own: the user checks first. */
 const LAUNCH_CHECK_LINE = "Check this launch in your wallet before launching again.";
+/**
+ * A launch the hold settled with success whose project can't be read yet: it stays
+ * confirming (only Check again), never a check, a discard or a resend, and retires only
+ * once its event names the project.
+ */
+const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
 
 function deriveSymbol(name: string): string {
   const words = name
@@ -1535,6 +1541,8 @@ export function CreateForm() {
    */
   const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase("launching");
+    // This run's own outcome replaces the restored launch's notice.
+    setLaunchError(null);
     const signal = pageSignal();
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
@@ -1809,7 +1817,7 @@ export function CreateForm() {
           if (status !== "success") throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
         } else if (receipt.status !== "success" && settledByHold) {
           // A settled success always wins (invariant D): a read that disagrees is retried, never a failure.
-          throw new Error("This launch's result can't be read yet. Check again in a moment.");
+          throw new Error(LAUNCH_SETTLED_CONFIRMING_LINE);
         } else if (receipt.status !== "success") {
           const saved = loadLaunchSession({ strict: true });
           if (!saved?.account) throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
@@ -1838,7 +1846,9 @@ export function CreateForm() {
           updateStatus(chainId, {
             phase: "uncertain",
             txHash: hash,
-            error: `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
+            error: settledByHold
+              ? LAUNCH_SETTLED_CONFIRMING_LINE
+              : `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
           });
           setPhase("failed");
           return;
@@ -1880,7 +1890,9 @@ export function CreateForm() {
                   phase: "uncertain",
                   txHash: hash,
                   safeProposalHash: proposal,
-                  error: `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
+                  error: settledByHold
+                    ? LAUNCH_SETTLED_CONFIRMING_LINE
+                    : `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
                 }
               : {
                   phase: "failed",
@@ -2112,15 +2124,20 @@ export function CreateForm() {
         return;
       }
     }
-    // The user took the exit: the saved submission retires, so neither a resend nor
-    // abandoning the launch asks for proof of it again.
+    // The user took the exit (or checked it): the saved submission retires, so neither a
+    // new launch nor abandoning this one asks for proof of it again.
     updateStatus(shown.chainId, {
       phase: "failed", unverifiedSend: undefined, held: undefined, txHash: undefined, safeProposalHash: undefined,
       directSafeCall: undefined, error: undefined,
     });
     setLaunchHeld(null);
     setLaunchError(null);
-    retry();
+    // A deliberate new launch never reuses the retired attempt's salt (as revnet): its
+    // launch is retired too and the form reopens; the next launch pins a fresh salt.
+    // Chains that already launched stay their own project, so they leave the selection.
+    const launched = selected.filter(id => statusesRef.current[id]?.phase === "done");
+    await abandonLaunch();
+    if (launched.length > 0) setSelected(current => current.filter(id => !launched.includes(id)));
   };
 
   const recoverSafeSetup = async (chainId: number, cancelled = false) => {
