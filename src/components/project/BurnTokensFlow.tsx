@@ -9,8 +9,6 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { useMemo, useState } from 'react'
 import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
-import { useChosen } from '@/hooks/useChosen'
-import { decimalKey } from '@/lib/transaction-builders'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -35,8 +33,7 @@ export function BurnTokensFlow({
 }) {
   const { address, isConnected, openSignIn } = useWallet()
   const tx = useSafeTx(chainId)
-  const amountField = useChosen('', 'amount')
-  const { value: amount, set: setAmount } = amountField
+  const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<ReturnType<
@@ -117,8 +114,8 @@ export function BurnTokensFlow({
         {
           // The holder whose tokens the reviewed request burns.
           reviewedAccount: plan.args[0],
-          // Max is all of the balance, whatever it is by a retry.
-          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: String(plan.args[1]), amount: amountField.key(decimalKey) }),
+          // Not an SDK builder yet: the holder's burn of the project's token, no amount.
+          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: plan.args[1] }),
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])
@@ -177,7 +174,7 @@ export function BurnTokensFlow({
         type="button"
         className="btn-secondary mt-2 text-xs"
         disabled={balance === undefined || balance === 0n}
-        onClick={() => (balance ? amountField.choose('max', formatUnits(balance, 18)) : setAmount(''))}
+        onClick={() => (balance ? setAmount(formatUnits(balance, 18)) : setAmount(''))}
       >
         Use max
       </button>

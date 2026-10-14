@@ -34,7 +34,6 @@ import {
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { useChosen } from '@/hooks/useChosen'
 import {
   formatUnits,
   parseUnits,
@@ -61,7 +60,7 @@ import {
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-import { buildUseAllowanceRequest, decimalKey } from '@/lib/transaction-builders'
+import { buildUseAllowanceRequest } from '@/lib/transaction-builders'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -820,8 +819,7 @@ function FundsTxFlow({
   const tx = useSafeTx(chainId)
 
   const [open, setOpen] = useState(false)
-  const amountField = useChosen('', 'amount')
-  const { value: amount, set: setAmount } = amountField
+  const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState<number>(
     lines[0]?.currency ?? ctx.currency,
   )
@@ -978,8 +976,9 @@ function FundsTxFlow({
         quote,
         min,
         account: address,
+        // Not an SDK builder yet: the project's payout of this token and currency to this beneficiary, no amount.
         intent: writeIntentKey('use-allowance', {
-          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: amountField.key(decimalKey), currency: line.currency, beneficiary: intent.address(address),
+          chainId, projectId, token: intent.address(ctx.token), currency: line.currency, beneficiary: intent.address(address),
         }),
       })
     } catch (e) {
@@ -1161,7 +1160,7 @@ function FundsTxFlow({
               const max = tokenKeyed
                 ? bigintMin(line.remaining, balance)
                 : line.remaining
-              amountField.choose('max', formatUnits(max, decimals))
+              setAmount(formatUnits(max, decimals))
               setReview(null)
               setFlowError(null)
             }}

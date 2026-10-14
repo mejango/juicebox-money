@@ -273,7 +273,9 @@ const budgets = {
   // (lazy) and SDK 2.34.1 measure 2609.7 KiB: round up, with CI headroom.
   // SDK 2.35.0 (its canonical intent keys, legacy holds, stale reviews and the
   // in-tab notice) measures 2612.3 KiB: round up, with CI headroom.
-  allScripts: 2615 * KIB,
+  // SDK 2.38.0 (the shared intent builders, batch identity, checked states and
+  // test resets) measures 2616.0 KiB: round up, with CI headroom.
+  allScripts: 2619 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

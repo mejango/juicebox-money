@@ -198,7 +198,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
-import { approvalStepIntent, cashOutIntent } from '@/lib/transaction-builders'
+import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const AUTO_ISSUE_CALL = {
@@ -646,6 +646,7 @@ describe('cash-out write flow', () => {
     // The symbol read failed: the cash-out still proceeds through the terminal.
     mocks.tokenSymbol = undefined
     const before = await cashOutIntentSent()
+    expect(before).toBe(cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE }))
     mocks.tokenSymbol = { address: '0x3333333333333333333333333333333333333333', symbol: 'JBT' }
     expect(await cashOutIntentSent()).toBe(before)
   })
@@ -666,9 +667,9 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'Approve tokens for this sale').props.onClick())
     const [request, options] = mocks.send.mock.calls.at(-1)! as [{ functionName: string }, { intent?: string }]
     expect(request.functionName).toBe('approve')
-    const parent = cashOutIntent({ chainId: 1, projectId: 42, amount: 'policy:max', beneficiary: ALICE })
+    const parent = cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE })
     const spender = (request as unknown as { args: readonly string[] }).args[0]
-    expect(options.intent).toBe(approvalStepIntent(parent, 'token-approval', '0x3333333333333333333333333333333333333333', spender))
+    expect(options.intent).toBe(approvalIntent(parent, { step: 'token-approval', token: '0x3333333333333333333333333333333333333333', spender }))
   })
 
   it('names the whole approval queue when the pool out-quotes the treasury', async () => {

@@ -32,6 +32,7 @@ import {
   type Abi,
   type Address,
   type PublicClient,
+  zeroAddress,
 } from 'viem'
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
@@ -47,7 +48,7 @@ import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
-import { bridgeSyncIntent } from '@/lib/transaction-builders'
+import { bridgeIntent } from '@bananapus/nana-sdk-core/review'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -805,7 +806,8 @@ function GossipRow({
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
       await tx.send({ ...request, abi: request.abi as unknown as Abi }, {
         reviewedAccount: address,
-        intent: bridgeSyncIntent({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+        // A sync moves no token: keyed by the sucker alone (the zero address as its token).
+        intent: bridgeIntent({ chainId: targetChainId, sucker: peer.syncSucker, token: zeroAddress, account: address }),
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')

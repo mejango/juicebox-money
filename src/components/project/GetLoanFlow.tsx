@@ -1,6 +1,6 @@
 'use client'
 
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { borrowIntent } from '@bananapus/nana-sdk-core/review'
 
 import {
   JBCoreContracts,
@@ -21,8 +21,6 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useState } from 'react'
-import { useChosen } from '@/hooks/useChosen'
-import { decimalKey } from '@/lib/transaction-builders'
 import {
   formatUnits,
   parseUnits,
@@ -106,8 +104,7 @@ export function GetLoanFlow({
   })
   const ctxs: readonly JBAccountingContext[] = contexts ?? []
 
-  const amountField = useChosen('', 'amount')
-  const { value: amount, set: setAmount } = amountField
+  const [amount, setAmount] = useState('')
   const [ctxToken, setCtxToken] = useState<Address | null>(null)
   const [prepaid, setPrepaid] = useState<number>(PREPAID_OPTIONS[0].value)
   const [review, setReview] = useState<ReviewedBorrow | null>(null)
@@ -217,10 +214,8 @@ export function GetLoanFlow({
       })
       await borrowTx.send(request, {
         reviewedAccount: r.account,
-        // Its minimum re-quotes on retry: held by the loan the user chose.
-        intent: writeIntentKey('borrow', {
-          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: amountField.key(decimalKey), prepaid: r.prepaid, beneficiary: intent.address(r.account),
-        }),
+        // Its minimum re-quotes on retry: held as this holder's borrow from the project.
+        intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -503,7 +498,7 @@ export function GetLoanFlow({
               {mounted && balance !== undefined ? (
                 <button
                   onClick={() => {
-                    amountField.choose('max', formatUnits(balance, 18))
+                    setAmount(formatUnits(balance, 18))
                     resetInputs()
                   }}
                   disabled={busy}

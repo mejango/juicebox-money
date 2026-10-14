@@ -2096,7 +2096,8 @@ describe('paying a reverted Relayr payment again', () => {
       let read = 0
       reads.mockImplementation(async signal => ++read === 1 ? answer(signal)
         : response({ bundle_uuid: BUNDLE_UUID, payment_received: true, transactions: [] }))
-      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds())
+      // The SDK reads the payment as funding the quote: held, never released or paid again.
+      await expect(runRelayrCalls(options)).rejects.toMatchObject(holds(/Another payment funded this Relayr quote/))
       expect(read).toBe(2)
       expect(loadRelayrPendingSession(options.pendingScope)?.released).toBeUndefined()
       expect(posts).toHaveLength(1)

@@ -270,7 +270,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     const originalPaymentExpired = async (): Promise<boolean> => {
       const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
-      return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
+      // Unknown (the chain couldn't be read) is never expired.
+      return !!journal?.paymentDeadline && !!client && (await relayrDeadlinePassed(client, journal.paymentDeadline)) === true
     }
 
     // Another payment may have funded a quote whose own payment reverted: what

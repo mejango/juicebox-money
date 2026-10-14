@@ -55,7 +55,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
-import { bridgeSendIntent } from '@/lib/transaction-builders'
+import { bridgeIntent } from '@bananapus/nana-sdk-core/review'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -615,7 +615,7 @@ function MovementGroup({
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
       await tx.send({ ...request, abi: request.abi as Abi }, {
         reviewedAccount: address,
-        intent: bridgeSendIntent({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address }),
+        intent: bridgeIntent({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address }),
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')

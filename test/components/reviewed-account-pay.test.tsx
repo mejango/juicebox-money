@@ -114,7 +114,7 @@ vi.mock('@/hooks/useTokenBalances', () => ({
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', async original => {
   const actual = await original<typeof import('@/components/project/ShopCartProvider')>()
-  const empty = { quantities: {}, chosen: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, reconcile: () => {}, clear: () => {} }
+  const empty = { quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }
   return { ...actual, useShopCart: () => (m.realCart ? actual.useShopCart() : empty) }
 })
 vi.mock('@/providers/preload-para', () => ({ preloadParaHost: () => {} }))
@@ -344,7 +344,7 @@ describe('a held payment whose token the app switched', () => {
 })
 
 describe('a checkout whose items are all gone', () => {
-  it('never pays without them, even once the shop stops resolving, until the cart is cleared', async () => {
+  it('just pays, under the same project key, once the cart is emptied', async () => {
     m.realCart = true
     const tier = (remaining: number) => ({
       id: 1, price: 10n ** 15n, discountPercent: 0, remaining, initial: 10, unlimited: false,
@@ -377,12 +377,9 @@ describe('a checkout whose items are all gone', () => {
     await act(async () => root.render(panel()))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     expect(cart.count).toBe(0)
-    expect(cart.chosen).toEqual({ 1: 2 })
+    // Nothing blocks: the amount pays as a plain payment, held by the project's one payment key.
     const pay = [...host.querySelectorAll('button')].find(item => item.textContent === 'Pay')!
-    expect(pay.disabled).toBe(true)
-    await act(async () => pay.click())
-    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
-    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(pay.disabled).toBe(false)
   })
 })
 
