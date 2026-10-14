@@ -2,7 +2,19 @@ import { useSyncExternalStore } from 'react'
 import { TransactionNotFoundError, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
-type Receipt = { status: 'success'; blockNumber: bigint; transactionHash: Hex }
+type Receipt = {
+  status: 'success'
+  blockNumber: bigint
+  transactionHash: Hex
+  blockHash: Hex
+  transactionIndex: number
+  from: Address
+  to: Address | null
+  logs: never[]
+}
+
+/** The canonical block every confirmed write is mined in. */
+const MINED_BLOCK = `0x${'5b'.repeat(32)}` as Hex
 
 /** The hash the fake wallet answers its `n`th write (from 1) with. */
 export function sentHash(n: number): Hex {
@@ -52,10 +64,20 @@ function createFakeWallet() {
     /** The account's next nonce, read before each wallet send. */
     getBlockNumber: vi.fn(async () => 100n),
     getTransactionCount: vi.fn(async () => 0),
-    /** No write is a transaction the chain shows: a Safe app's reply is its proposal's hash. */
-    getTransaction: vi.fn(async ({ hash }: { hash: Hex }): Promise<never> => {
-      throw new TransactionNotFoundError({ hash })
+    /**
+     * A confirmed write is a transaction the chain shows, mined where its receipt
+     * says; any other hash (a Safe app's proposal hash) is none.
+     */
+    getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
+      const receipt = receipts.get(hash.toLowerCase())
+      if (!receipt) throw new TransactionNotFoundError({ hash })
+      return { hash, chainId: 1, from: receipt.from, to: receipt.to, input: '0x' as Hex, value: 0n, nonce: 0,
+        blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }
     }),
+    getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+      args.blockTag === 'finalized'
+        ? { number: 1_000n, hash: `0x${'4f'.repeat(32)}` as Hex, timestamp: 1n }
+        : { number: args.blockNumber ?? 1_000n, hash: MINED_BLOCK }),
     /** A flow's own reads; each test answers the ones its flow makes. */
     readContract: vi.fn(async (request: { functionName: string; args?: readonly unknown[] }): Promise<unknown> => {
       throw new Error(`Unexpected read ${request.functionName}`)
@@ -78,7 +100,8 @@ function createFakeWallet() {
     /** The chain reports `hash` as confirmed. */
     confirm(hash: Hex, blockNumber = 10n) {
       const key = hash.toLowerCase()
-      const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash }
+      const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash, blockHash: MINED_BLOCK,
+        transactionIndex: 0, from: account ?? ('0x0000000000000000000000000000000000000000' as Address), to: null, logs: [] }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)

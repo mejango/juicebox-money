@@ -7,6 +7,11 @@ import { createWriteHold, type WriteHoldSettled } from '@bananapus/nana-sdk-core
  */
 export const writeHolds = createWriteHold()
 
+/** The hash a settlement names, lowercased, or null (an expiry names none). */
+export function settledHashOf(settled?: WriteHoldSettled): string | null {
+  return settled && 'hash' in settled ? settled.hash.toLowerCase() : null
+}
+
 /** What a hold that ended on its own says: its result when the hold saw it, otherwise that it went through. Never a send. */
 export function settledLine(settled?: WriteHoldSettled): string {
   if (settled?.result === 'failed') return 'Your earlier transaction failed onchain.'

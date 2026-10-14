@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { settledLine, writeHolds } from '@/lib/write-holds'
+import { settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -520,14 +520,40 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     proposalHash,
     calls: [call],
   }).catch(() => ({ status: 'unproven' as const }))
+  // Success is the write hold's verified settlement of this execution, never
+  // the receipt alone; until then it is confirming.
+  const settledHere = status === 'success' && (await holdSettles(key, client, receipt))
   updateProposal(
     key,
-    status === 'success'
+    settledHere
       ? { phase: 'success', receipt }
       : status === 'failed'
         ? { phase: 'failed', receipt, message: failed }
         : { ...unconfirmedProposal(key), receipt },
   )
+}
+
+/** How many times, a receipt-poll apart, a proposal's hold is asked to settle its execution. */
+const HOLD_SETTLE_ATTEMPTS = 15
+
+/**
+ * Whether the proposal's write hold settles this execution's receipt: true once
+ * it reports clear with this hash settled, or when it holds nothing to settle.
+ */
+async function holdSettles(key: string, client: FollowClient, receipt: TransactionReceipt): Promise<boolean> {
+  const proposal = proposals.get(key)
+  if (!proposal) return false
+  const hold = externalHolds.get(key)?.hold ?? safeHoldOf(proposal, key)
+  const before = hold.peek()
+  if (before.status === 'clear' && !before.settled) return true
+  const own = receipt.transactionHash.toLowerCase()
+  for (let attempt = 0; attempt < HOLD_SETTLE_ATTEMPTS; attempt += 1) {
+    const state = await hold.onReceipt(receipt, client as never, { calls: [proposal.call] }).catch(() => hold.peek())
+    if (state.status === 'clear') return settledHashOf(state.settled) === own
+    updateProposal(key, { phase: 'confirming' })
+    await new Promise(resolve => setTimeout(resolve, RECEIPT_POLL_INTERVAL_MS))
+  }
+  return false
 }
 
 /** Record a proposal and follow it; `reply` says whether the hash is the wallet's own answer. */
@@ -572,6 +598,9 @@ export function useSafeTx(chainId: number) {
   const [error, setError] = useState<string | null>(null)
   /** The transaction an ordinary send is waiting on. */
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+  /** The hash this flow observes, for a settlement it may claim. */
+  const hashRef = useRef(hash)
+  useEffect(() => { hashRef.current = hash }, [hash])
   /** The Safe proposal this flow shows, by its key in the registry. */
   const [shownKey, setShownKey] = useState<string | null>(null)
   const proposal = useSyncExternalStore(
@@ -642,6 +671,8 @@ export function useSafeTx(chainId: number) {
   /** This flow already shows its own receipt: a hold that clears on it changes nothing here. */
   const receiptShownRef = useRef(false)
   receiptShownRef.current = !!receiptData
+  /** The hash this flow's write hold settled, as its verified result: only then is success shown. */
+  const [settledHash, setSettledHash] = useState<string | null>(null)
   const receiptReverted = tracking && receiptData?.status === 'reverted'
   // The receipt watch gave up on a transaction that has a hash. It may still
   // land, so its write stays held until its receipt proves it, but nothing is
@@ -661,13 +692,24 @@ export function useSafeTx(chainId: number) {
     heldRef.current = next
     setHeld(next)
   }, [])
-  // A receipt for the held write's own hash is its result, whatever its
-  // status. The hold releases a verified success at once, a revert at finality.
+  // A receipt for the held write's own hash goes to its hold, which verifies
+  // it: a success settles at once, a revert at finality. Success shows only
+  // once the hold reports this hash settled; until then it is asked again.
   useEffect(() => {
     const current = heldRef.current
     if (!current || !receiptData || !publicClient) return
-    if (current.hold.peek().status === 'clear') return
-    void current.hold.onReceipt(receiptData as TransactionReceipt, publicClient as never).catch(() => {})
+    const own = receiptData.transactionHash.toLowerCase()
+    let live = true
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const check = async () => {
+      const state = await current.hold.onReceipt(receiptData as TransactionReceipt, publicClient as never)
+        .catch(() => current.hold.peek())
+      if (!live) return
+      if (state.status === 'clear' && settledHashOf(state.settled) === own) setSettledHash(own)
+      else if (state.status !== 'clear') retry = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
+    }
+    void check()
+    return () => { live = false; clearTimeout(retry) }
   }, [receiptData, publicClient])
   /** Show what the hold says now; a cleared hold leaves this flow idle. */
   const showHoldState = useCallback((current: Omit<HeldWrite, 'state'>, state: WriteHeldState) => {
@@ -678,6 +720,13 @@ export function useSafeTx(chainId: number) {
   }, [showHeld])
   /** The line a hold that ended on its own shows: never a send. */
   const [settledNotice, setSettledNotice] = useState<string | null>(null)
+  /** The hold ended without a settlement this flow can claim: it goes quiet, never claiming a result. */
+  const leaveHeld = useCallback(() => {
+    showHeld(null)
+    setHash(null)
+    inFlightRef.current = false
+    setPhase('idle')
+  }, [showHeld])
   const endHeld = useCallback((settled?: WriteHoldSettled) => {
     showHeld(null)
     setHash(null)
@@ -687,8 +736,6 @@ export function useSafeTx(chainId: number) {
   }, [showHeld])
   /** The hold whose exit the user accepted: its answer, not what it emits meanwhile, decides. */
   const exitingRef = useRef<WriteHoldHandle | null>(null)
-  /** A result a look at the hold returned while the exit was in flight, kept for its line. */
-  const exitSettledRef = useRef<WriteHoldSettled | undefined>(undefined)
   // The receipt watch gave up on this flow's own send: it enters the hold, so
   // the hold's line shows, its subscription attaches, and a time-based exit
   // can appear. Its hash is still followed for a receipt.
@@ -705,12 +752,15 @@ export function useSafeTx(chainId: number) {
   useWriteHoldWatch(shownHold, publicClient as WriteHoldClient | undefined, state => {
     const current = heldRef.current
     if (!current || current.hold !== shownHold) return
-    if (exitingRef.current === shownHold) {
-      if (state.status === 'clear' && state.settled) exitSettledRef.current = state.settled
-      return
-    }
+    // The exit's own answer decides while it is in flight.
+    if (exitingRef.current === shownHold) return
     if (state.status === 'clear') {
-      if (!receiptShownRef.current) endHeld(state.settled)
+      if (receiptShownRef.current) return
+      // Only a settlement of the hash this flow observed is its result; any
+      // other clear (an exit elsewhere, a resend's settlement) is not.
+      const own = (current.state?.record.hash ?? hashRef.current)?.toLowerCase()
+      if (own && settledHashOf(state.settled) === own) endHeld(state.settled)
+      else leaveHeld()
     } else showHoldState(current, state)
   })
 
@@ -723,7 +773,9 @@ export function useSafeTx(chainId: number) {
     ? proposal
       ? SHOWN_AS[proposal.phase]
       : 'idle'
-    : tracking && receiptData?.status === 'success'
+    : tracking && receiptData?.status === 'success' &&
+        // A held write's success is the hold's verified settlement, never the raw receipt.
+        (!held || settledHash === receiptData.transactionHash.toLowerCase())
       ? 'success'
       : receiptReverted
         ? 'error'
@@ -769,7 +821,6 @@ export function useSafeTx(chainId: number) {
     const current = heldRef.current
     if (!current?.state?.exit || !publicClient) return
     exitingRef.current = current.hold
-    exitSettledRef.current = undefined
     void current.hold.exit(current.state, { checkedWallet: true }, publicClient as never).finally(() => {
       if (exitingRef.current === current.hold) exitingRef.current = null
     }).then(
@@ -783,14 +834,20 @@ export function useSafeTx(chainId: number) {
           inFlightRef.current = false
           if (current.proposalKey && proposals.delete(current.proposalKey)) notifyProposals()
           void sendRef.current(current.request, current.options)
-        } else if (state.status === 'clear') endHeld(state.settled ?? exitSettledRef.current)
-        else showHoldState(current, state)
+        } else if (state.status === 'clear') {
+          // Settled meanwhile: the hold still reads how, from any tab.
+          const later = current.hold.peek()
+          const settled = state.settled ?? (later.status === 'clear' ? later.settled : undefined)
+          const own = current.state?.record.hash?.toLowerCase()
+          if (settled && (!own || settledHashOf(settled) === own)) endHeld(settled)
+          else leaveHeld()
+        } else showHoldState(current, state)
       },
       () => {
         // Unreadable: the hold stays, as last shown.
       },
     )
-  }, [endHeld, publicClient, showHeld, showHoldState])
+  }, [endHeld, leaveHeld, publicClient, showHeld, showHoldState])
   const shownState = held?.state ?? (effectivePhase === 'unconfirmed' && held ? held.hold.peek() : null)
   const effectiveError: string | ReactElement | null = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
@@ -853,6 +910,7 @@ export function useSafeTx(chainId: number) {
       setHash(null)
       setShownKey(null)
       setPolledReceipt(null)
+      setSettledHash(null)
       setSettledNotice(null)
       showHeld(null)
       // Read once: the review, the sent gas and the proposal tracking must all
@@ -1110,6 +1168,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setSettledNotice(null)
+    setSettledHash(null)
     showHeld(null)
   }, [showHeld])
 

@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
   client: {
     readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn(),
     getChainId: vi.fn(async () => 1),
-    getTransactionReceipt: vi.fn(async () => null),
+    getTransactionReceipt: vi.fn(async (_args: { hash: `0x${string}` }): Promise<unknown> => null),
     // The account's next nonce, read before the wallet opens.
     getBlockNumber: vi.fn(async () => 100n),
     getTransactionCount: vi.fn(async () => 0),
@@ -114,11 +114,20 @@ beforeEach(() => {
   mocks.review.mockReset().mockResolvedValue(undefined)
   mocks.write.mockReset().mockResolvedValue(PROPOSAL)
   mocks.waitSafe.mockReset().mockResolvedValue(PROPOSAL)
-  mocks.receipt.mockReset().mockImplementation(async (_client: unknown, hash: Hex) => ({
+  mocks.receipt.mockReset().mockImplementation(async (_client: unknown, hash: Hex) => mined({
     status: 'success',
     transactionHash: hash,
     logs: [],
   }))
+  // One node: a hash it shows as a transaction has the receipt its watcher reads, in canonical block 7.
+  mocks.client.getTransactionReceipt.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => {
+    const known = await mocks.client.getTransaction({ hash }).then(() => true, () => false)
+    return known ? mocks.receipt(mocks.client, hash) : null
+  })
+  ;(mocks.client as Record<string, unknown>).getBlock = vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+    args.blockTag === 'finalized'
+      ? { number: 100n, hash: `0x${'44'.repeat(32)}`, timestamp: 1n }
+      : { number: args.blockNumber ?? 8n, hash: args.blockNumber === 7n ? BLOCK : `0x${'66'.repeat(32)}` })
   mocks.shop.mockReset().mockResolvedValue({ hook: HOOK })
   mocks.client.readContract.mockReset().mockImplementation(async ({ functionName }: { functionName: string }) =>
     functionName === 'owner' ? ACCOUNT
@@ -132,12 +141,26 @@ beforeEach(() => {
 
 afterEach(async () => { await act(async () => renderer.unmount()) })
 
+const BLOCK = `0x${'77'.repeat(32)}` as Hex
+/** A receipt as the node shows it, in canonical block 7, its logs bound to it. */
+function mined(receipt: { status: string; transactionHash: Hex; logs: { address: Address; topics: Hex[]; data: Hex }[] }) {
+  const at = { blockHash: BLOCK, blockNumber: 7n, transactionIndex: 0 }
+  return {
+    ...receipt, ...at, from: STORE, to: ACCOUNT,
+    logs: receipt.logs.map(log => ({ ...log, ...at, removed: false, transactionHash: receipt.transactionHash })),
+  }
+}
+
 /** The Safe's execTransaction of the mint the wallet was asked to send, or of `data` in its place. */
 function executesSentMint(data?: Hex) {
   mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
     const sent = mocks.write.mock.calls[0][0] as { address: Address; abi: Abi; functionName: string; args: readonly unknown[] }
     return {
       hash,
+      chainId: 1,
+      blockHash: BLOCK,
+      blockNumber: 7n,
+      transactionIndex: 0,
       from: STORE,
       to: ACCOUNT,
       input: encodeFunctionData({
@@ -151,6 +174,19 @@ function executesSentMint(data?: Hex) {
 
 
 describe('a free mint held by the write hold', () => {
+  it('says minted only once the write hold settles the receipt, never from a receipt the chain does not show canonical', async () => {
+    const SENT = `0x${'cd'.repeat(32)}` as Hex
+    mocks.write.mockResolvedValueOnce(SENT)
+    mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+      hash, chainId: 1, from: ACCOUNT, to: HOOK, input: '0x', value: 0n, nonce: 0, blockHash: BLOCK, blockNumber: 7n, transactionIndex: 0,
+    }))
+    ;(mocks.client as Record<string, unknown>).getBlock = vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+      args.blockTag === 'finalized' ? { number: 100n, hash: `0x${'44'.repeat(32)}`, timestamp: 1n } : { number: args.blockNumber, hash: `0x${'66'.repeat(32)}` })
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    expect(text()).not.toContain('Items minted')
+  })
+
   it('shows the exit once it becomes due after a receipt timeout, without reopening, and accepting it mints exactly once more', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     try {
@@ -218,7 +254,7 @@ describe('free mint gas', () => {
     mocks.safe = true
     // Safe{Wallet} executed at once and returned the execution's own hash; the
     // Safe's event names its safeTxHash.
-    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => mined({
       status: 'success',
       transactionHash: hash,
       logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
@@ -239,7 +275,7 @@ describe('free mint gas', () => {
     mocks.safe = true
     // Safe{Wallet} executed at once and returned the execution's own hash; a
     // nonzero safeTxGas turned the failed mint into ExecutionFailure.
-    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => mined({
       status: 'success',
       transactionHash: hash,
       logs: [{ address: ACCOUNT, topics: [EXECUTION_FAILURE, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
@@ -252,7 +288,7 @@ describe('free mint gas', () => {
 
   it('does not report a mint Safe{Wallet} executed at once as minted when the execution ran another call', async () => {
     mocks.safe = true
-    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => mined({
       status: 'success',
       transactionHash: hash,
       logs: [{ address: ACCOUNT, topics: [EXECUTION_SUCCESS, SAFE_TX], data: `0x${'00'.repeat(32)}` }],
@@ -266,7 +302,7 @@ describe('free mint gas', () => {
 
   it("does not report a Safe app mint whose receipt doesn't show its proposal ran", async () => {
     mocks.safe = true
-    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => ({
+    mocks.receipt.mockImplementation(async (_client: unknown, hash: Hex) => mined({
       status: 'success',
       transactionHash: hash,
       logs: [],

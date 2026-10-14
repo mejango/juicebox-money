@@ -155,6 +155,11 @@ function browserStorage() {
 }
 
 const basePublicClient = mocks.publicClient
+const MINED_BLOCK = `0x${'55'.repeat(32)}` as Hex
+/** `hash`'s receipt in canonical block 5. */
+function mined(hash: string, status: 'success' | 'reverted' = 'success') {
+  return { status, transactionHash: hash, blockHash: MINED_BLOCK, blockNumber: 5n, from: BOB, to: ALICE, transactionIndex: 0, logs: [] }
+}
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', browserStorage())
@@ -172,12 +177,25 @@ beforeEach(() => {
   mocks.safeConnection = false
   mocks.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { mocks.chainId = chainId })
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
+  // Every transaction the chain shows is mined in block 5, canonical, so the
+  // write hold can verify a receipt (a test that needs otherwise says so).
   mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
     hash,
+    chainId: 10,
     from: BOB,
     to: ALICE,
     input: execTransaction(),
+    nonce: 3,
+    blockHash: MINED_BLOCK,
+    blockNumber: 5n,
+    transactionIndex: 0,
   }))
+  ;(mocks.publicClient as Record<string, unknown>).getTransactionReceipt = vi.fn(async ({ hash }: { hash: Hex }) =>
+    mined(hash, mocks.receipt.data?.transactionHash?.toLowerCase() === hash.toLowerCase() ? mocks.receipt.data.status : 'success'))
+  ;(mocks.publicClient as Record<string, unknown>).getBlock = vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+    args.blockTag === 'finalized'
+      ? { number: 4n, hash: `0x${'44'.repeat(32)}`, timestamp: 1n }
+      : { number: args.blockNumber ?? 6n, hash: args.blockNumber === 5n ? MINED_BLOCK : `0x${'66'.repeat(32)}` })
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
@@ -463,7 +481,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(false)
-    mocks.receipt = { data: { status: 'success', transactionHash: hook.ref.current!.hash! }, isError: false }
+    mocks.receipt = { data: mined(hook.ref.current!.hash!), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(true)
     expect(displayQueries.getQueryState(other)?.isInvalidated).toBe(false)
@@ -493,6 +511,76 @@ describe('useSafeTx', () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  describe('success shown only once the write hold settles it', () => {
+    const BLOCK = `0x${'55'.repeat(32)}` as Hex
+    const OTHER_BLOCK = `0x${'56'.repeat(32)}` as Hex
+    /** A chain that knows `hash` mined in block 5, canonical while `canonical()` says so. */
+    function chainWith(hash: Hex, canonical: () => boolean) {
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async () => ({ hash, chainId: 10, from: ALICE, to: BOB, input: '0x', value: 7n, nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 })),
+        getTransactionReceipt: vi.fn(async () => receiptFor(hash)),
+        getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) => args.blockTag === 'finalized'
+          ? { number: 4n, hash: OTHER_BLOCK, timestamp: 1n }
+          : { number: args.blockNumber ?? 6n, hash: canonical() && args.blockNumber === 5n ? BLOCK : OTHER_BLOCK }),
+      } as typeof mocks.publicClient
+    }
+    const receiptFor = (hash: Hex) => ({ status: 'success' as const, transactionHash: hash, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] })
+
+    it('never renders success from an instant receipt the chain does not show canonical, and does once it does', async () => {
+      let canonical = false
+      chainWith(HASH, () => canonical)
+      const phases: string[] = []
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: receiptFor(HASH), isError: false }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      phases.push(hook.ref.current!.phase)
+      expect(phases).not.toContain('success')
+      expect(hook.ref.current!.phase).toBe('pending')
+
+      // The chain shows it canonical, and the receipt is read again.
+      canonical = true
+      mocks.receipt = { data: { ...receiptFor(HASH) }, isError: false }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current!.phase).toBe('success')
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it("takes only its own hash's settlement: a flow following H1 shows nothing when the resend H2 settles", async () => {
+      const H2 = `0x${'ef'.repeat(32)}` as Hex
+      // H1's wallet reply is lost to the network; its watch gives up.
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) }),
+      } as typeof mocks.publicClient
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const first = await renderHook()
+      await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+      expect(first.ref.current!.phase).toBe('unconfirmed')
+
+      // Another flow takes the exit and resends as H2, which settles.
+      const second = await renderHook()
+      await act(async () => { await second.ref.current!.send(request, reviewedByAlice) })
+      mocks.writeContract.mockResolvedValueOnce(H2)
+      chainWith(H2, () => true)
+      await act(async () => { heldNotice(second.ref.current!.error).onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      mocks.receipt = { data: receiptFor(H2), isError: false }
+      await act(async () => { second.renderer.update(createElement(Harness, { ref: second.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(second.ref.current!.phase).toBe('success')
+      // The first flow never claims H2's result for its own attempt.
+      expect(first.ref.current!.notice).not.toBe('Your earlier transaction went through.')
+      expect(first.ref.current!.phase).not.toBe('success')
+      await act(async () => first.renderer.unmount())
+      await act(async () => second.renderer.unmount())
+    })
   })
 
   it("enters the hold when the receipt watch gives up, so the SDK's time-based exit appears, and accepting it sends exactly once more", async () => {
@@ -549,7 +637,7 @@ describe('useSafeTx', () => {
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
 
-    mocks.receipt = { data: { status: 'success', transactionHash: hash }, isError: false }
+    mocks.receipt = { data: mined(hash), isError: false }
     await act(async () => {
       hook.renderer.update(createElement(Harness, { ref: hook.ref }))
     })
@@ -820,7 +908,8 @@ describe('useSafeTx', () => {
       await endElsewhere()
       // A look at the hold (a poll, another flow) sees it clear while the exit is open.
       await act(async () => { await writeHolds.open(INPUT()).state(mocks.publicClient as never) })
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      // Released elsewhere with no settlement known: this flow claims no result.
+      expect(hook.ref.current).toMatchObject({ phase: 'idle', notice: null })
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -836,7 +925,8 @@ describe('useSafeTx', () => {
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      // Released elsewhere with no settlement known: this flow claims no result.
+      expect(hook.ref.current).toMatchObject({ phase: 'idle', notice: null })
       await act(async () => hook.renderer.unmount())
     })
   })
@@ -876,7 +966,7 @@ describe('useSafeTx', () => {
       expect(fast).toBeGreaterThanOrEqual(150)
       expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
 
-      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 9n, transactionHash: hook.ref.current!.hash })
+      getTransactionReceipt.mockResolvedValue(mined(hook.ref.current!.hash!))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000)
       })
@@ -899,7 +989,7 @@ describe('useSafeTx', () => {
         await hook.ref.current!.send(request, reviewedByAlice)
       })
 
-      mocks.receipt = { data: { status, transactionHash: HASH }, isError: false }
+      mocks.receipt = { data: mined(HASH, status), isError: false }
       await act(async () => {
         hook.renderer.update(createElement(Harness, { ref: hook.ref }))
       })
@@ -913,7 +1003,7 @@ describe('useSafeTx', () => {
   it('does not confirm a new action using the previous successful receipt', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
+    mocks.receipt = { data: mined(HASH), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe('success')
 
@@ -923,7 +1013,7 @@ describe('useSafeTx', () => {
       phase: 'pending', busy: true, hash: EXECUTION_HASH, receipt: null,
     })
 
-    mocks.receipt = { data: { status: 'success', transactionHash: EXECUTION_HASH }, isError: false }
+    mocks.receipt = { data: mined(EXECUTION_HASH), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe('success')
   })
@@ -934,7 +1024,7 @@ describe('useSafeTx', () => {
       const getTransactionReceipt = vi
         .fn()
         .mockResolvedValueOnce(null)
-        .mockResolvedValue({ status: 'success', blockNumber: 77n, transactionHash: HASH })
+        .mockResolvedValue(mined(HASH))
       mocks.publicClient = {
         ...mocks.publicClient,
         getTransactionReceipt,
@@ -957,7 +1047,7 @@ describe('useSafeTx', () => {
       // Two lookups, then the write hold's own read as it verifies the receipt.
       expect(getTransactionReceipt).toHaveBeenCalledTimes(3)
       expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
-      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 77n })
+      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 5n })
     } finally {
       vi.useRealTimers()
     }

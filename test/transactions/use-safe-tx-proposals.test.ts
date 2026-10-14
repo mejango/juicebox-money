@@ -183,6 +183,14 @@ async function mount(chainId = 10, phases?: string[]) {
   }
 }
 
+/** Let the follow run until `done`, the hold's receipt retries included (each a poll apart). */
+async function until(done: () => boolean, ms = 9_000) {
+  const end = Date.now() + ms
+  while (!done() && Date.now() < end) {
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
+  }
+}
+
 /** Let the registry's follow run. */
 const settle = () =>
   act(async () => {
@@ -229,9 +237,11 @@ beforeEach(async () => {
     return { hash, chainId: 10, from: BOB, to: SAFE, input: execTransaction(), blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }
   })
   // The receipt the write hold verifies: the execution's own, at a canonical block.
+  // One node: a hash it shows as a transaction has the receipt its watcher reads; any other has none.
   mocks.publicClient.getTransactionReceipt.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => {
-    if (hash !== EXECUTION) throw new TransactionReceiptNotFoundError({ hash })
-    return receiptOf(EXECUTION, PROPOSAL)
+    const known = await mocks.publicClient.getTransaction({ hash }).then(() => true, () => false)
+    if (!known) throw new TransactionReceiptNotFoundError({ hash })
+    return mocks.publicClient.waitForTransactionReceipt({ hash })
   })
   mocks.publicClient.getBlock.mockReset().mockImplementation(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
     args.blockNumber !== undefined
@@ -394,6 +404,7 @@ describe('a Safe proposal', () => {
     // The reply is the execution itself, and the Safe logs a safeTxHash the app never saw.
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
       hash,
+      chainId: 10, blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0,
       from: BOB,
       to: SAFE,
       input: execTransaction(),
@@ -456,7 +467,7 @@ describe('a Safe proposal', () => {
     mocks.waitForSafeExecutionHash.mockResolvedValue(execution)
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       if (hash !== execution) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      return { hash, chainId: 10, from: BOB, to: SAFE, input: execTransaction(), blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }
     })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
     const flow = await mount()
@@ -719,6 +730,25 @@ describe('a Safe proposal awaiting its signers', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
+  it("shows success only once the write hold settles the execution, never from a receipt the chain doesn't show canonical", async () => {
+    const execute = signersDecide()
+    let canonical = false
+    mocks.publicClient.getBlock.mockImplementation(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+      args.blockNumber !== undefined
+        ? { number: args.blockNumber, hash: canonical && args.blockNumber === 9n ? BLOCK : `0x${'98'.repeat(32)}` }
+        : { number: 100n, hash: `0x${'97'.repeat(32)}`, timestamp: 1n })
+    const phases: string[] = []
+    const flow = await mount(10, phases)
+    await flow.send()
+    await settle()
+    execute()
+    await settle()
+    expect(phases).not.toContain('success')
+    canonical = true
+    await until(() => flow.tx.phase === 'success')
+    expect(flow.tx.phase).toBe('success')
+  })
+
   it('stops being watched once its execution is known', async () => {
     const execute = signersDecide()
     const flow = await mount()
@@ -937,10 +967,11 @@ describe("a Safe proposal's last look at the chain", () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
     // A replica behind it answers every later read: the execution is bound on the one the look read.
     let reads = 0
+    let caughtUp = false
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       reads += 1
-      if (reads > 1) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      if (reads > 1 && !caughtUp) throw new TransactionNotFoundError({ hash })
+      return { hash, chainId: 10, from: BOB, to: SAFE, input: execTransaction(), blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }
     })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
@@ -949,11 +980,14 @@ describe("a Safe proposal's last look at the chain", () => {
     const flow = await mount(10, phases)
     await flow.send()
     await settle()
+    // The registry bound the execution on its first read; success waits for the
+    // write hold, which can't verify it while the node is behind.
+    expect(phases).not.toContain('success')
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    caughtUp = true
+    await until(() => flow.tx.phase === 'success')
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL, confirmationUncertain: false })
     expect(flow.tx.notice).toBeNull()
-    // The registry bound the execution on its first read (every later one finds
-    // nothing); the rest are the write hold's own as it verifies the receipt.
-    expect(reads).toBeGreaterThanOrEqual(1)
   })
 
   it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
@@ -1002,15 +1036,22 @@ describe("a Safe proposal's last look at the chain", () => {
   it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
     mocks.atOnceExecution.mockResolvedValue({ hash: PROPOSAL, from: BOB, to: SAFE, input: execTransaction() })
     // A replica that hasn't imported the receipt's block has no transaction for it.
+    let caughtUp = false
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
-      throw new TransactionNotFoundError({ hash })
+      if (!caughtUp) throw new TransactionNotFoundError({ hash })
+      return { hash, chainId: 10, from: BOB, to: SAFE, input: execTransaction(), blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }
     })
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
     )
-    const flow = await mount()
+    const phases: string[] = []
+    const flow = await mount(10, phases)
     await flow.send()
     await settle()
+    // Bound on the probe's read; success waits for the write hold to verify it.
+    expect(phases).not.toContain('success')
+    caughtUp = true
+    await until(() => flow.tx.phase === 'success')
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL })
   })
 
@@ -1026,7 +1067,7 @@ describe("a Safe proposal's last look at the chain", () => {
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
       // The receipt is in hand, so a not-found says only that this node is behind.
       if (!caughtUp) throw new TransactionNotFoundError({ hash })
-      return { hash, from: BOB, to: SAFE, input: execTransaction() }
+      return { hash, chainId: 10, from: BOB, to: SAFE, input: execTransaction(), blockHash: BLOCK, blockNumber: 9n, transactionIndex: 0 }
     })
     const flow = await mount()
     await flow.send()

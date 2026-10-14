@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { erc20Abi, type Address, type Hex } from 'viem'
-import { clearDefifaWriteRecovery, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { encodeFunctionData, erc20Abi, TransactionNotFoundError, type Address, type Hex } from 'viem'
+import { createBrowserWriteRecovery, createHeldWriteStorage } from '@bananapus/nana-sdk-core/review'
+import { clearDefifaWriteRecovery, defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -23,6 +24,23 @@ beforeEach(() => {
 afterEach(() => localStorage.clear())
 
 describe('SDK-owned native write recovery', () => {
+  it('keeps a Safe proposal row saved before the write hold from being sent again without the explicit exit', async () => {
+    // A row as an earlier release saved it: reserved and given its proposal hash, nothing more.
+    const legacy = createBrowserWriteRecovery({ chainId: 8453, account: ACCOUNT, safe: true, namespace: 'defifa:pay:27',
+      call: { to: TOKEN, data: encodeFunctionData(request), value: 0n } }, { storage: createHeldWriteStorage() })
+    await legacy.withLock(async () => { legacy.submitted(HASH, legacy.reserve()) })
+    const send = vi.fn(async () => HASH)
+    await expect(sendRecoverableDefifaWrite({ scope, request, safe: true, send, options: { reviewedAccount: ACCOUNT } })).rejects.toThrow()
+    expect(send).not.toHaveBeenCalled()
+    const record = readDefifaWriteRecovery(scope)!
+    // The hold says what is held, with no exit while the proposal can still run.
+    const client = { getChainId: async () => 8453, getTransactionReceipt: async () => null, getTransaction: async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) } }
+    const state = await defifaWriteHold(scope, record).state(client as never)
+    expect(state).toMatchObject({ status: 'pending-known-hash', exit: false })
+    await expect(sendRecoverableDefifaWrite({ scope, request, safe: true, send, options: { reviewedAccount: ACCOUNT } })).rejects.toThrow()
+    expect(send).not.toHaveBeenCalled()
+  })
+
   it('refuses mismatched reviewed scope before reserving or exposing a wallet', async () => {
     const send = vi.fn(async () => HASH)
     await expect(sendRecoverableDefifaWrite({ scope, request: { ...request, chainId: 1 }, safe: false, send, options: { reviewedAccount: ACCOUNT } })).rejects.toThrow('reviewed account and network')
