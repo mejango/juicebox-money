@@ -88,7 +88,7 @@ import { writeHolds } from '@/lib/write-holds'
 
 import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { approvalStepIntent, cashOutIntent, checkoutIntent, paymentIntent } from '@/lib/transaction-builders'
+import { approvalStepIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -583,7 +583,7 @@ describe('useSafeTx', () => {
       ['a payment whose route changed from pay to swap', paymentIntent(payment), paymentIntent({ ...payment })],
       ['a checkout whose price moved, its items the same', checkoutIntent({ ...payment, hook: HOOK, items: { 2: 1, 1: 3 } }),
         checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3, 2: 1 } })],
-      ['a cash-out whose venue changed from pool to terminal', cashOutIntent({ ...payment, token: BOB }), cashOutIntent({ ...payment, token: BOB })],
+      ['a cash-out whose venue changed from pool to terminal', cashOutIntent(payment), cashOutIntent({ ...payment })],
       ['an approval step whose computed amount changed', approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL),
         approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL)],
     ])('refuses %s after a lost reply, before the wallet', async (_case, first, retry) => {
@@ -598,11 +598,40 @@ describe('useSafeTx', () => {
       await act(async () => hook.renderer.unmount())
     })
 
+    it('keys a redemption by the items and holder alone, in any selection order', () => {
+      const redeem = (tokenIds: bigint[], holder = ALICE) => redeemItemsIntent({ chainId: 10, projectId: 7, hook: HOOK, tokenIds, holder })
+      expect(redeem([2n, 1n])).toBe(redeem([1n, 2n]))
+      expect(redeem([1n])).not.toBe(redeem([1n, 2n]))
+      expect(redeem([1n], BOB)).not.toBe(redeem([1n]))
+    })
+
+    describe("a pay panel's intent", () => {
+      const base = {
+        mode: 'pay' as const, chainId: 10, projectId: 7, hook: HOOK, beneficiary: ALICE, memo: 'gm', amount: 5n,
+        token: { from: 'typed' as const, value: BOB }, chosenCart: {}, cartCount: 0, checkoutReady: false,
+      }
+      it('blocks a checkout whose every item was pruned, never falling through to a payment', () => {
+        expect(payPanelIntent({ ...base, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
+      })
+      it('keys a checkout by the preserved choice, whatever its clamped cart or total', () => {
+        const checkout = payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 2, checkoutReady: true, amount: 9n })
+        expect(checkout).toEqual({ key: checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }) })
+        expect(payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 3, checkoutReady: true, amount: 12n })).toEqual(checkout)
+      })
+      it("keeps the user's currency through an automatic fallback, and an untouched default as auto", () => {
+        // The app switched to another currency: the key still names the user's pick.
+        expect(payPanelIntent({ ...base, token: { from: 'typed', value: BOB } })).toEqual({ key: paymentIntent(payment) })
+        const untouched = payPanelIntent({ ...base, token: { from: 'auto', value: null } })
+        expect(untouched).toEqual({ key: paymentIntent({ ...payment, token: 'auto:token' }) })
+      })
+    })
+
     it('keeps different user choices apart', () => {
       expect(paymentIntent({ ...payment, amount: 6n })).not.toBe(paymentIntent(payment))
       expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
       expect(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 2 } })).not.toBe(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }))
-      expect(cashOutIntent({ ...payment, token: BOB, amount: 6n })).not.toBe(cashOutIntent({ ...payment, token: BOB }))
+      expect(cashOutIntent({ ...payment, amount: 6n })).not.toBe(cashOutIntent(payment))
+      expect(cashOutIntent({ ...payment, amount: 'policy:max' })).not.toBe(cashOutIntent(payment))
       expect(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:b', 'permit2', BOB, TERMINAL))
       expect(approvalStepIntent('intent:a', 'erc20', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL))
     })

@@ -24,6 +24,7 @@ import {
   decodeAbiParameters,
   encodeAbiParameters,
   encodeFunctionData,
+  isAddress,
   type Abi,
   type Address,
   type ContractFunctionArgs,
@@ -710,10 +711,13 @@ export function buildPermit2ApproveRequest({
 
 type Chosen = { chainId: number; projectId: number; beneficiary: string; memo: string }
 
+/** A token in a key: its address, or a provenance marker (useChosen) such as `auto:token`. */
+const tokenKey = (token: string) => (isAddress(token, { strict: false }) ? intent.address(token) : token)
+
 /** A payment: the token the user pays with and the typed amount, whatever route (pay or swap) carries it. */
 export function paymentIntent(p: Chosen & { token: string; amount: bigint }): string {
   return writeIntentKey('pay', {
-    chainId: p.chainId, projectId: p.projectId, token: intent.address(p.token), amount: p.amount,
+    chainId: p.chainId, projectId: p.projectId, token: tokenKey(p.token), amount: p.amount,
     beneficiary: intent.address(p.beneficiary), memo: p.memo,
   })
 }
@@ -725,16 +729,59 @@ export function checkoutIntent(p: Chosen & { token: string; hook: string; items:
     .map(([tierId, quantity]) => [Number(tierId), quantity])
     .sort(([a], [b]) => a - b)
   return writeIntentKey('checkout', {
-    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook), items, token: intent.address(p.token),
+    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook), items, token: tokenKey(p.token),
     beneficiary: intent.address(p.beneficiary), memo: p.memo,
   })
 }
 
-/** A cash-out of the typed amount (or Max, as 'max'), whatever venue (a pool sale or the terminal) serves it. */
-export function cashOutIntent(p: Omit<Chosen, 'memo'> & { token?: string | null; amount: bigint | 'max' }): string {
+/**
+ * A cash-out of the project's token: the project (its token is the project's
+ * own, so never an address that loads later) and the amount as chosen (useChosen),
+ * whatever venue (a pool sale or the terminal) serves it.
+ */
+export function cashOutIntent(p: Omit<Chosen, 'memo'> & { amount: bigint | string }): string {
   return writeIntentKey('cash-out', {
-    chainId: p.chainId, projectId: p.projectId, token: p.token ? intent.address(p.token) : null, amount: p.amount,
+    chainId: p.chainId, projectId: p.projectId, amount: p.amount,
     beneficiary: intent.address(p.beneficiary),
+  })
+}
+
+export const CART_PRUNED_LINE = 'These items are no longer available. Change or clear your cart.'
+
+/**
+ * The pay panel's write intent. With items chosen it is always the checkout of
+ * that preserved choice, blocked while none of them is still available, never
+ * a plain payment. The token is the user's own pick, or `auto:token` while they
+ * haven't picked one, whatever currency the app falls back to.
+ */
+export function payPanelIntent(p: Chosen & {
+  mode: 'pay' | 'addbalance'
+  hook?: string | null
+  amount: bigint
+  token: { from: string; value: string | null }
+  chosenCart: Record<number, number>
+  cartCount: number
+  /** The checkout can be paid in the selected currency (its metadata is built). */
+  checkoutReady: boolean
+}): { key: string } | { blocked: string } {
+  const token = p.token.from === 'typed' && p.token.value ? p.token.value : 'auto:token'
+  if (p.mode !== 'pay') {
+    return { key: writeIntentKey('add-to-balance', { chainId: p.chainId, projectId: p.projectId, token: tokenKey(token), amount: p.amount, memo: p.memo }) }
+  }
+  const chose = Object.values(p.chosenCart).some(quantity => quantity > 0)
+  if (chose && p.hook) {
+    if (p.cartCount === 0) return { blocked: CART_PRUNED_LINE }
+    if (!p.checkoutReady) return { blocked: 'Choose a currency these items can be paid in.' }
+    return { key: checkoutIntent({ ...p, hook: p.hook, token, items: p.chosenCart }) }
+  }
+  return { key: paymentIntent({ ...p, token }) }
+}
+
+/** Redeeming shop items: the collection, the selected token ids and holder; never the terminal or payout token the app resolves. */
+export function redeemItemsIntent(p: { chainId: number; projectId: number; hook: string; tokenIds: readonly bigint[]; holder: string }): string {
+  return writeIntentKey('redeem-items', {
+    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook),
+    tokenIds: [...p.tokenIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), holder: intent.address(p.holder),
   })
 }
 

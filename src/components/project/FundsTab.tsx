@@ -34,7 +34,7 @@ import {
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { intentAmount, useChosenAmount } from '@/hooks/useChosenAmount'
+import { useChosen } from '@/hooks/useChosen'
 import {
   formatUnits,
   parseUnits,
@@ -820,7 +820,8 @@ function FundsTxFlow({
   const tx = useSafeTx(chainId)
 
   const [open, setOpen] = useState(false)
-  const { amount, setAmount, max: amountIsMax, fillMax } = useChosenAmount()
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
   const [currency, setCurrency] = useState<number>(
     lines[0]?.currency ?? ctx.currency,
   )
@@ -978,7 +979,7 @@ function FundsTxFlow({
         min,
         account: address,
         intent: writeIntentKey('use-allowance', {
-          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: intentAmount(amountIsMax, parsedAmount), currency: line.currency, beneficiary: intent.address(address),
+          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: amountField.key(parsedAmount), currency: line.currency, beneficiary: intent.address(address),
         }),
       })
     } catch (e) {
@@ -1160,7 +1161,7 @@ function FundsTxFlow({
               const max = tokenKeyed
                 ? bigintMin(line.remaining, balance)
                 : line.remaining
-              fillMax(formatUnits(max, decimals))
+              amountField.choose('max', formatUnits(max, decimals))
               setReview(null)
               setFlowError(null)
             }}

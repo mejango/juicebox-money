@@ -1,7 +1,6 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import {
   accountingContextsQuery,
@@ -75,9 +74,9 @@ import {
   buildAddToBalanceRequest,
   approvalStepIntent,
   buildErc20ApproveRequest,
-  checkoutIntent,
-  paymentIntent,
+  payPanelIntent,
 } from "@/lib/transaction-builders";
+import { useChosen } from "@/hooks/useChosen";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
 import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
@@ -326,6 +325,8 @@ export function PayPanel({
   // ETH/USDC router option never shadows a USDC/ETH project's real token — the
   // documented fund-loss desync. (website/ chooseRefinedPayToken parity.)
   const [tokenTouched, setTokenTouched] = useState(false);
+  /** The payment token the user picked, for the write intent: an automatic switch never changes it. */
+  const tokenChoice = useChosen<string | null>(null, "token");
   /** "$" is picked in the token menu: the payer has dollars, not the token this
    *  project takes. Nothing is bought until they press Pay — the amount is
    *  theirs to type first. */
@@ -936,6 +937,14 @@ export function PayPanel({
   // supplied this token's route, including a directly attached gateway.
   const terminalAddress = context?.terminal;
 
+  const payPlan = address
+    ? payPanelIntent({
+        mode, chainId, projectId, hook: shop?.hook, amount: amountRaw, token: tokenChoice,
+        chosenCart, cartCount, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
+      })
+    : null;
+  const payBlocked = payPlan && "blocked" in payPlan ? payPlan.blocked : null;
+
   const {
     data: preview,
     isFetching: previewLoading,
@@ -1316,14 +1325,9 @@ export function PayPanel({
   const preparePaymentSequence = (): PaymentSequenceAction[] => {
     if (!address || !context || !terminalAddress) return [];
     const actions: PaymentSequenceAction[] = [];
-    // One intent for what the user chose, whatever route, price or clamp the app applies.
-    const chosen = { chainId, projectId, token: context.token, beneficiary: address, memo: memo.trim() };
-    const paymentKey =
-      mode !== "pay"
-        ? writeIntentKey("add-to-balance", { chainId, projectId, token: intent.address(context.token), amount: amountRaw, memo: memo.trim() })
-        : metadata && shop
-          ? checkoutIntent({ ...chosen, hook: shop.hook, items: chosenCart })
-          : paymentIntent({ ...chosen, amount: amountRaw });
+    // One intent for what the user chose, whatever route, price, clamp or fallback the app applies.
+    if (!payPlan || "blocked" in payPlan) return [];
+    const paymentKey = payPlan.key;
     if (needsApproval && approvalSpender) {
       actions.push({
         kind: "token-approval",
@@ -1456,7 +1460,7 @@ export function PayPanel({
       setBuyExplainerOpen(true);
       return;
     }
-    if (!address) return;
+    if (!address || payBlocked) return;
     const creditOnlyCheckout =
       mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
@@ -1855,7 +1859,12 @@ export function PayPanel({
               All →
             </button>
           </div>
-          {cartCount > 0 && shopRoutesLoading ? (
+          {payBlocked && cartCount === 0 ? (
+            <p className="mt-1 text-xs leading-relaxed text-red-600">
+              {payBlocked}{" "}
+              <button type="button" className="underline" onClick={clearCart}>Clear</button>
+            </p>
+          ) : cartCount > 0 && shopRoutesLoading ? (
             <Skeleton
               className="mt-2 h-3 w-40 rounded"
               role="status"
@@ -1931,6 +1940,7 @@ export function PayPanel({
               });
               setTokenIndex(0);
               setTokenTouched(false);
+              tokenChoice.seed(null);
               selectedKeyRef.current = null;
               clearCart();
               setAmount("");
@@ -1991,6 +2001,7 @@ export function PayPanel({
                 // to this exact token instead of snapping back to list[0].
                 const picked = contexts[i];
                 if (picked) selectedKeyRef.current = payTokenKey(picked);
+                if (picked) tokenChoice.set(picked.token);
                 setTokenTouched(true);
               }}
               disabled={busy}
@@ -2036,6 +2047,7 @@ export function PayPanel({
             onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
               busy ||
+              !!payBlocked ||
               permit2WalletKindLoading ||
               (needsPermit2Approval && !permit2AllowanceFetched) ||
               notStarted ||

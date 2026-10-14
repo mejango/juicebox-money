@@ -22,7 +22,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
-import { intentAmount, useChosenAmount } from '@/hooks/useChosenAmount'
+import { useChosen } from '@/hooks/useChosen'
 import {
   erc20Abi,
   formatUnits,
@@ -109,7 +109,8 @@ export function CashOutPanel({
   const tx = useSafeTx(chainId)
   const approveTx = useSafeTx(chainId)
 
-  const { amount, setAmount, max: amountIsMax, fillMax } = useChosenAmount()
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -439,7 +440,7 @@ export function CashOutPanel({
   const setMax = () => {
     if (balance === undefined || balance <= 0n) return
     const max = formatUnits(balance, 18)
-    fillMax(max)
+    amountField.choose('max', max)
     setDebouncedAmount(max)
   }
 
@@ -510,7 +511,7 @@ export function CashOutPanel({
     setErrorMsg(null)
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
-    const cashOutKey = cashOutIntent({ chainId, projectId, token: projectToken?.address, amount: intentAmount(amountIsMax, cashOutCount), beneficiary: reviewedAccount })
+    const cashOutKey = cashOutIntent({ chainId, projectId, amount: amountField.key(cashOutCount), beneficiary: reviewedAccount })
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
@@ -524,7 +525,7 @@ export function CashOutPanel({
               spender: swapDeployment.permit2,
               amount: cashOutCount,
             }),
-            { reviewedAccount },
+            { reviewedAccount, intent: approvalStepIntent(cashOutKey, 'token-approval', projectToken.address, swapDeployment.permit2) },
           )
           return
         }

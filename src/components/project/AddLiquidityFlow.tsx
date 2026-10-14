@@ -32,6 +32,7 @@ import {
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
+import { useChosen } from '@/hooks/useChosen'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useSafeTx } from '@/hooks/useSafeTx'
@@ -235,15 +236,6 @@ function activeSides(
 
 // ----------------------------------------------------------------- component --
 
-type AmountEntry = 'typed' | 'max' | 'filled'
-
-/** An amount in a write intent: what was typed, or Max as all of it; a side filled from the other is left out (null). */
-function amountKey(entry: AmountEntry, amount: bigint, mode: string): bigint | 'max' | null {
-  if (entry === 'max') return 'max'
-  // In amounts mode both fields are the user's; elsewhere a filled side follows the price.
-  return entry === 'filled' && mode !== 'amounts' ? null : amount
-}
-
 export function AddLiquidityFlow({
   chainId,
   projectId,
@@ -403,15 +395,16 @@ function AddLiquidityForm({
   })
 
   // ----- inputs ------------------------------------------------------------
-  const [minStr, setMinStr] = useState('')
-  const [maxStr, setMaxStr] = useState('')
-  const [tokStr, setTokStr] = useState('')
-  const [pairStr, setPairStr] = useState('')
-  /**
-   * How each amount was chosen, for the write intent: typed, Max (all of it,
-   * whatever the balance is by then), or filled from the other side.
-   */
-  const [entries, setEntries] = useState<Record<'tok' | 'pair', AmountEntry>>({ tok: 'typed', pair: 'typed' })
+  // Each key input records how it was chosen (useChosen): typed, a policy the
+  // user picked (Max, the default or solved range), or filled in by the app.
+  const bounds = useChosen({ min: '', max: '' }, 'range')
+  const minStr = bounds.value.min
+  const maxStr = bounds.value.max
+  const chooseBounds = bounds.choose
+  const tok = useChosen('', 'token-amount')
+  const pairAmount_ = useChosen('', 'pair-amount')
+  const tokStr = tok.value
+  const pairStr = pairAmount_.value
   const seededRef = useRef(false)
 
   // Seed the default range once the pool price is known (website lpDefaultRange).
@@ -419,10 +412,11 @@ function AddLiquidityForm({
     if (seededRef.current) return
     const basePrice = poolP > 0 ? poolP : ceiling > 0 ? ceiling / 10 : 0
     const dr = lpDefaultRange(basePrice, floor ?? 0, ceiling)
-    if (dr.min > 0) setMinStr(trimNum(dr.min))
-    if (dr.max > 0) setMaxStr(trimNum(dr.max))
+    if (dr.min > 0 || dr.max > 0) {
+      chooseBounds('default', { min: dr.min > 0 ? trimNum(dr.min) : '', max: dr.max > 0 ? trimNum(dr.max) : '' })
+    }
     seededRef.current = true
-  }, [poolP, ceiling, floor])
+  }, [poolP, ceiling, floor, chooseBounds])
 
   // Amounts-first by default: both deposits are typed and the range is solved
   // around them (floor pinned to the cash-out price, ceiling to the issuance
@@ -453,19 +447,17 @@ function AddLiquidityForm({
   // review path, the mint ticks) synced to the solved range.
   useEffect(() => {
     if (!solved) return
-    setMinStr(trimNum(solved.minPrice))
-    setMaxStr(trimNum(solved.maxPrice))
-  }, [solved])
+    chooseBounds('solved', { min: trimNum(solved.minPrice), max: trimNum(solved.maxPrice) })
+  }, [solved, chooseBounds])
 
   // Full-range mode presets the bounds; the classic counterpart autofill over
   // that span then couples the amounts at the v2 pool ratio.
   useEffect(() => {
     if (mode !== 'full') return
-    const bounds = fullRangeBounds(poolP)
-    if (!bounds) return
-    setMinStr(trimNum(bounds.minPrice))
-    setMaxStr(trimNum(bounds.maxPrice))
-  }, [mode, poolP])
+    const full = fullRangeBounds(poolP)
+    if (!full) return
+    chooseBounds('full', { min: trimNum(full.minPrice), max: trimNum(full.maxPrice) })
+  }, [mode, poolP, chooseBounds])
 
   const range = useMemo(() => {
     if (mode === 'market') return { pa: floor ?? 0, pb: ceiling ?? 0 }
@@ -584,58 +576,36 @@ function AddLiquidityForm({
   }
 
   // ----- autofill (float math, display only) -------------------------------
-  const setTok = (v: string) => {
-    setTokStr(v)
-    invalidatePlan()
-    if (!sides.pair) {
-      setPairStr('0')
+  /** The user's side, typed or by a policy (Max). */
+  const chooseSide = (field: typeof tok, v: string, policy?: string) =>
+    policy ? field.choose(policy, v) : field.set(v)
+  /** The counterpart side follows the user's at the pool ratio: filled by the app. */
+  const fillCounterpart = (input: number, inputIsPair: boolean, other: typeof tok, otherHasRoom: boolean, ownHasRoom: boolean) => {
+    if (!otherHasRoom) {
+      other.fill('0')
       return
     }
-    if (!sides.tok) return
-    const t = parseFloat(v)
-    if (!(t > 0)) {
-      setPairStr('')
+    if (!ownHasRoom) return
+    if (!(input > 0)) {
+      other.fill('')
       return
     }
-    const e = lpCounterpart(t, false, poolP, range.pa, range.pb)
-    if (e != null) setPairStr(trimNum(e))
-  }
-  const setPairAmt = (v: string) => {
-    setPairStr(v)
-    invalidatePlan()
-    if (!sides.tok) {
-      setTokStr('0')
-      return
-    }
-    if (!sides.pair) return
-    const e = parseFloat(v)
-    if (!(e > 0)) {
-      setTokStr('')
-      return
-    }
-    const t = lpCounterpart(e, true, poolP, range.pa, range.pb)
-    if (t != null) setTokStr(trimNum(t))
+    const counterpart = lpCounterpart(input, inputIsPair, poolP, range.pa, range.pb)
+    if (counterpart != null) other.fill(trimNum(counterpart))
   }
   const onRangeChange = (which: 'min' | 'max', v: string) => {
-    if (which === 'min') setMinStr(v)
-    else setMaxStr(v)
+    bounds.set({ ...bounds.value, [which]: v })
     invalidatePlan()
   }
 
   // In amounts mode both fields are free-typed (the range absorbs the ratio);
   // in range mode the classic counterpart autofill keeps them coupled.
-  const onAmountInput = (side: 'tok' | 'pair', v: string, entry: AmountEntry = 'typed') => {
-    setEntries(current => mode === 'amounts'
-      ? { ...current, [side]: entry }
-      : side === 'tok' ? { tok: entry, pair: 'filled' } : { tok: 'filled', pair: entry })
-    if (mode !== 'amounts') {
-      if (side === 'tok') setTok(v)
-      else setPairAmt(v)
-      return
-    }
-    if (side === 'tok') setTokStr(v)
-    else setPairStr(v)
+  const onAmountInput = (side: 'tok' | 'pair', v: string, policy?: string) => {
+    chooseSide(side === 'tok' ? tok : pairAmount_, v, policy)
     invalidatePlan()
+    if (mode === 'amounts') return
+    if (side === 'tok') fillCounterpart(parseFloat(v), false, pairAmount_, sides.pair, sides.tok)
+    else fillCounterpart(parseFloat(v), true, tok, sides.tok, sides.pair)
   }
 
   const tokMax = () => {
@@ -778,8 +748,8 @@ function AddLiquidityForm({
         intent: writeIntentKey(mode === 'market' ? 'add-market-liquidity' : 'add-liquidity', {
           chainId, positionManager: intent.address(posm), pool: intent.hex(fresh.poolId), account: intent.address(address),
           mode,
-          token: amountKey(entries.tok, tokenAmount, mode), pair: amountKey(entries.pair, pairAmount, mode),
-          ...(mode === 'range' ? { min: String(pa), max: String(pb) } : {}),
+          token: tok.key(tokenAmount), pair: pairAmount_.key(pairAmount),
+          ...(mode === 'range' ? { range: bounds.key({ min: String(pa), max: String(pb) }) } : {}),
         }),
         display: {
           needTok,

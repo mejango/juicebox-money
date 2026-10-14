@@ -21,7 +21,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
 import { useEffect, useMemo, useState } from 'react'
-import { intentAmount, useChosenAmount } from '@/hooks/useChosenAmount'
+import { useChosen } from '@/hooks/useChosen'
 import {
   formatUnits,
   parseUnits,
@@ -105,7 +105,8 @@ export function GetLoanFlow({
   })
   const ctxs: readonly JBAccountingContext[] = contexts ?? []
 
-  const { amount, setAmount, max: amountIsMax, fillMax } = useChosenAmount()
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
   const [ctxToken, setCtxToken] = useState<Address | null>(null)
   const [prepaid, setPrepaid] = useState<number>(PREPAID_OPTIONS[0].value)
   const [review, setReview] = useState<ReviewedBorrow | null>(null)
@@ -217,7 +218,7 @@ export function GetLoanFlow({
         reviewedAccount: r.account,
         // Its minimum re-quotes on retry: held by the loan the user chose.
         intent: writeIntentKey('borrow', {
-          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: intentAmount(amountIsMax, r.collateral), prepaid: r.prepaid, beneficiary: intent.address(r.account),
+          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: amountField.key(r.collateral), prepaid: r.prepaid, beneficiary: intent.address(r.account),
         }),
       })
     } catch (e) {
@@ -501,7 +502,7 @@ export function GetLoanFlow({
               {mounted && balance !== undefined ? (
                 <button
                   onClick={() => {
-                    fillMax(formatUnits(balance, 18))
+                    amountField.choose('max', formatUnits(balance, 18))
                     resetInputs()
                   }}
                   disabled={busy}

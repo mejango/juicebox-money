@@ -111,7 +111,7 @@ vi.mock('@/hooks/useTokenBalances', () => ({
 }))
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', () => ({
-  useShopCart: () => ({ quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),
+  useShopCart: () => ({ quantities: {}, chosen: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, reconcile: () => {}, clear: () => {} }),
 }))
 vi.mock('@/providers/preload-para', () => ({ preloadParaHost: () => {} }))
 vi.mock('@/components/project/MarketSection', () => ({ resolveMarket: vi.fn() }))

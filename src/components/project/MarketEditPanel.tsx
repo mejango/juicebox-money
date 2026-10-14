@@ -10,6 +10,7 @@ import { erc20Abi, formatUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useChosen } from '@/hooks/useChosen'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { bandPrices } from '@/lib/edit-liquidity'
@@ -142,14 +143,16 @@ export function MarketEditPanel({
     [floor, pool.issuance],
   )
 
-  const [tokText, setTokText] = useState(
-    startEmpty ? '0' : formatUnits(sides.tokenSide?.tokenAmount ?? 0n, 18),
-  )
-  const [pairText, setPairText] = useState(
-    startEmpty ? '0' : formatUnits(sides.pairSide?.pairAmount ?? 0n, pairDec),
-  )
+  // How each key input was chosen (useChosen): the current holdings are kept,
+  // and the re-fit the app suggests is the app's until the user ticks it.
+  const keep = startEmpty ? undefined : 'keep-current'
+  const tokTarget = useChosen(startEmpty ? '0' : formatUnits(sides.tokenSide?.tokenAmount ?? 0n, 18), 'token-target', keep)
+  const pairTarget = useChosen(startEmpty ? '0' : formatUnits(sides.pairSide?.pairAmount ?? 0n, pairDec), 'pair-target', keep)
+  const tokText = tokTarget.value
+  const pairText = pairTarget.value
   const moved = corridor ? corridorMoved(pool, sides, corridor) : false
-  const [refit, setRefit] = useState(moved)
+  const refitChoice = useChosen(moved, 'refit')
+  const refit = refitChoice.value
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -257,7 +260,8 @@ export function MarketEditPanel({
         account: connectedAddress, pool: market, plan, steps,
         intent: writeIntentKey('edit-market', {
           chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId),
-          account: intent.address(connectedAddress), tokenAmount, pairAmount, refit,
+          account: intent.address(connectedAddress),
+          token: tokTarget.key(tokenAmount), pair: pairTarget.key(pairAmount), refit: refitChoice.key(refit),
         }),
       }
       replaceReviewed(built)
@@ -562,7 +566,7 @@ export function MarketEditPanel({
             placeholder="0"
             value={tokText}
             disabled={editing}
-            onChange={event => setTokText(event.target.value)}
+            onChange={event => tokTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
@@ -575,7 +579,7 @@ export function MarketEditPanel({
             placeholder="0"
             value={pairText}
             disabled={editing}
-            onChange={event => setPairText(event.target.value)}
+            onChange={event => pairTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>
@@ -587,7 +591,7 @@ export function MarketEditPanel({
             className="mt-0.5"
             checked={refit}
             disabled={editing}
-            onChange={event => setRefit(event.target.checked)}
+            onChange={event => refitChoice.set(event.target.checked)}
           />
           <span>
             Re-fit both sides to the current corridor ({formatPrice(corridor.floor)} –{' '}

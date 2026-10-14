@@ -10,6 +10,7 @@ import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } fr
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useChosen } from '@/hooks/useChosen'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import {
@@ -156,13 +157,23 @@ export function EditPositionPanel({
   const projectToken = pool.pairIsC0 ? pool.key.currency1 : pool.key.currency0
   const band = bandPrices(pool, position.tickLower, position.tickUpper)
 
-  const [minText, setMinText] = useState(String(Number(band.min.toPrecision(6))))
-  const [maxText, setMaxText] = useState(String(Number(band.max.toPrecision(6))))
+  // How each key input was chosen (useChosen): the current band and holdings
+  // are kept until the user types, drags or picks Fit.
+  const bounds = useChosen(
+    { min: String(Number(band.min.toPrecision(6))), max: String(Number(band.max.toPrecision(6))) },
+    'range',
+    'keep-current',
+  )
+  const minText = bounds.value.min
+  const maxText = bounds.value.max
+  const setBound = (edge: 'min' | 'max', value: string) => bounds.set({ ...bounds.value, [edge]: value })
   // Only a band the user actually changed re-mints; otherwise the position's
   // own ticks are kept exactly, never re-derived from rounded display prices.
   const [rangeTouched, setRangeTouched] = useState(false)
-  const [tokText, setTokText] = useState(holdingText(position.tokenAmount, 18))
-  const [pairText, setPairText] = useState(holdingText(position.pairAmount, pairDec))
+  const tokTarget = useChosen(holdingText(position.tokenAmount, 18), 'token-target', 'keep-current')
+  const pairTarget = useChosen(holdingText(position.pairAmount, pairDec), 'pair-target', 'keep-current')
+  const tokText = tokTarget.value
+  const pairText = pairTarget.value
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -247,8 +258,7 @@ export function EditPositionPanel({
       ceilingHint: pool.issuance,
     })
     if (!solved) return
-    setMinText(String(Number(solved.minPrice.toPrecision(6))))
-    setMaxText(String(Number(solved.maxPrice.toPrecision(6))))
+    bounds.choose('fit', { min: String(Number(solved.minPrice.toPrecision(6))), max: String(Number(solved.maxPrice.toPrecision(6))) })
     setRangeTouched(true)
     replaceReviewed(null)
   }
@@ -321,8 +331,9 @@ export function EditPositionPanel({
         account: connectedAddress, pool: market, plan, steps, copy,
         intent: writeIntentKey('edit-position', {
           chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId), tokenId: position.tokenId,
-          account: intent.address(connectedAddress), tokenAmount, pairAmount,
-          pa: range ? String(range.pa) : undefined, pb: range ? String(range.pb) : undefined,
+          account: intent.address(connectedAddress),
+          token: tokTarget.key(tokenAmount), pair: pairTarget.key(pairAmount),
+          range: bounds.key(range ? { min: String(range.pa), max: String(range.pb) } : null),
         }),
       }
       replaceReviewed(built)
@@ -634,7 +645,7 @@ export function EditPositionPanel({
           editing
             ? undefined
             : (edge, value) => {
-                ;(edge === 'min' ? setMinText : setMaxText)(String(value))
+                setBound(edge, String(value))
                 setRangeTouched(true)
               }
         }
@@ -649,7 +660,7 @@ export function EditPositionPanel({
             value={minText}
             disabled={editing}
             onChange={event => {
-              setMinText(event.target.value)
+              setBound('min', event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -663,7 +674,7 @@ export function EditPositionPanel({
             value={maxText}
             disabled={editing}
             onChange={event => {
-              setMaxText(event.target.value)
+              setBound('max', event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -679,7 +690,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={tokText}
             disabled={editing}
-            onChange={event => setTokText(event.target.value)}
+            onChange={event => tokTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
@@ -692,7 +703,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={pairText}
             disabled={editing}
-            onChange={event => setPairText(event.target.value)}
+            onChange={event => pairTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>

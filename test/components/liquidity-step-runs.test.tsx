@@ -28,7 +28,7 @@ const H1 = `0x${'a1'.repeat(32)}` as Hex
 const H2 = `0x${'a2'.repeat(32)}` as Hex
 const H3 = `0x${'a3'.repeat(32)}` as Hex
 
-const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 }, balance: 10n ** 30n }))
+const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 }, balance: 10n ** 30n, holding: { tokenHolding: 0n, pairHolding: 0n } }))
 
 /** The plan's own bytes name the account they were reviewed for. */
 const unlockDataFor = (account: string) => (account === ALICE ? '0xaa' : '0xbb') as Hex
@@ -90,6 +90,7 @@ vi.mock('@/lib/edit-liquidity', async importOriginal => ({
   bandPrices: () => ({ min: 0.5, max: 2 }),
   buildEditLiquidityPlan: ({ account }: { account: string }) => ({
     ...EMPTY_EDIT,
+    ...m.holding,
     kind: 'increase',
     unlockData: unlockDataFor(account),
   }),
@@ -169,6 +170,7 @@ beforeEach(() => {
   m.account = ALICE
   m.range = { minPrice: 0.5, maxPrice: 2 }
   m.balance = 10n ** 30n
+  m.holding = { tokenHolding: 0n, pairHolding: 0n }
   engine.restart()
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   host = document.createElement('div')
@@ -652,6 +654,82 @@ describe("a liquidity write's hold key", () => {
     await typeInto('TKN amount', '100000000000.0')
     await review('Add liquidity')
     expect(await finalIntent()).not.toBe(first)
+  })
+
+  it('keys untouched range bounds by how they were set, never their numbers', async () => {
+    const rangeIntent = async () => {
+      await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+      await waitFor('input[aria-label="TKN amount"]')
+      // The bounds the amounts solver set stay untouched when switching to a range.
+      await review('By price range')
+      await typeInto('TKN amount', '1')
+      await review('Add liquidity')
+      const key = await finalIntent()
+      act(() => root.unmount())
+      root = createRoot(host)
+      return key
+    }
+    const first = await rangeIntent()
+    // Reopened after the price moved: the solver sets other numbers.
+    m.range = { minPrice: 0.7, maxPrice: 2.9 }
+    expect(await rangeIntent()).toBe(first)
+  })
+
+  /** Mount a flow, run `act` on it, review with `label` and read the final write's intent; then unmount. */
+  async function intentOf(flow: () => ReactElement, label: string, before: () => Promise<void> = async () => {}) {
+    await render(flow)
+    await settle()
+    await before()
+    await review(label)
+    const key = await finalIntent()
+    act(() => root.unmount())
+    root = createRoot(host)
+    return key
+  }
+  const editOf = (position: typeof TOKEN_SIDE) => function edit() {
+    return (
+      <EditPositionPanel chainId={1} projectId={7} pool={POOL as never} positionManager={POSITION_MANAGER}
+        position={position} sym="TKN" floor={null} onClose={() => {}} onDone={() => {}} />
+    )
+  }
+
+  it('keys untouched position targets as keep-current, whatever the holdings are by a retry', async () => {
+    const first = await intentOf(editOf(TOKEN_SIDE), 'Edit position')
+    // The position's holdings moved while that edit is unresolved.
+    expect(await intentOf(editOf({ ...TOKEN_SIDE, tokenAmount: 2n * 10n ** 18n }), 'Edit position')).toBe(first)
+  })
+
+  it('keys Fit as the policy with the chosen targets, whatever band the price fits', async () => {
+    // The holding at this band caps the token side, so Fit is offered.
+    m.holding = { tokenHolding: 10n ** 17n, pairHolding: 10n ** 18n }
+    const both = { ...TOKEN_SIDE, tokenAmount: 10n ** 18n, pairAmount: 10n ** 18n }
+    const fit = async () => {
+      const button = buttons().find(item => item.textContent === 'Fit the band to these amounts')
+      expect(button, 'Fit').toBeDefined()
+      await act(async () => button!.click())
+    }
+    const first = await intentOf(editOf(both), 'Edit position', fit)
+    // The price moved: Fit solves another band.
+    m.range = { minPrice: 0.8, maxPrice: 3.1 }
+    expect(await intentOf(editOf(both), 'Edit position', fit)).toBe(first)
+  })
+
+  it('keys untouched market targets as keep-current, and an automatic re-fit apart from a chosen one', async () => {
+    const market = (tokenSide: typeof TOKEN_SIDE) => function edit() {
+      return (
+        <MarketEditPanel chainId={1} projectId={7} pool={POOL as never} positionManager={POSITION_MANAGER}
+          sides={{ tokenSide, pairSide: PAIR_SIDE }} sym="TKN" floor={0.5} onClose={() => {}} onDone={() => {}} />
+      )
+    }
+    const first = await intentOf(market(TOKEN_SIDE), 'Edit the market')
+    expect(await intentOf(market({ ...TOKEN_SIDE, tokenAmount: 3n * 10n ** 18n }), 'Edit the market')).toBe(first)
+    // Ticking the re-fit box twice leaves it as it was seeded, but now as the user's choice.
+    const chosen = await intentOf(market(TOKEN_SIDE), 'Edit the market', async () => {
+      const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+      await act(async () => box.click())
+      await act(async () => box.click())
+    })
+    expect(chosen).not.toBe(first)
   })
 
   it('tells a re-fit of the market from keeping its ranges', async () => {
