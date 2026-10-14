@@ -2,6 +2,7 @@
 
 import { keccak256, stringToHex } from 'viem'
 import { writeIntentKey } from '@/lib/write-intent'
+import { settleUnderHold } from '@/lib/write-holds'
 
 import { getAccount } from '@wagmi/core'
 import { getAddress, type Address, type Hex } from 'viem'
@@ -319,15 +320,23 @@ export async function submitSafeBatch({
     // Tracked to its execution, as a single Safe app authority call is.
     const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
     const receipt = await waitForTrackedReceipt(client, executionHash)
-    // The batch's hold verifies the execution on its own evidence (a failure only once final).
-    await safeBatchHold({ chainId, safe: authority, intent, calls: sequence })
-      .onReceipt(receipt, client as never, { calls: sequence, batch: true }).catch(() => null)
+    const hold = safeBatchHold({ chainId, safe: authority, intent, calls: sequence })
+    const proof = { calls: sequence, batch: true }
     const failure = 'The batch reverted after Safe execution.'
-    if (receipt.status !== 'success') throw new Error(failure)
-    await requireSafeProposalSuccess(
-      { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
-      failure,
-    )
+    try {
+      if (receipt.status !== 'success') throw new Error(failure)
+      // An extra guard with this batch's own failure line; it decides nothing on success.
+      await requireSafeProposalSuccess(
+        { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
+        failure,
+      )
+    } catch (error) {
+      // The hold settles a failure at finality, or keeps an unproven one, on its own evidence.
+      await hold.onReceipt(receipt, client as never, proof).catch(() => null)
+      throw error
+    }
+    // Success is the hold's settlement of this execution: anything else stays held, or neutral.
+    await settleUnderHold(chainId, hold, client as never, receipt, proof)
     return { kind: 'safe-app', safeTxHash, executionHash }
   }
 

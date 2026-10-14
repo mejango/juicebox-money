@@ -75,6 +75,7 @@ import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { heldWritesSnapshot } from '@/lib/write-holds'
+import { modelNode } from '../support/chain-node'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
@@ -110,20 +111,9 @@ const SAFE_PROPOSAL_SUCCESS = {
   data: `0x${'00'.repeat(32)}` as Hex,
 }
 
-/** Every receipt the chain shows is mined in canonical block 1, bound to its transaction, so a write hold can verify it. */
-function receiptsAre(make: (hash: Hex) => { transactionHash: Hex; status: string; logs: { address: Address; topics: Hex[]; data: Hex }[] }) {
-  const at = { blockHash: HASH, blockNumber: 1n, transactionIndex: 0 }
-  const shown = async (hash: Hex) => {
-    const receipt = make(hash)
-    const sent = await mocks.client.getTransaction({ hash }).catch(() => null) as { from?: Address; to?: Address } | null
-    return {
-      ...receipt, ...at, from: sent?.from, to: sent?.to,
-      logs: receipt.logs.map(log => ({ ...log, ...at, removed: false, transactionHash: hash })),
-    }
-  }
-  mocks.client.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => shown(hash))
-  mocks.client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => shown(hash))
-}
+/** The node this suite runs against: canonical block 1, every receipt bound to its transaction. */
+let node: ReturnType<typeof modelNode>
+const receiptsAre: ReturnType<typeof modelNode>['receiptsAre'] = make => node.receiptsAre(make)
 
 function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
@@ -182,6 +172,7 @@ beforeEach(() => {
     if (input.functionName === 'verify') return true
     throw new Error(`Unexpected read ${input.functionName}`)
   })
+  node = modelNode(mocks.client, { chainId: () => mocks.chainId, blockHash: HASH })
   // A Safe app's execution logs the Safe's ExecutionSuccess for its proposal.
   receiptsAre(hash => ({
     transactionHash: hash,
@@ -200,10 +191,6 @@ beforeEach(() => {
   }
   mocks.client.getCode.mockResolvedValue(PAYMENT_RUNTIME)
   mocks.client.getTransaction.mockImplementation(async ({ hash }) => transactionOf(hash))
-  mocks.client.getBlock.mockImplementation(async ({ blockTag, blockNumber }: { blockTag?: string; blockNumber?: bigint } = {}) =>
-    blockTag === 'finalized' ? { number: 100n, hash: `0x${'f1'.repeat(32)}`, timestamp: 1n } : { number: blockNumber ?? 100n, hash: HASH })
-  mocks.client.getBlockNumber.mockResolvedValue(100n)
-  Object.assign(mocks.client, { getTransactionCount: vi.fn(async () => 3), getChainId: vi.fn(async () => mocks.chainId) })
   vi.mocked(fetch).mockImplementation(async (input, init) => {
     const url = String(input)
     if (url.endsWith('/v1/bundle/prepaid') && init?.method === 'POST') {
