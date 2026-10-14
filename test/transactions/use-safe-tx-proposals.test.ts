@@ -842,6 +842,35 @@ describe('a Safe proposal an app journal holds (Defifa)', () => {
   })
 })
 
+describe('a queued Safe proposal an app journal adopts (Defifa)', () => {
+  it("reports the adopted proposal's unproven end to the journal's hold, so its exit appears and accepting it proposes exactly once more", async () => {
+    const { defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite } = await import('@/lib/defifa-write-recovery')
+    const scope = { chainId: 10, projectId: 8, account: SAFE, action: 'transfer' as const }
+    const queuedHash = canonicalSafeTxHash(10, SAFE, safeProposalFor({ to: BOB, data: callData, value: 7n }, 5))
+    // The Safe's queue already holds this exact call, and its execution can't be followed.
+    mocks.findPendingSafeAppProposal.mockResolvedValueOnce({ proposalHash: queuedHash, call: { to: BOB, data: callData, value: 7n } })
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    mocks.writeContract.mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount()
+    const sendThrough = () => act(async () => {
+      await sendRecoverableDefifaWrite({ scope, request, safe: true, options: { ...reviewedBySafe, reviewedInParent: true },
+        send: (sent, options) => flow.tx.send(sent, options) }).catch(() => null)
+    })
+    await sendThrough()
+    await settle()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    const record = readDefifaWriteRecovery(scope)!
+    expect(record.hash).toBe(queuedHash)
+    const hold = defifaWriteHold(scope, record)
+    const shown = await hold.state(mocks.publicClient as never)
+    expect(shown).toMatchObject({ status: 'safe-unproven', exit: true })
+    await expect(hold.exit(shown, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
+    await act(async () => flow.tx.reset())
+    await sendThrough()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+})
+
 describe('a Safe proposal lost track of in two flows', () => {
   it('stays held in every flow, with the exit, whichever flow is dismissed', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))

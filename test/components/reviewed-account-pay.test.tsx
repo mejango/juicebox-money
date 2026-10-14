@@ -299,6 +299,22 @@ describe('a payment reviewed for one account', () => {
   })
 })
 
+describe('a payment whose receipt watch gives up', () => {
+  it("shows the hold's line on the panel, and a second pay sends nothing until the payment settles", async () => {
+    wallet.watchGivesUp = true
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => host.textContent?.includes('Still pending in your wallet. Speed it up or cancel it there.') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await click('Close review')
+    expect(host.textContent).toContain('Still pending in your wallet. Speed it up or cancel it there.')
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => host.textContent?.includes('Still pending in your wallet.') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+  })
+})
+
 describe('a payment from a Safe', () => {
   /** Two pay panels for the same project, as when one is open beside another. */
   async function reviewInTwoPanels() {

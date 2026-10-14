@@ -257,7 +257,9 @@ const budgets = {
   // every held state) in place of the app's own glue measures 2597.4 KiB.
   // Holding the free mint through the same write hold, and rechecking a held
   // Defifa action while its card is open, measure 2598.0 KiB: round up.
-  allScripts: 2599 * KIB,
+  // Entering the hold when a receipt watch gives up (with its recheck) and
+  // routing adopted Safe proposals to an app journal's hold measure 2598.9 KiB.
+  allScripts: 2600 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

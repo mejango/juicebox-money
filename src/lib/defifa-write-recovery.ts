@@ -8,7 +8,7 @@ import {
   type ReviewedWriteRecoveryRecord,
 } from '@bananapus/nana-sdk-core/review'
 import { encodeFunctionData, type Address, type Hex, type PublicClient } from 'viem'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { ExternalHold, TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
 
 /** The SDK's held-write storage, shared with every write hold: the browser's, or this tab's memory. */
@@ -57,6 +57,8 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
     call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
   }
   const journal = openJournal(input)
+  // A Safe follower's outcome reaches this journal's record, and the recovery card hears of it.
+  const heldBy: ExternalHold = { hold: writeHolds.open(input), onChange: notifyRecovery }
   return journal.withLock(async () => {
     const previous = journal.read()
     if (previous) {
@@ -74,8 +76,7 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
     const hash = await send(request, {
       ...options,
       journaled: true,
-      // A Safe follower's outcome reaches this journal's record, and the recovery card hears of it.
-      heldBy: { hold: writeHolds.open(input), onChange: notifyRecovery },
+      heldBy,
       beforeWrite: async () => {
         const evidence = safe || !client ? undefined : await readReviewedWriteNonce(client, scope.account).catch(() => undefined)
         reserved = journal.reserve(undefined, evidence)
@@ -98,6 +99,8 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
         reserved = journal.submitted(hash, reserved)
         onRecord?.(reserved)
         notifyRecovery()
+        // An outcome its follower reached before the hash was saved reaches the hold now.
+        heldBy.recorded?.()
       } catch (error) {
         onRecord?.(journal.read() ?? reserved)
         notifyRecovery()

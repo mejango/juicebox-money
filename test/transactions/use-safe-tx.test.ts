@@ -495,6 +495,41 @@ describe('useSafeTx', () => {
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
   })
 
+  it("enters the hold when the receipt watch gives up, so the SDK's time-based exit appears, and accepting it sends exactly once more", async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        // The wallet's hash never reaches the network.
+        getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) }),
+      } as typeof mocks.publicClient
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: undefined, isError: true }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed', settled: true })
+      expect(heldNotice(hook.ref.current!.error).onExit).toBeUndefined()
+
+      // Closing and reopening the dialog keeps it held, and it is still checked.
+      await act(async () => hook.ref.current!.dismiss())
+      await act(async () => hook.ref.current!.reset())
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(60_000) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current!.phase).toBe('unconfirmed')
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown).toMatchObject({ status: 'held-unchecked' })
+      expect(shown.onExit).toBeTypeOf('function')
+      mocks.receipt = { data: undefined, isError: false }
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps the unconfirmed send locked through dismiss and reset, then settles when the receipt shows up', async () => {
     const hook = await renderHook()
     await act(async () => {

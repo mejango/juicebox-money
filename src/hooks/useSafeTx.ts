@@ -66,6 +66,8 @@ import {
   type SafeAppCall,
 } from '@/lib/safe-connector'
 
+/** How often a shown hold is asked again, so an exit that becomes due with time appears. */
+const HOLD_RECHECK_MS = 60_000
 /** How long the block-subscription watcher gets before its silence is reported. */
 const RECEIPT_WATCH_TIMEOUT_MS = 120_000
 const RECEIPT_POLL_INTERVAL_MS = 4_000
@@ -285,8 +287,25 @@ function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, k
 }
 
 /** Tell the hold how the registry saw a proposal end; the hold decides what it releases. */
-/** The hold an app journal keeps over a Safe write, and how the app hears of a change. */
-type ExternalHold = { hold: WriteHoldHandle; onChange?: () => void }
+/**
+ * The hold an app journal keeps over a Safe write, and how the app hears of a
+ * change. The send sets `recorded`; the journal calls it once it saved the
+ * proposal's hash, so an outcome that ended before that still reaches the hold.
+ */
+export type ExternalHold = { hold: WriteHoldHandle; onChange?: () => void; recorded?: () => void }
+
+/** Register an app journal's hold on a proposal before its follower runs. */
+function registerExternalHold(key: string, heldBy: ExternalHold | undefined, client: FollowClient): void {
+  if (!heldBy) {
+    externalHolds.delete(key)
+    return
+  }
+  externalHolds.set(key, heldBy)
+  heldBy.recorded = () => {
+    // Only an ended follow has an outcome to deliver again; a running one delivers its own.
+    if (!followingProposals.has(key)) void settleSafeHold(key, client)
+  }
+}
 
 /** Safe proposals an app journal holds, by registry key: their follower reports to that hold. */
 const externalHolds = new Map<string, ExternalHold>()
@@ -618,13 +637,16 @@ export function useSafeTx(chainId: number) {
   // submission merely because confirmation could not be read. A held write
   // that is tracking its hash settles the same way when its receipt lands.
   const tracking = phase === 'pending' || phase === 'unconfirmed'
+  /** This flow already shows its own receipt: a hold that clears on it changes nothing here. */
+  const receiptShownRef = useRef(false)
+  receiptShownRef.current = !!receiptData
   const receiptReverted = tracking && receiptData?.status === 'reverted'
   // The receipt watch gave up on a transaction that has a hash. It may still
   // land, so its write stays held until its receipt proves it, but nothing is
   // in flight to hold a dialog open for.
   const watchGaveUp = !shownKey && phase === 'pending' && receipt.isError && !receiptData
-  const watchGaveUpRef = useRef(false)
-  watchGaveUpRef.current = watchGaveUp
+  /** This flow's own pending hash, held and still followed: closing keeps it shown, so its receipt settles it here. */
+  const followingHeldRef = useRef(false)
 
   /**
    * This flow's write as the SDK's write hold holds it, and the send its exit
@@ -665,8 +687,25 @@ export function useSafeTx(chainId: number) {
   const exitingRef = useRef<WriteHoldHandle | null>(null)
   /** A result a look at the hold returned while the exit was in flight, kept for its line. */
   const exitSettledRef = useRef<WriteHoldSettled | undefined>(undefined)
+  // The receipt watch gave up on this flow's own send: it enters the hold, so
+  // the hold's line shows, its subscription attaches, and a time-based exit
+  // can appear. Its hash is still followed for a receipt.
+  useEffect(() => {
+    const current = heldRef.current
+    if (!watchGaveUp || !current || current.state) return
+    const state = current.hold.peek()
+    if (state.status === 'clear') return
+    showHeld({ ...current, state })
+    setPhase('unconfirmed')
+  }, [watchGaveUp, showHeld])
   // While a hold is shown, another tab or the hold's own follow may change it.
   const shownHold = phase === 'unconfirmed' ? held?.hold : undefined
+  useEffect(() => {
+    if (!shownHold || !publicClient) return
+    // Asked again while shown, so an exit that becomes due with time appears.
+    const timer = setInterval(() => { void shownHold.state(publicClient as never).catch(() => {}) }, HOLD_RECHECK_MS)
+    return () => clearInterval(timer)
+  }, [shownHold, publicClient])
   useEffect(() => {
     if (!shownHold) return
     return shownHold.subscribe(state => {
@@ -676,8 +715,9 @@ export function useSafeTx(chainId: number) {
         if (state.status === 'clear' && state.settled) exitSettledRef.current = state.settled
         return
       }
-      if (state.status === 'clear') endHeld(state.settled)
-      else showHoldState(current, state)
+      if (state.status === 'clear') {
+        if (!receiptShownRef.current) endHeld(state.settled)
+      } else showHoldState(current, state)
     })
   }, [shownHold, endHeld, showHoldState])
 
@@ -697,6 +737,7 @@ export function useSafeTx(chainId: number) {
         : watchGaveUp
           ? 'unconfirmed'
           : phase
+  followingHeldRef.current = effectivePhase === 'unconfirmed' && !!hash && (watchGaveUp || held?.state?.status === 'pending-known-hash')
   const notice = settledNotice ?? (
     proposal?.phase === 'awaiting'
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
@@ -873,6 +914,7 @@ export function useSafeTx(chainId: number) {
               }
             }
             if (holdsCall(held) || queued) {
+              registerExternalHold(key, options.heldBy, publicClient)
               if (queued) {
                 const { proposalHash, call } = queued
                 recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
@@ -989,8 +1031,7 @@ export function useSafeTx(chainId: number) {
             if (!isHash(txHash)) throw new Error(SAFE_REPLY_UNREADABLE)
             // The registry holds the call from here; this flow only shows it.
             inFlightRef.current = false
-            if (options.heldBy) externalHolds.set(key, options.heldBy)
-            else externalHolds.delete(key)
+            registerExternalHold(key, options.heldBy, publicClient)
             setShownKey(
               recordProposal(
                 { chainId: request.chainId, safe: account, call: sentCall, proposalHash: txHash },
@@ -1044,9 +1085,9 @@ export function useSafeTx(chainId: number) {
    * since the user may not have seen its line.
    */
   const reset = useCallback(() => {
-    // A send whose receipt watch gave up stays shown and followed, so its
-    // receipt still settles it here. Its hold outlives the dialog either way.
-    if (watchGaveUpRef.current) return
+    // A held send whose hash is still followed stays shown, so its receipt
+    // still settles it here. Its hold outlives the dialog either way.
+    if (followingHeldRef.current) return
     inFlightRef.current = false
     setPhase('idle')
     setError(null)
@@ -1062,7 +1103,7 @@ export function useSafeTx(chainId: number) {
    * followed and held.
    */
   const dismiss = useCallback(() => {
-    if (watchGaveUpRef.current) return
+    if (followingHeldRef.current) return
     if (shownKey && proposals.get(shownKey)?.phase === 'unproven') {
       proposals.delete(shownKey)
       notifyProposals()
