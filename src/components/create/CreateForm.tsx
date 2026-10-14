@@ -16,6 +16,7 @@ import {
   encodeFunctionData,
   parseUnits,
   type Address,
+  type Hex,
   type PublicClient,
 } from "viem";
 import { useConfig, useSwitchChain, useWriteContract } from "wagmi";
@@ -31,7 +32,14 @@ import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
 import { captureWalletContext } from "@/lib/wallet-context";
-import { gasWithHeadroom, isDefiniteWalletRejection } from "@bananapus/nana-sdk-core/review";
+import {
+  gasWithHeadroom,
+  isDefiniteWalletRejection,
+  WRITE_EXIT_LABEL,
+  writeExitMessage,
+  type WriteHeldState,
+  type WriteHoldHandle,
+} from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
   readSafeAppExecution,
@@ -125,6 +133,7 @@ import {
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
 import type { TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import { WriteHeldNotice } from "@/components/ui/WriteHeldNotice";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -219,6 +228,9 @@ type ChainStatus = LaunchChainStatus & {
   error?: string;
   indexed?: boolean;
 };
+
+/** A launch an earlier release left unverified, with no hold of its own: the user checks first. */
+const LAUNCH_UNVERIFIED_LINE = "This launch may already have gone through. Check your wallet first.";
 
 function deriveSymbol(name: string): string {
   const words = name
@@ -462,6 +474,12 @@ export function CreateForm() {
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
   const [setupRecoveryHashes, setSetupRecoveryHashes] = useState<Record<number, string>>({});
+  /** The chain's launch hold this run opened, so its proof reaches it. */
+  const launchHoldRef = useRef<WriteHoldHandle | null>(null);
+  /** A launch the hold (or an earlier release's journal) keeps from resending: its line and exit. */
+  const [launchHeld, setLaunchHeld] = useState<{
+    chainId: number; hold: WriteHoldHandle | null; state: WriteHeldState | null; call: { to: Address; data: Hex; value: bigint };
+  } | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
@@ -944,6 +962,7 @@ export function CreateForm() {
         ? { safeProposalHash: next.safeProposalHash }
         : {}),
       ...(next.directSafeCall ? { directSafeCall: next.directSafeCall } : {}),
+      ...(next.held ? { held: true as const } : {}),
       ...(next.projectId !== undefined ? { projectId: next.projectId } : {}),
     }, pinnedRef.current?.salt ?? restoredSessionRef.current?.salt);
     if (!persisted) throw new Error("Launch progress could not be saved. Restore browser storage before continuing.");
@@ -1513,6 +1532,7 @@ export function CreateForm() {
     const signal = pageSignal();
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
+      launchHoldRef.current = null;
       if (priorStatus?.phase === "done") continue;
       let hash = priorStatus?.txHash ?? priorStatus?.safeProposalHash;
       let proposal = priorStatus?.safeProposalHash;
@@ -1525,10 +1545,6 @@ export function CreateForm() {
         const client = getPublicClient(config, {
           chainId: chainId as SupportedChainId,
         }) as PublicClient;
-        if (priorStatus?.unverifiedSend || priorStatus?.phase === "signing" ||
-            (priorStatus?.phase === "uncertain" && !hash)) {
-          throw new Error("This launch may already have been submitted. Recover the original wallet request before trying again.");
-        }
         if (hash) {
           updateStatus(chainId, { phase: "confirming", error: undefined });
           if (proposal) {
@@ -1544,6 +1560,41 @@ export function CreateForm() {
             });
           }
         } else {
+          // The SDK's write hold over this chain's launch, keyed by its frozen launch: it
+          // decides what a request that may already be out allows, and reserves the
+          // wallet atomically across tabs right before it opens.
+          const heldRequest = buildLaunchRequest({
+            chainId: chainId as JBChainId, owner: address!, projectUri: pinned.projectUri,
+            creationFee: await getProjectCreationFee(client, chainId as JBChainId), plan: pinned.plans[chainId], salt: pinned.salt,
+          });
+          const heldCall = {
+            to: heldRequest.address,
+            data: encodeFunctionData(heldRequest as Parameters<typeof encodeFunctionData>[0]),
+            value: heldRequest.value ?? 0n,
+          };
+          // Loaded with the launch itself: the write hold stays out of the form's first load.
+          const { launchHold, launchResumeGate } = await import("@/lib/launch-hold");
+          launchHoldRef.current = launchHold({
+            chainId, account: address!, safe: viaSafe, salt: pinned.salt, projectUri: pinned.projectUri, call: heldCall,
+          });
+          const resume = await launchResumeGate(launchHoldRef.current, client as never, priorStatus);
+          if (resume.kind === "held" || resume.kind === "unverified") {
+            setLaunchHeld(resume.kind === "held"
+              ? { chainId, hold: launchHoldRef.current, state: resume.state, call: heldCall }
+              : { chainId, hold: null, state: null, call: heldCall });
+            throw new Error(resume.kind === "held" ? resume.state.line : LAUNCH_UNVERIFIED_LINE);
+          }
+          if (resume.kind === "send" && priorStatus?.unverifiedSend) {
+            // The user took the hold's exit: nothing is out, so this sends again.
+            updateStatus(chainId, { phase: "failed", unverifiedSend: undefined, held: undefined });
+          }
+          if (resume.kind === "settled") {
+            // The hold proved this launch ran: follow it, never send it again.
+            hash = resume.hash;
+            updateStatus(chainId, { phase: "confirming", txHash: hash, unverifiedSend: undefined });
+          }
+        }
+        if (!hash) {
           if (pinned.plans[chainId].multisigs?.length) {
             const { prepareLaunchMultisigs } = await import("@/lib/launch-multisig-direct");
             await prepareLaunchMultisigs({
@@ -1575,7 +1626,9 @@ export function CreateForm() {
             salt: pinned.salt,
           });
           directSafeCall = viaSafe ? { safe: address!, to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n } : undefined;
-          hash = await submitReviewedContractWrite({
+          const hold = launchHoldRef.current!;
+          const { sendUnderHold } = await import("@/lib/write-holds");
+          hash = await sendUnderHold(chainId, hold, client as never, gate => submitReviewedContractWrite({
             request,
             expectedAccount: address,
             review: (reviewed) =>
@@ -1631,20 +1684,30 @@ export function CreateForm() {
               assertWalletContext();
               if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
             },
-            beforeWrite: () => {
-              const saved = loadLaunchSession({ strict: true });
-              const status = saved?.statuses[chainId];
-              if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
-                  status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
-                  ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
-                throw new Error("The saved launch changed. Recover the original launch before continuing.");
+            beforeWrite: async () => {
+              // The SDK's atomic reservation, under its lock: another tab resuming this
+              // launch is refused here, before its wallet opens.
+              await gate.beforeSend();
+              try {
+                const saved = loadLaunchSession({ strict: true });
+                const status = saved?.statuses[chainId];
+                if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
+                    status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
+                    ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
+                  throw new Error("The saved launch changed. Recover the original launch before continuing.");
+                }
+                const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
+                if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
+                  throw new Error("The saved launch changed. Review the original launch before continuing.");
+                }
+                updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
+              } catch (error) {
+                gate.onRejected();
+                throw error;
               }
-              const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
-              if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
-                throw new Error("The saved launch changed. Review the original launch before continuing.");
-              }
-              updateStatus(chainId, { phase: "signing", directSafeCall, txHash: undefined, safeProposalHash: undefined });
             },
+            onWriteRejected: () => gate.onRejected(),
+            onWriteSubmitted: submitted => gate.afterSubmit(submitted),
             onBeforeWriteAborted: () => {
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
@@ -1660,7 +1723,7 @@ export function CreateForm() {
             },
             accountChangedError:
               "Connected account changed. Review the launch again.",
-          });
+          }));
           if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
             hash = undefined;
             throw new Error("The wallet returned no valid launch hash. Recover the original wallet request before trying again.");
@@ -1713,6 +1776,10 @@ export function CreateForm() {
           const { verifyCreatedLaunchMultisigs } = await import("@/lib/launch-multisig");
           await verifyCreatedLaunchMultisigs(client, pinned.plans[chainId], receipt.blockNumber);
         }
+        // Its proof reaches the hold this run opened, which releases it once verified.
+        await launchHoldRef.current?.onReceipt(receipt, client as never, proposal && directSafeCall
+          ? { calls: [{ to: directSafeCall.to, data: directSafeCall.data, value: directSafeCall.value }] }
+          : undefined).catch(() => null);
         const projectId = projectIdFromReceipt(receipt, chainId as JBChainId);
         if (!projectId) {
           updateStatus(chainId, {
@@ -1945,6 +2012,31 @@ export function CreateForm() {
   const retry = () => {
     const pinned = resumablePinned();
     if (pinned) void runChains(pinned);
+  };
+
+  /** The user checked their wallet: the hold decides whether this launch is sent again. */
+  const exitLaunchHeld = async () => {
+    const shown = launchHeld;
+    if (!shown) return;
+    if (shown.hold && shown.state) {
+      const client = getPublicClient(config, { chainId: shown.chainId as SupportedChainId }) as PublicClient;
+      const { released, state } = await shown.hold.exit(shown.state, { checkedWallet: true }, client as never);
+      if (!released) {
+        if (state.status === "clear") {
+          // Settled meanwhile: the resume follows what ran, never sends again.
+          setLaunchHeld(null);
+          retry();
+        } else {
+          const { hidesShownExit } = await import("@/lib/write-holds");
+          if (!hidesShownExit(shown.state, state)) setLaunchHeld({ ...shown, state });
+        }
+        return;
+      }
+    }
+    updateStatus(shown.chainId, { phase: "failed", unverifiedSend: undefined, held: undefined, error: undefined });
+    setLaunchHeld(null);
+    setLaunchError(null);
+    retry();
   };
 
   const recoverSafeSetup = async (chainId: number, cancelled = false) => {
@@ -2539,6 +2631,23 @@ export function CreateForm() {
         if (phase === "form") setLaunchError(null);
       }}
     >
+      {launchHeld ? (
+        launchHeld.state ? (
+          <WriteHeldNotice
+            chainId={launchHeld.chainId}
+            state={launchHeld.state}
+            onExit={launchHeld.state.exit ? () => void exitLaunchHeld() : undefined}
+          />
+        ) : (
+          <span className="block space-y-2 text-smoke-800">
+            <span className="block">{LAUNCH_UNVERIFIED_LINE}</span>
+            <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={() => void exitLaunchHeld()}>
+              {WRITE_EXIT_LABEL}
+            </button>
+            <span className="block text-xs text-smoke-600">{writeExitMessage(launchHeld.call)}</span>
+          </span>
+        )
+      ) : null}
       {interruptedSetups.map(chainId => (
         <div key={chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3 text-xs text-smoke-700">
           <p>Safe creation was interrupted on {chainName(chainId)}. Check your wallet&apos;s activity before continuing.</p>

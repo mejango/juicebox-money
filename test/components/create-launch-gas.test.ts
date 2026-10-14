@@ -43,7 +43,7 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(run).toContain('const viaSafe = isSafeConnection(config);')
     expect(run).toMatch(/\.\.\.simulated,\s*chainId,/)
     expect(run).toContain('proposal = viaSafe ? hash : undefined;')
-    expect(run).toMatch(/beforeWrite: \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
+    expect(run).toMatch(/beforeWrite: async \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
     expect(run).toContain('onBeforeWriteAborted: () => {')
   })
 
@@ -67,5 +67,13 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(source).toContain('phase: "signing", unverifiedSend: true')
     expect(source).toContain('!canAbandonDirectLaunch(session)')
     expect(source).toContain(': canAbandonDirectLaunch(activeLaunchSession)')
+  })
+
+  it('puts the launch under the SDK hold: the reservation right before the wallet, and the hold deciding a resume', () => {
+    expect(source).toContain('launchHold({')
+    expect(source).toContain('launchResumeGate(launchHoldRef.current')
+    expect(source).toContain('sendUnderHold(chainId, hold, client as never, gate => submitReviewedContractWrite({')
+    expect(source).toContain('await gate.beforeSend();')
+    expect(source).not.toContain('This launch may already have been submitted. Recover the original wallet request before trying again.')
   })
 })

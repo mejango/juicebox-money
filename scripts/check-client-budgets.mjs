@@ -88,7 +88,9 @@ const budgets = {
     // Node 26.7 / npm 12 browser build. Round only this route up to the next KiB.
     // The same root-layout notice, plus authority writes and Safe batches held
     // through the write hold, measure create 515.4 KiB. Round up.
-    '/create/page': 516 * KIB,
+    // The direct launch under the SDK write hold (its held line and exit in the
+    // launch dialog; the hold itself loads with the launch) measures 517.0 KiB.
+    '/create/page': 518 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -275,7 +277,9 @@ const budgets = {
   // in-tab notice) measures 2612.3 KiB: round up, with CI headroom.
   // SDK 2.38.0 (the shared intent builders, batch identity, checked states and
   // test resets) measures 2616.0 KiB: round up, with CI headroom.
-  allScripts: 2619 * KIB,
+  // The launch hold (a lazy chunk with the launch) and the last release's frozen
+  // intent keys (legacy-intents, for one release) measure 2621.3 KiB.
+  allScripts: 2624 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

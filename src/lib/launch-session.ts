@@ -45,6 +45,8 @@ export type LaunchChainStatus = {
    * mint a duplicate — surface a check-your-wallet warning before retrying.
    */
   unverifiedSend?: true
+  /** Its wallet request was reserved under the SDK write hold (launch-hold), which decides what is out. */
+  held?: true
   /** Safe setup is resumable independently of the non-idempotent project launch. */
   multisigSetup?: {
     phase: 'signing' | 'confirming' | 'done' | 'failed'
@@ -258,6 +260,7 @@ function coerceStatus(value: unknown): LaunchChainStatus {
     ...(multisigSetup ? { multisigSetup } : {}),
     ...(directSafeCall ? { directSafeCall } : {}),
     ...(wasSigning || status.unverifiedSend === true ? { unverifiedSend: true as const } : {}),
+    ...(status.held === true ? { held: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
     ...(typeof status.projectId === 'number'
