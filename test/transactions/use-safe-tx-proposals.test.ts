@@ -1083,6 +1083,24 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
   })
 
+  it("shows the hold's exit once an execution whose receipt it can't authenticate passes the mined window", async () => {
+    vi.useFakeTimers()
+    // Safe's service names the execution, but the node never shows its block canonical.
+    mocks.publicClient.getBlock.mockImplementation(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+      args.blockNumber !== undefined
+        ? { number: args.blockNumber, hash: `0x${'98'.repeat(32)}` }
+        : { number: 100n, hash: `0x${'97'.repeat(32)}`, timestamp: 1n })
+    const flow = await mount()
+    await flow.send()
+    await pass(0)
+    expect(flow.tx.phase).not.toBe('success')
+    // Then Safe's service loses the proposal: nothing more will come from it.
+    mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
+    await pass(31 * 60_000)
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toMatchObject({ status: 'held-unchecked', exit: true })
+  })
+
   it('binds an execution returned at once on the transaction the probe read, whatever a later read says', async () => {
     mocks.atOnceExecution.mockResolvedValue({ hash: PROPOSAL, from: BOB, to: SAFE, input: execTransaction() })
     // A replica that hasn't imported the receipt's block has no transaction for it.

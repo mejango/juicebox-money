@@ -2,6 +2,7 @@ import {
   createWriteHold,
   WriteHeldError,
   WriteHoldBusyError,
+  type WriteHeldState,
   type WriteHoldClient,
   type WriteHoldGate,
   type WriteHoldHandle,
@@ -29,6 +30,15 @@ export const WRITE_RELEASED_LINE = 'This transaction is no longer held here. Che
 export function repeatsWithoutExit(shown: WriteHoldState | null | undefined, next: WriteHoldState): boolean {
   return !!shown && shown.status !== 'clear' && next.status !== 'clear' && shown.exit && !next.exit &&
     (shown.status as string) === next.status && JSON.stringify(shown.record) === JSON.stringify(next.record)
+}
+
+/**
+ * Whether a hold result is one a flow must show now: held, with its exit, and
+ * not a repeat of what `shown` already offers. The direct and Safe paths both
+ * move to it and keep their settlement checks running behind it.
+ */
+export function offersExit(shown: WriteHoldState | null | undefined, next: WriteHoldState): next is WriteHeldState {
+  return next.status !== 'clear' && next.exit && !repeatsWithoutExit(shown, next)
 }
 
 /** A review's description, with the hold's line when this browser can't remember pending writes. */
