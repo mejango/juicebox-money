@@ -19,6 +19,7 @@ import {
   buildSetPermissionsTx,
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   decodeAbiParameters,
   encodeAbiParameters,
@@ -701,6 +702,17 @@ export function buildPermit2ApproveRequest({
     functionName: 'approve' as const,
     args: [token, positionManager, amount, expiration] as const,
   }
+}
+
+/**
+ * A Permit2 approve(token, spender, amount, expiration)'s write intent: its
+ * token, spender and amount. Its expiration restamps on every review, so it's left out.
+ */
+export function permit2ApproveIntent(request: { chainId: number; args: readonly unknown[] }): string {
+  const [token, spender, amount] = request.args as readonly [string, string, bigint]
+  return writeIntentKey('permit2-approve', {
+    chainId: request.chainId, token: intent.address(token), spender: intent.address(spender), amount: BigInt(amount),
+  })
 }
 
 /** Exact final Uniswap V4 PositionManager call with frozen mint bytes/value. */

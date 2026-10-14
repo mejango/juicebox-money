@@ -30,11 +30,12 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { editMarketIntent, permit2ApproveIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
+  permit2ApproveIntent,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -252,8 +253,13 @@ export function MarketEditPanel({
         labelFor,
         'Edit the market',
       )
-      const intent = editMarketIntent({ chainId, positionManager, pool: market.poolId, account: connectedAddress, tokenAmount, pairAmount })
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, intent }
+      const built: Reviewed = {
+        account: connectedAddress, pool: market, plan, steps,
+        intent: writeIntentKey('edit-market', {
+          chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId),
+          account: intent.address(connectedAddress), tokenAmount, pairAmount,
+        }),
+      }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(

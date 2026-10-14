@@ -1,6 +1,6 @@
 'use client'
 
-import { writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import {
   JBCoreContracts,
@@ -216,7 +216,7 @@ export function GetLoanFlow({
         reviewedAccount: r.account,
         // Its minimum re-quotes on retry: held by the loan the user chose.
         intent: writeIntentKey('borrow', {
-          chainId, revnetId: projectId, token: r.ctxToken, collateral: r.collateral, prepaid: r.prepaid, beneficiary: r.account,
+          chainId, revnetId: projectId, token: intent.address(r.ctxToken), collateral: r.collateral, prepaid: r.prepaid, beneficiary: intent.address(r.account),
         }),
       })
     } catch (e) {

@@ -28,11 +28,12 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { editPositionIntent, permit2ApproveIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
+  permit2ApproveIntent,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -316,10 +317,14 @@ export function EditPositionPanel({
             ? `${formatPrice(resulting.min)} – ${formatPrice(resulting.max)} ${pairSym}/${sym}`
             : undefined,
       })
-      const intent = editPositionIntent({
-        chainId, positionManager, pool: market.poolId, tokenId: position.tokenId, account: connectedAddress, tokenAmount, pairAmount, range,
-      })
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy, intent }
+      const built: Reviewed = {
+        account: connectedAddress, pool: market, plan, steps, copy,
+        intent: writeIntentKey('edit-position', {
+          chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId), tokenId: position.tokenId,
+          account: intent.address(connectedAddress), tokenAmount, pairAmount,
+          pa: range ? String(range.pa) : undefined, pb: range ? String(range.pb) : undefined,
+        }),
+      }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(

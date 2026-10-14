@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { encodeFunctionData, toEventSelector, TransactionNotFoundError, zeroAddress, type Abi, type Address, type Hex } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { WRITE_HOLD_IN_TAB_LINE } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -263,7 +264,7 @@ describe('free mint gas', () => {
     await mint()
     expect(mocks.review).toHaveBeenCalledWith(
       expect.objectContaining({ address: HOOK, functionName: 'mintFor', safeTxGas: 0n }),
-      expect.objectContaining({ description: 'Choose the Safe nonce.', confirmLabel: 'Agree & continue to Safe' }),
+      expect.objectContaining({ description: `Choose the Safe nonce.\n\n${WRITE_HOLD_IN_TAB_LINE}`, confirmLabel: 'Agree & continue to Safe' }),
     )
     // A Safe app signs the sent gas as safeTxGas.
     expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'mintFor', gas: 0n }))

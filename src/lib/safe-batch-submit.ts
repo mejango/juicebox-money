@@ -1,7 +1,5 @@
 'use client'
 
-import { keccak256, stringToHex } from 'viem'
-import { writeIntentKey } from '@/lib/write-intent'
 import { settleUnderHold } from '@/lib/write-holds'
 
 import { getAccount } from '@wagmi/core'
@@ -19,7 +17,7 @@ import {
   readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
-import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
+import { intent, simulateCallSequence, waitForTrackedReceipt, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
   safeBatchHold,
@@ -306,21 +304,21 @@ export async function submitSafeBatch({
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
     // These calls carry no restamped fields: the batch is held by its exact calls.
-    const intent = writeIntentKey('safe-batch', {
-      chainId, safe: authority, calls: keccak256(stringToHex(JSON.stringify(sequence.map(call => [call.to, call.data, String(call.value ?? 0n)])))),
+    const batchIntent = writeIntentKey('safe-batch', {
+      chainId, safe: intent.address(authority), calls: sequence.map(call => [intent.address(call.to), intent.hex(call.data), call.value ?? 0n]),
     })
     const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
-      intent,
+      intent: batchIntent,
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
     const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
     const receipt = await waitForTrackedReceipt(client, executionHash)
-    const hold = safeBatchHold({ chainId, safe: authority, intent, calls: sequence })
+    const hold = safeBatchHold({ chainId, safe: authority, intent: batchIntent, calls: sequence })
     const proof = { calls: sequence, batch: true }
     const failure = 'The batch reverted after Safe execution.'
     try {

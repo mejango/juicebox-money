@@ -9,6 +9,7 @@ import {
   forgetHeldWrite,
   heldWritesSnapshot,
   repeatsWithoutExit,
+  sameReservation,
   showHeldWrite,
   subscribeHeldWrites,
   WRITE_RELEASED_LINE,
@@ -32,6 +33,7 @@ function HeldWrite({ item }: { item: ShownHeldWrite }) {
   const [ended, setEnded] = useState<string | null>(null)
   const id = item.state.record.id
   const show = (state: WriteHoldState) => {
+    if (!sameReservation(item.state, state)) return
     if (state.status === 'clear') forgetHeldWrite(id)
     else if (state.record.id === id && !repeatsWithoutExit(item.state, state)) showHeldWrite(item.chainId, item.hold, state)
   }

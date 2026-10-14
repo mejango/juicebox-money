@@ -1,6 +1,6 @@
 'use client'
 
-import { writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
@@ -443,8 +443,8 @@ function RepayFlow({
         collateral: fresh.collateral,
         isNative,
         intents: {
-          repay: writeIntentKey('repay-loan', { chainId, loanId: loan.id, holder }),
-          approve: writeIntentKey('approve-loan-repay', { chainId, loanId: loan.id, holder, token: fresh.sourceToken }),
+          repay: writeIntentKey('repay-loan', { chainId, loanId: loan.id, holder: intent.address(holder) }),
+          approve: writeIntentKey('approve-loan-repay', { chainId, loanId: loan.id, holder: intent.address(holder), token: intent.address(fresh.sourceToken) }),
         },
         approve:
           allowance >= maxRepay

@@ -5,7 +5,7 @@ import { sendCalls } from 'wagmi/actions'
 import { isHex, size, type Abi, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
-import { sendUnderHold, writeHolds } from '@/lib/write-holds'
+import { reviewDescription, sendUnderHold, writeHolds } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -73,7 +73,7 @@ export async function proposeSafeBatch({
   await simulateCallSequence(client, { from: safe, calls, chainName: chainName(chainId) })
   await requireTransactionReview({
     title,
-    description: `These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`,
+    description: reviewDescription(`These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`),
     confirmLabel: 'Agree & propose to Safe',
     calls: calls.map(call => ({
       chainId,

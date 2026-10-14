@@ -43,11 +43,11 @@ import {
   isNativeToken,
   minimumDropNotice,
 } from '@/lib/cashOut'
-import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
+import { buildErc20ApproveRequest as buildTokenApproval, permit2ApproveIntent } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
-import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { chainName } from '@/lib/urn'
 import Link from 'next/link'
 
@@ -591,7 +591,7 @@ export function CashOutPanel({
           {
             reviewedAccount,
             // Its deadline and minimum regenerate on retry: held by what the user chose.
-            intent: writeIntentKey('pool-sell', { chainId, projectId, token: projectToken.address, amount: cashOutCount, recipient: reviewedAccount }),
+            intent: writeIntentKey('pool-sell', { chainId, projectId, token: intent.address(projectToken.address), amount: cashOutCount, recipient: intent.address(reviewedAccount) }),
             reviewNotice: minimumDropNotice({
               displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
@@ -610,7 +610,7 @@ export function CashOutPanel({
         reviewNotice: plan.reviewNotice,
         // Its minimum re-quotes on retry: held by what the user chose.
         intent: writeIntentKey('cash-out', {
-          chainId, projectId, terminal: plan.request.address, call: plan.request.functionName, amount: cashOutCount, beneficiary: reviewedAccount,
+          chainId, projectId, terminal: intent.address(plan.request.address), call: plan.request.functionName, amount: cashOutCount, beneficiary: intent.address(reviewedAccount),
         }),
       })
     } catch (e) {

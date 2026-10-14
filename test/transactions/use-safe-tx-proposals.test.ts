@@ -208,7 +208,19 @@ function signersDecide() {
   return (proposal: Hex = PROPOSAL, execution: Hex = EXECUTION) => executions.get(proposal)!(execution)
 }
 
+/** The page each test is: an earlier page's follow loops never run into a later one's storage or mocks. */
+let page = 0
+function timersOfThisPage() {
+  const mine = ++page
+  const { setTimeout: later, setInterval: every } = globalThis
+  vi.stubGlobal('setTimeout', ((run: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+    later(() => { if (page === mine) run(...args) }, ms)) as typeof setTimeout)
+  vi.stubGlobal('setInterval', ((run: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+    every(() => { if (page === mine) run(...args) }, ms)) as typeof setInterval)
+}
+
 beforeEach(async () => {
+  timersOfThisPage()
   displayQueries.clear()
   // The registry lives for the page: each test starts a page of its own.
   vi.resetModules()
@@ -946,6 +958,27 @@ describe('a queued Safe proposal an app journal adopts (Defifa)', () => {
     await expect(hold.exit(shown, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
     await act(async () => flow.tx.reset())
     await sendThrough()
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+})
+
+describe('a Safe write keyed by its intent', () => {
+  it('refuses a proposal under its intent while a #128-era Safe hold of the call is unresolved, until its explicit exit', async () => {
+    const { safeHoldNamespace, safeProposalKey } = await import('@/lib/write-holds')
+    const { createBrowserWriteRecovery, createHeldWriteStorage } = await import('@bananapus/nana-sdk-core/review')
+    // A #128-era row: the Safe call held under its own namespace alone (no mirrors), its reply lost.
+    const call = { to: BOB, data: callData, value: 7n }
+    const legacy = createBrowserWriteRecovery({ chainId: 10, account: SAFE, safe: true,
+      namespace: safeHoldNamespace(safeProposalKey(10, SAFE, call)), call }, { storage: createHeldWriteStorage() })
+    await legacy.withLock(async () => { legacy.reserve() })
+    const flow = await mount()
+    const send = () => act(async () => { await flow.tx.send(request, { ...reviewedBySafe, intent: 'intent:transfer:test' }) })
+    await send()
+    expect(mocks.writeContract).not.toHaveBeenCalled()
+    const shown = (flow.tx.error as ReactElement<{ state: { exit: boolean }; onExit?: () => void }>).props
+    expect(shown.state.exit).toBe(true)
+    await act(async () => shown.onExit!())
+    await settle()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 })

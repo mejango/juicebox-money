@@ -1,7 +1,7 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
-import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import {
   accountingContextsQuery,
@@ -74,6 +74,7 @@ import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
   buildErc20ApproveRequest,
+  permit2ApproveIntent,
 } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
@@ -1427,8 +1428,9 @@ export function PayPanel({
       swapInputRoute: activeSwapQuote?.inputRoute,
       // Its deadline restamps and its minimum re-quotes on retry: held by what the user chose.
       intent: writeIntentKey(mode === "pay" ? (activeSwapQuote ? "pay-swap" : "pay") : "add-to-balance", {
-        chainId, projectId, terminal: terminalAddress, token: context.token, amount: amountRaw,
-        beneficiary: address, memo: memo.trim(), metadata: mode === "pay" && !activeSwapQuote ? metadata : undefined,
+        chainId, projectId, terminal: intent.address(terminalAddress), token: intent.address(context.token), amount: amountRaw,
+        beneficiary: intent.address(address), memo: memo.trim(),
+        metadata: mode === "pay" && !activeSwapQuote && metadata ? intent.hex(metadata) : undefined,
       }),
     });
     return actions;

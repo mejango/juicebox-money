@@ -17,6 +17,8 @@ beforeEach(() => {
   const memory = tab[Symbol.for('nana-sdk:held-writes')] as Map<string, string> | undefined
   ;(tab[Symbol.for('nana-sdk:held-writes-seen')] as WeakMap<object, Map<string, string>> | undefined)?.get(memory ?? {})?.clear()
   memory?.clear()
+  // A lock an earlier test's never-settling write still holds is that page's, not this one's.
+  ;(tab[Symbol.for('nana-sdk:write-lock-queues')] as Map<string, unknown> | undefined)?.clear()
   try {
     const storage = globalThis.localStorage
     if (storage && typeof storage.key === 'function') {

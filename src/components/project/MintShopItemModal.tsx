@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { repeatsWithoutExit, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { repeatsWithoutExit, reviewDescription, sameReservation, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -116,7 +116,7 @@ export function MintShopItemModal({
   useWriteHoldWatch(phase === 'held' ? held?.hold : undefined,
     getPublicClient(config, { chainId: chainId as SupportedChainId }) as never,
     state => {
-      if (!held || exitingRef.current === held.hold) return
+      if (!held || exitingRef.current === held.hold || !sameReservation(held.state, state)) return
       if (state.status !== 'clear') {
         if (!repeatsWithoutExit(held.state, state)) setHeld({ hold: held.hold, state })
         return
@@ -253,9 +253,9 @@ export function MintShopItemModal({
               title: `Review free mint on ${chainName(chainId)}`,
               label: `Mint ${review.quantity} × ${itemName}`,
               contractName: 'JB721TiersHook',
-              description: viaSafe
+              description: reviewDescription(viaSafe
                 ? SAFE_NONCE_GUIDANCE
-                : 'This consumes shop inventory and collects no payment. It cannot be undone.',
+                : 'This consumes shop inventory and collects no payment. It cannot be undone.'),
               ...(viaSafe
                 ? { confirmLabel: 'Agree & continue to Safe' }
                 : {}),

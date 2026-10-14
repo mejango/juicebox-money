@@ -85,8 +85,8 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
-import { writeIntentKey } from '@/lib/write-intent'
-import { createBrowserWriteRecovery, createHeldWriteStorage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
+
+import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -517,7 +517,7 @@ describe('useSafeTx', () => {
   describe('a write keyed by its intent', () => {
     const swapAbi = parseAbi(['function swap(address to, uint256 amount, uint256 deadline)'])
     const swap = (deadline: bigint) => ({ ...request, abi: swapAbi, functionName: 'swap', args: [BOB, 5n, deadline] as const })
-    const intent = writeIntentKey('swap', { chainId: 10, to: BOB, amount: 5n })
+    const intent = writeIntentKey('swap', { chainId: 10, to: sdkIntent.address(BOB), amount: 5n })
 
     it('refuses a retry whose deadline regenerated while the first attempt is held, and sends only after the explicit exit', async () => {
       mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
@@ -536,12 +536,48 @@ describe('useSafeTx', () => {
       await act(async () => hook.renderer.unmount())
     })
 
+    it('refuses a send under its intent while a #128-era hold of the exact call is unresolved, until its explicit exit', async () => {
+      // An earlier build held this exact call by its calldata alone, and the wallet's reply was lost.
+      const call = { to: BOB, data: encodeFunctionData({ abi: swapAbi, functionName: 'swap', args: [BOB, 5n, 1_000n] }), value: 7n }
+      const legacyHold = writeHolds.open({ chainId: 10, account: ALICE, safe: false, call })
+      await legacyHold.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('refuses a review another window sent the same intent during, with its line, and opens a fresh review on retry', async () => {
+      const otherTab = createWriteHold()
+      // While this review is open, another window sends the same intent, and its wallet refuses.
+      mocks.requestReview.mockImplementationOnce(async () => {
+        const theirs = otherTab.open({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: '0x', value: 0n }, namespace: intent })
+        await theirs.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); gate.onRejected() })
+        return true
+      })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent, reviewedInParent: true, reviewNotice: 'Check the amount.' }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(hook.ref.current!.phase).toBe('error')
+      expect(hook.ref.current!.error).toBe(WRITE_HOLD_STALE_REVIEW_LINE)
+      // A parent-rendered retry still opens the review again before anything is sent.
+      mocks.requestReview.mockClear()
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent, reviewedInParent: true }) })
+      expect(mocks.requestReview).toHaveBeenCalledOnce()
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      otherTab.dispose()
+      await act(async () => hook.renderer.unmount())
+    })
+
     it('keys an intent by the action and its chosen parameters only, in one place', () => {
-      expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 5n })).toBe(intent)
-      expect(writeIntentKey('swap', { amount: 5n, to: `0x${BOB.slice(2).toUpperCase()}`, chainId: 10 })).toBe(intent)
-      expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 6n })).not.toBe(intent)
-      expect(writeIntentKey('pay', { chainId: 10, to: BOB, amount: 5n })).not.toBe(intent)
-      expect(intent).toMatch(/^[a-z0-9][a-z0-9:._/-]{0,127}$/)
+      expect(writeIntentKey('swap', { amount: 5n, to: sdkIntent.address(`0x${BOB.slice(2).toUpperCase()}`), chainId: 10 })).toBe(intent)
+      expect(writeIntentKey('swap', { chainId: 10, to: sdkIntent.address(BOB), amount: 6n })).not.toBe(intent)
+      expect(writeIntentKey('pay', { chainId: 10, to: sdkIntent.address(BOB), amount: 5n })).not.toBe(intent)
     })
   })
 
@@ -581,6 +617,43 @@ describe('useSafeTx', () => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(hook.ref.current!.phase).toBe('success')
       await act(async () => hook.renderer.unmount())
+    })
+
+    it("never adopts another tab's newer reservation: a flow following attempt A ignores attempt B's hash", async () => {
+      const H2 = `0x${'ef'.repeat(32)}` as Hex
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
+          if (hash === H2) return { hash, chainId: 10, from: ALICE, to: BOB, input: '0x', value: 7n, nonce: 3, blockNumber: null }
+          throw new TransactionNotFoundError({ hash })
+        }),
+      } as typeof mocks.publicClient
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      try {
+        mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+        const first = await renderHook()
+        await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+        expect(heldNotice(first.ref.current!.error).status).toBe('held-no-hash')
+
+        // Another tab (its own controller, its notices unseen here) takes A's exit and sends attempt B.
+        const otherTab = createWriteHold()
+        const call = { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n }
+        const theirs = otherTab.open({ chainId: 10, account: ALICE, safe: false, call })
+        const seen = await theirs.state(mocks.publicClient as never)
+        await expect(theirs.exit(seen, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
+        await theirs.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); gate.afterSubmit(H2) })
+
+        // The first flow's next look sees B: it never shows or follows B's hash as its own.
+        await act(async () => { vi.advanceTimersByTime(60_000) })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+        expect(first.ref.current!.hash).not.toBe(H2)
+        const shown = first.ref.current!.error
+        if (isValidElement(shown)) expect(heldNotice(shown).hash).not.toBe(H2)
+        otherTab.dispose()
+        await act(async () => first.renderer.unmount())
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it("takes only its own hash's settlement: a flow following H1 shows nothing when the resend H2 settles", async () => {

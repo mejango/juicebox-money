@@ -1,6 +1,6 @@
 'use client'
 
-import { writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import {
   JBCoreContracts,
@@ -519,7 +519,7 @@ function MoveFlow({
       reviewedAccount: review.account,
       // Its minimum re-quotes on a fresh review: held by what the user chose to move.
       intent: writeIntentKey('bridge-prepare', {
-        chainId: from, sucker: review.sucker, token: review.token, amount: review.amount, beneficiary: review.account,
+        chainId: from, sucker: intent.address(review.sucker), token: intent.address(review.token), amount: review.amount, beneficiary: intent.address(review.account),
       }),
     })
   }

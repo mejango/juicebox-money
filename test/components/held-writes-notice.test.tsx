@@ -16,6 +16,8 @@ const client = vi.hoisted(() => ({
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => client }))
 
 import HeldWritesList from '@/components/ui/HeldWritesList'
+import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
+import { WRITE_HOLD_IN_TAB_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { heldWritesSnapshot, sendUnderHold, writeHolds } from '@/lib/write-holds'
 
 describe('writes held outside a flow', () => {
@@ -35,6 +37,18 @@ describe('writes held outside a flow', () => {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     expect(heldWritesSnapshot()).toHaveLength(0)
     expect(hold.peek()).toMatchObject({ status: 'clear' })
+    await act(async () => root.unmount())
+  })
+
+  it("say when this browser can't remember them", async () => {
+    const hold = writeHolds.open({ chainId: 10, account: '0x1111111111111111111111111111111111111111' as Address, safe: false,
+      call: { to: '0x2222222222222222222222222222222222222222' as Address, data: '0x5678', value: 0n } })
+    await sendUnderHold(10, hold, client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    const state = { ...(hold.peek() as WriteHeldState), notice: WRITE_HOLD_IN_TAB_LINE }
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    await act(async () => root.render(<WriteHeldNotice chainId={10} state={state} />))
+    expect(host.textContent).toContain(WRITE_HOLD_IN_TAB_LINE)
     await act(async () => root.unmount())
   })
 })

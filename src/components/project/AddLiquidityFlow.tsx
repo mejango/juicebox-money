@@ -27,6 +27,7 @@ import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
+  permit2ApproveIntent,
 } from '@/lib/transaction-builders'
 import { TxError } from '@/components/ui/TxError'
 import { FormCardSkeleton } from '@/components/LoadingSkeletons'
@@ -43,7 +44,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { addLiquidityIntent, permit2ApproveIntent } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   POSITION_MANAGER_BY_CHAIN,
@@ -753,9 +754,10 @@ function AddLiquidityForm({
         steps,
         mint,
         market: mode === 'market',
-        intent: addLiquidityIntent({
-          chainId, positionManager: posm, pool: fresh.poolId, account: address, market: mode === 'market',
-          pairAmount, tokenAmount, pa, pb,
+        // The range is the user's typed prices, so it keys as text.
+        intent: writeIntentKey(mode === 'market' ? 'add-market-liquidity' : 'add-liquidity', {
+          chainId, positionManager: intent.address(posm), pool: intent.hex(fresh.poolId), account: intent.address(address),
+          pairAmount, tokenAmount, pa: String(pa), pb: String(pb),
         }),
         display: {
           needTok,

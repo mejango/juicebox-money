@@ -24,7 +24,7 @@ import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, writeHolds } from '@/lib/write-holds'
+import { reviewDescription, safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, writeHolds } from '@/lib/write-holds'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
@@ -691,7 +691,7 @@ export async function runAuthorityCalls({
       }
       if (!reviewedInParent) await requireTransactionReview({
         title: 'Review Safe transaction',
-        description: `This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`,
+        description: reviewDescription(`This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`),
         calls: [
           {
             chainId: call.chainId,
@@ -821,8 +821,7 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'direct') {
       if (!reviewedInParent) await requireTransactionReview({
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
-        description:
-          'Confirm each transaction on its destination chain. Calls are sent in the displayed order.',
+        description: reviewDescription('Confirm each transaction on its destination chain. Calls are sent in the displayed order.'),
         calls: group.map(call => ({
           chainId: call.chainId,
           from: call.authority,

@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { repeatsWithoutExit, safeHoldNamespace, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
+import { repeatsWithoutExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -35,6 +35,7 @@ import {
   WriteHeldError,
   WriteHoldBusyError,
   WriteHoldNonceError,
+  WriteHoldStaleReviewError,
   type WriteHeldState,
   type WriteHoldClient,
   type WriteHoldSettled,
@@ -289,8 +290,12 @@ type HeldWrite = {
 const intentHolds = new Map<string, string>()
 
 function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, key: string): WriteHoldHandle {
-  const namespace = intentHolds.get(key) ?? safeHoldNamespace(key)
-  return writeHolds.open({ chainId: proposal.chainId, account: proposal.safe, safe: true, namespace, call: proposal.call })
+  const intent = intentHolds.get(key)
+  const call = { chainId: proposal.chainId, account: proposal.safe, safe: true, call: proposal.call }
+  // Under an intent, the held-call namespace #128 shipped is its legacy key: an attempt held there still holds it.
+  return intent
+    ? writeHolds.open({ ...call, namespace: intent }, { legacy: [safeHoldNamespace(key)] })
+    : writeHolds.open({ ...call, namespace: safeHoldNamespace(key) })
 }
 
 /** Tell the hold how the registry saw a proposal end; the hold decides what it releases. */
@@ -615,6 +620,8 @@ export function useSafeTx(chainId: number) {
     () => undefined,
   )
   const inFlightRef = useRef(false)
+  /** Another window sent this write while its review was open: the next send reviews it again. */
+  const staleReviewRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
@@ -770,6 +777,9 @@ export function useSafeTx(chainId: number) {
     if (!current || current.hold !== shownHold) return
     // The exit's own answer decides while it is in flight.
     if (exitingRef.current === shownHold) return
+    // Only the reservation this flow observed: another tab's newer attempt, or
+    // a replay that names none, is not this flow's to show or claim.
+    if (!sameReservation(current.state, state)) return
     if (state.status === 'clear') {
       if (receiptShownRef.current) return
       // Only a settlement of the hash this flow observed is its result; any
@@ -1025,14 +1035,9 @@ export function useSafeTx(chainId: number) {
               // A review notice always opens the review, even where the caller
               // already rendered the payload — the notice exists precisely
               // because what was rendered is no longer what will be signed.
-              if (options.reviewedInParent && !options.reviewNotice) return
-              const description = [
-                options.reviewNotice,
-                viaSafe ? SAFE_NONCE_GUIDANCE : null,
-                writeHolds.reviewLine(),
-              ]
-                .filter(Boolean)
-                .join('\n\n')
+              if (options.reviewedInParent && !options.reviewNotice && !staleReviewRef.current) return
+              staleReviewRef.current = false
+              const description = reviewDescription(options.reviewNotice, viaSafe ? SAFE_NONCE_GUIDANCE : null)
               const approved = await requestContractTransactionReview(
                 {
                   ...reviewed,
@@ -1147,6 +1152,13 @@ export function useSafeTx(chainId: number) {
         if (hold && e instanceof WriteHeldError) {
           // Held already: what the hold says, its line and its exit.
           showHoldState({ hold, request, options, ...(safeKey ? { proposalKey: safeKey } : {}) }, e.state)
+          return null
+        }
+        if (e instanceof WriteHoldStaleReviewError) {
+          // Never sent: its line, and what became of the other window's send when known.
+          staleReviewRef.current = true
+          setError(e.settled ? `${e.message} ${settledLine(e.settled)}` : e.message)
+          setPhase('error')
           return null
         }
         if (hold && reachedWallet && !(e instanceof WriteHoldBusyError || e instanceof WriteHoldNonceError)) {

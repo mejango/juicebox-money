@@ -1,6 +1,6 @@
 'use client'
 
-import { writeIntentKey } from '@/lib/write-intent'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 
 import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 
@@ -977,7 +977,7 @@ function FundsTxFlow({
         min,
         account: address,
         intent: writeIntentKey('use-allowance', {
-          chainId, projectId, terminal, token: ctx.token, amount: parsedAmount, currency: line.currency, beneficiary: address,
+          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: parsedAmount, currency: line.currency, beneficiary: intent.address(address),
         }),
       })
     } catch (e) {
