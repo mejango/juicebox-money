@@ -28,7 +28,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
+import { editPositionIntent, permit2ApproveIntent } from '@/lib/write-intent'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
@@ -62,6 +62,8 @@ type Reviewed = {
   plan: EditLiquidityPlan
   steps: Step[]
   copy: { lead: string; detail: string; tech: string }
+  /** The write hold key of what the user chose: the pool, the position, its targets and range. */
+  intent: string
 }
 
 /** A target prefilled at full precision, so an untouched field asks for exactly what the position holds. */
@@ -314,7 +316,10 @@ export function EditPositionPanel({
             ? `${formatPrice(resulting.min)} – ${formatPrice(resulting.max)} ${pairSym}/${sym}`
             : undefined,
       })
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy }
+      const intent = editPositionIntent({
+        chainId, positionManager, pool: market.poolId, tokenId: position.tokenId, account: connectedAddress, tokenAmount, pairAmount, range,
+      })
+      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy, intent }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(
@@ -369,7 +374,7 @@ export function EditPositionPanel({
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
           // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
-          intent: writeIntentKey('edit-position', { chainId, positionManager, tokenId: position.tokenId, account: reviewedAccount }),
+          intent: p.intent,
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
           // position or drift beyond the reviewed maxima still aborts first.

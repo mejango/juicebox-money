@@ -7,6 +7,9 @@ import { createWriteHold, type WriteHoldHandle, type WriteHoldSettled, type Writ
  */
 export const writeHolds = createWriteHold()
 
+/** A hold that cleared with no settlement this flow can claim (an exit elsewhere): neutral, never a result. */
+export const WRITE_RELEASED_LINE = 'This transaction is no longer held here. Check your wallet before sending it again.'
+
 /** The hash a settlement names, lowercased, or null (an expiry names none). */
 export function settledHashOf(settled?: WriteHoldSettled): string | null {
   return settled && 'hash' in settled ? settled.hash.toLowerCase() : null

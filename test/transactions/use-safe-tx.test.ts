@@ -538,7 +538,7 @@ describe('useSafeTx', () => {
 
     it('keys an intent by the action and its chosen parameters only, in one place', () => {
       expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 5n })).toBe(intent)
-      expect(writeIntentKey('swap', { amount: 5n, to: BOB.toUpperCase(), chainId: 10 })).toBe(intent)
+      expect(writeIntentKey('swap', { amount: 5n, to: `0x${BOB.slice(2).toUpperCase()}`, chainId: 10 })).toBe(intent)
       expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 6n })).not.toBe(intent)
       expect(writeIntentKey('pay', { chainId: 10, to: BOB, amount: 5n })).not.toBe(intent)
       expect(intent).toMatch(/^[a-z0-9][a-z0-9:._/-]{0,127}$/)
@@ -941,7 +941,7 @@ describe('useSafeTx', () => {
       // A look at the hold (a poll, another flow) sees it clear while the exit is open.
       await act(async () => { await writeHolds.open(INPUT()).state(mocks.publicClient as never) })
       // Released elsewhere with no settlement known: this flow claims no result.
-      expect(hook.ref.current).toMatchObject({ phase: 'idle', notice: null })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -958,7 +958,7 @@ describe('useSafeTx', () => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
       // Released elsewhere with no settlement known: this flow claims no result.
-      expect(hook.ref.current).toMatchObject({ phase: 'idle', notice: null })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
       await act(async () => hook.renderer.unmount())
     })
   })

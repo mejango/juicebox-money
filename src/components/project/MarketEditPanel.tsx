@@ -30,7 +30,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
+import { editMarketIntent, permit2ApproveIntent } from '@/lib/write-intent'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
@@ -64,6 +64,8 @@ type Reviewed = {
   pool: Pool
   plan: MarketEditPlan
   steps: Step[]
+  /** The write hold key of what the user chose: the pool and its targets. */
+  intent: string
 }
 
 function parseAmount(text: string, decimals: number, symbol: string): bigint {
@@ -250,7 +252,8 @@ export function MarketEditPanel({
         labelFor,
         'Edit the market',
       )
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps }
+      const intent = editMarketIntent({ chainId, positionManager, pool: market.poolId, account: connectedAddress, tokenAmount, pairAmount })
+      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, intent }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(
@@ -303,7 +306,7 @@ export function MarketEditPanel({
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
           // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
-          intent: writeIntentKey('edit-market', { chainId, positionManager, pool: p.pool.poolId, account: reviewedAccount }),
+          intent: p.intent,
           reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
           reverify: async () => {
             if (!client) return

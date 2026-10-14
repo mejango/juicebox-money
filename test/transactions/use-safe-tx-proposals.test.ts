@@ -136,6 +136,8 @@ function browserStorage() {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => { values.set(key, value) },
     removeItem: (key: string) => { values.delete(key) },
+    /** Another tab released every held write, as its exit does: no settlement is left. */
+    releaseAll: () => { for (const key of [...values.keys()]) if (key.startsWith('nana-sdk:reviewed-write')) values.delete(key) },
   }
 }
 
@@ -748,6 +750,20 @@ describe('a Safe proposal awaiting its signers', () => {
     await until(() => flow.tx.phase === 'success')
     expect(flow.tx.phase).toBe('success')
   }, 30_000)
+
+  it('never shows success when another tab released the hold while its execution was awaited, and says so plainly', async () => {
+    const storage = browserStorage()
+    vi.stubGlobal('localStorage', storage)
+    const execute = signersDecide()
+    const flow = await mount()
+    await flow.send()
+    await settle()
+    storage.releaseAll()
+    execute()
+    await settle()
+    expect(flow.tx.phase).not.toBe('success')
+    expect(flow.tx.notice).toBe('This transaction is no longer held here. Check your wallet before sending it again.')
+  })
 
   it('stops being watched once its execution is known', async () => {
     const execute = signersDecide()

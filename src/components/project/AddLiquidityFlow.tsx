@@ -43,7 +43,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
+import { addLiquidityIntent, permit2ApproveIntent } from '@/lib/write-intent'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   POSITION_MANAGER_BY_CHAIN,
@@ -124,6 +124,8 @@ type Plan = {
   mint: Mint | MarketMint
   /** Two single-sided positions spanning the corridor, instead of one band. */
   market: boolean
+  /** The write hold key of what the user chose: the pool, the amounts and the range. */
+  intent: string
   /** Frozen display figures — must equal what the frozen `mint` sends. */
   display: {
     needTok: bigint
@@ -529,11 +531,8 @@ function AddLiquidityForm({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
-          // Its deadline restamps, and a fresh plan re-prices its amounts: held by the range the user chose.
-          intent: writeIntentKey(p.market ? 'add-market-liquidity' : 'add-liquidity', {
-            chainId, positionManager: p.posm, account: reviewedAccount,
-            tickLower: p.display.tickLower, tickUpper: p.display.tickUpper,
-          }),
+          // Its deadline restamps, and a fresh plan re-prices its amounts: held by what the user chose.
+          intent: p.intent,
         },
       )
     },
@@ -754,6 +753,10 @@ function AddLiquidityForm({
         steps,
         mint,
         market: mode === 'market',
+        intent: addLiquidityIntent({
+          chainId, positionManager: posm, pool: fresh.poolId, account: address, market: mode === 'market',
+          pairAmount, tokenAmount, pa, pb,
+        }),
         display: {
           needTok,
           needPair,

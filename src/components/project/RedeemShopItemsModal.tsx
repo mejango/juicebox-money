@@ -1,6 +1,6 @@
 'use client'
 
-import { writeIntentKey } from '@/lib/write-intent'
+import { redeemItemsIntent } from '@/lib/write-intent'
 
 import {
   JB_CHAINS,
@@ -403,9 +403,9 @@ export function RedeemShopItemsModal({
         reviewedAccount: plan.quote.holder,
         reviewNotice: plan.reviewNotice,
         // Its minimum re-quotes on retry: held by the items the user chose to redeem.
-        intent: writeIntentKey('redeem-items', {
-          chainId: plan.quote.chainId, terminal: plan.quote.terminal, token: plan.quote.token,
-          items: plan.quote.tokenIdsKey, holder: plan.quote.holder,
+        intent: redeemItemsIntent({
+          chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook, terminal: plan.quote.terminal,
+          token: plan.quote.token, items: plan.quote.tokenIdsKey, holder: plan.quote.holder,
         }),
       })
     } catch (error) {
