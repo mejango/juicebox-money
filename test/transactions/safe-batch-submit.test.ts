@@ -637,7 +637,7 @@ describe('Safe app batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow(/did not return a proposal hash/)
+    ).rejects.toThrow('Check this proposal in your Safe before sending it again.')
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
   })
 })

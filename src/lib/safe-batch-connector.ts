@@ -115,7 +115,7 @@ export async function proposeSafeBatch({
       throw error
     }
     if (!isHex(id) || size(id) !== 32) {
-      throw new Error('Safe did not return a proposal hash for this batch.')
+      throw new Error('Check this proposal in your Safe before sending it again.')
     }
     gate.afterSubmit(id)
     return id

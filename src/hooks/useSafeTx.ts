@@ -248,7 +248,7 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
 
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
-const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
+const SAFE_REPLY_UNREADABLE = 'Check this proposal in your Safe before sending it again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 
 type SafeProposal = {
