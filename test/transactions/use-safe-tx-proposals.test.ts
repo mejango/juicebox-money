@@ -813,6 +813,35 @@ describe("a send that asks Safe's queue first", () => {
   })
 })
 
+describe('a Safe proposal an app journal holds (Defifa)', () => {
+  it('reports the follower giving up to the journal\'s own hold, so its exit appears and accepting it proposes exactly once more', async () => {
+    const { defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_CHANGE_EVENT } = await import('@/lib/defifa-write-recovery')
+    // The recovery card listens for this event.
+    const changed = vi.fn()
+    vi.stubGlobal('dispatchEvent', changed)
+    const scope = { chainId: 10, projectId: 7, account: SAFE, action: 'transfer' as const }
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))
+    mocks.writeContract.mockResolvedValueOnce(PROPOSAL).mockResolvedValueOnce(SECOND_PROPOSAL)
+    const flow = await mount()
+    const sendThrough = () => act(async () => {
+      await sendRecoverableDefifaWrite({ scope, request, safe: true, options: { ...reviewedBySafe, reviewedInParent: true },
+        send: (sent, options) => flow.tx.send(sent, options) }).catch(() => null)
+    })
+    await sendThrough()
+    await settle()
+    const record = readDefifaWriteRecovery(scope)!
+    const hold = defifaWriteHold(scope, record)
+    expect(hold.peek()).toMatchObject({ status: 'safe-unproven', exit: true })
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ type: DEFIFA_RECOVERY_CHANGE_EVENT }))
+    const shown = await hold.state(mocks.publicClient as never)
+    expect(shown).toMatchObject({ status: 'safe-unproven', exit: true })
+    await expect(hold.exit(shown, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
+    await act(async () => flow.tx.reset())
+    await sendThrough()
+    expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('a Safe proposal lost track of in two flows', () => {
   it('stays held in every flow, with the exit, whichever flow is dismissed', async () => {
     mocks.waitForSafeExecutionHash.mockRejectedValue(new Error('Safe service unavailable'))

@@ -277,9 +277,11 @@ export function MintShopItemModal({
         try {
           submitted = await waitForSafeExecutionHash(chainId, proposal, { signal: modalSignal() })
         } catch {
-          // The Safe may still execute it: the mint stays submitted, never
-          // offered again from this form.
-          setPhase('uncertain')
+          // Its execution can't be followed here: the hold keeps the mint and
+          // offers the checked-wallet exit; later evidence still settles it.
+          const state = await hold.onUnproven(client as never, proposal).catch(() => hold.peek())
+          if (state.status !== 'clear') showHeld(hold, state)
+          else setPhase('uncertain')
           return
         }
         setHash(submitted)
@@ -417,7 +419,7 @@ export function MintShopItemModal({
         <TxConfirmDialog
           open
           preparing={!review}
-          title={phase === 'done' ? 'Items minted' : phase === 'uncertain' ? 'Mint submitted' : 'Confirm mint'}
+          title={phase === 'done' ? 'Items minted' : phase === 'uncertain' || phase === 'held' ? 'Mint submitted' : 'Confirm mint'}
           rows={
             review
               ? [

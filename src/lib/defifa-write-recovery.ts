@@ -52,10 +52,11 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
   if (request.chainId !== scope.chainId || options.reviewedAccount.toLowerCase() !== scope.account.toLowerCase()) {
     throw new Error('The recovery scope does not match the reviewed account and network.')
   }
-  const journal = openJournal({
+  const input: ReviewedWriteRecoveryInput = {
     chainId: scope.chainId, account: scope.account, safe, namespace: defifaWriteNamespace(scope),
     call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
-  })
+  }
+  const journal = openJournal(input)
   return journal.withLock(async () => {
     const previous = journal.read()
     if (previous) {
@@ -73,6 +74,8 @@ export async function sendRecoverableDefifaWrite({ scope, request, safe, send, o
     const hash = await send(request, {
       ...options,
       journaled: true,
+      // A Safe follower's outcome reaches this journal's record, and the recovery card hears of it.
+      heldBy: { hold: writeHolds.open(input), onChange: notifyRecovery },
       beforeWrite: async () => {
         const evidence = safe || !client ? undefined : await readReviewedWriteNonce(client, scope.account).catch(() => undefined)
         reserved = journal.reserve(undefined, evidence)

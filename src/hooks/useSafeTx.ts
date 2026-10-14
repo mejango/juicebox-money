@@ -127,6 +127,11 @@ export type TxSendOptions = {
   /** An app journal (Defifa's) already holds this write; the send keeps no hold of its own. */
   journaled?: boolean
   /**
+   * The write hold over that journal's record. A Safe follower's outcomes
+   * (unproven, executed, a receipt) go to it, and `onChange` tells the app.
+   */
+  heldBy?: ExternalHold
+  /**
    * The exact request was already rendered in a parent confirmation surface.
    * This skips only the second app-owned review; account checks, revalidation,
    * simulation, duplicate protection, and the wallet confirmation still run.
@@ -280,10 +285,17 @@ function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, k
 }
 
 /** Tell the hold how the registry saw a proposal end; the hold decides what it releases. */
+/** The hold an app journal keeps over a Safe write, and how the app hears of a change. */
+type ExternalHold = { hold: WriteHoldHandle; onChange?: () => void }
+
+/** Safe proposals an app journal holds, by registry key: their follower reports to that hold. */
+const externalHolds = new Map<string, ExternalHold>()
+
 async function settleSafeHold(key: string, client: FollowClient): Promise<void> {
   const proposal = proposals.get(key)
   if (!proposal) return
-  const hold = safeHoldOf(proposal, key)
+  const external = externalHolds.get(key)
+  const hold = external?.hold ?? safeHoldOf(proposal, key)
   try {
     if ((proposal.phase === 'success' || proposal.phase === 'failed') && proposal.receipt) {
       await hold.onReceipt(proposal.receipt, client as never, { calls: [proposal.call] })
@@ -298,6 +310,7 @@ async function settleSafeHold(key: string, client: FollowClient): Promise<void> 
   } catch {
     // The hold keeps it; its next state() asks again.
   }
+  external?.onChange?.()
 }
 
 const followingProposals = new Set<string>()
@@ -836,14 +849,20 @@ export function useSafeTx(chainId: number) {
           if (viaSafe) {
             // An action the Safe already has, from this session or its own queue,
             // is shown as it is and never proposed again.
-            const held = proposals.get(key)
+            let held = proposals.get(key)
+            if (held?.phase === 'unproven' && options.heldBy && options.heldBy.hold.peek().status === 'clear') {
+              // The app journal's hold was released by the user: propose afresh.
+              proposals.delete(key)
+              notifyProposals()
+              held = undefined
+            }
             let queued: Awaited<ReturnType<typeof findPendingSafeAppProposal>> = null
             if (!holdsCall(held) && hasSafeService(request.chainId)) {
               // Reading Safe's queue takes a moment: the flow shows it checking.
               setPhase('simulating')
               queued = await findPendingSafeAppProposal(publicClient, request.chainId, account, sentCall)
             }
-            if (held?.phase === 'unproven') {
+            if (held?.phase === 'unproven' && !options.heldBy) {
               // Unproven here: the hold decides, with its line and exit.
               const hold = safeHoldOf(held, key)
               const state = await hold.onUnproven(publicClient as never, held.proposalHash).catch(() => hold.peek())
@@ -970,6 +989,8 @@ export function useSafeTx(chainId: number) {
             if (!isHash(txHash)) throw new Error(SAFE_REPLY_UNREADABLE)
             // The registry holds the call from here; this flow only shows it.
             inFlightRef.current = false
+            if (options.heldBy) externalHolds.set(key, options.heldBy)
+            else externalHolds.delete(key)
             setShownKey(
               recordProposal(
                 { chainId: request.chainId, safe: account, call: sentCall, proposalHash: txHash },
