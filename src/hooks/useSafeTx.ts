@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { writeHolds } from '@/lib/write-holds'
+import { settledLine, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -266,13 +266,6 @@ type HeldWrite = {
   options: TxSendOptions
   /** What the hold last said; none while this flow's own send is in flight or followed. */
   state: WriteHeldState | null
-}
-
-/** What a hold that ended on its own says: its result when the hold saw it, otherwise that it went through. */
-function settledLine(settled?: WriteHoldSettled): string {
-  if (settled?.result === 'failed') return 'Your earlier transaction failed onchain.'
-  if (settled?.result === 'expired') return 'Your earlier Safe proposal expired before it ran.'
-  return 'Your earlier transaction went through.'
 }
 
 /** A Safe write is held by its call with stamped fields blanked, as the registry keys it. */

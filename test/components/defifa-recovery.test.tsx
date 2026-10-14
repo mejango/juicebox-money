@@ -3,7 +3,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { erc20Abi, erc721Abi, type Address, type Hex } from 'viem'
+import { erc20Abi, erc721Abi, TransactionNotFoundError, type Address, type Hex } from 'viem'
 import { DefifaNftTransactionRevertedError } from '@bananapus/nana-sdk-core/v6'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { readDefifaWriteRecovery, sendRecoverableDefifaWrite, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
@@ -16,12 +16,12 @@ const HASH = `0x${'a'.repeat(64)}` as Hex
 const EXECUTION = `0x${'b'.repeat(64)}` as Hex
 const scope = { chainId: 8453, projectId: 27, account: ACCOUNT, action: 'transfer' as DefifaWriteAction }
 const request: TxRequest = { chainId: 8453, address: HOOK, abi: erc721Abi, functionName: 'safeTransferFrom', args: [ACCOUNT, RECIPIENT, 123n] }
-const m = vi.hoisted(() => ({ receipt: vi.fn(), restore: vi.fn(), verify: vi.fn(), approval: vi.fn(), safe: vi.fn(), reported: vi.fn() }))
+const m = vi.hoisted(() => ({ transaction: vi.fn(), receipt: vi.fn(), restore: vi.fn(), verify: vi.fn(), approval: vi.fn(), safe: vi.fn(), reported: vi.fn() }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({
   getTransactionReceipt: m.receipt,
   getChainId: async () => 8453,
   // The node knows the saved hash and it hasn't been mined yet.
-  getTransaction: async ({ hash }: { hash: Hex }) => ({ hash, from: ACCOUNT, nonce: 0, blockNumber: null }),
+  getTransaction: m.transaction,
 }) }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), restoreDefifaNftReceiptContext: m.restore, verifyDefifaNftTransaction: m.verify }))
 vi.mock('@bananapus/nana-sdk-core/review', async original => ({ ...await original(), verifyReviewedWriteReceipt: m.approval }))
@@ -45,6 +45,7 @@ const click = async () => { await act(async () => host.querySelector<HTMLButtonE
 beforeEach(() => {
   localStorage.clear()
   vi.stubGlobal('navigator', { locks: { request: (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
+  m.transaction.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => ({ hash, from: ACCOUNT, nonce: 0, blockNumber: null }))
   m.receipt.mockReset().mockResolvedValue({ transactionHash: HASH, blockNumber: 50n })
   m.restore.mockReset().mockResolvedValue({ hook: HOOK, implementation: HOOK, account: ACCOUNT, transaction: request })
   m.verify.mockReset().mockResolvedValue(undefined)
@@ -77,6 +78,46 @@ describe('original native action recovery', () => {
     await click()
     expect(readDefifaWriteRecovery(scope)).toBeNull()
     expect(host.textContent).toContain('Fresh NFT controls')
+  })
+
+  /** A hash the node never sees, saved with the account's nonce: held, and its exit due 30 minutes after the wallet returned it. */
+  const saveUnseen = async () => {
+    m.transaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
+    await sendRecoverableDefifaWrite({ scope, request, safe: false, options: { reviewedAccount: ACCOUNT },
+      client: { getBlockNumber: async () => 100n, getTransactionCount: async () => 3 },
+      send: async (_request, options) => { await options.beforeWrite?.(); return HASH } })
+  }
+  const buttons = () => [...host.querySelectorAll('button')].map(button => button.textContent)
+
+  it('rechecks the hold while shown, so an exit that becomes due appears and releases', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      await saveUnseen(); await render()
+      expect(buttons()).toEqual(['Check original transaction'])
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(60_000) }); await settle()
+      expect(host.textContent).toContain("This transaction can't be checked onchain.")
+      expect(buttons()).toContain('I checked my wallet. Send again')
+      await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'I checked my wallet. Send again')!.click()); await settle()
+      expect(readDefifaWriteRecovery(scope)).toBeNull()
+      expect(host.textContent).toContain('Fresh NFT controls')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('refreshes the hold after a manual check', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      await saveUnseen(); m.verify.mockRejectedValue(new Error('RPC unavailable')); await render()
+      expect(buttons()).toEqual(['Check original transaction'])
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await click()
+      expect(host.textContent).toContain('RPC unavailable')
+      expect(buttons()).toContain('I checked my wallet. Send again')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('gives a saved hash still pending one line and no exit', async () => {

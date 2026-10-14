@@ -14,6 +14,8 @@ import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
 import { clearDefifaWriteRecovery, defifaWriteHold, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
+/** How often a shown hold is asked again while this card is open. */
+const HOLD_RECHECK_MS = 60_000
 const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
 
@@ -59,17 +61,27 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
   const clientRef = useRef(client)
   clientRef.current = client
   const hasClient = !!client
+  /** Ask the hold again: on show, on a timer while shown, and after a manual check. */
+  const recheck = useRef<() => void>(() => {})
   useEffect(() => {
     const current = originalRef.current
     const client = clientRef.current
     if (!originalId || !current || !client) return
     let live = true
-    void defifaWriteHold(current.scope, current.record).state(client as never).then(state => {
+    const hold = defifaWriteHold(current.scope, current.record)
+    const show = (state: Awaited<ReturnType<typeof hold.state>>) => {
       if (!live) return
       if (state.status === 'clear') notifyRecovery()
       else setHeld(state)
-    }, () => {})
-    return () => { live = false }
+    }
+    // Another tab, or the hold's own follow, may change it.
+    const stop = hold.subscribe(show)
+    const check = () => { void hold.state(client as never).then(show, () => {}) }
+    recheck.current = check
+    check()
+    // An exit can become due with time (a hash unseen for 30 minutes).
+    const timer = setInterval(check, HOLD_RECHECK_MS)
+    return () => { live = false; stop(); clearInterval(timer); recheck.current = () => {} }
   }, [originalId, hasClient])
   const shownHeld = held && original && held.record.id === original.record.id ? held : null
   const exit = async () => {
@@ -121,7 +133,10 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
       ])
       if (actor.current.generation === generation) setResolved({ hash: receipt.transactionHash, chainId: scope.chainId, failed })
     } catch (reason) { if (actor.current.generation === generation) setError(describe(reason)) }
-    finally { if (actor.current.generation === generation) setChecking(false) }
+    finally {
+      if (actor.current.generation === generation) setChecking(false)
+      recheck.current()
+    }
   }
   if (active || !account) return children
   if (saved.isLoading) return <p role="status" className="text-sm">Checking saved NFT actions…</p>

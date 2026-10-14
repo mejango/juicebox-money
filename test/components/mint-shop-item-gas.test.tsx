@@ -12,7 +12,13 @@ const mocks = vi.hoisted(() => ({
   waitSafe: vi.fn(),
   receipt: vi.fn(),
   shop: vi.fn(),
-  client: { readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
+  client: {
+    readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn(),
+    getChainId: vi.fn(async () => 1),
+    // The account's next nonce, read before the wallet opens.
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 0),
+  },
 }))
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -139,6 +145,27 @@ function executesSentMint(data?: Hex) {
     }
   })
 }
+
+
+describe('a free mint held by the write hold', () => {
+  it('sends nothing on a second click after a lost wallet reply, across closing the modal, and shows the held line with its exit', async () => {
+    mocks.write.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    const shown = JSON.stringify(renderer.toJSON())
+    expect(shown).toContain("Your earlier transaction hasn't confirmed yet. Check your wallet.")
+    expect(shown).toContain('I checked my wallet. Send again')
+
+    // The user checked their wallet: the same mint is sent again, once.
+    await click('I checked my wallet. Send again')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(mocks.write).toHaveBeenCalledTimes(2)
+  })
+})
 
 describe('free mint gas', () => {
   it('wallet-action:mint-shop-tiers-without-payment sends the measured gas limit from an ordinary wallet', async () => {

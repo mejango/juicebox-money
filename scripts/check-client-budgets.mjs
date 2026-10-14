@@ -255,7 +255,9 @@ const budgets = {
   // the exit, and keeping a ran Safe proposal across reloads measure 2593.7 KiB.
   // SDK 2.32.0's write hold controller (its Safe proposal follow, the exits and
   // every held state) in place of the app's own glue measures 2597.4 KiB.
-  allScripts: 2598 * KIB,
+  // Holding the free mint through the same write hold, and rechecking a held
+  // Defifa action while its card is open, measure 2598.0 KiB: round up.
+  allScripts: 2599 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.
