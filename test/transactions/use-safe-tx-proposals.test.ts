@@ -839,13 +839,20 @@ describe('an executed Safe proposal', () => {
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     expect(flow.tx).toMatchObject({ phase: 'submitted', notice: PENDING_RECEIPT })
 
-    await pass(50 * 60_000)
-    expect(flow.tx.notice).toBe(PENDING_RECEIPT)
-    await pass(10 * 60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // Past the hold's window with no receipt the hold warns and offers its exit; the
+    // flow shows it, never falls back to awaiting, and keeps checking behind it.
+    await pass(60 * 60_000)
+    expect(flow.tx.phase).toBe('unconfirmed')
+    const held = heldState(flow.tx.error)
+    expect(held).toMatchObject({ exit: true })
+    expect(held.status).not.toBe('pending-known-hash')
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledOnce()
+    // A retry shows the same hold; nothing is proposed again, and the wait isn't restarted.
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
+    expect(heldState(flow.tx.error)).toMatchObject({ status: held.status, exit: true })
+    expect(mocks.waitForSafeExecutionHash).toHaveBeenCalledOnce()
   })
 
   it('settles once its receipt arrives within the hour', async () => {
@@ -1063,7 +1070,7 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
   })
 
-  it("keeps an execution held through a node that can't answer for its receipt after the hour", async () => {
+  it("keeps an execution held through a node that can't answer for its receipt, and shows the hold's exit, never awaiting", async () => {
     vi.useFakeTimers()
     mocks.publicClient.waitForTransactionReceipt.mockReset().mockRejectedValue(new Error('timed out'))
     let nodeUp = true
@@ -1077,10 +1084,12 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx.notice).toBe('Executed by your Safe. Confirming it onchain.')
     nodeUp = false
     await pass(10 * 60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false })
     nodeUp = true
     await pass(60_000)
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: true, notice: UNCONFIRMED })
+    // Never back to awaiting: past its window the hold warns, with its exit, and nothing is proposed again.
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toMatchObject({ exit: true })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it("shows the hold's exit once an execution whose receipt it can't authenticate passes the mined window", async () => {

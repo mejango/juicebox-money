@@ -251,8 +251,6 @@ const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
-/** A receipt still missing this long after its execution was first seen is not coming. */
-const RECEIPT_HORIZON_MS = 60 * 60_000
 
 type SafeProposal = {
   chainId: number
@@ -485,22 +483,34 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   }
   updateProposal(key, { phase: 'executing', executionHash })
   const failed = `Safe executed the proposal, but the onchain transaction failed (${executionHash}).`
-  // The execution was first seen now: its receipt has an hour from here.
-  const seenAt = Date.now()
+  // The named execution is the hold's candidate (onExecuted): its checked state,
+  // through offersExit, drives what is shown while no receipt arrives, and the
+  // proposal never falls back to awaiting while the hold is unresolved.
+  const hold = externalHolds.get(key)?.hold ?? safeHoldOf(proposal, key)
+  const stillFollowed = () => proposals.get(key)?.proposalHash === proposalHash
+  let shown: WriteHoldState | null = null
   let receipt: TransactionReceipt | null = null
   while (!receipt) {
     receipt = await waitForTrackedReceipt(client, executionHash).catch(() => null)
     if (receipt) break
-    if (Date.now() - seenAt >= RECEIPT_HORIZON_MS) {
-      const hash = executionHash
-      receipt = await chainAnswer(() => client.getTransactionReceipt({ hash }))
-      if (!receipt) {
-        updateProposal(key, unconfirmedProposal(key))
+    if (!stillFollowed()) return
+    // No receipt yet: the hold checks the named execution as its candidate.
+    const state = await hold.onExecuted(client as never, executionHash).catch(() => hold.peek())
+    if (state.status === 'clear') {
+      // Settled (it verified the execution itself) or released elsewhere while its receipt was awaited.
+      if (settledHashOf(state.settled) !== executionHash.toLowerCase()) {
+        updateProposal(key, { phase: 'released', message: WRITE_RELEASED_LINE })
         return
       }
-      break
+      const settledReceipt = await waitForTrackedReceipt(client, executionHash).catch(() => null)
+      updateProposal(key, { phase: 'success', receipt: settledReceipt })
+      return
     }
-    updateProposal(key, { phase: 'confirming' })
+    if (offersExit(shown, state)) {
+      shown = state
+      updateProposal(key, { phase: 'held', held: state })
+    } else if (!shown) updateProposal(key, { phase: 'confirming' })
+    await new Promise(resolve => setTimeout(resolve, RECEIPT_POLL_INTERVAL_MS))
   }
   if (receipt.status !== 'success') {
     updateProposal(key, {
