@@ -1,5 +1,7 @@
 'use client'
 
+import { redeemItemsIntent } from '@/lib/transaction-builders'
+
 import {
   JB_CHAINS,
   NATIVE_TOKEN,
@@ -400,6 +402,11 @@ export function RedeemShopItemsModal({
       await tx.send(plan.request, {
         reviewedAccount: plan.quote.holder,
         reviewNotice: plan.reviewNotice,
+        // Its minimum re-quotes on retry: held by the items the user chose to redeem.
+        intent: redeemItemsIntent({
+          chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook,
+          tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
+        }),
       })
     } catch (error) {
       setPrepareError(

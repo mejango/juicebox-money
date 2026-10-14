@@ -4,7 +4,8 @@ import { getAccount } from '@wagmi/core'
 import { sendCalls } from 'wagmi/actions'
 import { isHex, size, type Abi, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { simulateCallSequence } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { reviewDescription, sendUnderHold, writeHolds } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -27,6 +28,17 @@ export type SequenceCall = BatchCall & {
   contractName?: string
 }
 
+/** The write hold over a Safe batch: by the user's intent, its first call as the record's call. */
+export function safeBatchHold({ chainId, safe, intent, calls }: {
+  chainId: JBChainId; safe: Address; intent: string; calls: readonly BatchCall[]
+}) {
+  const [first] = calls
+  return writeHolds.open({
+    chainId, account: safe, safe: true, namespace: intent,
+    call: { to: first.to, data: first.data, value: first.value ?? 0n },
+  })
+}
+
 /**
  * The one raw `sendCalls` site: a Safe app connection maps `wallet_sendCalls`
  * to a single MultiSend proposal, and the returned id is its safeTxHash.
@@ -39,11 +51,18 @@ export async function proposeSafeBatch({
   safe,
   calls,
   title,
+  intent,
 }: {
   chainId: JBChainId
   safe: Address
   calls: readonly SequenceCall[]
   title: string
+  /**
+   * The write hold key of the user's intent (writeIntentKey): the batch is held
+   * by it from just before the wallet opens until the hold settles it, so a
+   * retry with regenerated deadlines or expirations waits for the exit.
+   */
+  intent: string
 }): Promise<Hex> {
   assertNoViewAs()
   if (!calls.length) throw new Error('A batch needs at least one call.')
@@ -54,7 +73,7 @@ export async function proposeSafeBatch({
   await simulateCallSequence(client, { from: safe, calls, chainName: chainName(chainId) })
   await requireTransactionReview({
     title,
-    description: `These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`,
+    description: reviewDescription(`These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`),
     confirmLabel: 'Agree & propose to Safe',
     calls: calls.map(call => ({
       chainId,
@@ -74,16 +93,27 @@ export async function proposeSafeBatch({
     requireUnchanged: true,
     changedError: SAFE_CONNECTION_CHANGED,
   })
-  const { id } = await sendCalls(wagmiConfig, {
-    chainId,
-    calls: calls.map(call => ({
-      to: call.to,
-      data: call.data,
-      value: call.value,
-    })),
+  const hold = safeBatchHold({ chainId, safe, intent, calls })
+  return sendUnderHold(chainId, hold, client as unknown as WriteHoldClient, async gate => {
+    await gate.beforeSend()
+    let id: string
+    try {
+      ;({ id } = await sendCalls(wagmiConfig, {
+        chainId,
+        calls: calls.map(call => ({
+          to: call.to,
+          data: call.data,
+          value: call.value,
+        })),
+      }))
+    } catch (error) {
+      if (isDefiniteWalletRejection(error)) gate.onRejected()
+      throw error
+    }
+    if (!isHex(id) || size(id) !== 32) {
+      throw new Error('Safe did not return a proposal hash for this batch.')
+    }
+    gate.afterSubmit(id)
+    return id
   })
-  if (!isHex(id) || size(id) !== 32) {
-    throw new Error('Safe did not return a proposal hash for this batch.')
-  }
-  return id
 }

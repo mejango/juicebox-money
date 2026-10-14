@@ -24,10 +24,13 @@ import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
+import { reviewDescription, safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, unprovenUnderHold, writeHolds } from '@/lib/write-holds'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
   waitForTrackedReceipt,
+  isDefiniteWalletRejection,
+  type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import {
   relayrRecordChain,
@@ -688,7 +691,7 @@ export async function runAuthorityCalls({
       }
       if (!reviewedInParent) await requireTransactionReview({
         title: 'Review Safe transaction',
-        description: `This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`,
+        description: reviewDescription(`This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`),
         calls: [
           {
             chainId: call.chainId,
@@ -716,44 +719,73 @@ export async function runAuthorityCalls({
         kind: 'safe',
         message: 'Continue in Safe, then execute the proposal…',
       })
-      await call.onSending?.('safe-connector')
-      try {
-        walletGuards.get(call)!()
-        if (!isSafeConnection(wagmiConfig)) throw new Error('Safe connection changed. Review this project action again.')
-      } catch (error) {
-        await call.onBeforeSubmissionAborted?.()
-        throw error
-      }
-      const safeTxHash = await wallet.sendTransaction({
-        chain: wallet.chain,
-        account,
-        to: call.target,
-        data: call.data,
-        value: call.value ?? 0n,
-        gas: 0n,
+      // Held by the SDK's write hold from just before the wallet opens: a lost
+      // reply or an unproven execution is never proposed again without the exit.
+      const sentCall = { to: call.target, data: call.data, value: call.value ?? 0n }
+      const hold = safeWriteHold(call.chainId, call.authority, sentCall)
+      const holdClient = clientFor(call.chainId) as unknown as WriteHoldClient
+      const safeTxHash = await sendUnderHold(call.chainId, hold, holdClient, async gate => {
+        await gate.beforeSend()
+        await call.onSending?.('safe-connector')
+        try {
+          walletGuards.get(call)!()
+          if (!isSafeConnection(wagmiConfig)) throw new Error('Safe connection changed. Review this project action again.')
+        } catch (error) {
+          gate.onRejected()
+          await call.onBeforeSubmissionAborted?.()
+          throw error
+        }
+        let sent: Hex
+        try {
+          sent = await wallet.sendTransaction({
+            chain: wallet.chain,
+            account,
+            to: call.target,
+            data: call.data,
+            value: call.value ?? 0n,
+            gas: 0n,
+          })
+        } catch (error) {
+          if (isDefiniteWalletRejection(error)) gate.onRejected()
+          throw error
+        }
+        gate.afterSubmit(sent)
+        return sent
       })
       await call.onSubmitted?.(safeTxHash, 'safe-connector')
-      const executionHash = await waitForSafeExecutionHash(
-        call.chainId,
-        safeTxHash,
-        { signal },
-      )
+      let executionHash: Hex
+      try {
+        executionHash = await waitForSafeExecutionHash(call.chainId, safeTxHash, { signal })
+      } catch (error) {
+        await unprovenUnderHold(call.chainId, hold, holdClient, safeTxHash, signal)
+        throw error
+      }
       const receipt = await waitForTrackedReceipt(
         clientFor(call.chainId),
         executionHash,
       )
       const failure = `${call.label ?? 'Project action'} reverted after Safe execution.`
-      if (receipt.status !== 'success') throw new Error(failure)
-      await requireSafeProposalSuccess(
-        {
-          client: clientFor(call.chainId),
-          receipt,
-          safe: call.authority,
-          proposalHash: safeTxHash,
-          calls: [{ to: call.target, data: call.data, value: call.value }],
-        },
-        failure,
-      )
+      if (receipt.status !== 'success') {
+        void hold.onReceipt(receipt, holdClient, { calls: [sentCall] }).catch(() => {})
+        throw new Error(failure)
+      }
+      try {
+        await requireSafeProposalSuccess(
+          {
+            client: clientFor(call.chainId),
+            receipt,
+            safe: call.authority,
+            proposalHash: safeTxHash,
+            calls: [{ to: call.target, data: call.data, value: call.value }],
+          },
+          failure,
+        )
+      } catch (error) {
+        // The hold settles a failure at finality, or keeps an unproven one, on its own evidence.
+        void hold.onReceipt(receipt, holdClient, { calls: [sentCall] }).catch(() => {})
+        throw error
+      }
+      await settleUnderHold(call.chainId, hold, holdClient, receipt, { calls: [sentCall] })
       directResults.push(executionHash)
       continue
     }
@@ -785,8 +817,7 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'direct') {
       if (!reviewedInParent) await requireTransactionReview({
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
-        description:
-          'Confirm each transaction on its destination chain. Calls are sent in the displayed order.',
+        description: reviewDescription('Confirm each transaction on its destination chain. Calls are sent in the displayed order.'),
         calls: group.map(call => ({
           chainId: call.chainId,
           from: call.authority,
@@ -827,31 +858,61 @@ export async function runAuthorityCalls({
         })
         await call.reverifyAuthority?.()
         walletGuards.get(call)!()
-        await call.onSending?.('direct')
-        try {
-          walletGuards.get(call)!()
-          if (isSafeConnection(wagmiConfig)) throw new Error('Connected wallet changed. Review this project action again.')
-        } catch (error) {
-          await call.onBeforeSubmissionAborted?.()
-          throw error
-        }
-        const hash = await wallet.sendTransaction({
-          chain: wallet.chain,
-          account,
-          to: call.target,
-          data: call.data,
-          value: call.value ?? 0n,
-          gas: call.gas,
+        // Held by the SDK's write hold from just before the wallet opens: a lost
+        // reply or an unread receipt is never sent again without the exit.
+        const hold = writeHolds.open({
+          chainId: call.chainId, account, safe: false,
+          call: { to: call.target, data: call.data, value: call.value ?? 0n },
+        })
+        const holdClient = client as unknown as WriteHoldClient
+        const hash = await sendUnderHold(call.chainId, hold, holdClient, async gate => {
+          await gate.beforeSend()
+          await call.onSending?.('direct')
+          try {
+            walletGuards.get(call)!()
+            if (isSafeConnection(wagmiConfig)) throw new Error('Connected wallet changed. Review this project action again.')
+          } catch (error) {
+            gate.onRejected()
+            await call.onBeforeSubmissionAborted?.()
+            throw error
+          }
+          let sent: Hex
+          try {
+            sent = await wallet.sendTransaction({
+              chain: wallet.chain,
+              account,
+              to: call.target,
+              data: call.data,
+              value: call.value ?? 0n,
+              gas: call.gas,
+            })
+          } catch (error) {
+            if (isDefiniteWalletRejection(error)) gate.onRejected()
+            throw error
+          }
+          gate.afterSubmit(sent)
+          return sent
         })
         await call.onSubmitted?.(hash, 'direct')
-        const receipt = await waitForTrackedReceipt(client, hash)
+        let receipt: Awaited<ReturnType<typeof waitForTrackedReceipt>>
+        try {
+          receipt = await waitForTrackedReceipt(client, hash)
+        } catch (error) {
+          // Its receipt can't be read: it stays held, shown with its line, until the chain says.
+          const state = await hold.state(holdClient).catch(() => hold.peek())
+          if (state.status !== 'clear') showHeldWrite(call.chainId, hold, state)
+          throw error
+        }
         if (receipt.status !== 'success') {
+          // The hold keeps a revert until it is final, so a retry can't double it.
+          void hold.onReceipt(receipt, holdClient).catch(() => {})
           throw new Error(
             `${call.label ?? 'Project action'} reverted on ${
               chainName(call.chainId)
             }.`,
           )
         }
+        await settleUnderHold(call.chainId, hold, holdClient, receipt)
         directResults.push(hash)
       }
       continue

@@ -1,5 +1,7 @@
 'use client'
 
+import { settleUnderHold, unprovenUnderHold } from '@/lib/write-holds'
+
 import { getAccount } from '@wagmi/core'
 import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
@@ -15,9 +17,10 @@ import {
   readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
-import { simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
+import { intent, simulateCallSequence, waitForTrackedReceipt, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
+  safeBatchHold,
   type SequenceCall,
 } from '@/lib/safe-batch-connector'
 import {
@@ -300,22 +303,44 @@ export async function submitSafeBatch({
   const sequence = sequenceOf(steps)
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
+    // These calls carry no restamped fields: the batch is held by its exact calls.
+    const batchIntent = writeIntentKey('safe-batch', {
+      chainId, safe: intent.address(authority), calls: sequence.map(call => [intent.address(call.to), intent.hex(call.data), call.value ?? 0n]),
+    })
     const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
+      intent: batchIntent,
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
-    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
+    const hold = safeBatchHold({ chainId, safe: authority, intent: batchIntent, calls: sequence })
+    let executionHash: Hex
+    try {
+      executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
+    } catch (error) {
+      await unprovenUnderHold(chainId, hold, client as never, safeTxHash, signal)
+      throw error
+    }
     const receipt = await waitForTrackedReceipt(client, executionHash)
+    const proof = { calls: sequence, batch: true }
     const failure = 'The batch reverted after Safe execution.'
-    if (receipt.status !== 'success') throw new Error(failure)
-    await requireSafeProposalSuccess(
-      { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
-      failure,
-    )
+    try {
+      if (receipt.status !== 'success') throw new Error(failure)
+      // An extra guard with this batch's own failure line; it decides nothing on success.
+      await requireSafeProposalSuccess(
+        { client, receipt, safe: authority, proposalHash: safeTxHash, calls: sequence },
+        failure,
+      )
+    } catch (error) {
+      // The hold settles a failure at finality, or keeps an unproven one, on its own evidence.
+      await hold.onReceipt(receipt, client as never, proof).catch(() => null)
+      throw error
+    }
+    // Success is the hold's settlement of this execution: anything else stays held, or neutral.
+    await settleUnderHold(chainId, hold, client as never, receipt, proof)
     return { kind: 'safe-app', safeTxHash, executionHash }
   }
 

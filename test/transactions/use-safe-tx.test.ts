@@ -85,8 +85,11 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
-import { createBrowserWriteRecovery, createHeldWriteStorage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
+
+import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
+import { approvalStepIntent, bridgeSendIntent, bridgeSyncIntent, moveIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, decimalKey, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
+import { useChosen } from '@/hooks/useChosen'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -155,6 +158,11 @@ function browserStorage() {
 }
 
 const basePublicClient = mocks.publicClient
+const MINED_BLOCK = `0x${'55'.repeat(32)}` as Hex
+/** `hash`'s receipt in canonical block 5. */
+function mined(hash: string, status: 'success' | 'reverted' = 'success') {
+  return { status, transactionHash: hash, blockHash: MINED_BLOCK, blockNumber: 5n, from: BOB, to: ALICE, transactionIndex: 0, logs: [] }
+}
 
 beforeEach(() => {
   vi.stubGlobal('localStorage', browserStorage())
@@ -172,12 +180,25 @@ beforeEach(() => {
   mocks.safeConnection = false
   mocks.switchChain.mockImplementation(async ({ chainId }: { chainId: number }) => { mocks.chainId = chainId })
   mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION_HASH)
+  // Every transaction the chain shows is mined in block 5, canonical, so the
+  // write hold can verify a receipt (a test that needs otherwise says so).
   mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
     hash,
+    chainId: 10,
     from: BOB,
     to: ALICE,
     input: execTransaction(),
+    nonce: 3,
+    blockHash: MINED_BLOCK,
+    blockNumber: 5n,
+    transactionIndex: 0,
   }))
+  ;(mocks.publicClient as Record<string, unknown>).getTransactionReceipt = vi.fn(async ({ hash }: { hash: Hex }) =>
+    mined(hash, mocks.receipt.data?.transactionHash?.toLowerCase() === hash.toLowerCase() ? mocks.receipt.data.status : 'success'))
+  ;(mocks.publicClient as Record<string, unknown>).getBlock = vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
+    args.blockTag === 'finalized'
+      ? { number: 4n, hash: `0x${'44'.repeat(32)}`, timestamp: 1n }
+      : { number: args.blockNumber ?? 6n, hash: args.blockNumber === 5n ? MINED_BLOCK : `0x${'66'.repeat(32)}` })
   mocks.publicClient.simulateContract.mockResolvedValue({
     request: { address: BOB, functionName: 'transfer', gas: 100n },
   })
@@ -463,7 +484,7 @@ describe('useSafeTx', () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(false)
-    mocks.receipt = { data: { status: 'success', transactionHash: hook.ref.current!.hash! }, isError: false }
+    mocks.receipt = { data: mined(hook.ref.current!.hash!), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(displayQueries.getQueryState(key)?.isInvalidated).toBe(true)
     expect(displayQueries.getQueryState(other)?.isInvalidated).toBe(false)
@@ -493,6 +514,307 @@ describe('useSafeTx', () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  describe('a write keyed by its intent', () => {
+    const swapAbi = parseAbi(['function swap(address to, uint256 amount, uint256 deadline)'])
+    const swap = (deadline: bigint) => ({ ...request, abi: swapAbi, functionName: 'swap', args: [BOB, 5n, deadline] as const })
+    const intent = writeIntentKey('swap', { chainId: 10, to: sdkIntent.address(BOB), amount: 5n })
+
+    it('refuses a retry whose deadline regenerated while the first attempt is held, and sends only after the explicit exit', async () => {
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent }) })
+      expect(hook.ref.current!.phase).toBe('unconfirmed')
+      await act(async () => hook.ref.current!.reset())
+      // The retry carries a fresh deadline, so its calldata differs: the intent still holds it.
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('refuses a send under its intent while a #128-era hold of the exact call is unresolved, until its explicit exit', async () => {
+      // An earlier build held this exact call by its calldata alone, and the wallet's reply was lost.
+      const call = { to: BOB, data: encodeFunctionData({ abi: swapAbi, functionName: 'swap', args: [BOB, 5n, 1_000n] }), value: 7n }
+      const legacyHold = writeHolds.open({ chainId: 10, account: ALICE, safe: false, call })
+      await legacyHold.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('refuses a review another window sent the same intent during, with its line, and opens a fresh review on retry', async () => {
+      const otherTab = createWriteHold()
+      // While this review is open, another window sends the same intent, and its wallet refuses.
+      mocks.requestReview.mockImplementationOnce(async () => {
+        const theirs = otherTab.open({ chainId: 10, account: ALICE, safe: false, call: { to: BOB, data: '0x', value: 0n }, namespace: intent })
+        await theirs.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); gate.onRejected() })
+        return true
+      })
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent, reviewedInParent: true, reviewNotice: 'Check the amount.' }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      expect(hook.ref.current!.phase).toBe('error')
+      expect(hook.ref.current!.error).toBe(WRITE_HOLD_STALE_REVIEW_LINE)
+      // A parent-rendered retry still opens the review again before anything is sent.
+      mocks.requestReview.mockClear()
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent, reviewedInParent: true }) })
+      expect(mocks.requestReview).toHaveBeenCalledOnce()
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      otherTab.dispose()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    // One intent per user action: what the app picks (route, venue, price, computed amounts) never splits it.
+    const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
+    const HOOK = '0x4444444444444444444444444444444444444444' as Address
+    const payment = { chainId: 10, projectId: 7, token: BOB, amount: '5', beneficiary: ALICE, memo: 'gm' }
+    it.each([
+      ['a payment whose route changed from pay to swap', paymentIntent(payment), paymentIntent({ ...payment })],
+      ['a checkout whose price moved, its items the same', checkoutIntent({ ...payment, hook: HOOK, items: { 2: 1, 1: 3 } }),
+        checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3, 2: 1 } })],
+      ['a cash-out whose venue changed from pool to terminal', cashOutIntent(payment), cashOutIntent({ ...payment })],
+      ['a bridge send whose fee was requoted', bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE }),
+        bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE })],
+      ['a sync whose fee was requoted', bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE }), bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE })],
+      ["a move's approval after Max refilled another balance",
+        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK),
+        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK)],
+      ['an approval step whose computed amount changed', approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL),
+        approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL)],
+    ])('refuses %s after a lost reply, before the wallet', async (_case, first, retry) => {
+      expect(retry).toBe(first)
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: first }) })
+      await act(async () => hook.ref.current!.reset())
+      // The retry's calldata differs (another route, venue, price or amount): its intent still holds it.
+      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, { ...reviewedByAlice, intent: retry }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('keys a redemption by the items and holder alone, in any selection order', () => {
+      const redeem = (tokenIds: bigint[], holder = ALICE) => redeemItemsIntent({ chainId: 10, projectId: 7, hook: HOOK, tokenIds, holder })
+      expect(redeem([2n, 1n])).toBe(redeem([1n, 2n]))
+      expect(redeem([1n])).not.toBe(redeem([1n, 2n]))
+      expect(redeem([1n], BOB)).not.toBe(redeem([1n]))
+    })
+
+    describe("a pay panel's intent", () => {
+      const base = {
+        mode: 'pay' as const, chainId: 10, projectId: 7, hook: HOOK, beneficiary: ALICE, memo: 'gm', amount: '5',
+        token: { from: 'typed' as const, value: BOB }, chosenCart: {}, cartCount: 0, checkoutReady: false,
+      }
+      it('blocks a checkout whose every item was pruned, never falling through to a payment', () => {
+        expect(payPanelIntent({ ...base, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
+        // Even once the shop stops resolving its hook.
+        expect(payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
+        expect('blocked' in payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 2, checkoutReady: true })).toBe(true)
+      })
+      it('keys a checkout by the preserved choice, whatever its clamped cart or total', () => {
+        const checkout = payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 2, checkoutReady: true, amount: '9' })
+        expect(checkout).toEqual({ key: checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }) })
+        expect(payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 3, checkoutReady: true, amount: '12' })).toEqual(checkout)
+      })
+      it("keeps the user's currency through an automatic fallback, and an untouched default as auto", () => {
+        // The app switched to another currency: the key still names the user's pick.
+        expect(payPanelIntent({ ...base, token: { from: 'typed', value: BOB } })).toEqual({ key: paymentIntent(payment) })
+        const untouched = payPanelIntent({ ...base, token: { from: 'auto', value: null } })
+        expect(untouched).toEqual({ key: paymentIntent({ ...payment, token: 'auto:token' }) })
+      })
+    })
+
+    it('keeps a deliberate merge blocked: an app refill shares the typed key, so its send waits for the exit', async () => {
+      // The user typed 5; the app then refilled the field to 7. The key keeps the 5 the user chose.
+      let field!: ReturnType<typeof useChosen<string>>
+      const Probe = () => { field = useChosen('', 'amount'); return null }
+      let probe!: TestRenderer.ReactTestRenderer
+      await act(async () => { probe = TestRenderer.create(createElement(Probe)) })
+      await act(async () => field.set('5'))
+      const typed = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
+      await act(async () => field.fill('7'))
+      const refilled = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
+      expect(refilled).toBe(typed)
+      await act(async () => probe.unmount())
+
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: typed }) })
+      await act(async () => hook.ref.current!.reset())
+      // The refilled send is another call, still held by the merged intent: blocked, with the exit.
+      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 7n] as const }, { ...reviewedByAlice, intent: refilled }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('keeps different user choices apart', () => {
+      expect(paymentIntent({ ...payment, amount: '6' })).not.toBe(paymentIntent(payment))
+      expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
+      expect(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 2 } })).not.toBe(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }))
+      expect(cashOutIntent({ ...payment, amount: '6' })).not.toBe(cashOutIntent(payment))
+      expect(cashOutIntent({ ...payment, amount: 'policy:max' })).not.toBe(cashOutIntent(payment))
+      expect(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:b', 'permit2', BOB, TERMINAL))
+      expect(approvalStepIntent('intent:a', 'erc20', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL))
+    })
+
+    it('keys an intent by the action and its chosen parameters only, in one place', () => {
+      expect(writeIntentKey('swap', { amount: 5n, to: sdkIntent.address(`0x${BOB.slice(2).toUpperCase()}`), chainId: 10 })).toBe(intent)
+      expect(writeIntentKey('swap', { chainId: 10, to: sdkIntent.address(BOB), amount: 6n })).not.toBe(intent)
+      expect(writeIntentKey('pay', { chainId: 10, to: sdkIntent.address(BOB), amount: 5n })).not.toBe(intent)
+    })
+  })
+
+  describe('success shown only once the write hold settles it', () => {
+    const BLOCK = `0x${'55'.repeat(32)}` as Hex
+    const OTHER_BLOCK = `0x${'56'.repeat(32)}` as Hex
+    /** A chain that knows `hash` mined in block 5, canonical while `canonical()` says so. */
+    function chainWith(hash: Hex, canonical: () => boolean) {
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async () => ({ hash, chainId: 10, from: ALICE, to: BOB, input: '0x', value: 7n, nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 })),
+        getTransactionReceipt: vi.fn(async () => receiptFor(hash)),
+        getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) => args.blockTag === 'finalized'
+          ? { number: 4n, hash: OTHER_BLOCK, timestamp: 1n }
+          : { number: args.blockNumber ?? 6n, hash: canonical() && args.blockNumber === 5n ? BLOCK : OTHER_BLOCK }),
+      } as typeof mocks.publicClient
+    }
+    const receiptFor = (hash: Hex) => ({ status: 'success' as const, transactionHash: hash, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] })
+
+    it('never renders success from an instant receipt the chain does not show canonical, and does once it does', async () => {
+      let canonical = false
+      chainWith(HASH, () => canonical)
+      const phases: string[] = []
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: receiptFor(HASH), isError: false }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      phases.push(hook.ref.current!.phase)
+      expect(phases).not.toContain('success')
+      expect(hook.ref.current!.phase).toBe('pending')
+
+      // The chain shows it canonical, and the receipt is read again.
+      canonical = true
+      mocks.receipt = { data: { ...receiptFor(HASH) }, isError: false }
+      await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(hook.ref.current!.phase).toBe('success')
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it("shows the hold's exit once a receipt it can't verify passes the mined window, and keeps checking behind it", async () => {
+      // The node returns a receipt, but doesn't show its block canonical: the hold can't verify it.
+      let canonical = false
+      chainWith(HASH, () => canonical)
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+      mocks.receipt = { data: receiptFor(HASH), isError: false }
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+      try {
+        await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        // Held while the hold can't tell: pending, no exit yet.
+        expect(hook.ref.current!.phase).toBe('pending')
+        await act(async () => { await vi.advanceTimersByTimeAsync(31 * 60_000) })
+        // Past the mined window the hold offers its exit: the flow shows it, never busy forever.
+        expect(hook.ref.current!.phase).toBe('unconfirmed')
+        const shown = heldNotice(hook.ref.current!.error)
+        expect(shown.status).toBe('held-unchecked')
+        expect(shown.onExit).toBeTypeOf('function')
+        // Behind it, the settlement checks go on: once the chain shows it, it settles.
+        canonical = true
+        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        expect(hook.ref.current!.phase).toBe('success')
+      } finally {
+        vi.useRealTimers()
+      }
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it("never adopts another tab's newer reservation: a flow following attempt A ignores attempt B's hash", async () => {
+      const H2 = `0x${'ef'.repeat(32)}` as Hex
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
+          if (hash === H2) return { hash, chainId: 10, from: ALICE, to: BOB, input: '0x', value: 7n, nonce: 3, blockNumber: null }
+          throw new TransactionNotFoundError({ hash })
+        }),
+      } as typeof mocks.publicClient
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      try {
+        mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+        const first = await renderHook()
+        await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+        expect(heldNotice(first.ref.current!.error).status).toBe('held-no-hash')
+
+        // Another tab (its own controller, its notices unseen here) takes A's exit and sends attempt B.
+        const otherTab = createWriteHold()
+        const call = { to: BOB, data: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n }
+        const theirs = otherTab.open({ chainId: 10, account: ALICE, safe: false, call })
+        const seen = await theirs.state(mocks.publicClient as never)
+        await expect(theirs.exit(seen, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
+        await theirs.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); gate.afterSubmit(H2) })
+
+        // The first flow's next look sees B: it never shows or follows B's hash as its own.
+        await act(async () => { vi.advanceTimersByTime(60_000) })
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+        expect(first.ref.current!.hash).not.toBe(H2)
+        const shown = first.ref.current!.error
+        if (isValidElement(shown)) expect(heldNotice(shown).hash).not.toBe(H2)
+        otherTab.dispose()
+        await act(async () => first.renderer.unmount())
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it("takes only its own hash's settlement: a flow following H1 shows nothing when the resend H2 settles", async () => {
+      const H2 = `0x${'ef'.repeat(32)}` as Hex
+      // H1's wallet reply is lost to the network; its watch gives up.
+      mocks.publicClient = {
+        ...mocks.publicClient,
+        getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) }),
+      } as typeof mocks.publicClient
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const first = await renderHook()
+      await act(async () => { await first.ref.current!.send(request, reviewedByAlice) })
+      expect(first.ref.current!.phase).toBe('unconfirmed')
+
+      // Another flow takes the exit and resends as H2, which settles.
+      const second = await renderHook()
+      await act(async () => { await second.ref.current!.send(request, reviewedByAlice) })
+      mocks.writeContract.mockResolvedValueOnce(H2)
+      chainWith(H2, () => true)
+      await act(async () => { heldNotice(second.ref.current!.error).onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      mocks.receipt = { data: receiptFor(H2), isError: false }
+      await act(async () => { second.renderer.update(createElement(Harness, { ref: second.ref })) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(second.ref.current!.phase).toBe('success')
+      // The first flow never claims H2's result for its own attempt.
+      expect(first.ref.current!.notice).not.toBe('Your earlier transaction went through.')
+      expect(first.ref.current!.phase).not.toBe('success')
+      await act(async () => first.renderer.unmount())
+      await act(async () => second.renderer.unmount())
+    })
   })
 
   it("enters the hold when the receipt watch gives up, so the SDK's time-based exit appears, and accepting it sends exactly once more", async () => {
@@ -549,7 +871,7 @@ describe('useSafeTx', () => {
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
 
-    mocks.receipt = { data: { status: 'success', transactionHash: hash }, isError: false }
+    mocks.receipt = { data: mined(hash), isError: false }
     await act(async () => {
       hook.renderer.update(createElement(Harness, { ref: hook.ref }))
     })
@@ -820,7 +1142,8 @@ describe('useSafeTx', () => {
       await endElsewhere()
       // A look at the hold (a poll, another flow) sees it clear while the exit is open.
       await act(async () => { await writeHolds.open(INPUT()).state(mocks.publicClient as never) })
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      // Released elsewhere with no settlement known: this flow claims no result.
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -836,7 +1159,8 @@ describe('useSafeTx', () => {
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'Your earlier transaction went through.' })
+      // Released elsewhere with no settlement known: this flow claims no result.
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
       await act(async () => hook.renderer.unmount())
     })
   })
@@ -876,7 +1200,7 @@ describe('useSafeTx', () => {
       expect(fast).toBeGreaterThanOrEqual(150)
       expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
 
-      getTransactionReceipt.mockResolvedValue({ status: 'success', blockNumber: 9n, transactionHash: hook.ref.current!.hash })
+      getTransactionReceipt.mockResolvedValue(mined(hook.ref.current!.hash!))
       await act(async () => {
         await vi.advanceTimersByTimeAsync(60_000)
       })
@@ -899,7 +1223,7 @@ describe('useSafeTx', () => {
         await hook.ref.current!.send(request, reviewedByAlice)
       })
 
-      mocks.receipt = { data: { status, transactionHash: HASH }, isError: false }
+      mocks.receipt = { data: mined(HASH, status), isError: false }
       await act(async () => {
         hook.renderer.update(createElement(Harness, { ref: hook.ref }))
       })
@@ -913,7 +1237,7 @@ describe('useSafeTx', () => {
   it('does not confirm a new action using the previous successful receipt', async () => {
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    mocks.receipt = { data: { status: 'success', transactionHash: HASH }, isError: false }
+    mocks.receipt = { data: mined(HASH), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe('success')
 
@@ -923,7 +1247,7 @@ describe('useSafeTx', () => {
       phase: 'pending', busy: true, hash: EXECUTION_HASH, receipt: null,
     })
 
-    mocks.receipt = { data: { status: 'success', transactionHash: EXECUTION_HASH }, isError: false }
+    mocks.receipt = { data: mined(EXECUTION_HASH), isError: false }
     await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
     expect(hook.ref.current!.phase).toBe('success')
   })
@@ -934,7 +1258,7 @@ describe('useSafeTx', () => {
       const getTransactionReceipt = vi
         .fn()
         .mockResolvedValueOnce(null)
-        .mockResolvedValue({ status: 'success', blockNumber: 77n, transactionHash: HASH })
+        .mockResolvedValue(mined(HASH))
       mocks.publicClient = {
         ...mocks.publicClient,
         getTransactionReceipt,
@@ -957,7 +1281,7 @@ describe('useSafeTx', () => {
       // Two lookups, then the write hold's own read as it verifies the receipt.
       expect(getTransactionReceipt).toHaveBeenCalledTimes(3)
       expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
-      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 77n })
+      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 5n })
     } finally {
       vi.useRealTimers()
     }

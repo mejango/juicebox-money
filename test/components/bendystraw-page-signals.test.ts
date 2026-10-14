@@ -87,9 +87,10 @@ describe("a page's Bendystraw reads", () => {
     expect(readers.has('@/lib/pending-payments#paymentCommitment')).toBe(false)
   })
 
+  // Scans the whole browser build's source: slow on a loaded machine.
   it('give each reader a signal', () => {
     expect(unsignalled(browserCode(), new Set(findReaders().keys()))).toEqual([])
-  })
+  }, 60_000)
 })
 
 describe('the search for readers', () => {

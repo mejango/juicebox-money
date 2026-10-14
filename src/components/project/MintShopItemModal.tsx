@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { settledLine, writeHolds } from '@/lib/write-holds'
+import { repeatsWithoutExit, reviewDescription, sameReservation, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -103,17 +103,40 @@ export function MintShopItemModal({
   const [message, setMessage] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
 
+  /** The mint is the hold's verified settlement: refresh the shop and say so. */
+  const finishMint = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: shop721QueryKey(chainId, projectId, isRevnet) }),
+      queryClient.invalidateQueries({ queryKey: ['shopTierSupply'] }),
+    ])
+    setPhase('done')
+  }
+
   // A shown hold stays current: an exit that becomes due appears, and one that clears ends it.
   useWriteHoldWatch(phase === 'held' ? held?.hold : undefined,
     getPublicClient(config, { chainId: chainId as SupportedChainId }) as never,
     state => {
-      if (!held || exitingRef.current === held.hold) return
-      if (state.status === 'clear') {
-        setHeld(null)
-        setMessage(settledLine(state.settled))
-        setPhase('uncertain')
-      } else setHeld({ hold: held.hold, state })
+      if (!held || exitingRef.current === held.hold || !sameReservation(held.state, state)) return
+      if (state.status !== 'clear') {
+        if (!repeatsWithoutExit(held.state, state)) setHeld({ hold: held.hold, state })
+        return
+      }
+      setHeld(null)
+      // Only a settlement of the hash this modal observed is its result.
+      const own = (hash ?? held.state.record.hash)?.toLowerCase()
+      const settledHash = settledHashOf(state.settled)
+      if (own && settledHash === own) {
+        if (state.settled?.result === 'success') void finishMint()
+        else {
+          setMessage(settledLine(state.settled))
+          setPhase('uncertain')
+        }
+      } else {
+        setMessage(null)
+        setPhase('review')
+      }
     })
+
 
   const busy = ['checking', 'sending', 'confirming'].includes(phase)
   const maxQuantity = Math.max(0, Math.min(50, remaining))
@@ -230,9 +253,9 @@ export function MintShopItemModal({
               title: `Review free mint on ${chainName(chainId)}`,
               label: `Mint ${review.quantity} × ${itemName}`,
               contractName: 'JB721TiersHook',
-              description: viaSafe
+              description: reviewDescription(viaSafe
                 ? SAFE_NONCE_GUIDANCE
-                : 'This consumes shop inventory and collects no payment. It cannot be undone.',
+                : 'This consumes shop inventory and collects no payment. It cannot be undone.'),
               ...(viaSafe
                 ? { confirmLabel: 'Agree & continue to Safe' }
                 : {}),
@@ -304,7 +327,7 @@ export function MintShopItemModal({
       const receipt = await waitForTrackedReceipt(client, submitted)
       outcomeKnown = true
       // The hold releases a verified success at once, a failure only at finality.
-      void hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => {})
+      const verified = hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => hold.peek())
       if (receipt.status !== 'success') throw new Error('The mint failed.')
       if (proposal) {
         // Only the Safe's ExecutionSuccess for this proposal confirms the
@@ -324,15 +347,18 @@ export function MintShopItemModal({
         if (outcome !== 'success') throw new Error('The mint failed.')
       }
 
-      await Promise.all([
-        queryClient.invalidateQueries({
-          queryKey: shop721QueryKey(chainId, projectId, isRevnet),
-        }),
-        queryClient.invalidateQueries({
-          queryKey: ['shopTierSupply'],
-        }),
-      ])
-      setPhase('done')
+      // Minted only once the hold settles this receipt: until then it holds the mint.
+      const settled = await verified
+      if (settled.status !== 'clear' || settledHashOf(settled.settled) !== receipt.transactionHash.toLowerCase()) {
+        if (settled.status !== 'clear') showHeld(hold, settled)
+        else {
+          // Settled as another attempt, or released elsewhere: this attempt claims no result.
+          setMessage(null)
+          setPhase('review')
+        }
+        return
+      }
+      await finishMint()
     } catch (error) {
       const hold = holdRef.current
       if (hold && error instanceof WriteHeldError) {

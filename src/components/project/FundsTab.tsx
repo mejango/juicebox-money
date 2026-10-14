@@ -1,5 +1,7 @@
 'use client'
 
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+
 import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 
 import {
@@ -32,6 +34,7 @@ import {
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
+import { useChosen } from '@/hooks/useChosen'
 import {
   formatUnits,
   parseUnits,
@@ -58,7 +61,7 @@ import {
 } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
-import { buildUseAllowanceRequest } from '@/lib/transaction-builders'
+import { buildUseAllowanceRequest, decimalKey } from '@/lib/transaction-builders'
 
 /** A payout limit or surplus allowance entry with its live usage. */
 type LimitLine = {
@@ -783,6 +786,8 @@ type ReviewedTx = {
   min: bigint
   /** The account the review was made for. */
   account: Address
+  /** Its minimum re-quotes on retry: the write hold key of what the user chose. */
+  intent: string
 }
 
 function FundsTxFlow({
@@ -815,7 +820,8 @@ function FundsTxFlow({
   const tx = useSafeTx(chainId)
 
   const [open, setOpen] = useState(false)
-  const [amount, setAmount] = useState('')
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
   const [currency, setCurrency] = useState<number>(
     lines[0]?.currency ?? ctx.currency,
   )
@@ -972,6 +978,9 @@ function FundsTxFlow({
         quote,
         min,
         account: address,
+        intent: writeIntentKey('use-allowance', {
+          chainId, projectId, terminal: intent.address(terminal), token: intent.address(ctx.token), amount: amountField.key(decimalKey), currency: line.currency, beneficiary: intent.address(address),
+        }),
       })
     } catch (e) {
       setFlowError(e instanceof FlowError ? e.message : shortError(e))
@@ -983,7 +992,7 @@ function FundsTxFlow({
   const handleConfirm = () => {
     if (!review || sending) return
     // The reviewed args embed the beneficiary: only that account may send them.
-    tx.send(review.request, { reviewedAccount: review.account })
+    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent })
   }
 
   const closeReview = () => {
@@ -1152,7 +1161,7 @@ function FundsTxFlow({
               const max = tokenKeyed
                 ? bigintMin(line.remaining, balance)
                 : line.remaining
-              setAmount(formatUnits(max, decimals))
+              amountField.choose('max', formatUnits(max, decimals))
               setReview(null)
               setFlowError(null)
             }}

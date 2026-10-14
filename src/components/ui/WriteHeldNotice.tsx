@@ -16,6 +16,8 @@ export function WriteHeldNotice({ chainId, state, onExit }: {
 }) {
   const hash = 'hash' in state ? state.hash : state.record.hash
   const url = hash ? explorerTxUrl(chainId, hash) : null
+  // Only while this browser can't remember pending writes.
+  const notice = 'notice' in state && typeof state.notice === 'string' ? state.notice : null
   const warning = 'warning' in state && state.warning ? state.warning : writeExitMessage(state.record.call)
   return (
     <span className="block space-y-2 text-smoke-800">
@@ -30,6 +32,7 @@ export function WriteHeldNotice({ chainId, state, onExit }: {
           </>
         ) : null}
       </span>
+      {notice ? <span className="block text-xs text-smoke-600">{notice}</span> : null}
       {onExit ? (
         <>
           <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={onExit}>

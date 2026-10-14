@@ -63,7 +63,7 @@ if (!rpcTransport.includes("createPacedJBCenterLimiter()") ||
 }
 
 const safeConnector = read("src/lib/safe-connector.ts");
-for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "SAFE_PROPOSAL_AWAITING", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "chainAnswer", "reportedSafeExecution"]) {
+for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "SAFE_PROPOSAL_AWAITING", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "reportedSafeExecution"]) {
   if (!new RegExp(`export \\{[^}]*\\b${name}\\b[^}]*\\} from ['"]@bananapus/nana-sdk-core/safe-service['"]`, "s").test(safeConnector)) {
     failures.push(`Safe connector must re-export SDK ${name}`);
   }

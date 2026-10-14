@@ -5,13 +5,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { settledLine, writeHolds } from '@/lib/write-holds'
+import { offersExit, repeatsWithoutExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
   isHash,
-  keccak256,
-  stringToHex,
   type Abi,
   type Address,
   type Hex,
@@ -37,7 +35,9 @@ import {
   WriteHeldError,
   WriteHoldBusyError,
   WriteHoldNonceError,
+  WriteHoldStaleReviewError,
   type WriteHeldState,
+  type WriteHoldState,
   type WriteHoldClient,
   type WriteHoldSettled,
   type WriteHoldGate,
@@ -53,9 +53,7 @@ import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   atOnceExecution,
-  chainAnswer,
   findPendingSafeAppProposal,
-  heldCall,
   isSafeConnection,
   readSafeAppExecution,
   reportedSafeExecution,
@@ -128,6 +126,13 @@ export type TxSendOptions = {
   onWriteRejected?: () => unknown | Promise<unknown>
   /** An app journal (Defifa's) already holds this write; the send keeps no hold of its own. */
   journaled?: boolean
+  /**
+   * For a write whose calldata regenerates on retry (a deadline, a Permit2
+   * expiration or signature, a fresh quote): its intent key, from
+   * writeIntentKey. Its hold is the intent's, so a retry is held until the
+   * user's exit.
+   */
+  intent?: string
   /**
    * The write hold over that journal's record. A Safe follower's outcomes
    * (unproven, executed, a receipt) go to it, and `onChange` tells the app.
@@ -220,6 +225,10 @@ type ProposalPhase =
   | 'replaced'
   /** The chain shows the Safe ran it, and its execution can't be read here. */
   | 'ran'
+  /** Its hold was released elsewhere with no settlement known: nothing is claimed. */
+  | 'released'
+  /** Its hold offers its exit (`held`), while its settlement is still checked behind it. */
+  | 'held'
 
 /** How a flow shows each: in flight, with the Safe, or settled. */
 const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
@@ -233,14 +242,14 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
   expired: 'error',
   replaced: 'error',
   ran: 'submitted',
+  released: 'submitted',
+  held: 'unconfirmed',
 }
 
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
 const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
-/** A receipt still missing this long after its execution was first seen is not coming. */
-const RECEIPT_HORIZON_MS = 60 * 60_000
 
 type SafeProposal = {
   chainId: number
@@ -253,6 +262,8 @@ type SafeProposal = {
   receipt: TransactionReceipt | null
   /** The line for an end other than success: failed, unproven, expired or replaced. */
   message: string | null
+  /** In phase `held`: what the hold offers, with its exit. */
+  held?: WriteHeldState
 }
 
 /**
@@ -275,15 +286,21 @@ type HeldWrite = {
   state: WriteHeldState | null
   /** A Safe proposal's registry key: an accepted exit drops the registry's entry too. */
   proposalKey?: string
+  /** This flow's own write, shown by its hold: a settlement of it is this flow's success. */
+  own?: boolean
 }
 
-/** A Safe write is held by its call with stamped fields blanked, as the registry keys it. */
-function safeHoldNamespace(key: string): string {
-  return `safe:${keccak256(stringToHex(key)).slice(2)}`
-}
+
+/** Safe proposals sent under an intent key, by registry key: their hold is the intent's. */
+const intentHolds = new Map<string, string>()
 
 function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, key: string): WriteHoldHandle {
-  return writeHolds.open({ chainId: proposal.chainId, account: proposal.safe, safe: true, namespace: safeHoldNamespace(key), call: proposal.call })
+  const intent = intentHolds.get(key)
+  const call = { chainId: proposal.chainId, account: proposal.safe, safe: true, call: proposal.call }
+  // Under an intent, the held-call namespace #128 shipped is its legacy key: an attempt held there still holds it.
+  return intent
+    ? writeHolds.open({ ...call, namespace: intent }, { legacy: [safeHoldNamespace(key)] })
+    : writeHolds.open({ ...call, namespace: safeHoldNamespace(key) })
 }
 
 /** Tell the hold how the registry saw a proposal end; the hold decides what it releases. */
@@ -322,7 +339,9 @@ async function settleSafeHold(key: string, client: FollowClient): Promise<void> 
       // The follower gave up: the hold offers the exit, and later evidence still settles it.
       await hold.onUnproven(client as never, proposal.proposalHash)
     } else if (proposal.phase === 'ran') {
-      await hold.onExecuted(client as never, proposal.executionHash ?? undefined)
+      // The chain showed it ran, but no execution hash is known: the hold looks
+      // again itself. onExecuted takes only a hash believed to be the execution.
+      await hold.state(client as never)
     } else if (proposal.phase === 'expired' || proposal.phase === 'replaced') {
       await hold.state(client as never)
     }
@@ -346,10 +365,7 @@ function notifyProposals(): void {
   for (const listener of proposalListeners) listener()
 }
 
-function proposalKey(chainId: number, safe: Address, call: SafeAppCall): string {
-  const held = heldCall(call)
-  return `${chainId}:${safe.toLowerCase()}:${held.to.toLowerCase()}:${held.value ?? 0n}:${held.data.toLowerCase()}`
-}
+const proposalKey = safeProposalKey
 
 function updateProposal(key: string, next: Partial<SafeProposal>): void {
   const current = proposals.get(key)
@@ -358,22 +374,14 @@ function updateProposal(key: string, next: Partial<SafeProposal>): void {
   notifyProposals()
 }
 
-/** A distinct execution hash cannot make the original Safe proposal safe to repeat. */
-function unconfirmedProposal(key: string, message = SAFE_PROPOSAL_UNCONFIRMED): Partial<SafeProposal> {
-  const proposal = proposals.get(key)
-  // The chain showed the Safe ran it: an unreadable recheck leaves it so.
-  if (proposal?.phase === 'ran') return {}
-  const knownProposal = proposal?.executionHash &&
-    proposal.executionHash.toLowerCase() !== proposal.proposalHash.toLowerCase()
-  return { phase: knownProposal ? 'awaiting' : 'unproven', message }
-}
-
 /** Rechecks use the same follower; concurrent flows never start a second one. */
 function startFollowingProposal(key: string, client: FollowClient, reply: boolean): void {
   if (followingProposals.has(key)) return
   followingProposals.add(key)
   void followProposal(key, client, reply)
-    .catch(() => updateProposal(key, unconfirmedProposal(key)))
+    // An end the follower can't conclude is unproven: the hold decides, with its exit,
+    // in a loop of its own, so a recheck can follow the proposal again behind it.
+    .catch(() => void holdUntilResolved(key, client, { unproven: true }))
     .finally(() => {
       followingProposals.delete(key)
       void settleSafeHold(key, client)
@@ -385,7 +393,7 @@ function startFollowingProposal(key: string, client: FollowClient, reply: boolea
  * until dismissed. It ends with a result, or once it can no longer run.
  */
 function holdsCall(proposal: SafeProposal | undefined): proposal is SafeProposal {
-  return !!proposal && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
+  return !!proposal && proposal.phase !== 'released' && SHOWN_AS[proposal.phase] !== 'success' && SHOWN_AS[proposal.phase] !== 'error'
 }
 
 /** The execution a proposal awaiting its signers runs in, or how it ends before it runs. */
@@ -437,9 +445,10 @@ async function awaitExecution(
 
 /**
  * Follow a proposal to its result, whatever becomes of the flow that made it.
- * A node that cannot answer keeps the proposal held and is asked again a
- * minute later ({@link chainAnswer}). A known proposal with uncertain execution
- * evidence stays awaiting an explicit recheck, without another wallet send.
+ * No app-side retry stands between its end and the hold: an unproven end, or a
+ * receipt in hand, goes to the hold at once (holdUntilResolved), and every
+ * further chain read (an RPC error being unknown evidence) runs behind what
+ * the hold shows. Nothing is proposed again.
  */
 async function followProposal(key: string, client: FollowClient, reply: boolean): Promise<void> {
   const proposal = proposals.get(key)
@@ -451,61 +460,56 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   let executionHash = execution ? proposalHash : null
   if (!executionHash) {
     // A recheck of one the Safe ran keeps saying so while it looks.
-    if (proposal.phase !== 'ran') updateProposal(key, { phase: 'awaiting' })
+    // Awaiting only before anything is known: one already held stays as its hold says.
+    if (proposal.phase !== 'ran' && proposal.phase !== 'held') updateProposal(key, { phase: 'awaiting' })
     const awaited = await awaitExecution(proposal, client)
     if ('executionHash' in awaited) executionHash = awaited.executionHash
     // An execution returned at once that the node learned only after the probe
-    // is the execution: the chain is asked once more before the proposal ends.
+    // is the execution: the chain is asked once more, one read, before the
+    // proposal ends. An error is unknown evidence for the hold, never a wait.
     else if (
       awaited.phase === 'unproven' &&
-      (execution = await chainAnswer(() => client.getTransaction({ hash: proposalHash })))
+      (execution = await client.getTransaction({ hash: proposalHash }).catch(() => null))
     ) {
       executionHash = proposalHash
     } else {
-      updateProposal(key, awaited.phase === 'unproven' ? unconfirmedProposal(key, awaited.message) : awaited)
+      if (awaited.phase === 'unproven') void holdUntilResolved(key, client, { unproven: true })
+      else updateProposal(key, awaited)
       return
     }
   }
   updateProposal(key, { phase: 'executing', executionHash })
   const failed = `Safe executed the proposal, but the onchain transaction failed (${executionHash}).`
-  // The execution was first seen now: its receipt has an hour from here.
-  const seenAt = Date.now()
-  let receipt: TransactionReceipt | null = null
-  while (!receipt) {
-    receipt = await waitForTrackedReceipt(client, executionHash).catch(() => null)
-    if (receipt) break
-    if (Date.now() - seenAt >= RECEIPT_HORIZON_MS) {
-      const hash = executionHash
-      receipt = await chainAnswer(() => client.getTransactionReceipt({ hash }))
-      if (!receipt) {
-        updateProposal(key, unconfirmedProposal(key))
-        return
-      }
-      break
-    }
-    updateProposal(key, { phase: 'confirming' })
+  // A missing receipt is no end the app can conclude: the named execution is
+  // the hold's candidate (onExecuted), and the proposal ends unproven, its hold
+  // deciding (holdUntilResolved), which keeps reading the receipt behind it.
+  const receipt = await waitForTrackedReceipt(client, executionHash).catch(() => null)
+  if (!receipt) {
+    const hold = externalHolds.get(key)?.hold ?? safeHoldOf(proposal, key)
+    await hold.onExecuted(client as never, executionHash).catch(() => null)
+    void holdUntilResolved(key, client, { unproven: true, executionHash })
+    return
   }
   if (receipt.status !== 'success') {
-    updateProposal(key, {
-      ...(executionHash.toLowerCase() === proposalHash.toLowerCase()
-        ? { phase: 'failed' as const, message: failed }
-        : unconfirmedProposal(key)),
-      receipt,
-    })
+    // An execution returned at once that reverted ran nothing on the Safe: failed.
+    // Another's revert doesn't show this proposal's end: the hold decides.
+    if (executionHash.toLowerCase() === proposalHash.toLowerCase()) updateProposal(key, { phase: 'failed', message: failed, receipt })
+    else void holdUntilResolved(key, client, { unproven: true, receipt })
     return
   }
   // Only the Safe's own event for this proposal decides it, and an execution
   // returned at once must also have run the reviewed call. Its receipt proves
-  // its transaction exists, so with none read yet, a node that shows none is
-  // only behind: the proposal stays held, and can end its confirm on Done.
+  // its transaction exists, so a node that shows none is only behind: one read
+  // here, and the hold, with the receipt in hand, reads it again behind what it shows.
   const atOnce = receipt.transactionHash.toLowerCase() === proposalHash.toLowerCase()
   const transaction =
     atOnce && !execution
-      ? await chainAnswer(() => client.getTransaction({ hash: proposalHash }), {
-          exists: true,
-          onRetry: () => updateProposal(key, { phase: 'confirming' }),
-        })
+      ? await client.getTransaction({ hash: proposalHash }).catch(() => null)
       : execution
+  if (atOnce && !transaction) {
+    void holdUntilResolved(key, client, { unproven: false, receipt })
+    return
+  }
   const { status } = await readSafeAppExecution({
     client: {
       getTransaction: async () => {
@@ -518,14 +522,90 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     proposalHash,
     calls: [call],
   }).catch(() => ({ status: 'unproven' as const }))
-  updateProposal(
-    key,
-    status === 'success'
-      ? { phase: 'success', receipt }
-      : status === 'failed'
-        ? { phase: 'failed', receipt, message: failed }
-        : { ...unconfirmedProposal(key), receipt },
-  )
+  // Success is the write hold's verified settlement of this execution, never
+  // the receipt alone; a proven failure is shown as failed; anything else is unproven.
+  if (status === 'failed') updateProposal(key, { phase: 'failed', receipt, message: failed })
+  else void holdUntilResolved(key, client, { unproven: status !== 'success', receipt })
+}
+
+/** How many times, a receipt-poll apart, a proposal's hold is asked before it is asked a minute apart. */
+const HOLD_SETTLE_ATTEMPTS = 15
+const HOLD_SLOW_POLL_MS = 60_000
+/** Each proposal's current hold loop, by generation: a newer one ends the older. */
+const holdLoops = new Map<string, number>()
+
+/**
+ * The follower's one end besides the user's: the proposal's write hold decides.
+ * It is told an `unproven` end (onUnproven, keeping any candidate already
+ * registered), then asked until it resolves, with this execution's receipt
+ * when there is one (read behind it when only its hash is known). Its state is
+ * shown as the hold says, with its exit through offersExit (the direct path's
+ * rule), and the proposal never falls back to awaiting. It ends with the hold:
+ * success only on its authenticated settlement of this execution, or a
+ * failure, an expiry or a release; or once the proposal is gone (the user took
+ * its exit or dismissed it). The hold enforces the pending and mined windows
+ * and protects a finalized execution.
+ */
+async function holdUntilResolved(key: string, client: FollowClient, { unproven, receipt: known = null, executionHash = null }: {
+  unproven: boolean
+  receipt?: TransactionReceipt | null
+  executionHash?: Hex | null
+}): Promise<void> {
+  const proposal = proposals.get(key)
+  if (!proposal) return
+  // One hold loop per proposal: a recheck's follower, with its newer evidence, takes over.
+  const generation = (holdLoops.get(key) ?? 0) + 1
+  holdLoops.set(key, generation)
+  const hold = externalHolds.get(key)?.hold ?? safeHoldOf(proposal, key)
+  // Until it ends: gone (the user took its exit or dismissed it), a result another
+  // follower showed, or a newer loop took over.
+  const followed = () => {
+    const current = proposals.get(key)
+    return holdLoops.get(key) === generation && current?.proposalHash === proposal.proposalHash && holdsCall(current)
+  }
+  const receipt = known
+  let shown: WriteHoldState | null = null
+  // An execution awaiting its receipt keeps the friendly line until the hold's exit is due.
+  const confirming = !receipt && !!executionHash
+  const show = (state: WriteHoldState) => {
+    if (offersExit(shown, state) || (unproven && !confirming && !shown && state.status !== 'clear')) {
+      shown = state
+      updateProposal(key, { phase: 'held', held: state as WriteHeldState })
+    } else if (!shown) updateProposal(key, { phase: 'confirming' })
+  }
+  // The receipt in hand goes to the hold first; an unproven end then keeps it as
+  // evidence (and any candidate already registered) while the hold decides.
+  let state: WriteHoldState | null = receipt
+    ? await hold.onReceipt(receipt, client as never, { calls: [proposal.call] }).catch(() => hold.peek())
+    : null
+  if (unproven && state?.status !== 'clear') {
+    state = await hold.onUnproven(client as never, proposal.proposalHash).catch(() => hold.peek())
+  }
+  for (let attempt = 0; followed(); attempt += 1) {
+    // This execution's receipt to the hold again, or, with none, the hold's own
+    // look: a saved execution's receipt, Safe's service and the nonce.
+    state ??= await (receipt
+      ? hold.onReceipt(receipt, client as never, { calls: [proposal.call] })
+      : hold.state(client as never)
+    ).catch(() => hold.peek())
+    if (!followed()) return
+    if (state.status === 'clear') {
+      const settled = state.settled
+      const own = (receipt?.transactionHash ?? executionHash)?.toLowerCase()
+      const ours = !!settled && (!own || settledHashOf(settled) === own)
+      updateProposal(key, !ours
+        ? { phase: 'released', receipt, message: WRITE_RELEASED_LINE }
+        : settled?.result === 'success'
+          ? { phase: 'success', receipt }
+          : settled?.result === 'expired'
+            ? { phase: 'expired', message: SAFE_PROPOSAL_EXPIRED }
+            : { phase: 'failed', receipt, message: settledLine(settled) })
+      return
+    }
+    show(state)
+    state = null
+    await new Promise(resolve => setTimeout(resolve, attempt < HOLD_SETTLE_ATTEMPTS ? RECEIPT_POLL_INTERVAL_MS : HOLD_SLOW_POLL_MS))
+  }
 }
 
 /** Record a proposal and follow it; `reply` says whether the hash is the wallet's own answer. */
@@ -570,6 +650,9 @@ export function useSafeTx(chainId: number) {
   const [error, setError] = useState<string | null>(null)
   /** The transaction an ordinary send is waiting on. */
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+  /** The hash this flow observes, for a settlement it may claim. */
+  const hashRef = useRef(hash)
+  useEffect(() => { hashRef.current = hash }, [hash])
   /** The Safe proposal this flow shows, by its key in the registry. */
   const [shownKey, setShownKey] = useState<string | null>(null)
   const proposal = useSyncExternalStore(
@@ -578,6 +661,8 @@ export function useSafeTx(chainId: number) {
     () => undefined,
   )
   const inFlightRef = useRef(false)
+  /** Another window sent this write while its review was open: the next send reviews it again. */
+  const staleReviewRef = useRef(false)
 
   const receipt = useWaitForTransactionReceipt({
     hash: hash ?? undefined,
@@ -640,6 +725,10 @@ export function useSafeTx(chainId: number) {
   /** This flow already shows its own receipt: a hold that clears on it changes nothing here. */
   const receiptShownRef = useRef(false)
   receiptShownRef.current = !!receiptData
+  /** The line a hold that ended on its own shows: never a send. */
+  const [settledNotice, setSettledNotice] = useState<string | null>(null)
+  /** The hash this flow's write hold settled, as its verified result: only then is success shown. */
+  const [settledHash, setSettledHash] = useState<string | null>(null)
   const receiptReverted = tracking && receiptData?.status === 'reverted'
   // The receipt watch gave up on a transaction that has a hash. It may still
   // land, so its write stays held until its receipt proves it, but nothing is
@@ -659,14 +748,42 @@ export function useSafeTx(chainId: number) {
     heldRef.current = next
     setHeld(next)
   }, [])
-  // A receipt for the held write's own hash is its result, whatever its
-  // status. The hold releases a verified success at once, a revert at finality.
+  // A receipt for the held write's own hash goes to its hold, which verifies
+  // it: a success settles at once, a revert at finality. Success shows only
+  // once the hold reports this hash settled; until then it is asked again.
   useEffect(() => {
     const current = heldRef.current
     if (!current || !receiptData || !publicClient) return
-    if (current.hold.peek().status === 'clear') return
-    void current.hold.onReceipt(receiptData as TransactionReceipt, publicClient as never).catch(() => {})
-  }, [receiptData, publicClient])
+    const own = receiptData.transactionHash.toLowerCase()
+    let live = true
+    let retry: ReturnType<typeof setTimeout> | undefined
+    const check = async () => {
+      const state = await current.hold.onReceipt(receiptData as TransactionReceipt, publicClient as never)
+        .catch(() => current.hold.peek())
+      if (!live) return
+      if (state.status === 'clear') {
+        if (settledHashOf(state.settled) === own) setSettledHash(own)
+        else {
+          // Released elsewhere with no settlement of this hash: claim nothing.
+          showHeld(null)
+          setHash(null)
+          inFlightRef.current = false
+          setSettledNotice(WRITE_RELEASED_LINE)
+          setPhase('submitted')
+        }
+      } else {
+        // The hold offers its exit (a receipt it can't verify past the mined window):
+        // show it, with its exit, and keep checking behind it. Never busy without one.
+        if (offersExit(heldRef.current?.state, state)) {
+          showHeld({ ...current, state })
+          setPhase('unconfirmed')
+        }
+        retry = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
+      }
+    }
+    void check()
+    return () => { live = false; clearTimeout(retry) }
+  }, [receiptData, publicClient, showHeld])
   /** Show what the hold says now; a cleared hold leaves this flow idle. */
   const showHoldState = useCallback((current: Omit<HeldWrite, 'state'>, state: WriteHeldState) => {
     showHeld({ ...current, state })
@@ -674,8 +791,14 @@ export function useSafeTx(chainId: number) {
     setHash(state.status === 'pending-known-hash' && !state.record.safe ? state.hash : null)
     setPhase('unconfirmed')
   }, [showHeld])
-  /** The line a hold that ended on its own shows: never a send. */
-  const [settledNotice, setSettledNotice] = useState<string | null>(null)
+  /** The hold ended without a settlement this flow can claim: it goes quiet, never claiming a result. */
+  const leaveHeld = useCallback(() => {
+    showHeld(null)
+    setHash(null)
+    inFlightRef.current = false
+    setSettledNotice(WRITE_RELEASED_LINE)
+    setPhase('submitted')
+  }, [showHeld])
   const endHeld = useCallback((settled?: WriteHoldSettled) => {
     showHeld(null)
     setHash(null)
@@ -685,8 +808,6 @@ export function useSafeTx(chainId: number) {
   }, [showHeld])
   /** The hold whose exit the user accepted: its answer, not what it emits meanwhile, decides. */
   const exitingRef = useRef<WriteHoldHandle | null>(null)
-  /** A result a look at the hold returned while the exit was in flight, kept for its line. */
-  const exitSettledRef = useRef<WriteHoldSettled | undefined>(undefined)
   // The receipt watch gave up on this flow's own send: it enters the hold, so
   // the hold's line shows, its subscription attaches, and a time-based exit
   // can appear. Its hash is still followed for a receipt.
@@ -703,13 +824,32 @@ export function useSafeTx(chainId: number) {
   useWriteHoldWatch(shownHold, publicClient as WriteHoldClient | undefined, state => {
     const current = heldRef.current
     if (!current || current.hold !== shownHold) return
-    if (exitingRef.current === shownHold) {
-      if (state.status === 'clear' && state.settled) exitSettledRef.current = state.settled
-      return
-    }
+    // The exit's own answer decides while it is in flight.
+    if (exitingRef.current === shownHold) return
+    // Only the reservation this flow observed: another tab's newer attempt, or
+    // a replay that names none, is not this flow's to show or claim.
+    if (!sameReservation(current.state, state)) return
     if (state.status === 'clear') {
-      if (!receiptShownRef.current) endHeld(state.settled)
-    } else showHoldState(current, state)
+      if (receiptShownRef.current) return
+      // Only a settlement of the hash this flow observed is its result; any
+      // other clear (an exit elsewhere, a resend's settlement) is not.
+      // A Safe proposal settles on its execution: the candidate its hold followed.
+      const settledOn = settledHashOf(state.settled)
+      const own = [
+        current.state?.record.hash ?? hashRef.current,
+        current.state?.record.executionHash,
+        current.proposalKey ? proposals.get(current.proposalKey)?.executionHash : null,
+      ]
+        .filter(Boolean).map(hash => hash!.toLowerCase())
+      if (settledOn && own.includes(settledOn)) {
+        if (current.own && state.settled?.result === 'success') {
+          // This flow's own write finished: its success, as any send's.
+          showHeld(null)
+          inFlightRef.current = false
+          setPhase('success')
+        } else endHeld(state.settled)
+      } else leaveHeld()
+    } else if (!repeatsWithoutExit(current.state, state)) showHoldState(current, state)
   })
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
@@ -721,7 +861,9 @@ export function useSafeTx(chainId: number) {
     ? proposal
       ? SHOWN_AS[proposal.phase]
       : 'idle'
-    : tracking && receiptData?.status === 'success'
+    : tracking && receiptData?.status === 'success' &&
+        // A held write's success is the hold's verified settlement, never the raw receipt.
+        (!held || settledHash === receiptData.transactionHash.toLowerCase())
       ? 'success'
       : receiptReverted
         ? 'error'
@@ -734,7 +876,7 @@ export function useSafeTx(chainId: number) {
       ? (proposal.message ?? SAFE_PROPOSAL_AWAITING)
       : proposal?.phase === 'confirming'
         ? SAFE_EXECUTION_CONFIRMING
-        : proposal?.phase === 'unproven' || proposal?.phase === 'ran'
+        : proposal?.phase === 'unproven' || proposal?.phase === 'ran' || proposal?.phase === 'released'
           ? (proposal.message ?? SAFE_PROPOSAL_UNCONFIRMED)
           : null)
   const sendRef = useRef<(request: TxRequest, options: TxSendOptions) => Promise<Hex | null>>(async () => null)
@@ -743,6 +885,36 @@ export function useSafeTx(chainId: number) {
   // A Safe proposal this flow shows whose follower ended unproven: the hold's
   // line and exit replace the registry's notice.
   const unprovenKey = shownKey && proposal?.phase === 'unproven' ? shownKey : null
+  // A proposal whose hold offers its exit while its settlement is still checked: shown as the hold says.
+  // A held Safe proposal this flow shows by its hold: once the registry has its
+  // result (another follower proved it), the flow shows that result instead.
+  const heldProposalKey = held?.proposalKey ?? null
+  const heldProposal = useSyncExternalStore(
+    subscribeProposals,
+    () => (heldProposalKey ? proposals.get(heldProposalKey) : undefined),
+    () => undefined,
+  )
+  // Only a result reached after the hold was shown: one it already had is what the hold refused over.
+  const heldFromPhaseRef = useRef<{ key: string | null; phase: ProposalPhase | undefined }>({ key: null, phase: undefined })
+  if (heldFromPhaseRef.current.key !== heldProposalKey) heldFromPhaseRef.current = { key: heldProposalKey, phase: heldProposal?.phase }
+  const heldPhase = heldProposal?.phase
+  const heldProposalEnded = !!heldProposal && !holdsCall(heldProposal) && heldPhase !== heldFromPhaseRef.current.phase
+  useEffect(() => {
+    if (!heldProposalEnded || !heldProposalKey) return
+    showHeld(null)
+    setHash(null)
+    inFlightRef.current = false
+    setShownKey(heldProposalKey)
+  }, [heldProposalEnded, heldProposalKey, showHeld])
+  const heldKey = shownKey && proposal?.phase === 'held' ? shownKey : null
+  useEffect(() => {
+    const shown = heldKey ? proposals.get(heldKey) : undefined
+    const last = lastSendRef.current
+    if (!heldKey || !shown?.held || !last) return
+    const hold = externalHolds.get(heldKey)?.hold ?? safeHoldOf(shown, heldKey)
+    setShownKey(null)
+    showHoldState({ hold, ...last, proposalKey: heldKey, own: true }, shown.held)
+  }, [heldKey, showHoldState])
   useEffect(() => {
     const shown = unprovenKey ? proposals.get(unprovenKey) : undefined
     const last = lastSendRef.current
@@ -767,7 +939,6 @@ export function useSafeTx(chainId: number) {
     const current = heldRef.current
     if (!current?.state?.exit || !publicClient) return
     exitingRef.current = current.hold
-    exitSettledRef.current = undefined
     void current.hold.exit(current.state, { checkedWallet: true }, publicClient as never).finally(() => {
       if (exitingRef.current === current.hold) exitingRef.current = null
     }).then(
@@ -781,14 +952,20 @@ export function useSafeTx(chainId: number) {
           inFlightRef.current = false
           if (current.proposalKey && proposals.delete(current.proposalKey)) notifyProposals()
           void sendRef.current(current.request, current.options)
-        } else if (state.status === 'clear') endHeld(state.settled ?? exitSettledRef.current)
-        else showHoldState(current, state)
+        } else if (state.status === 'clear') {
+          // Settled meanwhile: the hold still reads how, from any tab.
+          const later = current.hold.peek()
+          const settled = state.settled ?? (later.status === 'clear' ? later.settled : undefined)
+          const own = current.state?.record.hash?.toLowerCase()
+          if (settled && (!own || settledHashOf(settled) === own)) endHeld(settled)
+          else leaveHeld()
+        } else showHoldState(current, state)
       },
       () => {
         // Unreadable: the hold stays, as last shown.
       },
     )
-  }, [endHeld, publicClient, showHeld, showHoldState])
+  }, [endHeld, leaveHeld, publicClient, showHeld, showHoldState])
   const shownState = held?.state ?? (effectivePhase === 'unconfirmed' && held ? held.hold.peek() : null)
   const effectiveError: string | ReactElement | null = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
@@ -851,6 +1028,7 @@ export function useSafeTx(chainId: number) {
       setHash(null)
       setShownKey(null)
       setPolledReceipt(null)
+      setSettledHash(null)
       setSettledNotice(null)
       showHeld(null)
       // Read once: the review, the sent gas and the proposal tracking must all
@@ -873,16 +1051,17 @@ export function useSafeTx(chainId: number) {
         const key = proposalKey(request.chainId, account, sentCall)
         if (viaSafe) safeKey = key
         if (!options.journaled) {
+          if (viaSafe && options.intent) intentHolds.set(key, options.intent)
           hold = viaSafe
             ? safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
-            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall })
+            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) })
         }
         {
           if (viaSafe) {
             // An action the Safe already has, from this session or its own queue,
             // is shown as it is and never proposed again.
             let held = proposals.get(key)
-            if (held?.phase === 'unproven' && options.heldBy && options.heldBy.hold.peek().status === 'clear') {
+            if ((held?.phase === 'unproven' || held?.phase === 'held') && options.heldBy && options.heldBy.hold.peek().status === 'clear') {
               // The app journal's hold was released by the user: propose afresh.
               proposals.delete(key)
               notifyProposals()
@@ -932,8 +1111,9 @@ export function useSafeTx(chainId: number) {
               if (queued) {
                 const { proposalHash, call } = queued
                 recordProposal({ chainId: request.chainId, safe: account, call, proposalHash }, publicClient, false)
-              } else if (held?.phase === 'awaiting' || held?.phase === 'ran') {
-                // Awaiting, or ran with its execution unread: look again, never propose again.
+              } else if (held?.phase === 'awaiting' || held?.phase === 'ran' || held?.phase === 'held') {
+                // Awaiting, ran with its execution unread, or held by its hold: look again
+                // behind what is shown, never propose again.
                 startFollowingProposal(key, publicClient, false)
               }
               inFlightRef.current = false
@@ -948,14 +1128,9 @@ export function useSafeTx(chainId: number) {
               // A review notice always opens the review, even where the caller
               // already rendered the payload — the notice exists precisely
               // because what was rendered is no longer what will be signed.
-              if (options.reviewedInParent && !options.reviewNotice) return
-              const description = [
-                options.reviewNotice,
-                viaSafe ? SAFE_NONCE_GUIDANCE : null,
-                writeHolds.reviewLine(),
-              ]
-                .filter(Boolean)
-                .join('\n\n')
+              if (options.reviewedInParent && !options.reviewNotice && !staleReviewRef.current) return
+              staleReviewRef.current = false
+              const description = reviewDescription(options.reviewNotice, viaSafe ? SAFE_NONCE_GUIDANCE : null)
               const approved = await requestContractTransactionReview(
                 {
                   ...reviewed,
@@ -1072,6 +1247,13 @@ export function useSafeTx(chainId: number) {
           showHoldState({ hold, request, options, ...(safeKey ? { proposalKey: safeKey } : {}) }, e.state)
           return null
         }
+        if (e instanceof WriteHoldStaleReviewError) {
+          // Never sent: its line, and what became of the other window's send when known.
+          staleReviewRef.current = true
+          setError(e.settled ? `${e.message} ${settledLine(e.settled)}` : e.message)
+          setPhase('error')
+          return null
+        }
         if (hold && reachedWallet && !(e instanceof WriteHoldBusyError || e instanceof WriteHoldNonceError)) {
           // The wallet may have sent it without saying so: its hold is shown, as the chain says.
           const now = await hold.state(publicClient as never).catch(() => hold!.peek())
@@ -1108,6 +1290,7 @@ export function useSafeTx(chainId: number) {
     setHash(null)
     setShownKey(null)
     setSettledNotice(null)
+    setSettledHash(null)
     showHeld(null)
   }, [showHeld])
 

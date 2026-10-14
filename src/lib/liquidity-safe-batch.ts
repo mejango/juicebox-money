@@ -124,6 +124,7 @@ export async function proposeLiquidityBatch({
   unlockData,
   value,
   title,
+  intent,
 }: {
   chainId: JBChainId
   account: Address
@@ -132,11 +133,14 @@ export async function proposeLiquidityBatch({
   unlockData: Hex
   value: bigint
   title: string
+  /** What the user chose (the pool, its amounts and range): the batch's deadlines and expirations restamp. */
+  intent: string
 }): Promise<Hex> {
   return proposeSafeBatch({
     chainId,
     safe: account,
     calls: liquidityBatchCalls({ chainId, positionManager, steps, unlockData, value }),
     title,
+    intent,
   })
 }

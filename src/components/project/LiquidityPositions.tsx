@@ -22,6 +22,7 @@ import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
 import { POSITION_MANAGER_BY_CHAIN } from '@/lib/uniswap-v4'
 import { swapDeadline } from '@/lib/safe-connector'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildModifyLiquiditiesRequest,
   buildRemoveLiquidityUnlockData,
@@ -359,7 +360,13 @@ function ChainLpRows({
         deadline: swapDeadline(tx.isSafe),
         value: 0n,
       }),
-      { reviewedAccount: account },
+      {
+        reviewedAccount: account,
+        // Its deadline restamps on retry: held by the positions the user claims from.
+        intent: writeIntentKey('claim-lp-fees', {
+          chainId, positionManager: intent.address(positionManager), account: intent.address(account), positions: positions.map(position => position.tokenId),
+        }),
+      },
     )
     refresh()
   }
@@ -425,7 +432,11 @@ function ChainLpRows({
         deadline: swapDeadline(tx.isSafe),
         value: 0n,
       }),
-      { reviewedAccount: frozen.account },
+      {
+        reviewedAccount: frozen.account,
+        // Its deadline restamps and its minimums re-read on retry: held by the position the user removes.
+        intent: writeIntentKey('remove-lp', { chainId, positionManager: intent.address(positionManager), tokenId: frozen.position.tokenId, account: intent.address(frozen.account) }),
+      },
     )
     refresh()
   }

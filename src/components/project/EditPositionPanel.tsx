@@ -10,6 +10,7 @@ import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } fr
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
+import { useChosen } from '@/hooks/useChosen'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import {
@@ -28,10 +29,13 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
+  approvalStepIntent,
+  decimalKey,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -61,6 +65,8 @@ type Reviewed = {
   plan: EditLiquidityPlan
   steps: Step[]
   copy: { lead: string; detail: string; tech: string }
+  /** The write hold key of what the user chose: the pool, the position, its targets and range. */
+  intent: string
 }
 
 /** A target prefilled at full precision, so an untouched field asks for exactly what the position holds. */
@@ -152,13 +158,23 @@ export function EditPositionPanel({
   const projectToken = pool.pairIsC0 ? pool.key.currency1 : pool.key.currency0
   const band = bandPrices(pool, position.tickLower, position.tickUpper)
 
-  const [minText, setMinText] = useState(String(Number(band.min.toPrecision(6))))
-  const [maxText, setMaxText] = useState(String(Number(band.max.toPrecision(6))))
+  // How each key input was chosen (useChosen): the current band and holdings
+  // are kept until the user types, drags or picks Fit.
+  const bounds = useChosen(
+    { min: String(Number(band.min.toPrecision(6))), max: String(Number(band.max.toPrecision(6))) },
+    'range',
+    'keep-current',
+  )
+  const minText = bounds.value.min
+  const maxText = bounds.value.max
+  const setBound = (edge: 'min' | 'max', value: string) => bounds.set({ ...bounds.value, [edge]: value })
   // Only a band the user actually changed re-mints; otherwise the position's
   // own ticks are kept exactly, never re-derived from rounded display prices.
   const [rangeTouched, setRangeTouched] = useState(false)
-  const [tokText, setTokText] = useState(holdingText(position.tokenAmount, 18))
-  const [pairText, setPairText] = useState(holdingText(position.pairAmount, pairDec))
+  const tokTarget = useChosen(holdingText(position.tokenAmount, 18), 'token-target', 'keep-current')
+  const pairTarget = useChosen(holdingText(position.pairAmount, pairDec), 'pair-target', 'keep-current')
+  const tokText = tokTarget.value
+  const pairText = pairTarget.value
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -243,8 +259,7 @@ export function EditPositionPanel({
       ceilingHint: pool.issuance,
     })
     if (!solved) return
-    setMinText(String(Number(solved.minPrice.toPrecision(6))))
-    setMaxText(String(Number(solved.maxPrice.toPrecision(6))))
+    bounds.choose('fit', { min: String(Number(solved.minPrice.toPrecision(6))), max: String(Number(solved.maxPrice.toPrecision(6))) })
     setRangeTouched(true)
     replaceReviewed(null)
   }
@@ -313,7 +328,15 @@ export function EditPositionPanel({
             ? `${formatPrice(resulting.min)} – ${formatPrice(resulting.max)} ${pairSym}/${sym}`
             : undefined,
       })
-      const built: Reviewed = { account: connectedAddress, pool: market, plan, steps, copy }
+      const built: Reviewed = {
+        account: connectedAddress, pool: market, plan, steps, copy,
+        intent: writeIntentKey('edit-position', {
+          chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId), tokenId: position.tokenId,
+          account: intent.address(connectedAddress),
+          token: tokTarget.key(decimalKey), pair: pairTarget.key(decimalKey),
+          range: bounds.key(b => ({ min: decimalKey(b.min), max: decimalKey(b.max) })),
+        }),
+      }
       replaceReviewed(built)
     } catch (e) {
       setReviewError(
@@ -341,20 +364,19 @@ export function EditPositionPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          { reviewedAccount },
+          // Its amount follows the live pool: held as a step of the user's action.
+          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
         )
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount },
-        )
+        const request = buildPermit2ApproveRequest({
+          chainId,
+          token: step.token,
+          positionManager,
+          amount: step.amount,
+          expiration: step.expiration,
+        })
+        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, positionManager) })
       }
       // Everything that touches funds is frozen inside unlockData; only the
       // deadline is stamped at send time.
@@ -369,6 +391,8 @@ export function EditPositionPanel({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
+          // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
+          intent: p.intent,
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
           // position or drift beyond the reviewed maxima still aborts first.
@@ -431,6 +455,7 @@ export function EditPositionPanel({
           unlockData: p.plan.unlockData,
           value: p.plan.value,
           title: FINAL_STEP[p.plan.kind],
+          intent: p.intent,
         })
         setBatchProposed(true)
       } catch (e) {
@@ -621,7 +646,7 @@ export function EditPositionPanel({
           editing
             ? undefined
             : (edge, value) => {
-                ;(edge === 'min' ? setMinText : setMaxText)(String(value))
+                setBound(edge, String(value))
                 setRangeTouched(true)
               }
         }
@@ -636,7 +661,7 @@ export function EditPositionPanel({
             value={minText}
             disabled={editing}
             onChange={event => {
-              setMinText(event.target.value)
+              setBound('min', event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -650,7 +675,7 @@ export function EditPositionPanel({
             value={maxText}
             disabled={editing}
             onChange={event => {
-              setMaxText(event.target.value)
+              setBound('max', event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -666,7 +691,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={tokText}
             disabled={editing}
-            onChange={event => setTokText(event.target.value)}
+            onChange={event => tokTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
@@ -679,7 +704,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={pairText}
             disabled={editing}
-            onChange={event => setPairText(event.target.value)}
+            onChange={event => pairTarget.set(event.target.value)}
           />
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>

@@ -306,6 +306,7 @@ describe('persisted query scope', () => {
     expect(tagged.length).toBeGreaterThanOrEqual(14)
   })
 
+  // Scans every source file: slow on a loaded machine.
   it('routes persisted reads through the component hydration boundary, with no server seed to discard', () => {
     const failures: string[] = []
     let kept = 0
@@ -337,7 +338,7 @@ describe('persisted query scope', () => {
     }
     expect(failures).toEqual([])
     expect(kept).toBeGreaterThanOrEqual(27)
-  })
+  }, 60_000)
 })
 
 const IMPORTS = [

@@ -16,6 +16,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useChosen } from '@/hooks/useChosen'
 import {
   erc20Abi,
   formatUnits,
@@ -41,7 +42,7 @@ import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
-import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { approvalStepIntent, bridgeSendIntent, buildErc20ApproveRequest, decimalKey, moveIntent } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
 
 /** The frozen, reviewed prepare: what the user confirms is exactly what's
@@ -58,6 +59,8 @@ type ReviewedMove = {
   backingSymbol: string
   infra: Infra
   account: Address
+  /** The move's write intent, frozen at review: its approval is a step of it. */
+  intent: string
 }
 
 /**
@@ -87,7 +90,8 @@ export function MoveCard({
 
   const [from, setFrom] = useState<number>(chainId)
   const [to, setTo] = useState<number | null>(null)
-  const [amount, setAmount] = useState('')
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
 
   const fromPid = useMemo(() => {
     const mapped = chains.find(([cid]) => cid === from)?.[1]
@@ -247,7 +251,7 @@ export function MoveCard({
                   <button
                     onClick={() =>
                       src?.erc20Balance != null &&
-                      setAmount(formatUnits(src.erc20Balance, 18))
+                      amountField.choose('max', formatUnits(src.erc20Balance, 18))
                     }
                     className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
                   >
@@ -278,6 +282,7 @@ export function MoveCard({
               sucker={selectedPair.sucker}
               projectToken={src.token}
               amount={parsedAmount}
+              amountKey={amountField.key(decimalKey)}
               maxBalance={src.erc20Balance}
               account={address}
             />
@@ -298,6 +303,7 @@ function MoveFlow({
   sucker,
   projectToken,
   amount,
+  amountKey,
   maxBalance,
   account,
 }: {
@@ -308,6 +314,8 @@ function MoveFlow({
   sucker: Address
   projectToken: Address
   amount: bigint
+  /** The amount as the write intent keys it (useChosen): the typed decimal, or Max as the user's choice of all. */
+  amountKey: string
   maxBalance: bigint
   account: Address
 }) {
@@ -476,6 +484,7 @@ function MoveFlow({
         backingSymbol,
         infra,
         account,
+        intent: moveIntent({ chainId: from, sucker, token, amount: amountKey, beneficiary: account }),
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
@@ -499,7 +508,7 @@ function MoveFlow({
         spender: review.sucker,
         amount: review.amount,
       }),
-      { reviewedAccount: review.account },
+      { reviewedAccount: review.account, intent: approvalStepIntent(review.intent, 'approve', review.projectToken, review.sucker) },
     )
   }
 
@@ -513,7 +522,11 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
+    tx.send({ ...request, abi: request.abi as Abi }, {
+      reviewedAccount: review.account,
+      // Its minimum re-quotes on a fresh review: held by what the user chose to move.
+      intent: review.intent,
+    })
   }
 
   const sendToRemote = async () => {
@@ -544,7 +557,11 @@ function MoveFlow({
         token: review.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
+      await tx.send({ ...request, abi: request.abi as Abi }, {
+        reviewedAccount: review.account,
+        // Its fee requotes on retry: held by the outbox send itself.
+        intent: bridgeSendIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
+      })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')
     } finally {

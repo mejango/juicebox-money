@@ -10,6 +10,11 @@ const mocks = vi.hoisted(() => ({
     readContract: vi.fn(),
     waitForTransactionReceipt: vi.fn(),
     getTransaction: vi.fn(),
+    getChainId: vi.fn(async () => 1),
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 3),
+    getTransactionReceipt: vi.fn(),
+    getBlock: vi.fn(),
   },
   wallet: { signTypedData: vi.fn() },
   getAccount: vi.fn(),
@@ -63,6 +68,8 @@ import {
   packMultiSend,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
+import { forgetHeldWrite, heldWritesSnapshot } from '@/lib/write-holds'
+import { modelNode } from '../support/chain-node'
 import {
   authorityCallForStep,
   batchActionLabel,
@@ -378,7 +385,85 @@ describe('Safe owner batch', () => {
   })
 })
 
+/** Each attempt below starts after the earlier proposal ended elsewhere: its write hold is gone. */
+function earlierProposalEnded() {
+  const tab = globalThis as unknown as Record<symbol, Map<string, string> | undefined>
+  tab[Symbol.for('nana-sdk:held-writes')]?.clear()
+  for (const shown of heldWritesSnapshot()) forgetHeldWrite(shown.state.record.id)
+}
+
 describe('Safe app batch', () => {
+  const BLOCK = `0x${'b1'.repeat(32)}` as Hex
+  let canonical = true
+  type Log = { address: Address; topics: Hex[]; data: Hex }
+  /** The logs the node's execution receipt carries; by default the Safe's ExecutionSuccess for the proposal. */
+  let executionLogs: Log[] = []
+  /** The batch the execution runs, as its execTransaction's MultiSend. */
+  let executedBatch: ReturnType<typeof composeBatch>['calls'] = []
+  beforeEach(() => {
+    canonical = true
+    executionLogs = [{ address: SAFE, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` }]
+    executedBatch = composeBatch(presetSteps()).calls
+    // A real node: the execution is an owner's execTransaction of this batch,
+    // mined in a canonical block, its receipt logging the Safe's ExecutionSuccess.
+    const node = modelNode(mocks.client, { chainId: () => 1, blockHash: BLOCK })
+    mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+      if (hash !== EXECUTION) throw Object.assign(new Error('not found'), { name: 'TransactionNotFoundError' })
+      return {
+        hash, chainId: 1, from: ALICE, to: SAFE, nonce: 0, ...node.minedAt,
+        ...(canonical ? {} : { blockHash: `0x${'b2'.repeat(32)}` as Hex }),
+        input: encodeFunctionData({
+          abi: SAFE_EXEC_ABI,
+          functionName: 'execTransaction',
+          args: [MULTI_SEND_CALL_ONLY, 0n, encodeMultiSend(executedBatch), 1, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
+        }),
+      }
+    })
+    const shown = node.receiptsAre(hash => ({ transactionHash: hash, status: 'success', logs: executionLogs }))
+    mocks.waitForTrackedReceipt.mockImplementation(async (_client: unknown, hash: Hex) => shown(hash))
+  })
+
+  it('succeeds only once the hold settles the execution it observed, never on the receipt alone', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    const submit = () => submitSafeBatch({
+      signal: flow, chainId: 1, authority: SAFE, steps: presetSteps(), route: { kind: 'safe-app', authorityKind: 'safe' },
+    })
+    // The node can't show the execution in a canonical block: no success.
+    canonical = false
+    await expect(submit()).rejects.toThrow()
+    earlierProposalEnded()
+    canonical = true
+    await expect(submit()).resolves.toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
+  })
+
+  it('shows the neutral line, never success, when another tab released the hold while it waited', async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    let executed!: (hash: Hex) => void
+    mocks.waitForSafeExecutionHash.mockImplementation(() => new Promise(resolve => (executed = resolve)))
+    const submitted = submitSafeBatch({
+      signal: flow, chainId: 1, authority: SAFE, steps: presetSteps(), route: { kind: 'safe-app', authorityKind: 'safe' },
+    })
+    await vi.waitFor(() => expect(mocks.waitForSafeExecutionHash).toHaveBeenCalled())
+    earlierProposalEnded()
+    executed(EXECUTION)
+    await expect(submitted).rejects.toThrow('This transaction is no longer held here. Check your wallet before sending it again.')
+  })
+
+  it("holds a batch Safe's service lost with the warned exit, never pending without one", async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    earlierProposalEnded()
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error("Safe's transaction service has no record of this proposal."))
+    await expect(submitSafeBatch({
+      signal: flow, chainId: 1, authority: SAFE, steps: presetSteps(), route: { kind: 'safe-app', authorityKind: 'safe' },
+    })).rejects.toThrow('no record')
+    const [shown] = heldWritesSnapshot()
+    expect(shown?.state).toMatchObject({ status: 'safe-unproven', exit: true })
+    expect(shown.state).toHaveProperty('warning')
+  })
+
   it('reviews the calls, sends one wallet_sendCalls batch and tracks the proposal to execution', async () => {
     mocks.account = SAFE
     mocks.isSafeConnection.mockReturnValue(true)
@@ -459,11 +544,7 @@ describe('Safe app batch', () => {
     })
     const success = { address: SAFE, topics: [EXECUTION_SUCCESS, PROPOSAL], data: `0x${'00'.repeat(32)}` as Hex }
     // Another proposal of the same Safe failing in one execution is not this batch failing.
-    mocks.waitForTrackedReceipt.mockResolvedValueOnce({
-      status: 'success',
-      transactionHash: EXECUTION,
-      logs: [failure(`0x${'ef'.repeat(32)}`), success],
-    })
+    executionLogs = [failure(`0x${'ef'.repeat(32)}`), success]
     await expect(
       submitSafeBatch({
         signal: flow,
@@ -475,11 +556,8 @@ describe('Safe app batch', () => {
     ).resolves.toEqual({ kind: 'safe-app', safeTxHash: PROPOSAL, executionHash: EXECUTION })
 
     // Nor does it prove this batch ran.
-    mocks.waitForTrackedReceipt.mockResolvedValueOnce({
-      status: 'success',
-      transactionHash: EXECUTION,
-      logs: [failure(`0x${'ef'.repeat(32)}`)],
-    })
+    earlierProposalEnded()
+    executionLogs = [failure(`0x${'ef'.repeat(32)}`)]
     await expect(
       submitSafeBatch({
         signal: flow,
@@ -492,11 +570,8 @@ describe('Safe app batch', () => {
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',
     )
 
-    mocks.waitForTrackedReceipt.mockResolvedValueOnce({
-      status: 'success',
-      transactionHash: EXECUTION,
-      logs: [failure(PROPOSAL)],
-    })
+    earlierProposalEnded()
+    executionLogs = [failure(PROPOSAL)]
     await expect(
       submitSafeBatch({
         signal: flow,
@@ -516,22 +591,8 @@ describe('Safe app batch', () => {
     // Safe's event names a safeTxHash this app never saw.
     mocks.sendCalls.mockResolvedValue({ id: EXECUTION })
     mocks.waitForSafeExecutionHash.mockResolvedValue(EXECUTION)
-    mocks.waitForTrackedReceipt.mockResolvedValue({
-      status: 'success',
-      transactionHash: EXECUTION,
-      logs: [{ address: SAFE, topics: [EXECUTION_SUCCESS, `0x${'ef'.repeat(32)}`], data: `0x${'00'.repeat(32)}` }],
-    })
-    const ran = (batch: typeof calls) =>
-      mocks.client.getTransaction.mockResolvedValue({
-        hash: EXECUTION,
-        from: ALICE,
-        to: SAFE,
-        input: encodeFunctionData({
-          abi: SAFE_EXEC_ABI,
-          functionName: 'execTransaction',
-          args: [MULTI_SEND_CALL_ONLY, 0n, encodeMultiSend(batch), 1, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'],
-        }),
-      })
+    executionLogs = [{ address: SAFE, topics: [EXECUTION_SUCCESS, `0x${'ef'.repeat(32)}`], data: `0x${'00'.repeat(32)}` }]
+    const ran = (batch: typeof calls) => { executedBatch = batch }
     const submit = () =>
       submitSafeBatch({
         signal: flow,
@@ -545,6 +606,7 @@ describe('Safe app batch', () => {
     await expect(submit()).resolves.toEqual({ kind: 'safe-app', safeTxHash: EXECUTION, executionHash: EXECUTION })
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: EXECUTION })
 
+    earlierProposalEnded()
     ran([...calls].reverse())
     await expect(submit()).rejects.toThrow(
       'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.',

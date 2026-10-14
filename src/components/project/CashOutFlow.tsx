@@ -22,6 +22,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
+import { useChosen } from '@/hooks/useChosen'
 import {
   erc20Abi,
   formatUnits,
@@ -43,7 +44,7 @@ import {
   isNativeToken,
   minimumDropNotice,
 } from '@/lib/cashOut'
-import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
+import { approvalStepIntent, buildErc20ApproveRequest as buildTokenApproval, cashOutIntent, decimalKey } from '@/lib/transaction-builders'
 import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { swapDeadline } from '@/lib/safe-connector'
@@ -108,7 +109,8 @@ export function CashOutPanel({
   const tx = useSafeTx(chainId)
   const approveTx = useSafeTx(chainId)
 
-  const [amount, setAmount] = useState('')
+  const amountField = useChosen('', 'amount')
+  const { value: amount, set: setAmount } = amountField
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -438,7 +440,7 @@ export function CashOutPanel({
   const setMax = () => {
     if (balance === undefined || balance <= 0n) return
     const max = formatUnits(balance, 18)
-    setAmount(max)
+    amountField.choose('max', max)
     setDebouncedAmount(max)
   }
 
@@ -508,6 +510,8 @@ export function CashOutPanel({
     if (!plan || !address || busy) return
     setErrorMsg(null)
     const reviewedAccount = plan.account
+    // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
+    const cashOutKey = cashOutIntent({ chainId, projectId, amount: amountField.key(decimalKey), beneficiary: reviewedAccount })
     try {
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
@@ -521,7 +525,7 @@ export function CashOutPanel({
               spender: swapDeployment.permit2,
               amount: cashOutCount,
             }),
-            { reviewedAccount },
+            { reviewedAccount, intent: approvalStepIntent(cashOutKey, 'token-approval', projectToken.address, swapDeployment.permit2) },
           )
           return
         }
@@ -538,7 +542,7 @@ export function CashOutPanel({
               args: approval.args as unknown as readonly unknown[],
               label: 'Approve swap router',
             },
-            { reviewedAccount },
+            { reviewedAccount, intent: approvalStepIntent(cashOutKey, 'router-approval', projectToken.address, approval.args[1] as string) },
           )
           return
         }
@@ -589,6 +593,8 @@ export function CashOutPanel({
           },
           {
             reviewedAccount,
+            // Its deadline and minimum regenerate on retry: held by what the user chose.
+            intent: cashOutKey,
             reviewNotice: minimumDropNotice({
               displayedMinimum: plan.minimumReturn,
               freshMinimum: refreshedBest.minimumReturn,
@@ -602,7 +608,12 @@ export function CashOutPanel({
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      await tx.send(plan.request, { reviewedAccount, reviewNotice: plan.reviewNotice })
+      await tx.send(plan.request, {
+        reviewedAccount,
+        reviewNotice: plan.reviewNotice,
+        // Its minimum re-quotes on retry: held by what the user chose.
+        intent: cashOutKey,
+      })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }

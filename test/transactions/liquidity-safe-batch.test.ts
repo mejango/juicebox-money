@@ -70,6 +70,7 @@ describe('liquidity as one Safe batch', () => {
       unlockData: UNLOCK,
       value: 7n,
       title: 'Add liquidity',
+      intent: 'intent:add-liquidity:test',
     })
 
     expect(hash).toBe(PROPOSAL)
@@ -80,6 +81,7 @@ describe('liquidity as one Safe batch', () => {
       safe: SAFE,
       title: 'Add liquidity',
       calls: expect.any(Array),
+      intent: 'intent:add-liquidity:test',
     })
     const calls = request.calls
     expect(calls).toHaveLength(3)

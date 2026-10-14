@@ -1,5 +1,7 @@
 'use client'
 
+import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
@@ -327,6 +329,8 @@ type RepayPlan = {
   isNative: boolean
   /** The ERC-20 approval prompt, when the allowance doesn't already cover the cap. */
   approve: ReturnType<typeof buildErc20ApproveRequest> | null
+  /** Its cap re-reads the fee on a fresh review: the write hold keys of the loan the user repays. */
+  intents: { repay: string; approve: string }
 }
 
 function RepayFlow({
@@ -372,7 +376,7 @@ function RepayFlow({
   // Once the ERC-20 approval lands, send the repayment held in the plan.
   useEffect(() => {
     if (approveTx.phase === 'success' && plan?.approve) {
-      repayTx.send(plan.request, { reviewedAccount: plan.account })
+      repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveTx.phase])
@@ -438,6 +442,10 @@ function RepayFlow({
         maxRepay,
         collateral: fresh.collateral,
         isNative,
+        intents: {
+          repay: writeIntentKey('repay-loan', { chainId, loanId: loan.id, holder: intent.address(holder) }),
+          approve: writeIntentKey('approve-loan-repay', { chainId, loanId: loan.id, holder: intent.address(holder), token: intent.address(fresh.sourceToken) }),
+        },
         approve:
           allowance >= maxRepay
             ? null
@@ -459,14 +467,14 @@ function RepayFlow({
     if (!plan || busy) return
     setFlowError(null)
     if (plan.isNative) {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account })
+      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
       return
     }
     if (!plan.approve || approveTx.phase === 'success') {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account })
+      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
       return
     }
-    await approveTx.send(plan.approve, { reviewedAccount: plan.account })
+    await approveTx.send(plan.approve, { reviewedAccount: plan.account, intent: plan.intents.approve })
   }
 
   const closeDialog = () => {

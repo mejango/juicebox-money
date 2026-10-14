@@ -47,6 +47,7 @@ import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
+import { bridgeSyncIntent } from '@/lib/transaction-builders'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -801,8 +802,11 @@ function GossipRow({
         sucker: peer.syncSucker,
         value,
       })
-      // Sent by the account the bridge fee was estimated for.
-      await tx.send({ ...request, abi: request.abi as unknown as Abi }, { reviewedAccount: address })
+      // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
+      await tx.send({ ...request, abi: request.abi as unknown as Abi }, {
+        reviewedAccount: address,
+        intent: bridgeSyncIntent({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+      })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')
     } finally {
