@@ -451,6 +451,19 @@ describe('Safe app batch', () => {
     await expect(submitted).rejects.toThrow('This transaction is no longer held here. Check your wallet before sending it again.')
   })
 
+  it("holds a batch Safe's service lost with the warned exit, never pending without one", async () => {
+    mocks.account = SAFE
+    mocks.isSafeConnection.mockReturnValue(true)
+    earlierProposalEnded()
+    mocks.waitForSafeExecutionHash.mockRejectedValue(new Error("Safe's transaction service has no record of this proposal."))
+    await expect(submitSafeBatch({
+      signal: flow, chainId: 1, authority: SAFE, steps: presetSteps(), route: { kind: 'safe-app', authorityKind: 'safe' },
+    })).rejects.toThrow('no record')
+    const [shown] = heldWritesSnapshot()
+    expect(shown?.state).toMatchObject({ status: 'safe-unproven', exit: true })
+    expect(shown.state).toHaveProperty('warning')
+  })
+
   it('reviews the calls, sends one wallet_sendCalls batch and tracks the proposal to execution', async () => {
     mocks.account = SAFE
     mocks.isSafeConnection.mockReturnValue(true)

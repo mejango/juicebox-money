@@ -24,7 +24,7 @@ import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { reviewDescription, safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, writeHolds } from '@/lib/write-holds'
+import { reviewDescription, safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, unprovenUnderHold, writeHolds } from '@/lib/write-holds'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
@@ -757,11 +757,7 @@ export async function runAuthorityCalls({
       try {
         executionHash = await waitForSafeExecutionHash(call.chainId, safeTxHash, { signal })
       } catch (error) {
-        // A wait the flow ended leaves the proposal pending; any other end is unproven here.
-        if (!signal.aborted) {
-          const state = await hold.onUnproven(holdClient, safeTxHash).catch(() => hold.peek())
-          if (state.status !== 'clear') showHeldWrite(call.chainId, hold, state)
-        }
+        await unprovenUnderHold(call.chainId, hold, holdClient, safeTxHash, signal)
         throw error
       }
       const receipt = await waitForTrackedReceipt(

@@ -55,4 +55,25 @@ describe('a Safe batch held by its intent', () => {
     await expect(proposeSafeBatch(batch(4))).rejects.toThrow()
     expect(m.sendCalls).toHaveBeenCalledTimes(2)
   })
+
+  // Known open: the SDK aliases a batch hold's record call, its first call, and verifies a batch
+  // only with that first call as the record's. This flips to passing once the SDK takes the whole batch.
+  it.fails('never holds another batch that only shares its first call, and still refuses its own retry', async () => {
+    const OTHER = `0x${'cd'.repeat(32)}` as Hex
+    m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL }).mockResolvedValueOnce({ id: OTHER })
+    const approveThen = (intent: string, data: Hex) => ({
+      chainId: 10 as const, safe: SAFE, title: 'Batch', intent,
+      calls: [
+        { to: TARGET, data: '0x1234' as Hex, value: 0n, label: 'Approve' },
+        { to: TARGET, data, value: 0n, label: 'Act' },
+      ],
+    })
+    await expect(proposeSafeBatch(approveThen('intent:a:test', '0xaaaa'))).resolves.toBe(PROPOSAL)
+    // Another batch beginning with the same approval is its own write.
+    await expect(proposeSafeBatch(approveThen('intent:b:test', '0xbbbb'))).resolves.toBe(OTHER)
+    expect(m.sendCalls).toHaveBeenCalledTimes(2)
+    // The first batch, pending with the Safe, is refused again.
+    await expect(proposeSafeBatch(approveThen('intent:a:test', '0xaaaa'))).rejects.toThrow()
+    expect(m.sendCalls).toHaveBeenCalledTimes(2)
+  })
 })

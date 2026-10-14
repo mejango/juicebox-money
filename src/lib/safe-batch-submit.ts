@@ -1,6 +1,6 @@
 'use client'
 
-import { settleUnderHold } from '@/lib/write-holds'
+import { settleUnderHold, unprovenUnderHold } from '@/lib/write-holds'
 
 import { getAccount } from '@wagmi/core'
 import { getAddress, type Address, type Hex } from 'viem'
@@ -316,9 +316,15 @@ export async function submitSafeBatch({
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
-    const executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
-    const receipt = await waitForTrackedReceipt(client, executionHash)
     const hold = safeBatchHold({ chainId, safe: authority, intent: batchIntent, calls: sequence })
+    let executionHash: Hex
+    try {
+      executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
+    } catch (error) {
+      await unprovenUnderHold(chainId, hold, client as never, safeTxHash, signal)
+      throw error
+    }
+    const receipt = await waitForTrackedReceipt(client, executionHash)
     const proof = { calls: sequence, batch: true }
     const failure = 'The batch reverted after Safe execution.'
     try {

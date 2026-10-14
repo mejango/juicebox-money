@@ -257,7 +257,7 @@ export function MarketEditPanel({
         account: connectedAddress, pool: market, plan, steps,
         intent: writeIntentKey('edit-market', {
           chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId),
-          account: intent.address(connectedAddress), tokenAmount, pairAmount,
+          account: intent.address(connectedAddress), tokenAmount, pairAmount, refit,
         }),
       }
       replaceReviewed(built)

@@ -99,6 +99,23 @@ export async function sendUnderHold(
 }
 
 /**
+ * A Safe proposal's wait for its execution ended without one. Unless its flow
+ * ended the wait, the proposal is unproven: the hold says so app-wide, with its
+ * warned exit, so it never stays pending without one.
+ */
+export async function unprovenUnderHold(
+  chainId: number,
+  hold: WriteHoldHandle,
+  client: WriteHoldClient,
+  proposalHash: Hex,
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) return
+  const state = await hold.onUnproven(client, proposalHash).catch(() => hold.peek())
+  if (state.status !== 'clear') showHeldWrite(chainId, hold, state)
+}
+
+/**
  * After a held write's receipt (or Safe execution receipt): the hold verifies
  * it. Anything but this hash's settlement keeps it held and shown, and throws
  * the hold's line, so no caller reports success from the receipt alone.

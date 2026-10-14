@@ -28,7 +28,7 @@ const H1 = `0x${'a1'.repeat(32)}` as Hex
 const H2 = `0x${'a2'.repeat(32)}` as Hex
 const H3 = `0x${'a3'.repeat(32)}` as Hex
 
-const m = vi.hoisted(() => ({ account: '' as string }))
+const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 } }))
 
 /** The plan's own bytes name the account they were reviewed for. */
 const unlockDataFor = (account: string) => (account === ALICE ? '0xaa' : '0xbb') as Hex
@@ -69,7 +69,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 }))
 vi.mock('@/lib/uniswap-v4', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/uniswap-v4')>()),
-  solveRangeFromAmounts: () => ({ minPrice: 0.5, maxPrice: 2 }),
+  solveRangeFromAmounts: () => m.range,
 }))
 vi.mock('@/lib/lp-mint', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/lp-mint')>()),
@@ -167,6 +167,7 @@ let make: () => ReactElement
 
 beforeEach(() => {
   m.account = ALICE
+  m.range = { minPrice: 0.5, maxPrice: 2 }
   engine.restart()
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   host = document.createElement('div')
@@ -571,5 +572,58 @@ describe('a liquidity run whose step could not be confirmed yet', () => {
     await act(async () => engine.answer(H2))
     await act(async () => engine.unconfirm(LINE))
     await expectReleased(1)
+  })
+})
+
+describe("a liquidity write's hold key", () => {
+  /** Confirm the reviewed plan, land each step before its final write, and read that write's intent; then stop it. */
+  async function finalIntent(): Promise<string | undefined> {
+    await confirm()
+    for (let step = 0; step < 5; step++) {
+      const [request, options] = engine.send.mock.calls.at(-1)! as [{ functionName?: string }, { intent?: string }]
+      if (request.functionName === 'modifyLiquidities') {
+        await act(async () => engine.fail('Transaction cancelled.'))
+        await act(async () => engine.answer(null))
+        await cancel()
+        return options.intent
+      }
+      const hash = `0x${String(step + 1).padStart(64, '0')}` as Hex
+      await act(async () => engine.answer(hash))
+      await act(async () => engine.confirm(hash, 10n + BigInt(step)))
+    }
+    throw new Error('The plan never reached its final write.')
+  }
+
+  it('stays the same when a new pool price moves the solved range of the same amounts', async () => {
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    const first = await finalIntent()
+    // The pool price moved: the same amounts solve to another range.
+    m.range = { minPrice: 0.6, maxPrice: 2.4 }
+    await typeInto('TKN amount', '1.0')
+    await review('Add liquidity')
+    expect(await finalIntent()).toBe(first)
+    // Other amounts are another add.
+    await typeInto('TKN amount', '2')
+    await review('Add liquidity')
+    expect(await finalIntent()).not.toBe(first)
+  })
+
+  it('tells a re-fit of the market from keeping its ranges', async () => {
+    await render(() => (
+      <MarketEditPanel chainId={1} projectId={7} pool={{ ...POOL, issuance: 2 } as never} positionManager={POSITION_MANAGER}
+        sides={{ tokenSide: TOKEN_SIDE, pairSide: PAIR_SIDE }} sym="TKN" floor={0.5} onClose={() => {}} onDone={() => {}} />
+    ))
+    await settle()
+    const refit = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!
+    const before = refit.checked
+    await review('Edit the market')
+    const first = await finalIntent()
+    await act(async () => refit.click())
+    expect(refit.checked).toBe(!before)
+    await review('Edit the market')
+    expect(await finalIntent()).not.toBe(first)
   })
 })

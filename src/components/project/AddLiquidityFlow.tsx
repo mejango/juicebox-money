@@ -754,10 +754,12 @@ function AddLiquidityForm({
         steps,
         mint,
         market: mode === 'market',
-        // The range is the user's typed prices, so it keys as text.
+        // What the user chose: the mode and amounts, and the prices only when typed
+        // (range mode). Elsewhere the range follows the pool price, which moves.
         intent: writeIntentKey(mode === 'market' ? 'add-market-liquidity' : 'add-liquidity', {
           chainId, positionManager: intent.address(posm), pool: intent.hex(fresh.poolId), account: intent.address(address),
-          pairAmount, tokenAmount, pa: String(pa), pb: String(pb),
+          mode, pairAmount, tokenAmount,
+          ...(mode === 'range' ? { min: minStr.trim(), max: maxStr.trim() } : {}),
         }),
         display: {
           needTok,
