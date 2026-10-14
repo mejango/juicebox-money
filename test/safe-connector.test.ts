@@ -5,7 +5,6 @@ import {
   getAddress,
   toEventSelector,
   TransactionNotFoundError,
-  TransactionReceiptNotFoundError,
   zeroAddress,
   type Address,
   type Hex,
@@ -45,7 +44,6 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
 import type { TxRequest } from '@/hooks/useSafeTx'
 import {
   atOnceExecution,
-  chainAnswer,
   findPendingSafeAppProposal,
   heldCall,
   isSafeConnection,
@@ -673,49 +671,3 @@ describe("an execution Safe's service reports failed", () => {
   })
 })
 
-describe("the chain's last word before a proposal ends unproven", () => {
-  it('is what the chain shows', async () => {
-    await expect(chainAnswer(async () => ({ hash: HASH }))).resolves.toEqual({ hash: HASH })
-  })
-
-  it('is none when the chain says it has none', async () => {
-    await expect(
-      chainAnswer(() => Promise.reject(new TransactionNotFoundError({ hash: HASH }))),
-    ).resolves.toBeNull()
-    await expect(
-      chainAnswer(() => Promise.reject(new TransactionReceiptNotFoundError({ hash: HASH }))),
-    ).resolves.toBeNull()
-  })
-
-  it("waits a minute and asks again when the node can't answer, as long as it takes", async () => {
-    vi.useFakeTimers()
-    const read = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('fetch failed'))
-      .mockRejectedValueOnce(new Error('HTTP 503'))
-      .mockResolvedValue({ hash: HASH })
-    let answer: unknown
-    void chainAnswer(read).then(found => (answer = found))
-    await vi.advanceTimersByTimeAsync(59_999)
-    expect(read).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(60_001)
-    expect(answer).toEqual({ hash: HASH })
-    expect(read).toHaveBeenCalledTimes(3)
-  })
-
-  it('asks again on a not-found too, for something the chain already proved exists, saying so before it waits', async () => {
-    vi.useFakeTimers()
-    const read = vi
-      .fn()
-      .mockRejectedValueOnce(new TransactionNotFoundError({ hash: HASH }))
-      .mockResolvedValue({ hash: HASH })
-    const onRetry = vi.fn()
-    let answer: unknown
-    void chainAnswer(read, { exists: true, onRetry }).then(found => (answer = found))
-    await vi.advanceTimersByTimeAsync(0)
-    expect(onRetry).toHaveBeenCalledOnce()
-    expect(answer).toBeUndefined()
-    await vi.advanceTimersByTimeAsync(60_000)
-    expect(answer).toEqual({ hash: HASH })
-  })
-})

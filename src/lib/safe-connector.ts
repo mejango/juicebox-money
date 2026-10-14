@@ -20,7 +20,6 @@ export {
   SAFE_PROPOSAL_AWAITING,
   SAFE_PROPOSAL_UNCONFIRMED,
   atOnceExecution,
-  chainAnswer,
   findPendingSafeAppProposal,
   heldCall,
   lookAtSafeProposal,

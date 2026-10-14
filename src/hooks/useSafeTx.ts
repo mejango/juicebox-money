@@ -53,7 +53,6 @@ import { chainName } from '@/lib/urn'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   atOnceExecution,
-  chainAnswer,
   findPendingSafeAppProposal,
   isSafeConnection,
   readSafeAppExecution,
@@ -446,9 +445,10 @@ async function awaitExecution(
 
 /**
  * Follow a proposal to its result, whatever becomes of the flow that made it.
- * A node that cannot answer keeps the proposal held and is asked again a
- * minute later ({@link chainAnswer}). A known proposal with uncertain execution
- * evidence stays awaiting an explicit recheck, without another wallet send.
+ * No app-side retry stands between its end and the hold: an unproven end, or a
+ * receipt in hand, goes to the hold at once (holdUntilResolved), and every
+ * further chain read (an RPC error being unknown evidence) runs behind what
+ * the hold shows. Nothing is proposed again.
  */
 async function followProposal(key: string, client: FollowClient, reply: boolean): Promise<void> {
   const proposal = proposals.get(key)
@@ -465,10 +465,11 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
     const awaited = await awaitExecution(proposal, client)
     if ('executionHash' in awaited) executionHash = awaited.executionHash
     // An execution returned at once that the node learned only after the probe
-    // is the execution: the chain is asked once more before the proposal ends.
+    // is the execution: the chain is asked once more, one read, before the
+    // proposal ends. An error is unknown evidence for the hold, never a wait.
     else if (
       awaited.phase === 'unproven' &&
-      (execution = await chainAnswer(() => client.getTransaction({ hash: proposalHash })))
+      (execution = await client.getTransaction({ hash: proposalHash }).catch(() => null))
     ) {
       executionHash = proposalHash
     } else {
@@ -498,16 +499,17 @@ async function followProposal(key: string, client: FollowClient, reply: boolean)
   }
   // Only the Safe's own event for this proposal decides it, and an execution
   // returned at once must also have run the reviewed call. Its receipt proves
-  // its transaction exists, so with none read yet, a node that shows none is
-  // only behind: the proposal stays held, and can end its confirm on Done.
+  // its transaction exists, so a node that shows none is only behind: one read
+  // here, and the hold, with the receipt in hand, reads it again behind what it shows.
   const atOnce = receipt.transactionHash.toLowerCase() === proposalHash.toLowerCase()
   const transaction =
     atOnce && !execution
-      ? await chainAnswer(() => client.getTransaction({ hash: proposalHash }), {
-          exists: true,
-          onRetry: () => updateProposal(key, { phase: 'confirming' }),
-        })
+      ? await client.getTransaction({ hash: proposalHash }).catch(() => null)
       : execution
+  if (atOnce && !transaction) {
+    void holdUntilResolved(key, client, { unproven: false, receipt })
+    return
+  }
   const { status } = await readSafeAppExecution({
     client: {
       getTransaction: async () => {

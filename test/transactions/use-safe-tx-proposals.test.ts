@@ -1076,27 +1076,47 @@ describe("a Safe proposal's last look at the chain", () => {
     expect(flow.tx.notice).toBeNull()
   }, 30_000)
 
-  it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
+  it("leaves a proposal to its hold at once when a node can't answer its last look, and proposes nothing again", async () => {
     vi.useFakeTimers()
     mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
-    let nodeUp = false
-    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
-      if (!nodeUp) throw new Error('fetch failed')
-      throw new TransactionNotFoundError({ hash })
-    })
+    mocks.publicClient.getTransaction.mockImplementation(async () => { throw new Error('fetch failed') })
     const flow = await mount()
     await flow.send()
     await pass(0)
-    // Never flagged on a node error: still with the Safe, and held.
-    expect(flow.tx).toMatchObject({ phase: 'submitted', confirmationUncertain: false, notice: AWAITING })
+    // The node error is unknown evidence for the hold, never a wait in front of it.
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toBeTruthy()
     await act(async () => flow.tx.dismiss())
     await flow.send()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
 
-    nodeUp = true
-    await pass(60_000)
-    expect(flow.tx).toMatchObject({ phase: 'unconfirmed', confirmationUncertain: true })
-    expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
+  it("shows the hold's exit by 31 minutes when the last look at the chain errors forever", async () => {
+    vi.useFakeTimers()
+    mocks.waitForSafeExecutionHash.mockRejectedValue(NO_RECORD)
+    mocks.publicClient.getTransaction.mockImplementation(async () => { throw new Error('fetch failed') })
+    const flow = await mount()
+    await flow.send()
+    await pass(31 * 60_000)
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toMatchObject({ exit: true })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+  })
+
+  it("shows the hold's exit by 31 minutes when a receipt is in hand but its transaction is never found", async () => {
+    vi.useFakeTimers()
+    // Safe{Wallet} executed at once; the node has its receipt but never shows its transaction.
+    mocks.atOnceExecution.mockResolvedValue(null)
+    mocks.waitForSafeExecutionHash.mockResolvedValue(PROPOSAL)
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
+    mocks.publicClient.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+    mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receiptOf(hash, UNSEEN))
+    const flow = await mount()
+    await flow.send()
+    await pass(31 * 60_000)
+    expect(flow.tx.phase).toBe('unconfirmed')
+    expect(heldState(flow.tx.error)).toMatchObject({ exit: true })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
   it("keeps an execution held through a node that can't answer for its receipt, and shows the hold's exit, never awaiting", async () => {
