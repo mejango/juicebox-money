@@ -322,7 +322,9 @@ async function settleSafeHold(key: string, client: FollowClient): Promise<void> 
       // The follower gave up: the hold offers the exit, and later evidence still settles it.
       await hold.onUnproven(client as never, proposal.proposalHash)
     } else if (proposal.phase === 'ran') {
-      await hold.onExecuted(client as never, proposal.executionHash ?? undefined)
+      // The chain showed it ran, but no execution hash is known: the hold looks
+      // again itself. onExecuted takes only a hash believed to be the execution.
+      await hold.state(client as never)
     } else if (proposal.phase === 'expired' || proposal.phase === 'replaced') {
       await hold.state(client as never)
     }

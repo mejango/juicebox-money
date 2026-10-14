@@ -126,6 +126,8 @@ beforeEach(() => {
         : { id: 1n, flags: { allowOwnerMint: true }, remainingSupply: 5 })
   mocks.client.simulateContract.mockReset().mockImplementation(async (request: object) => ({ request }))
   mocks.client.estimateContractGas.mockReset().mockResolvedValue(100_000n)
+  // A safeTxHash is no transaction; a test that executes one says so.
+  mocks.client.getTransaction.mockReset().mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
 })
 
 afterEach(async () => { await act(async () => renderer.unmount()) })

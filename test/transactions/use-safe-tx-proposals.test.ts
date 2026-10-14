@@ -415,11 +415,16 @@ describe('a Safe proposal', () => {
     ['ran the reviewed call', execTransaction(), 'success'],
     ['ran another call', execTransaction('0xdeadbeef'), 'unconfirmed'],
   ] as const)('settles an execution returned at once only when it %s', async (_, input, phase) => {
+    // The execution is mined, as one returned at once is.
     mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
       hash,
+      chainId: 10,
       from: BOB,
       to: SAFE,
       input,
+      blockHash: BLOCK,
+      blockNumber: 9n,
+      transactionIndex: 0,
     }))
     mocks.publicClient.waitForTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) =>
       receiptOf(hash, UNSEEN),
@@ -428,8 +433,12 @@ describe('a Safe proposal', () => {
     await flow.send()
     await settle()
     expect(flow.tx.phase).toBe(phase)
-    // Unproven: the write hold's line and state, not a release.
-    if (phase === 'unconfirmed') expect(heldState(flow.tx.error)).toMatchObject({ status: 'safe-unproven', exit: true })
+    // Mined, its result unreadable: the write hold's line, and no exit yet.
+    if (phase === 'unconfirmed') {
+      expect(heldState(flow.tx.error)).toMatchObject({
+        status: 'pending-known-hash', exit: false, line: "Your transaction is onchain, but its result can't be read yet.",
+      })
+    }
   })
 
   it.each([
@@ -705,7 +714,8 @@ describe('a Safe proposal awaiting its signers', () => {
     await expect(reloaded.send()).resolves.toBeNull()
     await settle()
     expect(reloaded.tx).toMatchObject({ phase: 'unconfirmed', busy: false, settled: true })
-    expect(heldState(reloaded.tx.error)).toMatchObject({ status: 'ran-executed', line: 'Your Safe ran this transaction.', exit: false })
+    // With no execution hash, the hold has nothing to settle it on here: held, never resent.
+    expect(heldState(reloaded.tx.error)).toMatchObject({ exit: false })
     expect(mocks.writeContract).toHaveBeenCalledOnce()
   })
 
