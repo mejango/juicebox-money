@@ -2,8 +2,9 @@
 
 import { transactionMessage } from '@/lib/transaction-message'
 import { useState } from 'react'
+import { relayrDiscardLine } from '@bananapus/nana-sdk-core/review'
 import type { RelayrDiscardReason } from '@bananapus/nana-sdk-core/review/relayr'
-import { discardRelayrSession, relayrDiscardLine, RelayrDiscardError } from '@/lib/relayr'
+import { discardRelayrSession, RelayrDiscardError } from '@/lib/relayr'
 
 /**
  * The one line and the Discard of a saved Relayr session whose requests are
@@ -21,7 +22,7 @@ export function RelayrDiscard({ scope, reason, paymentUnmatched, onDiscarded }: 
   const [error, setError] = useState<string | null>(null)
   return (
     <div className="space-y-2">
-      <p className="text-sm text-smoke-700">{relayrDiscardLine(reason, paymentUnmatched)}</p>
+      <p className="text-sm text-smoke-700">{relayrDiscardLine(reason, { paymentUnmatched })}</p>
       <button
         type="button"
         className="btn-secondary min-h-[36px] px-4 text-sm"

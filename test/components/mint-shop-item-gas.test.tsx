@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { encodeFunctionData, toEventSelector, zeroAddress, type Abi, type Address, type Hex } from 'viem'
+import { encodeFunctionData, toEventSelector, TransactionNotFoundError, zeroAddress, type Abi, type Address, type Hex } from 'viem'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -12,7 +12,14 @@ const mocks = vi.hoisted(() => ({
   waitSafe: vi.fn(),
   receipt: vi.fn(),
   shop: vi.fn(),
-  client: { readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn() },
+  client: {
+    readContract: vi.fn(), simulateContract: vi.fn(), estimateContractGas: vi.fn(), getTransaction: vi.fn(),
+    getChainId: vi.fn(async () => 1),
+    getTransactionReceipt: vi.fn(async () => null),
+    // The account's next nonce, read before the wallet opens.
+    getBlockNumber: vi.fn(async () => 100n),
+    getTransactionCount: vi.fn(async () => 0),
+  },
 }))
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -140,6 +147,64 @@ function executesSentMint(data?: Hex) {
   })
 }
 
+
+describe('a free mint held by the write hold', () => {
+  it('shows the exit once it becomes due after a receipt timeout, without reopening, and accepting it mints exactly once more', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      // The wallet returns a hash the network never sees, and its receipt watch times out.
+      mocks.write.mockResolvedValueOnce(`0x${'cd'.repeat(32)}`)
+      mocks.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
+      mocks.receipt.mockRejectedValueOnce(new Error('The receipt could not be read in time.'))
+      await mint()
+      expect(mocks.write).toHaveBeenCalledOnce()
+      expect(JSON.stringify(renderer.toJSON())).toContain('Still pending in your wallet.')
+      expect(JSON.stringify(renderer.toJSON())).not.toContain('I checked my wallet. Send again')
+
+      vi.setSystemTime(Date.now() + 31 * 60_000)
+      await act(async () => { vi.advanceTimersByTime(60_000) })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(JSON.stringify(renderer.toJSON())).toContain('I checked my wallet. Send again')
+      await click('I checked my wallet. Send again')
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.write).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('offers the exit when a proposed mint can no longer be followed, and accepting it proposes exactly once more', async () => {
+    mocks.safe = true
+    mocks.waitSafe.mockRejectedValueOnce(new Error('Safe service unavailable'))
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    const shown = JSON.stringify(renderer.toJSON())
+    expect(shown).toContain("This Safe transaction couldn't be confirmed here. Check your Safe, then send again.")
+    expect(shown).toContain('I checked my wallet. Send again')
+    await click('I checked my wallet. Send again')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(mocks.write).toHaveBeenCalledTimes(2)
+  })
+
+  it('sends nothing on a second click after a lost wallet reply, across closing the modal, and shows the held line with its exit', async () => {
+    mocks.write.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+
+    await mint()
+    expect(mocks.write).toHaveBeenCalledOnce()
+    const shown = JSON.stringify(renderer.toJSON())
+    expect(shown).toContain("Your earlier transaction hasn't confirmed yet. Check your wallet.")
+    expect(shown).toContain('I checked my wallet. Send again')
+
+    // The user checked their wallet: the same mint is sent again, once.
+    await click('I checked my wallet. Send again')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(mocks.write).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('free mint gas', () => {
   it('wallet-action:mint-shop-tiers-without-payment sends the measured gas limit from an ordinary wallet', async () => {
     await mint()
@@ -222,6 +287,8 @@ describe('free mint gas', () => {
     const actions = renderer.root.findAllByType('button').map(button => button.children.join(''))
     expect(actions).toContain('Done')
     expect(actions).not.toContain('Confirm mint')
+    // Held by the write hold: only its checked-wallet exit can propose it again.
+    expect(actions).toContain('I checked my wallet. Send again')
     expect(mocks.write).toHaveBeenCalledOnce()
   })
 

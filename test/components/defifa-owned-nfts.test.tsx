@@ -136,6 +136,11 @@ describe('native owned NFT actions', () => {
     expect(wallet.writeContract).not.toHaveBeenCalled()
     expect(readDefifaWriteRecovery({ chainId: 1, projectId: 1, account: m.account as Address, action })).toBeNull()
   })
+  it("says in its review when this browser can't remember pending transactions", async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError') })
+    await manual(); await click('Cash out Defifa NFTs')
+    expect(JSON.stringify(renderer.toJSON())).toContain("This browser can't remember pending transactions. Check your wallet before repeating one.")
+  })
   it('wallet-action:cash-out-defifa-nfts preserves zero currency with positive protocol rewards', async () => {
     await manual(); await click('Cash out Defifa NFTs'); await click('Confirm NFT action')
     expect(m.cash).toHaveBeenCalledTimes(2); expect(m.send).toHaveBeenCalledTimes(1)

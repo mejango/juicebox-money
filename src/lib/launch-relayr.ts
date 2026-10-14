@@ -29,6 +29,7 @@ import {
   relayrPay,
   relayrPaymentLabel,
   relayrPoll,
+  RELAYR_REQUEST_REFRESH_SECONDS,
   relayrHeldMessage,
   relayrPostBundle,
 } from '@/lib/relayr'
@@ -523,7 +524,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           client.readContract({ address: forwarderFor(signed.chainId), abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] }),
           client.getCode({ address: account }),
         ])
-        if (request.deadline < Math.floor(Date.now() / 1000) + 120) {
+        if (request.deadline < Math.floor(Date.now() / 1000) + RELAYR_REQUEST_REFRESH_SECONDS) {
           throw new LaunchSignaturesNeedRefresh('Launch signatures are about to expire. Review fresh authorizations before payment.')
         }
         if (!trusted || !valid || (code && code !== '0x')) {

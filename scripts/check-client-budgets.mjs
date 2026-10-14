@@ -79,7 +79,11 @@ const budgets = {
     // chunk that adds loading/compression cost without solving aggregate growth.
     // The same comparison measures create 521,889 -> 523,483 -> 525,190 B.
     // Preserve all wallet/dialog boundaries and round the measured route cost.
-    '/create/page': 513 * KIB,
+    // SDK 2.31.0 with every ordinary write held by the SDK's write recovery (its
+    // IndexedDB lock fallback, nonce evidence and the held-write notice with its
+    // exit, in place of the in-memory registry) measures create 513.3 KiB on the
+    // Node 26.7 / npm 12 browser build. Round only this route up to the next KiB.
+    '/create/page': 514 * KIB,
   },
   // Counts every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
@@ -244,7 +248,18 @@ const budgets = {
   // liquidity runs' suspend on unconfirmed, and the tall-confirm browser proof
   // route) measures 2587.4 KiB on the Node 26.7 / npm 12 browser build. Round
   // only the aggregate to the next KiB.
-  allScripts: 2588 * KIB,
+  // SDK 2.31.0 and the SDK's write recovery for every ordinary write (durable
+  // holds, chain release, the exit) in place of that registry measure 2592.5 KiB
+  // against 2587.4 KiB on the same toolchain. Round only the aggregate up.
+  // Holding a write until its receipt is final, the pending line in place of
+  // the exit, and keeping a ran Safe proposal across reloads measure 2593.7 KiB.
+  // SDK 2.32.0's write hold controller (its Safe proposal follow, the exits and
+  // every held state) in place of the app's own glue measures 2597.4 KiB.
+  // Holding the free mint through the same write hold, and rechecking a held
+  // Defifa action while its card is open, measure 2598.0 KiB: round up.
+  // Entering the hold when a receipt watch gives up (with its recheck) and
+  // routing adopted Safe proposals to an app journal's hold measure 2598.9 KiB.
+  allScripts: 2600 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

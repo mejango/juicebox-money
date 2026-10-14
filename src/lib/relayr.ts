@@ -24,7 +24,12 @@ import {
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
-import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
+import {
+  isDefiniteWalletRejection,
+  relayrDiscardLine,
+  relayrHeldMessage as sharedRelayrHeldMessage,
+  simulateStateChangingTransaction,
+} from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
@@ -32,7 +37,7 @@ import {
   FORWARD_REQUEST_TYPES,
   MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_API,
-  RELAYR_FORWARDER_DEADLINE_SECONDS,
+  RELAYR_REQUEST_RUN_MARGIN_SECONDS,
   RELAYR_PAYMENT_GAS,
   RELAYR_UUID_RE,
   RelayrDestinationRevertedError,
@@ -46,6 +51,7 @@ import {
   relayrBundleRequest,
   relayrDestinationHash,
   relayrForwardRequest,
+  relayrForwarderDeadline,
   relayrPaymentAttemptOutcome,
   relayrPaymentChains,
   relayrPaymentDetails,
@@ -90,6 +96,15 @@ import {
 
 const RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:'
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
+/**
+ * A saved request is reused for a new quote only while it has this long left:
+ * a quote's payment window (about 10 minutes, with slack) plus the time the
+ * SDK leaves Relayr to run a paid bundle. Any less and the quote offers no
+ * payable option, so the session waits for its requests to expire and signs again.
+ */
+export const RELAYR_REQUEST_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MARGIN_SECONDS
+/** The longest a request may be signed for (Relayr refuses 48 hours); sessions saved before 2-hour signing used it. */
+const RELAYR_LONGEST_DEADLINE_SECONDS = 47 * 60 * 60
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
 /** Consecutive 404s that prove the uuid was never Relayr's, not a blip. */
 const RELAYR_NOT_FOUND_ATTEMPTS = 3
@@ -136,33 +151,13 @@ export function relayrCallsScope(calls: RelayrCall[]): string {
   return `authority:${keccak256(stringToHex(JSON.stringify(stableCalls)))}`
 }
 
-/**
- * The line each reason a saved session can be discarded shows (ruling R114,
- * the SDK's RelayrDiscardReason). Opening the action still signs `expired`
- * requests again at their saved nonces.
- */
-const RELAYR_DISCARD_LINES: Record<RelayrDiscardReason, string> = {
-  ran: 'This action\'s earlier signature may already have run. Check the project, then discard it to review it again.',
-  changed: 'The project changed since this review.',
-  expired: 'This action\'s earlier signatures expired without running.',
-}
-
-/** What a session whose requests all expired unused shows when its saved payment proved to be another transaction. */
-const RELAYR_PAYMENT_UNMATCHED_LINE = 'The saved payment couldn\'t be matched to this action and isn\'t refunded. Discard it to review it again.'
-
 /** The line a new payment's review shows when it replaces a payment that was never matched to its quote. */
 const RELAYR_PAYMENT_UNMATCHED_NOTE = 'The earlier payment couldn\'t be matched to this action and isn\'t refunded.'
 
 /**
- * The one line a discardable session shows, and the error its action throws
- * until it is discarded. `paymentUnmatched`: its saved payment proved to be
- * another transaction, which matters once none of its requests ran.
+ * A saved session none of whose requests can run again: Discard ends it, and
+ * its message is the SDK's discard line. `cause` is why its calls were not proven.
  */
-export function relayrDiscardLine(reason: RelayrDiscardReason, paymentUnmatched = false): string {
-  return reason === 'expired' && paymentUnmatched ? RELAYR_PAYMENT_UNMATCHED_LINE : RELAYR_DISCARD_LINES[reason]
-}
-
-/** A saved session none of whose requests can run again: Discard ends it. `cause` is why its calls were not proven. */
 export class RelayrDiscardError extends Error {
   readonly name = 'RelayrDiscardError'
 
@@ -172,19 +167,13 @@ export class RelayrDiscardError extends Error {
     cause?: unknown,
     readonly paymentUnmatched = false,
   ) {
-    super(relayrDiscardLine(reason, paymentUnmatched), cause === undefined ? undefined : { cause })
+    super(relayrDiscardLine(reason, { paymentUnmatched }), cause === undefined ? undefined : { cause })
   }
 }
 
-/**
- * The line a session shows while one of its old requests can still run:
- * until `until` (seconds), or, once the clock is past it, until a finalized
- * block is.
- */
+/** The SDK's line for a session one of whose old requests can still run, in this app's time format. */
 export function relayrHeldMessage(until: number, nowMs = Date.now()): string {
-  return until * 1_000 > nowMs
-    ? `This action's earlier signature can still run until ${formatDateTime(until)}. Try again after that.`
-    : 'This action\'s earlier signature may still run. Try again in a few minutes.'
+  return sharedRelayrHeldMessage(until, { nowMs, formatTime: ms => formatDateTime(ms / 1_000) })
 }
 
 export type RelayrPendingSession = {
@@ -333,19 +322,25 @@ const MAX_UINT256 = (1n << 256n) - 1n
  * expired, so both arguments here are milliseconds.
  */
 export function relayrSessionExpired(
-  session: { createdAt: number },
+  session: Pick<RelayrPendingSession, 'createdAt' | 'publishedEntries'>,
   nowMs: number = Date.now(),
 ): boolean {
   return nowMs >= relayrSessionExpiresAt(session)
 }
 
 /**
- * When a session's signatures stop being executable, in milliseconds. Pending
- * sessions persist in localStorage indefinitely, so a bundle resumed days later
- * would fail at the forwarder; the resume UI says so instead.
+ * When a session's signatures stop being executable, in milliseconds: its
+ * latest signed request's deadline. A session whose requests can't be read
+ * falls back to the longest deadline Relayr accepts, so it is never reported
+ * expired early. Pending sessions persist in localStorage indefinitely, so a
+ * bundle resumed days later would fail at the forwarder; the resume UI says so instead.
  */
-export function relayrSessionExpiresAt(session: { createdAt: number }): number {
-  return session.createdAt + RELAYR_FORWARDER_DEADLINE_SECONDS * 1000
+export function relayrSessionExpiresAt(session: Pick<RelayrPendingSession, 'createdAt' | 'publishedEntries'>): number {
+  const deadlines = (session.publishedEntries ?? []).map(entry => relayrForwardRequest(entry)?.deadline)
+  if (deadlines.length && deadlines.every(deadline => deadline !== undefined)) {
+    return Math.max(...(deadlines as number[])) * 1000
+  }
+  return session.createdAt + RELAYR_LONGEST_DEADLINE_SECONDS * 1000
 }
 
 /** A timeout means Relayr may still execute a paid bundle. Do not submit it again blindly. */
@@ -910,7 +905,7 @@ async function verifyForwardedEntries(entries: RelayrEntry[], account: Address):
     const client = publicClient(entry.chain as JBChainId)
     if (!isAddressEqual(request.from, account) ||
         request.value !== BigInt(entry.value) ||
-        request.deadline <= Math.floor(Date.now() / 1000) + 120 ||
+        request.deadline <= Math.floor(Date.now() / 1000) + RELAYR_REQUEST_REFRESH_SECONDS ||
         !await relayrTargetSupportsForwarder({ chainId: entry.chain as JBChainId, target: request.to, data: request.data }) ||
         !await client.readContract({ address: entry.target, abi: erc2771ForwarderAbi, functionName: 'verify', args: [request] })) {
       throw new Error('The relay authorization or trusted forwarder changed. Review the original action again.')
@@ -973,7 +968,7 @@ async function signForwardedRequest(
     value,
     gas: call.gas ?? 500_000n,
     nonce,
-    deadline: Math.floor(Date.now() / 1000) + RELAYR_FORWARDER_DEADLINE_SECONDS,
+    deadline: relayrForwarderDeadline(),
     data: call.data,
   }
   const typedDomain = {

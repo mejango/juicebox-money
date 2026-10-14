@@ -13,7 +13,7 @@ import {
   JBPermissionIdsV6,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   encodeFunctionData,
   isAddress,
@@ -36,7 +36,13 @@ import {
   gasWithHeadroom,
   isTransactionReceiptUnavailableError,
   waitForTrackedReceipt,
+  WriteHeldError,
+  type WriteHeldState,
+  type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
+import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
+import { settledLine, writeHolds } from '@/lib/write-holds'
+import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
   isSafeConnection,
@@ -87,10 +93,27 @@ export function MintShopItemModal({
   const [quantity, setQuantity] = useState('1')
   const [review, setReview] = useState<MintReview | null>(null)
   const [phase, setPhase] = useState<
-    'form' | 'checking' | 'review' | 'sending' | 'confirming' | 'uncertain' | 'done'
+    'form' | 'checking' | 'review' | 'sending' | 'confirming' | 'uncertain' | 'held' | 'done'
   >('form')
+  /** The mint the SDK's write hold holds, kept across closing and reopening this modal. */
+  const [held, setHeld] = useState<{ hold: WriteHoldHandle; state: WriteHeldState } | null>(null)
+  const holdRef = useRef<WriteHoldHandle | null>(null)
+  /** The hold whose exit the user accepted: its answer, not what it reports meanwhile, decides. */
+  const exitingRef = useRef<WriteHoldHandle | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [hash, setHash] = useState<`0x${string}` | null>(null)
+
+  // A shown hold stays current: an exit that becomes due appears, and one that clears ends it.
+  useWriteHoldWatch(phase === 'held' ? held?.hold : undefined,
+    getPublicClient(config, { chainId: chainId as SupportedChainId }) as never,
+    state => {
+      if (!held || exitingRef.current === held.hold) return
+      if (state.status === 'clear') {
+        setHeld(null)
+        setMessage(settledLine(state.settled))
+        setPhase('uncertain')
+      } else setHeld({ hold: held.hold, state })
+    })
 
   const busy = ['checking', 'sending', 'confirming'].includes(phase)
   const maxQuantity = Math.max(0, Math.min(50, remaining))
@@ -156,6 +179,10 @@ export function MintShopItemModal({
     }
 
     setMessage(null)
+    setHeld(null)
+    let reachedWallet = false
+    /** Its receipt was read: the failure says so, and the hold keeps it in the background until final. */
+    let outcomeKnown = false
     try {
       setPhase('checking')
       const assertOriginalWallet = captureWalletContext(config, { account: address, chainId })
@@ -181,9 +208,14 @@ export function MintShopItemModal({
         beneficiary: review.beneficiary,
       })
       setPhase('sending')
+      const call = { to: request.address, data: encodeFunctionData(request), value: 0n }
+      // The SDK's write hold holds this exact mint from just before the wallet
+      // opens, across closing this modal and reloading, until it is proven.
+      const hold = writeHolds.open({ chainId, account: address, safe: viaSafe, call })
+      holdRef.current = hold
       // Read once: the review, the sent gas and the tracking must agree on
       // whether a Safe proposes this mint.
-      let submitted = await submitReviewedContractWrite({
+      let submitted = await hold.send(client as never, gate => submitReviewedContractWrite({
         request,
         expectedAccount: address,
         review: reviewed =>
@@ -245,7 +277,14 @@ export function MintShopItemModal({
         ),
         accountChangedError:
           'Connected account changed. Review the free mint again.',
-      })
+        beforeWrite: async () => {
+          await gate.beforeSend()
+          reachedWallet = true
+        },
+        onWriteSubmitted: hash => gate.afterSubmit(hash),
+        onWriteRejected: () => gate.onRejected(),
+        onBeforeWriteAborted: () => gate.onRejected(),
+      }))
       setHash(submitted)
       setPhase('confirming')
       const proposal = viaSafe ? submitted : null
@@ -253,14 +292,19 @@ export function MintShopItemModal({
         try {
           submitted = await waitForSafeExecutionHash(chainId, proposal, { signal: modalSignal() })
         } catch {
-          // The Safe may still execute it: the mint stays submitted, never
-          // offered again from this form.
-          setPhase('uncertain')
+          // Its execution can't be followed here: the hold keeps the mint and
+          // offers the checked-wallet exit; later evidence still settles it.
+          const state = await hold.onUnproven(client as never, proposal).catch(() => hold.peek())
+          if (state.status !== 'clear') showHeld(hold, state)
+          else setPhase('uncertain')
           return
         }
         setHash(submitted)
       }
       const receipt = await waitForTrackedReceipt(client, submitted)
+      outcomeKnown = true
+      // The hold releases a verified success at once, a failure only at finality.
+      void hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => {})
       if (receipt.status !== 'success') throw new Error('The mint failed.')
       if (proposal) {
         // Only the Safe's ExecutionSuccess for this proposal confirms the
@@ -290,12 +334,48 @@ export function MintShopItemModal({
       ])
       setPhase('done')
     } catch (error) {
+      const hold = holdRef.current
+      if (hold && error instanceof WriteHeldError) {
+        showHeld(hold, error.state)
+        return
+      }
+      if (hold && reachedWallet && !outcomeKnown) {
+        // The wallet may have sent it without saying so: the hold says what is held.
+        const now = await hold.state(getPublicClient(config, { chainId: chainId as SupportedChainId }) as never).catch(() => hold.peek())
+        if (now.status !== 'clear') {
+          showHeld(hold, now)
+          return
+        }
+      }
       setMessage(shortError(error, 'Could not mint this item.'))
       setPhase(isTransactionReceiptUnavailableError(error) ? 'uncertain' : review ? 'review' : 'form')
     }
   }
 
-  const settled = phase === 'done' || phase === 'uncertain'
+  const showHeld = (hold: WriteHoldHandle, state: WriteHeldState) => {
+    setHeld({ hold, state })
+    setMessage(null)
+    setPhase('held')
+  }
+
+  /** The user checked their wallet: the mint is sent again only if the hold reports it released. */
+  const exitHeld = async () => {
+    if (!held?.state.exit) return
+    const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as never
+    exitingRef.current = held.hold
+    const { released, state } = await held.hold.exit(held.state, { checkedWallet: true }, client)
+      .finally(() => { exitingRef.current = null })
+    if (released) {
+      setHeld(null)
+      await handleConfirm()
+    } else if (state.status === 'clear') {
+      setHeld(null)
+      setMessage(settledLine(state.settled))
+      setPhase('uncertain')
+    } else showHeld(held.hold, state)
+  }
+
+  const settled = phase === 'done' || phase === 'uncertain' || phase === 'held'
   const footer = (
     <div className="flex justify-end gap-2">
       <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
@@ -356,7 +436,7 @@ export function MintShopItemModal({
         <TxConfirmDialog
           open
           preparing={!review}
-          title={phase === 'done' ? 'Items minted' : phase === 'uncertain' ? 'Mint submitted' : 'Confirm mint'}
+          title={phase === 'done' ? 'Items minted' : phase === 'uncertain' || phase === 'held' ? 'Mint submitted' : 'Confirm mint'}
           rows={
             review
               ? [
@@ -377,10 +457,12 @@ export function MintShopItemModal({
             !review
               ? 'Checking your mint permission…'
               : phase === 'uncertain'
-                ? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.'
+                ? (message ?? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.')
                 : undefined
           }
-          error={phase === 'uncertain' ? undefined : message}
+          error={phase === 'held' && held
+            ? <WriteHeldNotice chainId={chainId} state={held.state} onExit={held.state.exit ? () => void exitHeld() : undefined} />
+            : phase === 'uncertain' ? undefined : message}
           onClose={() => {
             if (settled) {
               onClose()

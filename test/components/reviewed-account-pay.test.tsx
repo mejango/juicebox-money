@@ -299,6 +299,22 @@ describe('a payment reviewed for one account', () => {
   })
 })
 
+describe('a payment whose receipt watch gives up', () => {
+  it("shows the hold's line on the panel, and a second pay sends nothing until the payment settles", async () => {
+    wallet.watchGivesUp = true
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => host.textContent?.includes('Still pending in your wallet. Speed it up or cancel it there.') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await click('Close review')
+    expect(host.textContent).toContain('Still pending in your wallet. Speed it up or cancel it there.')
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => host.textContent?.includes('Still pending in your wallet.') ?? false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+  })
+})
+
 describe('a payment from a Safe', () => {
   /** Two pay panels for the same project, as when one is open beside another. */
   async function reviewInTwoPanels() {
@@ -330,12 +346,13 @@ describe('a payment from a Safe', () => {
   const clickIn = (name: string, label: string) => act(async () => panelButton(name, label)!.click())
 
   const AWAITING = 'Proposed to your Safe. Its other signers can approve it there.'
-  const REPLACED = 'Safe moved past this proposal without running it. Review it again.'
-  const UNCONFIRMED =
-    'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action.'
+  const REPLACED = 'Another Safe transaction used this nonce. Propose it again to run it.'
+  /** The write hold's line for a proposal its follower couldn't prove. */
+  const UNPROVEN = "This Safe transaction couldn't be confirmed here. Check your Safe, then send again."
+  const EXIT = 'I checked my wallet. Send again'
   const panelSays = (line: string) => host.textContent?.includes(line) ?? false
 
-  it("keeps a proposed payment's line on the panel after Done, and frees the panel by Dismiss once it can't be proven", async () => {
+  it("keeps a proposed payment's line on the panel after Done, and once it can't be proven shows the hold's line, where only the exit pays again", async () => {
     m.safe = true
     let lose!: (reason: Error) => void
     m.waitForSafeExecutionHash = () => new Promise((_, reject) => (lose = reject))
@@ -354,15 +371,22 @@ describe('a payment from a Safe', () => {
     expect(button('Pay').disabled).toBe(true)
     expect([...host.querySelectorAll('button')].some(item => item.textContent === 'Dismiss')).toBe(false)
 
-    // Safe's service is lost before its execution can be read.
+    // Safe's service is lost before its execution can be read: the hold's line and its exit.
     await act(async () => lose(new Error('Safe service unavailable')))
-    await waitUntil(() => panelSays('Safe service unavailable'))
-    expect(panelSays(`${UNCONFIRMED} Safe service unavailable`)).toBe(true)
-    expect(button('Pay').disabled).toBe(true)
+    await waitUntil(() => panelSays(UNPROVEN))
+    expect(panelSays(UNPROVEN)).toBe(true)
+    expect([...host.querySelectorAll('button')].some(item => item.textContent === EXIT)).toBe(true)
 
+    // Dismissing frees the panel, but paying again proposes nothing: only the exit does.
     await click('Dismiss')
-    expect(panelSays(UNCONFIRMED)).toBe(false)
     expect(button('Pay').disabled).toBe(false)
+    await click('Pay')
+    await click('Confirm & Pay')
+    await waitUntil(() => panelSays(UNPROVEN))
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    await click(EXIT)
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
   })
 
   it('frees a panel whose proposed payment another panel dismissed, by its own Dismiss', async () => {
@@ -381,16 +405,15 @@ describe('a payment from a Safe', () => {
     await waitUntil(() => !!panelButton('second', 'Done'))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     await act(async () => lose(new Error('Safe service unavailable')))
-    await waitUntil(() => panel('second').textContent?.includes('Safe service unavailable') ?? false)
+    await waitUntil(() => panel('second').textContent?.includes(UNPROVEN) ?? false)
     await clickIn('second', 'Done')
-    expect(panelButton('second', 'Pay')!.disabled).toBe(false)
 
-    // Released there, the first panel's stage is lost: its line says so, and Dismiss frees it.
+    // Both panels show the hold's line, and dismissing frees a panel without proposing again.
     await waitUntil(() => !!panelButton('first', 'Dismiss'))
-    expect(panel('first').textContent).toContain(UNCONFIRMED)
-    expect(panelButton('first', 'Pay')!.disabled).toBe(true)
+    expect(panel('first').textContent).toContain(UNPROVEN)
     await clickIn('first', 'Dismiss')
     expect(panelButton('first', 'Pay')!.disabled).toBe(false)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
   })
 
   it("shows on the panel why a router authorization proposed to the Safe ended after Done", async () => {
@@ -435,31 +458,25 @@ describe('a payment from a Safe', () => {
     expect(button('Pay').disabled).toBe(false)
   })
 
-  it("ends an approval whose result can't be proven on Done, freeing the panel and the call", async () => {
+  it("ends an approval whose result can't be proven on Done, freeing the panel, and keeps the call held", async () => {
     m.safe = true
     m.token = 'erc20'
     // Safe's service is lost before the approval's execution can be read.
     m.waitForSafeExecutionHash = () => Promise.reject(new Error('Safe service unavailable'))
     await reviewPayment()
     await click('Confirm & Pay')
-    await waitUntil(() => dialogStatus()?.includes('Safe service unavailable') ?? false)
+    await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    expect(dialogStatus()).toBe(
-      'Safe proposal submitted, but confirmation is unavailable. Check Safe before taking another action. Safe service unavailable',
-    )
 
     await click('Done')
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // Dismissed after its line, the same approval can be proposed again.
+    // The write hold still holds the same approval: it is not proposed again.
     await click('Pay')
     await click('Confirm & Pay')
-    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
-    expect(wallet.writes()).toEqual([
-      { functionName: 'approve', account: ALICE },
-      { functionName: 'approve', account: ALICE },
-    ])
+    await waitUntil(() => panelSays(UNPROVEN))
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
   })
 })
 
@@ -578,7 +595,7 @@ describe('compatible basic funding', () => {
     const original = readDefifaWriteRecovery(scope)!
     expect(original.hash).toBeUndefined()
     await click('Close review')
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     await click('Add to balance')
@@ -603,20 +620,24 @@ describe('compatible basic funding', () => {
     } }
     const panel = <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
     await act(async () => root.render(panel))
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
-    expect(host.textContent).toContain('Retrying this NFT action is blocked')
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet. Check your wallet."))
+    expect(host.textContent).toContain('I checked my wallet. Send again')
     await click('Add to balance')
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
     const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Payment mode"]')!
     await act(async () => { mode.value = 'pay'; mode.dispatchEvent(new Event('change', { bubbles: true })) })
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     await act(async () => root.unmount())
     root = createRoot(host)
     await act(async () => root.render(panel))
-    await waitUntil(() => !!host.textContent?.includes('wallet did not return a transaction identity'))
+    await waitUntil(() => !!host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
     expect(readDefifaWriteRecovery(scope)?.id).toBe(original.id)
     expect(wallet.writeContract).not.toHaveBeenCalled()
+    // The user checked their wallet: the hold ends and the NFT form returns.
+    await click('I checked my wallet. Send again')
+    await waitUntil(() => !host.textContent?.includes("Your earlier NFT mint hasn't confirmed yet."))
+    expect(readDefifaWriteRecovery(scope)).toBeNull()
   })
 
   for (const identity of ['defifa', 'unknown'] as const) {

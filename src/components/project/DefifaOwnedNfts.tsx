@@ -14,6 +14,7 @@ import { useConfig, usePublicClient } from 'wagmi'
 import { getAccount } from 'wagmi/actions'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
@@ -203,7 +204,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     try {
       const hash = await sendRecoverableDefifaWrite({
         scope: { chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind },
-        request: plan.result.transaction, safe: tx.isSafe, send: (request, options) => tx.send(request, options),
+        request: plan.result.transaction, safe: tx.isSafe, client, send: (request, options) => tx.send(request, options),
         onRecord: record => { recovery.current = record; markWrite(record !== null) },
         options: {
         reviewedAccount: plan.account,
@@ -288,6 +289,6 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       ...(cash ? [{ label: 'Reclaimed', value: `${formatTokenAmount(cash.reclaimAmount, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Minimum', value: `${formatTokenAmount(plan.minimum, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Protocol rewards', value: `${formatTokenAmount(cash.protocolRewards.defifaAmount, cash.protocolRewards.defifaDecimals)} at ${cash.protocolRewards.defifaToken}, ${formatTokenAmount(cash.protocolRewards.baseProtocolAmount, cash.protocolRewards.baseProtocolDecimals)} at ${cash.protocolRewards.baseProtocolToken}` }] : []),
-    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} action="Confirm NFT action" onConfirm={() => void confirm()} onClose={close} busy={tx.busy || proof === 'checking'} actionDisabled={held || proof !== 'idle'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error} /> : null}
+    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} action="Confirm NFT action" onConfirm={() => void confirm()} onClose={close} busy={tx.busy || proof === 'checking'} actionDisabled={held || proof !== 'idle'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}><WriteRecoveryInTabNote /></TxConfirmDialog> : null}
   </div></DefifaRecovery>
 }

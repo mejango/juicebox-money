@@ -11,6 +11,23 @@ function blockedNetworkConstructor(transport: string) {
 }
 
 beforeEach(() => {
+  // Writes held in a storage-less tab live in the SDK's tab memory, and in a
+  // DOM environment's storage: each test starts with none.
+  const tab = globalThis as unknown as Record<symbol, unknown>
+  const memory = tab[Symbol.for('nana-sdk:held-writes')] as Map<string, string> | undefined
+  ;(tab[Symbol.for('nana-sdk:held-writes-seen')] as WeakMap<object, Map<string, string>> | undefined)?.get(memory ?? {})?.clear()
+  memory?.clear()
+  try {
+    const storage = globalThis.localStorage
+    if (storage && typeof storage.key === 'function') {
+      for (let index = storage.length - 1; index >= 0; index--) {
+        const key = storage.key(index)
+        if (key?.startsWith('nana-sdk:reviewed-write:')) storage.removeItem(key)
+      }
+    }
+  } catch {
+    // No storage in this environment.
+  }
   // React 19 requires test environments to opt into act() semantics
   // explicitly. Every renderer mutation in the component suites is wrapped
   // in act(), so advertise that contract and fail loudly if a future test is
