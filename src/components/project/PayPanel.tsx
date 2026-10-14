@@ -1,6 +1,7 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
+import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
 
 import {
   accountingContextsQuery,
@@ -134,6 +135,8 @@ type PaymentTransactionAction = {
   label: string;
   request: TxRequest;
   swapInputRoute?: DirectPaySwapQuote["inputRoute"];
+  /** The write hold key for an action whose calldata regenerates on retry (an expiration, a deadline, a quote). */
+  intent?: string;
 };
 
 type PaymentSignatureAction = {
@@ -1358,6 +1361,7 @@ export function PayPanel({
             args: request.args as unknown as readonly unknown[],
             label: "Authorize Uniswap swap router",
           },
+          intent: permit2ApproveIntent(request),
         });
       }
     }
@@ -1421,6 +1425,11 @@ export function PayPanel({
           : "Add to the project balance",
       request: paymentRequest,
       swapInputRoute: activeSwapQuote?.inputRoute,
+      // Its deadline restamps and its minimum re-quotes on retry: held by what the user chose.
+      intent: writeIntentKey(mode === "pay" ? (activeSwapQuote ? "pay-swap" : "pay") : "add-to-balance", {
+        chainId, projectId, terminal: terminalAddress, token: context.token, amount: amountRaw,
+        beneficiary: address, memo: memo.trim(), metadata: mode === "pay" && !activeSwapQuote ? metadata : undefined,
+      }),
     });
     return actions;
   };
@@ -1628,6 +1637,7 @@ export function PayPanel({
               args: request.args as unknown as readonly unknown[],
               label: "Authorize Uniswap swap router",
             },
+            intent: permit2ApproveIntent(request),
           };
           setSequenceActions(current =>
             current.map(action =>
@@ -1647,7 +1657,7 @@ export function PayPanel({
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
           routerApproval.request,
-          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock },
+          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1688,6 +1698,7 @@ export function PayPanel({
       const paymentHash = await tx.send(paymentRequest, {
         reviewedAccount: account,
         simulationBlockNumber: latestApprovalBlock,
+        intent: paymentAction.intent,
       });
       if (!paymentHash) throw new Error("Payment was cancelled.");
       if (tx.isSafe) {

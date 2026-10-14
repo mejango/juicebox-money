@@ -262,7 +262,9 @@ const budgets = {
   // SDK 2.34.0 (readable settlements, one exit gate, candidate executions,
   // attachHash) and showing success only once the hold settles it measure
   // 2600.9 KiB: round up, with headroom for CI.
-  allScripts: 2602 * KIB,
+  // Intent keys for writes whose calldata regenerates on retry (deadlines,
+  // Permit2 expirations, quotes) measure 2601.7 KiB: round up, with CI headroom.
+  allScripts: 2604 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

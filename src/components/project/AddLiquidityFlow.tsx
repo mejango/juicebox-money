@@ -43,6 +43,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
+import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
 import { wagmiConfig } from '@/providers/Providers'
 import {
   POSITION_MANAGER_BY_CHAIN,
@@ -503,16 +504,14 @@ function AddLiquidityForm({
         )
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager: p.posm,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount },
-        )
+        const request = buildPermit2ApproveRequest({
+          chainId,
+          token: step.token,
+          positionManager: p.posm,
+          amount: step.amount,
+          expiration: step.expiration,
+        })
+        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
       }
       // Deadline is set at send time — everything that touches funds is
       // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
@@ -527,7 +526,15 @@ function AddLiquidityForm({
           deadline,
           value: p.mint.value,
         }),
-        { reviewedAccount, simulationBlockNumber: confirmedAt },
+        {
+          reviewedAccount,
+          simulationBlockNumber: confirmedAt,
+          // Its deadline restamps, and a fresh plan re-prices its amounts: held by the range the user chose.
+          intent: writeIntentKey(p.market ? 'add-market-liquidity' : 'add-liquidity', {
+            chainId, positionManager: p.posm, account: reviewedAccount,
+            tickLower: p.display.tickLower, tickUpper: p.display.tickUpper,
+          }),
+        },
       )
     },
     [tx, chainId],

@@ -1,5 +1,7 @@
 'use client'
 
+import { writeIntentKey } from '@/lib/write-intent'
+
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
@@ -513,7 +515,13 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: review.account })
+    tx.send({ ...request, abi: request.abi as Abi }, {
+      reviewedAccount: review.account,
+      // Its minimum re-quotes on a fresh review: held by what the user chose to move.
+      intent: writeIntentKey('bridge-prepare', {
+        chainId: from, sucker: review.sucker, token: review.token, amount: review.amount, beneficiary: review.account,
+      }),
+    })
   }
 
   const sendToRemote = async () => {

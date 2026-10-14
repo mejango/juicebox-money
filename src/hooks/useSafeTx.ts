@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { peekHeld, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -128,6 +128,13 @@ export type TxSendOptions = {
   onWriteRejected?: () => unknown | Promise<unknown>
   /** An app journal (Defifa's) already holds this write; the send keeps no hold of its own. */
   journaled?: boolean
+  /**
+   * For a write whose calldata regenerates on retry (a deadline, a Permit2
+   * expiration or signature, a fresh quote): its intent key, from
+   * writeIntentKey. Its hold is the intent's, so a retry is held until the
+   * user's exit.
+   */
+  intent?: string
   /**
    * The write hold over that journal's record. A Safe follower's outcomes
    * (unproven, executed, a receipt) go to it, and `onChange` tells the app.
@@ -282,8 +289,12 @@ function safeHoldNamespace(key: string): string {
   return `safe:${keccak256(stringToHex(key)).slice(2)}`
 }
 
+/** Safe proposals sent under an intent key, by registry key: their hold is the intent's. */
+const intentHolds = new Map<string, string>()
+
 function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, key: string): WriteHoldHandle {
-  return writeHolds.open({ chainId: proposal.chainId, account: proposal.safe, safe: true, namespace: safeHoldNamespace(key), call: proposal.call })
+  const namespace = intentHolds.get(key) ?? safeHoldNamespace(key)
+  return writeHolds.open({ chainId: proposal.chainId, account: proposal.safe, safe: true, namespace, call: proposal.call })
 }
 
 /** Tell the hold how the registry saw a proposal end; the hold decides what it releases. */
@@ -548,7 +559,7 @@ async function holdSettles(key: string, client: FollowClient, receipt: Transacti
   if (before.status === 'clear' && !before.settled) return true
   const own = receipt.transactionHash.toLowerCase()
   for (let attempt = 0; attempt < HOLD_SETTLE_ATTEMPTS; attempt += 1) {
-    const state = await hold.onReceipt(receipt, client as never, { calls: [proposal.call] }).catch(() => hold.peek())
+    const state = await hold.onReceipt(receipt, client as never, { calls: [proposal.call] }).catch(() => peekHeld(hold))
     if (state.status === 'clear') return settledHashOf(state.settled) === own
     updateProposal(key, { phase: 'confirming' })
     await new Promise(resolve => setTimeout(resolve, RECEIPT_POLL_INTERVAL_MS))
@@ -703,7 +714,7 @@ export function useSafeTx(chainId: number) {
     let retry: ReturnType<typeof setTimeout> | undefined
     const check = async () => {
       const state = await current.hold.onReceipt(receiptData as TransactionReceipt, publicClient as never)
-        .catch(() => current.hold.peek())
+        .catch(() => peekHeld(current.hold))
       if (!live) return
       if (state.status === 'clear' && settledHashOf(state.settled) === own) setSettledHash(own)
       else if (state.status !== 'clear') retry = setTimeout(() => void check(), RECEIPT_POLL_INTERVAL_MS)
@@ -742,7 +753,7 @@ export function useSafeTx(chainId: number) {
   useEffect(() => {
     const current = heldRef.current
     if (!watchGaveUp || !current || current.state) return
-    const state = current.hold.peek()
+    const state = peekHeld(current.hold)
     if (state.status === 'clear') return
     showHeld({ ...current, state })
     setPhase('unconfirmed')
@@ -848,7 +859,7 @@ export function useSafeTx(chainId: number) {
       },
     )
   }, [endHeld, leaveHeld, publicClient, showHeld, showHoldState])
-  const shownState = held?.state ?? (effectivePhase === 'unconfirmed' && held ? held.hold.peek() : null)
+  const shownState = held?.state ?? (effectivePhase === 'unconfirmed' && held ? peekHeld(held.hold) : null)
   const effectiveError: string | ReactElement | null = shownKey
     ? proposal && SHOWN_AS[proposal.phase] === 'error'
       ? proposal.message
@@ -933,9 +944,10 @@ export function useSafeTx(chainId: number) {
         const key = proposalKey(request.chainId, account, sentCall)
         if (viaSafe) safeKey = key
         if (!options.journaled) {
+          if (viaSafe && options.intent) intentHolds.set(key, options.intent)
           hold = viaSafe
             ? safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
-            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall })
+            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) })
         }
         {
           if (viaSafe) {
@@ -957,7 +969,7 @@ export function useSafeTx(chainId: number) {
             if (held?.phase === 'unproven' && !options.heldBy) {
               // Unproven here: the hold decides, with its line and exit.
               const hold = safeHoldOf(held, key)
-              const state = await hold.onUnproven(publicClient as never, held.proposalHash).catch(() => hold.peek())
+              const state = await hold.onUnproven(publicClient as never, held.proposalHash).catch(() => peekHeld(hold))
               if (state.status !== 'clear') {
                 inFlightRef.current = false
                 showHoldState({ hold, request, options, proposalKey: key }, state)
@@ -1134,7 +1146,7 @@ export function useSafeTx(chainId: number) {
         }
         if (hold && reachedWallet && !(e instanceof WriteHoldBusyError || e instanceof WriteHoldNonceError)) {
           // The wallet may have sent it without saying so: its hold is shown, as the chain says.
-          const now = await hold.state(publicClient as never).catch(() => hold!.peek())
+          const now = await hold.state(publicClient as never).catch(() => peekHeld(hold!))
           if (now.status !== 'clear') {
             showHoldState({ hold, request, options }, now)
             return null

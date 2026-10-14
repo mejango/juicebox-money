@@ -41,7 +41,7 @@ import {
   type WriteHoldHandle,
 } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
+import { peekHeld, settledHashOf, settledLine, writeHolds } from '@/lib/write-holds'
 import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
 import { shortError } from '@/lib/errors'
 import {
@@ -317,7 +317,7 @@ export function MintShopItemModal({
         } catch {
           // Its execution can't be followed here: the hold keeps the mint and
           // offers the checked-wallet exit; later evidence still settles it.
-          const state = await hold.onUnproven(client as never, proposal).catch(() => hold.peek())
+          const state = await hold.onUnproven(client as never, proposal).catch(() => peekHeld(hold))
           if (state.status !== 'clear') showHeld(hold, state)
           else setPhase('uncertain')
           return
@@ -327,7 +327,7 @@ export function MintShopItemModal({
       const receipt = await waitForTrackedReceipt(client, submitted)
       outcomeKnown = true
       // The hold releases a verified success at once, a failure only at finality.
-      const verified = hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => hold.peek())
+      const verified = hold.onReceipt(receipt, client as never, proposal ? { calls: [call] } : undefined).catch(() => peekHeld(hold))
       if (receipt.status !== 'success') throw new Error('The mint failed.')
       if (proposal) {
         // Only the Safe's ExecutionSuccess for this proposal confirms the
@@ -350,7 +350,12 @@ export function MintShopItemModal({
       // Minted only once the hold settles this receipt: until then it holds the mint.
       const settled = await verified
       if (settled.status !== 'clear' || settledHashOf(settled.settled) !== receipt.transactionHash.toLowerCase()) {
-        showHeld(hold, settled.status === 'clear' ? hold.peek() as never : settled)
+        if (settled.status !== 'clear') showHeld(hold, settled)
+        else {
+          // Settled as another attempt, or released elsewhere: this attempt claims no result.
+          setMessage(null)
+          setPhase('review')
+        }
         return
       }
       await finishMint()
@@ -362,7 +367,7 @@ export function MintShopItemModal({
       }
       if (hold && reachedWallet && !outcomeKnown) {
         // The wallet may have sent it without saying so: the hold says what is held.
-        const now = await hold.state(getPublicClient(config, { chainId: chainId as SupportedChainId }) as never).catch(() => hold.peek())
+        const now = await hold.state(getPublicClient(config, { chainId: chainId as SupportedChainId }) as never).catch(() => peekHeld(hold))
         if (now.status !== 'clear') {
           showHeld(hold, now)
           return

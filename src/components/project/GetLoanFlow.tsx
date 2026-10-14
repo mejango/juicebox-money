@@ -1,5 +1,7 @@
 'use client'
 
+import { writeIntentKey } from '@/lib/write-intent'
+
 import {
   JBCoreContracts,
   jbContractAddress,
@@ -210,7 +212,13 @@ export function GetLoanFlow({
         prepaidFeePercent: BigInt(r.prepaid),
         holder: r.account,
       })
-      await borrowTx.send(request, { reviewedAccount: r.account })
+      await borrowTx.send(request, {
+        reviewedAccount: r.account,
+        // Its minimum re-quotes on retry: held by the loan the user chose.
+        intent: writeIntentKey('borrow', {
+          chainId, revnetId: projectId, token: r.ctxToken, collateral: r.collateral, prepaid: r.prepaid, beneficiary: r.account,
+        }),
+      })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
     } finally {

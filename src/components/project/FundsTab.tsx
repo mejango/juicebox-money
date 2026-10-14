@@ -1,5 +1,7 @@
 'use client'
 
+import { writeIntentKey } from '@/lib/write-intent'
+
 import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 
 import {
@@ -783,6 +785,8 @@ type ReviewedTx = {
   min: bigint
   /** The account the review was made for. */
   account: Address
+  /** Its minimum re-quotes on retry: the write hold key of what the user chose. */
+  intent: string
 }
 
 function FundsTxFlow({
@@ -972,6 +976,9 @@ function FundsTxFlow({
         quote,
         min,
         account: address,
+        intent: writeIntentKey('use-allowance', {
+          chainId, projectId, terminal, token: ctx.token, amount: parsedAmount, currency: line.currency, beneficiary: address,
+        }),
       })
     } catch (e) {
       setFlowError(e instanceof FlowError ? e.message : shortError(e))
@@ -983,7 +990,7 @@ function FundsTxFlow({
   const handleConfirm = () => {
     if (!review || sending) return
     // The reviewed args embed the beneficiary: only that account may send them.
-    tx.send(review.request, { reviewedAccount: review.account })
+    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent })
   }
 
   const closeReview = () => {

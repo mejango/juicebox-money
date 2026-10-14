@@ -28,6 +28,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
+import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
@@ -345,16 +346,14 @@ export function EditPositionPanel({
         )
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount },
-        )
+        const request = buildPermit2ApproveRequest({
+          chainId,
+          token: step.token,
+          positionManager,
+          amount: step.amount,
+          expiration: step.expiration,
+        })
+        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
       }
       // Everything that touches funds is frozen inside unlockData; only the
       // deadline is stamped at send time.
@@ -369,6 +368,8 @@ export function EditPositionPanel({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
+          // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
+          intent: writeIntentKey('edit-position', { chainId, positionManager, tokenId: position.tokenId, account: reviewedAccount }),
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
           // position or drift beyond the reviewed maxima still aborts first.

@@ -1,4 +1,4 @@
-import { createWriteHold, type WriteHoldSettled } from '@bananapus/nana-sdk-core/review'
+import { createWriteHold, type WriteHoldHandle, type WriteHoldSettled, type WriteHoldState } from '@bananapus/nana-sdk-core/review'
 
 /**
  * The app's one SDK write hold: every wallet write is held through it
@@ -17,4 +17,14 @@ export function settledLine(settled?: WriteHoldSettled): string {
   if (settled?.result === 'failed') return 'Your earlier transaction failed onchain.'
   if (settled?.result === 'expired') return 'Your earlier Safe proposal expired before it ran.'
   return 'Your earlier transaction went through.'
+}
+
+/**
+ * What a hold's saved record says, without asking the chain, for display only:
+ * never an exit. Exits come only from state() and exit(), which ask the chain
+ * first.
+ */
+export function peekHeld(hold: WriteHoldHandle): WriteHoldState {
+  const state = hold.peek()
+  return state.status === 'clear' ? state : ({ ...state, exit: false } as WriteHoldState)
 }

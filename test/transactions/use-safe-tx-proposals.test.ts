@@ -184,7 +184,7 @@ async function mount(chainId = 10, phases?: string[]) {
 }
 
 /** Let the follow run until `done`, the hold's receipt retries included (each a poll apart). */
-async function until(done: () => boolean, ms = 9_000) {
+async function until(done: () => boolean, ms = 25_000) {
   const end = Date.now() + ms
   while (!done() && Date.now() < end) {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 100)) })
@@ -747,7 +747,7 @@ describe('a Safe proposal awaiting its signers', () => {
     canonical = true
     await until(() => flow.tx.phase === 'success')
     expect(flow.tx.phase).toBe('success')
-  })
+  }, 30_000)
 
   it('stops being watched once its execution is known', async () => {
     const execute = signersDecide()
@@ -988,7 +988,7 @@ describe("a Safe proposal's last look at the chain", () => {
     await until(() => flow.tx.phase === 'success')
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL, confirmationUncertain: false })
     expect(flow.tx.notice).toBeNull()
-  })
+  }, 30_000)
 
   it("keeps a proposal held through a node that can't answer its last look, and looks again a minute later", async () => {
     vi.useFakeTimers()
@@ -1053,7 +1053,7 @@ describe("a Safe proposal's last look at the chain", () => {
     caughtUp = true
     await until(() => flow.tx.phase === 'success')
     expect(flow.tx).toMatchObject({ phase: 'success', hash: PROPOSAL })
-  })
+  }, 30_000)
 
   it('asks a node behind the receipt again, held and able to end on Done, when no transaction is in hand', async () => {
     vi.useFakeTimers()

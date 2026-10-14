@@ -85,6 +85,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
+import { writeIntentKey } from '@/lib/write-intent'
 import { createBrowserWriteRecovery, createHeldWriteStorage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
@@ -511,6 +512,37 @@ describe('useSafeTx', () => {
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
     })
     expect(mocks.requestReview).toHaveBeenCalledTimes(1)
+  })
+
+  describe('a write keyed by its intent', () => {
+    const swapAbi = parseAbi(['function swap(address to, uint256 amount, uint256 deadline)'])
+    const swap = (deadline: bigint) => ({ ...request, abi: swapAbi, functionName: 'swap', args: [BOB, 5n, deadline] as const })
+    const intent = writeIntentKey('swap', { chainId: 10, to: BOB, amount: 5n })
+
+    it('refuses a retry whose deadline regenerated while the first attempt is held, and sends only after the explicit exit', async () => {
+      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
+      const hook = await renderHook()
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent }) })
+      expect(hook.ref.current!.phase).toBe('unconfirmed')
+      await act(async () => hook.ref.current!.reset())
+      // The retry carries a fresh deadline, so its calldata differs: the intent still holds it.
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      const shown = heldNotice(hook.ref.current!.error)
+      expect(shown.onExit).toBeTypeOf('function')
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it('keys an intent by the action and its chosen parameters only, in one place', () => {
+      expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 5n })).toBe(intent)
+      expect(writeIntentKey('swap', { amount: 5n, to: BOB.toUpperCase(), chainId: 10 })).toBe(intent)
+      expect(writeIntentKey('swap', { chainId: 10, to: BOB, amount: 6n })).not.toBe(intent)
+      expect(writeIntentKey('pay', { chainId: 10, to: BOB, amount: 5n })).not.toBe(intent)
+      expect(intent).toMatch(/^[a-z0-9][a-z0-9:._/-]{0,127}$/)
+    })
   })
 
   describe('success shown only once the write hold settles it', () => {

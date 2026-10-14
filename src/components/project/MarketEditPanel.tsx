@@ -30,6 +30,7 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
+import { permit2ApproveIntent, writeIntentKey } from '@/lib/write-intent'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
@@ -281,16 +282,14 @@ export function MarketEditPanel({
         )
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount },
-        )
+        const request = buildPermit2ApproveRequest({
+          chainId,
+          token: step.token,
+          positionManager,
+          amount: step.amount,
+          expiration: step.expiration,
+        })
+        return tx.send(request, { reviewedAccount, intent: permit2ApproveIntent(request) })
       }
       return tx.send(
         buildModifyLiquiditiesRequest({
@@ -303,6 +302,8 @@ export function MarketEditPanel({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
+          // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
+          intent: writeIntentKey('edit-market', { chainId, positionManager, pool: p.pool.poolId, account: reviewedAccount }),
           reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
           reverify: async () => {
             if (!client) return
