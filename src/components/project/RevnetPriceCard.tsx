@@ -24,7 +24,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
 } from '@bananapus/nana-sdk-core/v6'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
 import {
   erc20Abi,
@@ -104,11 +104,13 @@ export function RevnetPriceCard({
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
 
   const args = { chainId, projectId: BigInt(projectId) }
-  const { data: allRulesets, isPending } = useQuery({
+  // Kept reads: the Terms tab (opened by #terms during hydration) loads these same stages, and a
+  // cached answer must not change this card's first hydration render from the server's skeleton.
+  const { data: allRulesets, isPending } = useKeptQuery({
     ...allRulesetsQuery(publicClient!, { ...args, size: 50n }),
     enabled: !!publicClient,
   })
-  const { data: contexts } = useQuery({
+  const { data: contexts } = useKeptQuery({
     ...accountingContextSymbolsQuery(publicClient!, queryClient, args),
     enabled: !!publicClient,
   })

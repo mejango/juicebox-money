@@ -148,3 +148,22 @@ for (const persistent of [false, true]) {
     expect(observed.external).toEqual([])
   })
 }
+
+// #terms opens Terms during hydration, and Terms loads the same stages the Overview price card reads.
+// On a slow CPU that answer used to land before the card hydrated, so its first render showed the
+// chart where the server sent a skeleton (React #418). Kept reads match the server until hydrated.
+test('/eth:1#terms hydrates the Overview price card without a mismatch on a slow CPU', async ({ browser }) => {
+  test.setTimeout(90_000)
+  for (let load = 0; load < 6; load++) {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    const observed = await watchPage(context, page)
+    const cdp = await context.newCDPSession(page)
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 8 })
+    await page.goto('/eth:1#terms')
+    await expectTerms(page)
+    expect(observed.errors).toEqual([])
+    expect(observed.external).toEqual([])
+    await context.close()
+  }
+})

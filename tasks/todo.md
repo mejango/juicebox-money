@@ -1,3 +1,46 @@
+# SDK 2.41 migration: held writes and saved attempts through the SDK (2026-10-15)
+
+Brief: scratchpad ALIGN/migration-brief.md (+ corrections from jango in the task). Rules frozen in ALIGN/recovery-rule.md.
+Pattern: revnet-money#82, sticky#62, homerun#46. Branch feat/sdk-241 from origin/main c0d995b.
+
+- [ ] 1. Bump @bananapus/nana-sdk-core 2.38.2 -> 2.41.0 (Node 26, npx npm@12). No nana-sdk-react (wagmi 2 peer).
+- [ ] 2. write-holds.ts keeps only `writeHolds`, `savedAttempts` and the Safe hold keys (#128 namespace, still live records).
+      Delete sendUnderHold/settleUnderHold/unprovenUnderHold/hidesShownExit/offersExit/sameReservation/settledHashOf/
+      settledLine/WRITE_RELEASED_LINE/reviewDescription, held-writes-registry, HeldWritesList, WriteHeldNotice,
+      useWriteHoldWatch, WriteRecoveryInTabNote copy.
+- [ ] 3. useSafeTx on `useHeldSend` (one view per intent/call, SDK line/exit/send-again/follower). Delete the in-memory
+      Safe proposal registry, followers and hold loops. Keep its return shape for the 25 flows; keep `journaled`
+      (Defifa) as the SDK hold of the Defifa namespace.
+- [ ] 4. App-wide notice: SDK `HeldWritesNotice` over `useHeldWrites` per supported chain for the connected account
+      (authority calls, Safe batches and any closed flow still held).
+- [ ] 5. Lib writers (authority.ts direct + Safe connector, safe-batch-submit, safe-batch-connector, launch-multisig-direct)
+      send through the SDK hold handle (`hold.send`, `onReceipt`, `acknowledge` once a success is shown); the notice shows
+      what stays held.
+- [ ] 6. Launch: delete launch-hold.ts, recoverSavedLaunch/launchResumeGate/exitLaunchHeld/discardUnreadableLaunchSession,
+      the strict-read helpers in CreateForm. A saved chain becomes a SavedAttempt (launchIntent namespace, saved call,
+      saved hash/proposal, authenticate = launch receipt names the project, confirmRetirable = journal re-read);
+      useSavedAttempt + SDK copy. Ruling: after "I checked it" the launch keeps its salt (Homerun parity).
+- [ ] 7. Pre-existing findings onto createSavedAttemptRecovery, test each (red first):
+      a. Relayr launch + raw funding (launch-relayr.ts, raw-relayr-lifecycle.ts): unauthenticatable saved payment -> check;
+      b. Safe-creation setup (launch-multisig-direct.ts): saved signing/confirming recovered before preparation;
+      c. payer deployment (payer-relayr.ts): lost reply (`sending`) and unauthenticatable hashes -> check;
+      d. project batches (project-batch.ts, authority.ts): hold settlement / accepted exit reconciled first.
+- [ ] 8. Builders: redeemIntent, allowanceIntent, burnIntent, safeBatchIntent, syncIntent. jbm's current keys go to
+      legacy-intents.ts as `legacy`.
+- [ ] 9. Hydration #418 in project-terms-loading "before-the-other-tab": find the client-only first-render read, fix.
+- [ ] 10. Gates: test/hold-gate.test.ts (app-local hold/recovery patterns, SDK storage keys, copied SDK lines) +
+      happy-path click/notice parity (pay, cash-out, launch) vs main; port scenario tests onto the SDK path.
+- [ ] 11. Budgets (/create 517.9/518 KiB): delete first, bump with a written reason only if needed.
+- [ ] 12. npm run check, Codex (max 2 rounds; block only send-twice, unreachable exit, lost success, regression), PR.
+
+## Plan refinement
+- **Objective:** Every jbm held write and saved-attempt recovery runs through SDK 2.41 (useHeldSend/useHeldWrite/useHeldWrites/HeldWritesNotice/useSavedAttempt/createSavedAttemptRecovery); app copies are deleted; the four pre-existing recovery dead ends get the SDK check; the normal path is unchanged (same clicks, no new notice).
+- **System fit:** Outcome (no double send, no dead end) -> capability (SDK hold + saved-attempt engine) -> evidence (hold records, receipts, domain checks the app supplies as `authenticate`) -> action (send/exit/check) -> verified result (hold settlement, journal domain data). Owners: SDK owns gates, lines and retirement; jbm owns domain checks (launch event, payer clone, batch receipt) and journals as data. Consumers: 25 useSafeTx flows, CreateForm, authority/batch/payer/Relayr surfaces.
+- **Reuse and simplicity:** Reuse SDK hooks/engine and Sticky's useSafeTx shape (ported from jbm); delete registry/followers/glue (~2k lines). The only new app pieces are SavedAttempt builders per journal (domain) and one SavedAttemptNotice display component (Homerun's).
+- **Evidence and unknowns:** SDK 2.41 source (wt-sdk222 + published tarball), reference PR diffs, joint4 findings 5-9. Unknown: final 2.41 API after its review fixes; re-read the published d.ts before wiring.
+- **Verification:** Unit tests per finding (red first), ported scenario tests (double send, settled-while-away, unreadable storage, stale check, wallet rejection, main-era record), hold-gate, happy-path parity, full `npm run check`, browser suites, two Codex rounds max.
+- **Resource budget:** One worktree, no subagents. Order: bump -> useSafeTx -> notice -> lib writers -> launch -> findings -> builders -> flake -> gates. Re-plan if 2.41 API differs materially from the reviewed source.
+
 # Full parity build (user 2026-07-16: "do them all", incl. split hooks +
 # per-chain payout amounts & item supply)
 
