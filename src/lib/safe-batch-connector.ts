@@ -6,6 +6,7 @@ import { isHex, size, type Abi, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { reviewDescription, sendUnderHold, writeHolds } from '@/lib/write-holds'
+import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
@@ -28,15 +29,20 @@ export type SequenceCall = BatchCall & {
   contractName?: string
 }
 
-/** The write hold over a Safe batch: by the user's intent, its first call as the record's call. */
-export function safeBatchHold({ chainId, safe, intent, calls }: {
+/**
+ * The write hold over a Safe batch: by the user's intent, with the whole batch
+ * (its MultiSendCallOnly call) as the hold's call, so another batch that only
+ * shares a call is never held by it.
+ */
+export function safeBatchHold({ chainId, safe, intent, calls, legacy = [] }: {
   chainId: JBChainId; safe: Address; intent: string; calls: readonly BatchCall[]
+  /** The namespaces the last release keyed this batch by (legacy-intents). */
+  legacy?: readonly string[]
 }) {
-  const [first] = calls
   return writeHolds.open({
     chainId, account: safe, safe: true, namespace: intent,
-    call: { to: first.to, data: first.data, value: first.value ?? 0n },
-  })
+    call: { to: MULTI_SEND_CALL_ONLY, data: encodeMultiSend(calls), value: 0n },
+  }, { legacy: [...legacy] })
 }
 
 /**
@@ -52,6 +58,7 @@ export async function proposeSafeBatch({
   calls,
   title,
   intent,
+  legacy,
 }: {
   chainId: JBChainId
   safe: Address
@@ -63,6 +70,8 @@ export async function proposeSafeBatch({
    * retry with regenerated deadlines or expirations waits for the exit.
    */
   intent: string
+  /** The namespaces the last release keyed this batch by: an attempt it left unresolved still holds it. */
+  legacy?: readonly string[]
 }): Promise<Hex> {
   assertNoViewAs()
   if (!calls.length) throw new Error('A batch needs at least one call.')
@@ -93,7 +102,7 @@ export async function proposeSafeBatch({
     requireUnchanged: true,
     changedError: SAFE_CONNECTION_CHANGED,
   })
-  const hold = safeBatchHold({ chainId, safe, intent, calls })
+  const hold = safeBatchHold({ chainId, safe, intent, calls, legacy })
   return sendUnderHold(chainId, hold, client as unknown as WriteHoldClient, async gate => {
     await gate.beforeSend()
     let id: string
@@ -111,7 +120,7 @@ export async function proposeSafeBatch({
       throw error
     }
     if (!isHex(id) || size(id) !== 32) {
-      throw new Error('Safe did not return a proposal hash for this batch.')
+      throw new Error('Check this proposal in your Safe before sending it again.')
     }
     gate.afterSubmit(id)
     return id

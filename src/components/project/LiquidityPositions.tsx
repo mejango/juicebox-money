@@ -1,5 +1,7 @@
 'use client'
 
+import { legacyClaimFeesKey, legacyRemoveLpKey } from '@/lib/legacy-intents'
+import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
@@ -22,7 +24,6 @@ import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
 import { POSITION_MANAGER_BY_CHAIN } from '@/lib/uniswap-v4'
 import { swapDeadline } from '@/lib/safe-connector'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildModifyLiquiditiesRequest,
   buildRemoveLiquidityUnlockData,
@@ -362,10 +363,9 @@ function ChainLpRows({
       }),
       {
         reviewedAccount: account,
-        // Its deadline restamps on retry: held by the positions the user claims from.
-        intent: writeIntentKey('claim-lp-fees', {
-          chainId, positionManager: intent.address(positionManager), account: intent.address(account), positions: positions.map(position => position.tokenId),
-        }),
+        // Its deadline restamps on retry: held as a change to these positions.
+        intent: liquidityIntent({ chainId, pool: pool.poolId, positions: positions.map(position => position.tokenId) }),
+        legacy: [legacyClaimFeesKey({ chainId, positionManager, account, positions: positions.map(position => position.tokenId) })],
       },
     )
     refresh()
@@ -434,8 +434,9 @@ function ChainLpRows({
       }),
       {
         reviewedAccount: frozen.account,
-        // Its deadline restamps and its minimums re-read on retry: held by the position the user removes.
-        intent: writeIntentKey('remove-lp', { chainId, positionManager: intent.address(positionManager), tokenId: frozen.position.tokenId, account: intent.address(frozen.account) }),
+        // Its deadline restamps and its minimums re-read on retry: held as a change to this position.
+        intent: liquidityIntent({ chainId, pool: pool.poolId, positions: [frozen.position.tokenId] }),
+        legacy: [legacyRemoveLpKey({ chainId, positionManager, tokenId: frozen.position.tokenId, account: frozen.account })],
       },
     )
     refresh()

@@ -86,10 +86,10 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
 
-import { createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
+import { approvalIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { approvalStepIntent, bridgeSendIntent, bridgeSyncIntent, moveIntent, CART_PRUNED_LINE, cashOutIntent, checkoutIntent, decimalKey, payPanelIntent, paymentIntent, redeemItemsIntent } from '@/lib/transaction-builders'
-import { useChosen } from '@/hooks/useChosen'
+import { redeemItemsIntent } from '@/lib/transaction-builders'
+import { legacyCashOutKeys, legacyEditMarketKeys, legacyPayKeys } from '@/lib/legacy-intents'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -576,31 +576,60 @@ describe('useSafeTx', () => {
       await act(async () => hook.renderer.unmount())
     })
 
-    // One intent per user action: what the app picks (route, venue, price, computed amounts) never splits it.
+    // One intent per user action, from the SDK's shared builders: identity and explicit
+    // choices only, so another token, amount, route, venue, fee or range never splits it.
     const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
     const HOOK = '0x4444444444444444444444444444444444444444' as Address
-    const payment = { chainId: 10, projectId: 7, token: BOB, amount: '5', beneficiary: ALICE, memo: 'gm' }
+    const POOL = `0x${'55'.repeat(32)}` as Hex
+    const project = { chainId: 10, project: 7 }
     it.each([
-      ['a payment whose route changed from pay to swap', paymentIntent(payment), paymentIntent({ ...payment })],
-      ['a checkout whose price moved, its items the same', checkoutIntent({ ...payment, hook: HOOK, items: { 2: 1, 1: 3 } }),
-        checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3, 2: 1 } })],
-      ['a cash-out whose venue changed from pool to terminal', cashOutIntent(payment), cashOutIntent({ ...payment })],
-      ['a bridge send whose fee was requoted', bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE }),
-        bridgeSendIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE })],
-      ['a sync whose fee was requoted', bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE }), bridgeSyncIntent({ chainId: 10, sucker: HOOK, account: ALICE })],
-      ["a move's approval after Max refilled another balance",
-        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK),
-        approvalStepIntent(moveIntent({ chainId: 10, sucker: HOOK, token: BOB, amount: 'policy:max', beneficiary: ALICE }), 'approve', BOB, HOOK)],
-      ['an approval step whose computed amount changed', approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL),
-        approvalStepIntent('intent:add-liquidity:x', 'permit2', BOB, TERMINAL)],
-    ])('refuses %s after a lost reply, before the wallet', async (_case, first, retry) => {
-      expect(retry).toBe(first)
+      ['a payment in another token, amount or route, or a checkout', payIntent({ ...project, beneficiary: ALICE })],
+      ['a cash-out of another amount, at another venue', cashOutIntent({ ...project, holder: ALICE, beneficiary: ALICE })],
+      ['another repayment of the same loan', loanIntent({ chainId: 10, loanId: 3n })],
+      ['a borrow of another amount', borrowIntent({ ...project, holder: ALICE })],
+      ['a bridge step at another fee', bridgeIntent({ chainId: 10, sucker: HOOK, token: BOB, account: ALICE })],
+      ['an approval of another amount', approvalIntent(payIntent({ ...project, beneficiary: ALICE }), { step: 'token-approval', token: BOB, spender: TERMINAL })],
+      ['a change to the same positions at another range', liquidityIntent({ chainId: 10, pool: POOL, positions: [2n, 1n] })],
+    ])('refuses %s after a lost reply, before the wallet, until the exit', async (_case, key) => {
       mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
       const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: first }) })
+      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: key }) })
       await act(async () => hook.ref.current!.reset())
-      // The retry's calldata differs (another route, venue, price or amount): its intent still holds it.
-      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, { ...reviewedByAlice, intent: retry }) })
+      // The retry's calldata differs: its intent still holds it.
+      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 6n] as const }, { ...reviewedByAlice, intent: key }) })
+      expect(mocks.writeContract).toHaveBeenCalledOnce()
+      const shown = heldNotice(hook.ref.current!.error)
+      await act(async () => { shown.onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      await act(async () => hook.renderer.unmount())
+    })
+
+    it.each([
+      ['a cash-out', () => ({
+        legacy: legacyCashOutKeys({ chainId: 10, projectId: 7, amount: '5', beneficiary: ALICE }),
+        key: cashOutIntent({ ...project, holder: ALICE, beneficiary: ALICE }),
+      })],
+      ['a payment', () => ({
+        legacy: legacyPayKeys({ mode: 'pay', chainId: 10, projectId: 7, amount: '1.0', token: BOB, cart: {}, checkoutReady: false, beneficiary: ALICE, memo: '' }),
+        key: payIntent({ ...project, beneficiary: ALICE }),
+      })],
+      ['a market edit', () => ({
+        legacy: legacyEditMarketKeys({ chainId: 10, positionManager: TERMINAL, pool: POOL, account: ALICE, tokText: '1', pairText: '2', refit: false }),
+        key: liquidityIntent({ chainId: 10, pool: POOL, positions: [] }),
+      })],
+    ])("refuses %s under its new key while an attempt the last release saved under its old key is unresolved, until the exit", async (_case, keys) => {
+      const { legacy, key } = keys()
+      // The last release (origin/main) saved this attempt under its own namespace, with its own calldata; the reply was lost.
+      const oldCall = { to: BOB, data: encodeFunctionData({ abi: swapAbi, functionName: 'swap', args: [BOB, 5n, 1_000n] }), value: 7n }
+      const old = writeHolds.open({ chainId: 10, account: ALICE, safe: false, call: oldCall, namespace: legacy.at(-1)! })
+      await old.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+      const hook = await renderHook()
+      // The retry regenerated its calldata and is keyed by the SDK builder now.
+      await act(async () => { await hook.ref.current!.send(swap(2_000n), { ...reviewedByAlice, intent: key, legacy }) })
+      expect(mocks.writeContract).not.toHaveBeenCalled()
+      await act(async () => { heldNotice(hook.ref.current!.error).onExit!() })
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
       await act(async () => hook.renderer.unmount())
     })
@@ -610,68 +639,6 @@ describe('useSafeTx', () => {
       expect(redeem([2n, 1n])).toBe(redeem([1n, 2n]))
       expect(redeem([1n])).not.toBe(redeem([1n, 2n]))
       expect(redeem([1n], BOB)).not.toBe(redeem([1n]))
-    })
-
-    describe("a pay panel's intent", () => {
-      const base = {
-        mode: 'pay' as const, chainId: 10, projectId: 7, hook: HOOK, beneficiary: ALICE, memo: 'gm', amount: '5',
-        token: { from: 'typed' as const, value: BOB }, chosenCart: {}, cartCount: 0, checkoutReady: false,
-      }
-      it('blocks a checkout whose every item was pruned, never falling through to a payment', () => {
-        expect(payPanelIntent({ ...base, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
-        // Even once the shop stops resolving its hook.
-        expect(payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 0 })).toEqual({ blocked: CART_PRUNED_LINE })
-        expect('blocked' in payPanelIntent({ ...base, hook: null, chosenCart: { 1: 2 }, cartCount: 2, checkoutReady: true })).toBe(true)
-      })
-      it('keys a checkout by the preserved choice, whatever its clamped cart or total', () => {
-        const checkout = payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 2, checkoutReady: true, amount: '9' })
-        expect(checkout).toEqual({ key: checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }) })
-        expect(payPanelIntent({ ...base, chosenCart: { 1: 3 }, cartCount: 3, checkoutReady: true, amount: '12' })).toEqual(checkout)
-      })
-      it("keeps the user's currency through an automatic fallback, and an untouched default as auto", () => {
-        // The app switched to another currency: the key still names the user's pick.
-        expect(payPanelIntent({ ...base, token: { from: 'typed', value: BOB } })).toEqual({ key: paymentIntent(payment) })
-        const untouched = payPanelIntent({ ...base, token: { from: 'auto', value: null } })
-        expect(untouched).toEqual({ key: paymentIntent({ ...payment, token: 'auto:token' }) })
-      })
-    })
-
-    it('keeps a deliberate merge blocked: an app refill shares the typed key, so its send waits for the exit', async () => {
-      // The user typed 5; the app then refilled the field to 7. The key keeps the 5 the user chose.
-      let field!: ReturnType<typeof useChosen<string>>
-      const Probe = () => { field = useChosen('', 'amount'); return null }
-      let probe!: TestRenderer.ReactTestRenderer
-      await act(async () => { probe = TestRenderer.create(createElement(Probe)) })
-      await act(async () => field.set('5'))
-      const typed = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
-      await act(async () => field.fill('7'))
-      const refilled = cashOutIntent({ chainId: 10, projectId: 7, amount: field.key(decimalKey), beneficiary: ALICE })
-      expect(refilled).toBe(typed)
-      await act(async () => probe.unmount())
-
-      mocks.writeContract.mockRejectedValueOnce(new Error('wallet transport disconnected'))
-      const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.send(swap(1_000n), { ...reviewedByAlice, intent: typed }) })
-      await act(async () => hook.ref.current!.reset())
-      // The refilled send is another call, still held by the merged intent: blocked, with the exit.
-      await act(async () => { await hook.ref.current!.send({ ...request, args: [BOB, 7n] as const }, { ...reviewedByAlice, intent: refilled }) })
-      expect(mocks.writeContract).toHaveBeenCalledOnce()
-      const shown = heldNotice(hook.ref.current!.error)
-      expect(shown.onExit).toBeTypeOf('function')
-      await act(async () => { shown.onExit!() })
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
-      await act(async () => hook.renderer.unmount())
-    })
-
-    it('keeps different user choices apart', () => {
-      expect(paymentIntent({ ...payment, amount: '6' })).not.toBe(paymentIntent(payment))
-      expect(paymentIntent({ ...payment, memo: 'GM' })).not.toBe(paymentIntent(payment))
-      expect(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 2 } })).not.toBe(checkoutIntent({ ...payment, hook: HOOK, items: { 1: 3 } }))
-      expect(cashOutIntent({ ...payment, amount: '6' })).not.toBe(cashOutIntent(payment))
-      expect(cashOutIntent({ ...payment, amount: 'policy:max' })).not.toBe(cashOutIntent(payment))
-      expect(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:b', 'permit2', BOB, TERMINAL))
-      expect(approvalStepIntent('intent:a', 'erc20', BOB, TERMINAL)).not.toBe(approvalStepIntent('intent:a', 'permit2', BOB, TERMINAL))
     })
 
     it('keys an intent by the action and its chosen parameters only, in one place', () => {

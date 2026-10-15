@@ -1,3 +1,4 @@
+import { resetWriteRecoveryForTests } from '@bananapus/nana-sdk-core/testing'
 import { encodeFunctionData, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -387,8 +388,7 @@ describe('Safe owner batch', () => {
 
 /** Each attempt below starts after the earlier proposal ended elsewhere: its write hold is gone. */
 function earlierProposalEnded() {
-  const tab = globalThis as unknown as Record<symbol, Map<string, string> | undefined>
-  tab[Symbol.for('nana-sdk:held-writes')]?.clear()
+  resetWriteRecoveryForTests()
   for (const shown of heldWritesSnapshot()) forgetHeldWrite(shown.state.record.id)
 }
 
@@ -637,7 +637,7 @@ describe('Safe app batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow(/did not return a proposal hash/)
+    ).rejects.toThrow('Check this proposal in your Safe before sending it again.')
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
   })
 })

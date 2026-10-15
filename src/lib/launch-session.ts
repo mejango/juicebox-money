@@ -45,6 +45,13 @@ export type LaunchChainStatus = {
    * mint a duplicate — surface a check-your-wallet warning before retrying.
    */
   unverifiedSend?: true
+  /** Its wallet request was reserved under the SDK write hold (launch-hold), which decides what is out. */
+  held?: true
+  /**
+   * The hold authenticated `txHash` as this launch's success, saved before any domain read:
+   * from then on it stays confirming, and neither a check nor an exit retires it.
+   */
+  settled?: true
   /** Safe setup is resumable independently of the non-idempotent project launch. */
   multisigSetup?: {
     phase: 'signing' | 'confirming' | 'done' | 'failed'
@@ -91,13 +98,23 @@ function reviver(_key: string, value: unknown): unknown {
     : value
 }
 
+/** A saved success: settled by its hold, or completed (`done`, including records saved before `settled` existed). */
+export function isLaunchChainSuccess(status: { phase?: unknown; settled?: unknown } | undefined): boolean {
+  return status?.settled === true || status?.phase === 'done'
+}
+
 export function saveLaunchSession(session: LaunchSession): boolean {
   if (typeof window === 'undefined') return false
   try {
     const existing = window.localStorage.getItem(LAUNCH_SESSION_KEY)
     if (existing) {
-      const salt = (JSON.parse(existing) as { salt?: unknown }).salt
-      if (typeof salt === 'string' && salt !== session.salt) return false
+      const saved = JSON.parse(existing, reviver) as { salt?: unknown; statuses?: Record<number, { phase?: unknown; settled?: unknown } | undefined> }
+      if (typeof saved.salt === 'string' && saved.salt !== session.salt) return false
+      // A saved success is never overwritten by a copy without it (invariant D).
+      for (const [chainId, status] of Object.entries(saved.statuses ?? {})) {
+        const next = session.statuses[Number(chainId)]
+        if (isLaunchChainSuccess(status) && !isLaunchChainSuccess(next)) return false
+      }
     }
     window.localStorage.setItem(
       LAUNCH_SESSION_KEY,
@@ -258,6 +275,8 @@ function coerceStatus(value: unknown): LaunchChainStatus {
     ...(multisigSetup ? { multisigSetup } : {}),
     ...(directSafeCall ? { directSafeCall } : {}),
     ...(wasSigning || status.unverifiedSend === true ? { unverifiedSend: true as const } : {}),
+    ...(status.held === true ? { held: true as const } : {}),
+    ...(status.settled === true && txHash ? { settled: true as const } : {}),
     ...(phase !== 'pending' && txHash ? { txHash } : {}),
     ...(phase !== 'pending' && safeProposalHash ? { safeProposalHash } : {}),
     ...(typeof status.projectId === 'number'
@@ -292,8 +311,17 @@ export function recordLaunchChainStatus(
   status: LaunchChainStatus,
   expectedSalt?: Hex,
 ): boolean {
-  const session = loadLaunchSession()
+  let session: LaunchSession | null
+  try {
+    // Read strictly: nothing is written after a read that failed.
+    session = loadLaunchSession({ strict: true })
+  } catch {
+    return false
+  }
   if (!session || (expectedSalt && session.salt !== expectedSalt) || !session.chains.includes(chainId)) return false
+  // A saved success is never overwritten by anything but its own progress (invariant D).
+  const saved = session.statuses[chainId]
+  if (isLaunchChainSuccess(saved) && !isLaunchChainSuccess(status)) return false
   const multisigSetup = status.multisigSetup ?? session.statuses[chainId]?.multisigSetup
   return saveLaunchSession({
     ...session,
@@ -345,6 +373,20 @@ export function canAbandonDirectLaunch(session: LaunchSession): boolean {
  * deterministically-reverting config would otherwise loop on Retry forever
  * with no exit short of hand-clearing localStorage.
  */
+/**
+ * Drops a journal that can't be read, after the user confirmed they checked their wallet.
+ * The only path that removes a record without reading it first.
+ */
+export function discardUnreadableLaunchSession(): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    window.localStorage.removeItem(LAUNCH_SESSION_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export function abandonLaunchSession(expectedSalt?: `0x${string}`): boolean {
   if (typeof window === 'undefined') return false
   try {

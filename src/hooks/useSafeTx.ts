@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { getAccount } from '@wagmi/core'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { offersExit, repeatsWithoutExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
+import { offersExit, hidesShownExit, reviewDescription, safeHoldNamespace, sameReservation, safeProposalKey, settledHashOf, settledLine, WRITE_RELEASED_LINE, writeHolds } from '@/lib/write-holds'
 import {
   BaseError,
   encodeFunctionData,
@@ -134,6 +134,11 @@ export type TxSendOptions = {
    */
   intent?: string
   /**
+   * The namespaces an earlier release keyed this action by (legacy-intents):
+   * an attempt it left unresolved still holds this one until its exit.
+   */
+  legacy?: readonly string[]
+  /**
    * The write hold over that journal's record. A Safe follower's outcomes
    * (unproven, executed, a receipt) go to it, and `onChange` tells the app.
    */
@@ -248,7 +253,7 @@ const SHOWN_AS: Record<ProposalPhase, TxPhase> = {
 
 const SAFE_EXECUTION_CONFIRMING = 'Executed by your Safe. Confirming it onchain.'
 /** What a Safe app replied in place of a proposal or execution hash. */
-const SAFE_REPLY_UNREADABLE = 'Safe did not return a proposal hash. Check Safe before sending this again.'
+const SAFE_REPLY_UNREADABLE = 'Check this proposal in your Safe before sending it again.'
 const SAFE_PROPOSAL_EXPIRED = "This Safe proposal's deadline passed. Review it again."
 
 type SafeProposal = {
@@ -292,14 +297,16 @@ type HeldWrite = {
 
 
 /** Safe proposals sent under an intent key, by registry key: their hold is the intent's. */
-const intentHolds = new Map<string, string>()
+const intentHolds = new Map<string, { intent: string; legacy: readonly string[] }>()
 
 function safeHoldOf(proposal: Pick<SafeProposal, 'chainId' | 'safe' | 'call'>, key: string): WriteHoldHandle {
-  const intent = intentHolds.get(key)
+  const keyed = intentHolds.get(key)
   const call = { chainId: proposal.chainId, account: proposal.safe, safe: true, call: proposal.call }
-  // Under an intent, the held-call namespace #128 shipped is its legacy key: an attempt held there still holds it.
-  return intent
-    ? writeHolds.open({ ...call, namespace: intent }, { legacy: [safeHoldNamespace(key)] })
+  // Under an intent, the held-call namespace #128 shipped is a legacy key, and so is any
+  // namespace an earlier release keyed this action by (legacy-intents): an attempt held
+  // there still holds it.
+  return keyed
+    ? writeHolds.open({ ...call, namespace: keyed.intent }, { legacy: [safeHoldNamespace(key), ...keyed.legacy] })
     : writeHolds.open({ ...call, namespace: safeHoldNamespace(key) })
 }
 
@@ -849,7 +856,7 @@ export function useSafeTx(chainId: number) {
           setPhase('success')
         } else endHeld(state.settled)
       } else leaveHeld()
-    } else if (!repeatsWithoutExit(current.state, state)) showHoldState(current, state)
+    } else if (!hidesShownExit(current.state, state)) showHoldState(current, state)
   })
 
   // A Safe proposal's state is the registry's. Its confirm ends on Done while
@@ -959,7 +966,10 @@ export function useSafeTx(chainId: number) {
           const own = current.state?.record.hash?.toLowerCase()
           if (settled && (!own || settledHashOf(settled) === own)) endHeld(settled)
           else leaveHeld()
-        } else showHoldState(current, state)
+        } else if (!hidesShownExit(current.state, state)) {
+          // A contended exit (checked: false) never hides the exit already shown.
+          showHoldState(current, state)
+        }
       },
       () => {
         // Unreadable: the hold stays, as last shown.
@@ -1051,10 +1061,13 @@ export function useSafeTx(chainId: number) {
         const key = proposalKey(request.chainId, account, sentCall)
         if (viaSafe) safeKey = key
         if (!options.journaled) {
-          if (viaSafe && options.intent) intentHolds.set(key, options.intent)
+          if (viaSafe && options.intent) intentHolds.set(key, { intent: options.intent, legacy: options.legacy ?? [] })
           hold = viaSafe
             ? safeHoldOf({ chainId: request.chainId, safe: account, call: sentCall }, key)
-            : writeHolds.open({ chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) })
+            : writeHolds.open(
+                { chainId: request.chainId, account, safe: false, call: sentCall, ...(options.intent ? { namespace: options.intent } : {}) },
+                { legacy: options.legacy ? [...options.legacy] : [] },
+              )
         }
         {
           if (viaSafe) {

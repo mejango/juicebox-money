@@ -72,12 +72,10 @@ import {
 import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
-  approvalStepIntent,
   buildErc20ApproveRequest,
-  decimalKey,
-  payPanelIntent,
 } from "@/lib/transaction-builders";
-import { useChosen } from "@/hooks/useChosen";
+import { approvalIntent, payIntent } from "@bananapus/nana-sdk-core/review";
+import { legacyPayKeys } from "@/lib/legacy-intents";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
 import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
@@ -140,6 +138,8 @@ type PaymentTransactionAction = {
   swapInputRoute?: DirectPaySwapQuote["inputRoute"];
   /** The write hold key for an action whose calldata regenerates on retry (an expiration, a deadline, a quote). */
   intent?: string;
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy?: string[];
 };
 
 type PaymentSignatureAction = {
@@ -276,12 +276,10 @@ export function PayPanel({
   const { isConnected, address, openSignIn } = useWallet();
   const {
     quantities: cart,
-    chosen: chosenCart,
     items: cartItems,
     count: cartCount,
     setQuantity,
     registerItem,
-    reconcile,
     clear: clearCart,
   } = useShopCart();
 
@@ -326,8 +324,6 @@ export function PayPanel({
   // ETH/USDC router option never shadows a USDC/ETH project's real token — the
   // documented fund-loss desync. (website/ chooseRefinedPayToken parity.)
   const [tokenTouched, setTokenTouched] = useState(false);
-  /** The payment token the user picked, for the write intent: an automatic switch never changes it. */
-  const tokenChoice = useChosen<string | null>(null, "token");
   /** "$" is picked in the token menu: the payer has dollars, not the token this
    *  project takes. Nothing is bought until they press Pay — the amount is
    *  theirs to type first. */
@@ -663,16 +659,16 @@ export function PayPanel({
       });
       const quantity = cart[tier.id] ?? 0;
       const cap = tier.unlimited ? 99 : tier.remaining;
-      if (quantity > cap) reconcile(tier.id, cap);
+      if (quantity > cap) setQuantity(tier.id, cap);
     }
     // Only ever prune against a COMPLETE tier list. `shop` is now paged to completion, so an
     // id missing from it really is gone from the shop — but the guard stays explicit, because
     // the failure mode is destroying a shopper's cart, and it is silent.
     if (!shop.tiersComplete) return;
     for (const id of Object.keys(cart).map(Number)) {
-      if (!liveIds.has(id)) reconcile(id, 0);
+      if (!liveIds.has(id)) setQuantity(id, 0);
     }
-  }, [shop, cart, registerItem, reconcile]);
+  }, [shop, cart, registerItem, setQuantity]);
 
   const { data: shopCredits = 0n, isLoading: shopCreditsLoading } = useQuery({
     queryKey: ["payShopCredits", chainId, shop?.hook, address],
@@ -938,13 +934,6 @@ export function PayPanel({
   // supplied this token's route, including a directly attached gateway.
   const terminalAddress = context?.terminal;
 
-  const payPlan = address
-    ? payPanelIntent({
-        mode, chainId, projectId, hook: shop?.hook, amount: decimalKey(debouncedAmount), token: tokenChoice,
-        chosenCart, cartCount, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
-      })
-    : null;
-  const payBlocked = payPlan && "blocked" in payPlan ? payPlan.blocked : null;
 
   const {
     data: preview,
@@ -1327,8 +1316,14 @@ export function PayPanel({
     if (!address || !context || !terminalAddress) return [];
     const actions: PaymentSequenceAction[] = [];
     // One intent for what the user chose, whatever route, price, clamp or fallback the app applies.
-    if (!payPlan || "blocked" in payPlan) return [];
-    const paymentKey = payPlan.key;
+    // Every payment to this project for this beneficiary: pay, checkout or add to balance,
+    // whatever token, amount, route or cart.
+    const paymentKey = payIntent({ chainId, project: projectId, beneficiary: address });
+    // The keys the last release built for this payment: an attempt it left unresolved still holds it.
+    const paymentLegacy = legacyPayKeys({
+      mode, chainId, projectId, hook: shop?.hook, amount: debouncedAmount, token: context.token,
+      cart, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
+    });
     if (needsApproval && approvalSpender) {
       actions.push({
         kind: "token-approval",
@@ -1339,7 +1334,7 @@ export function PayPanel({
           spender: approvalSpender,
           amount: amountRaw,
         }),
-        intent: approvalStepIntent(paymentKey, "token-approval", context.token, approvalSpender),
+        intent: approvalIntent(paymentKey, { step: "token-approval", token: context.token, spender: approvalSpender }),
       });
     }
     if (needsPermit2Approval && swapDeployment?.universalRouter) {
@@ -1380,7 +1375,7 @@ export function PayPanel({
             args: request.args as unknown as readonly unknown[],
             label: "Authorize Uniswap swap router",
           },
-          intent: approvalStepIntent(paymentKey, "router-approval", context.token, swapDeployment.universalRouter),
+          intent: approvalIntent(paymentKey, { step: "router-approval", token: context.token, spender: swapDeployment.universalRouter }),
         });
       }
     }
@@ -1446,6 +1441,7 @@ export function PayPanel({
       swapInputRoute: activeSwapQuote?.inputRoute,
       // Its deadline restamps, its minimum re-quotes and its route may change on retry: held by what the user chose.
       intent: paymentKey,
+      legacy: paymentLegacy,
     });
     return actions;
   };
@@ -1461,7 +1457,7 @@ export function PayPanel({
       setBuyExplainerOpen(true);
       return;
     }
-    if (!address || payBlocked) return;
+    if (!address) return;
     const creditOnlyCheckout =
       mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
@@ -1575,7 +1571,7 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedAccount: account, intent: tokenApproval.intent },
+          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy },
         );
         if (!approvalHash) throw new Error("Token approval was cancelled.");
         if (approveTx.isSafe) {
@@ -1653,7 +1649,7 @@ export function PayPanel({
               args: request.args as unknown as readonly unknown[],
               label: "Authorize Uniswap swap router",
             },
-            intent: approvalStepIntent(paymentAction.intent!, "router-approval", routerSignature.authorization.token, routerSignature.authorization.spender),
+            intent: approvalIntent(paymentAction.intent!, { step: "router-approval", token: routerSignature.authorization.token, spender: routerSignature.authorization.spender }),
           };
           setSequenceActions(current =>
             current.map(action =>
@@ -1673,7 +1669,7 @@ export function PayPanel({
         setSequenceStatus("Review and authorize the Uniswap swap router.");
         const approvalHash = await routerApproveTx.send(
           routerApproval.request,
-          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent },
+          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent, legacy: routerApproval.legacy },
         );
         if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
         if (routerApproveTx.isSafe) {
@@ -1715,6 +1711,7 @@ export function PayPanel({
         reviewedAccount: account,
         simulationBlockNumber: latestApprovalBlock,
         intent: paymentAction.intent,
+        legacy: paymentAction.legacy,
       });
       if (!paymentHash) throw new Error("Payment was cancelled.");
       if (tx.isSafe) {
@@ -1860,12 +1857,7 @@ export function PayPanel({
               All →
             </button>
           </div>
-          {payBlocked && cartCount === 0 ? (
-            <p className="mt-1 text-xs leading-relaxed text-red-600">
-              {payBlocked}{" "}
-              <button type="button" className="underline" onClick={clearCart}>Clear</button>
-            </p>
-          ) : cartCount > 0 && shopRoutesLoading ? (
+          {cartCount > 0 && shopRoutesLoading ? (
             <Skeleton
               className="mt-2 h-3 w-40 rounded"
               role="status"
@@ -1941,7 +1933,6 @@ export function PayPanel({
               });
               setTokenIndex(0);
               setTokenTouched(false);
-              tokenChoice.seed(null);
               selectedKeyRef.current = null;
               clearCart();
               setAmount("");
@@ -2002,7 +1993,6 @@ export function PayPanel({
                 // to this exact token instead of snapping back to list[0].
                 const picked = contexts[i];
                 if (picked) selectedKeyRef.current = payTokenKey(picked);
-                if (picked) tokenChoice.set(picked.token);
                 setTokenTouched(true);
               }}
               disabled={busy}
@@ -2048,7 +2038,6 @@ export function PayPanel({
             onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
               busy ||
-              !!payBlocked ||
               permit2WalletKindLoading ||
               (needsPermit2Approval && !permit2AllowanceFetched) ||
               notStarted ||

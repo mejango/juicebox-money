@@ -125,6 +125,7 @@ export async function proposeLiquidityBatch({
   value,
   title,
   intent,
+  legacy,
 }: {
   chainId: JBChainId
   account: Address
@@ -135,6 +136,8 @@ export async function proposeLiquidityBatch({
   title: string
   /** What the user chose (the pool, its amounts and range): the batch's deadlines and expirations restamp. */
   intent: string
+  /** The namespaces the last release keyed this action by (legacy-intents). */
+  legacy?: readonly string[]
 }): Promise<Hex> {
   return proposeSafeBatch({
     chainId,
@@ -142,5 +145,6 @@ export async function proposeLiquidityBatch({
     calls: liquidityBatchCalls({ chainId, positionManager, steps, unlockData, value }),
     title,
     intent,
+    legacy,
   })
 }

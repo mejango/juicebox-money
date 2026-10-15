@@ -186,7 +186,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     for (const chainId of current.chains) validateLaunchMultisigs(current.plans[chainId])
     const persist = () => {
-      const latest = loadLaunchSession()
+      // Read strictly: an unreadable journal is never overwritten.
+      const latest = loadLaunchSession({ strict: true })
       if (latest && latest.salt !== current.salt) throw new Error('Another tab changed the active launch. Stop and recover the original launch before continuing.')
       if (!saveLaunchSession(current)) {
         throw new Error('Allow browser storage before launching so payment and destination transactions can be recovered safely.')
@@ -270,7 +271,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     const originalPaymentExpired = async (): Promise<boolean> => {
       const client = journal?.paymentChainId === undefined ? undefined : relayrChainClient(journal.paymentChainId)
-      return !!journal?.paymentDeadline && !!client && relayrDeadlinePassed(client, journal.paymentDeadline)
+      // Unknown (the chain couldn't be read) is never expired.
+      return !!journal?.paymentDeadline && !!client && (await relayrDeadlinePassed(client, journal.paymentDeadline)) === true
     }
 
     // Another payment may have funded a quote whose own payment reverted: what

@@ -685,7 +685,7 @@ export async function runAuthorityCalls({
         })
         onProgress?.({
           kind: 'safe',
-          message: 'The exact Safe proposal is already pending.',
+          message: 'This proposal is waiting in your Safe. Finish it there first.',
         })
         continue
       }

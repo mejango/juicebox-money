@@ -16,6 +16,7 @@ import {
   encodeFunctionData,
   parseUnits,
   type Address,
+  type Hex,
   type PublicClient,
 } from "viem";
 import { useConfig, useSwitchChain, useWriteContract } from "wagmi";
@@ -28,10 +29,16 @@ import { AddressLabel } from "@/components/ui/AddressLabel";
 import { ProjectLink } from "@/components/ProjectLink";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
+import { useWriteHoldWatch } from "@/hooks/useWriteHoldWatch";
 import { friendlyError } from "@/lib/errors";
 import { submitReviewedContractWrite } from "@/lib/contract-write";
 import { captureWalletContext } from "@/lib/wallet-context";
-import { gasWithHeadroom, isDefiniteWalletRejection } from "@bananapus/nana-sdk-core/review";
+import {
+  gasWithHeadroom,
+  isDefiniteWalletRejection,
+  type WriteHeldState,
+  type WriteHoldHandle,
+} from "@bananapus/nana-sdk-core/review";
 import {
   isSafeConnection,
   readSafeAppExecution,
@@ -61,6 +68,8 @@ import {
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
+  discardUnreadableLaunchSession,
+  isLaunchChainSuccess,
   canAbandonRelayrLaunch,
   canAbandonDirectLaunch,
   completeLaunchSession,
@@ -125,6 +134,7 @@ import {
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
 import type { TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import { WriteHeldNotice } from "@/components/ui/WriteHeldNotice";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -219,6 +229,19 @@ type ChainStatus = LaunchChainStatus & {
   error?: string;
   indexed?: boolean;
 };
+
+/** A launch an earlier release left unverified, with no hold of its own: the user checks first. */
+const LAUNCH_CHECK_LINE = "Check this launch in your wallet before launching again.";
+/**
+ * A launch the hold settled with success whose project can't be read yet: it stays
+ * confirming (only Check again), never a check, a discard or a resend, and retires only
+ * once its event names the project.
+ */
+const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
+/** The journal couldn't be read right before a retirement: nothing is retired or written. */
+const LAUNCH_UNREADABLE_LINE = "Couldn't check this transaction. Try again.";
+/** Shown with the warned discard, only after a strict read failed in the same action. */
+const LAUNCH_UNREADABLE_WARNING = "This browser can't read its saved transactions. Check your wallet before sending again.";
 
 function deriveSymbol(name: string): string {
   const words = name
@@ -462,7 +485,22 @@ export function CreateForm() {
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
   const [setupRecoveryHashes, setSetupRecoveryHashes] = useState<Record<number, string>>({});
+  /** The chain's launch hold this run opened, so its proof reaches it. */
+  const launchHoldRef = useRef<WriteHoldHandle | null>(null);
+  /** The launch hold's exit is in flight: its answer, not what the hold emits meanwhile, decides. */
+  const launchExitingRef = useRef(false);
+  /** A launch the hold (or an earlier release's journal) keeps from resending: its line and exit. */
+  type LaunchHeld = { chainId: number; hold: WriteHoldHandle | null; state: WriteHeldState | null };
+  const [launchHeld, setLaunchHeldState] = useState<LaunchHeld | null>(null);
+  /** What is shown, at once: the hold reports many states before React renders, and only the first may act. */
+  const launchHeldRef = useRef<LaunchHeld | null>(null);
+  const setLaunchHeld = (next: LaunchHeld | null) => {
+    launchHeldRef.current = next;
+    setLaunchHeldState(next);
+  };
   const [confirmOpen, setConfirmOpen] = useState(false);
+  /** A strict journal read failed in this action: the warned discard is offered. */
+  const [launchUnreadable, setLaunchUnreadable] = useState(false);
   // Everything pinned + the assembled plan, once per run; retries reuse it
   // (inputs lock while busy). Building the plan up front also keeps its
   // validation throws inside launch()'s try.
@@ -944,6 +982,8 @@ export function CreateForm() {
         ? { safeProposalHash: next.safeProposalHash }
         : {}),
       ...(next.directSafeCall ? { directSafeCall: next.directSafeCall } : {}),
+      ...(next.held ? { held: true as const } : {}),
+      ...(next.settled ? { settled: true as const } : {}),
       ...(next.projectId !== undefined ? { projectId: next.projectId } : {}),
     }, pinnedRef.current?.salt ?? restoredSessionRef.current?.salt);
     if (!persisted) throw new Error("Launch progress could not be saved. Restore browser storage before continuing.");
@@ -1510,14 +1550,21 @@ export function CreateForm() {
    */
   const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
     setPhase("launching");
+    // This run's own outcome replaces the restored launch's notice.
+    setLaunchError(null);
     const signal = pageSignal();
     for (const chainId of selected) {
       const priorStatus = statusesRef.current[chainId];
+      launchHoldRef.current = null;
       if (priorStatus?.phase === "done") continue;
       let hash = priorStatus?.txHash ?? priorStatus?.safeProposalHash;
       let proposal = priorStatus?.safeProposalHash;
       let directSafeCall = priorStatus?.directSafeCall;
       let provenReverted = false;
+      /** The hold's state, or the check it asks for, is shown: the journal keeps the submission as it is. */
+      let heldShown = false;
+      /** The hold settled this launch with success: no later read downgrades it. */
+      let settledByHold = false;
       let walletInvoked = false;
       const assertWalletContext = captureWalletContext(config, { account: address, chainId });
       const viaSafe = isSafeConnection(config);
@@ -1525,25 +1572,90 @@ export function CreateForm() {
         const client = getPublicClient(config, {
           chainId: chainId as SupportedChainId,
         }) as PublicClient;
-        if (priorStatus?.unverifiedSend || priorStatus?.phase === "signing" ||
-            (priorStatus?.phase === "uncertain" && !hash)) {
-          throw new Error("This launch may already have been submitted. Recover the original wallet request before trying again.");
-        }
-        if (hash) {
-          updateStatus(chainId, { phase: "confirming", error: undefined });
-          if (proposal) {
-            hash = await waitForSafeExecutionHash(
-              chainId,
-              proposal,
-              { signal },
-            );
-            updateStatus(chainId, {
-              phase: "confirming",
-              txHash: hash,
-              safeProposalHash: proposal,
+        // The SDK's write hold over this chain's launch, keyed by its frozen launch. It
+        // decides what a saved submission, or a request that may already be out,
+        // allows (the shared recovery rule), and reserves the wallet atomically across
+        // tabs right before it opens. It loads with the launch, not with the form.
+        // Recovery runs first (invariant A): the hold opens on what is saved, with no network
+        // read. Its key is the frozen launch; its call is the saved Safe call, or the pinned
+        // launch built purely (no fee read), so no fresh-send preparation can keep recovery
+        // from deciding. A fresh send opens it again on its exact call.
+        let savedCall: { to: Address; data: Hex; value: bigint } | undefined = directSafeCall
+          ? { to: directSafeCall.to, data: directSafeCall.data, value: directSafeCall.value }
+          : undefined;
+        if (!savedCall) {
+          try {
+            const pinnedRequest = buildLaunchRequest({
+              chainId: chainId as JBChainId, owner: address!, projectUri: pinned.projectUri,
+              creationFee: 0n, plan: pinned.plans[chainId], salt: pinned.salt,
             });
+            savedCall = { to: pinnedRequest.address, data: encodeFunctionData(pinnedRequest as Parameters<typeof encodeFunctionData>[0]), value: 0n };
+          } catch {
+            savedCall = undefined;
           }
+        }
+        const { launchHold, launchResumeGate, recoverSavedLaunch } = await import("@/lib/launch-hold");
+        if (!savedCall) {
+          // The saved launch can't be rebuilt here: the user checks it.
+          heldShown = true;
+          setLaunchHeld({ chainId, hold: null, state: null });
+          throw new Error(LAUNCH_CHECK_LINE);
+        }
+        launchHoldRef.current = launchHold({
+          chainId, account: address!, safe: !!proposal || viaSafe, salt: pinned.salt, projectUri: pinned.projectUri, call: savedCall,
+        });
+        if (hash && priorStatus?.settled) {
+          // A success saved before: it stays confirming, whatever a read says now (invariant D).
+          settledByHold = true;
+          proposal = undefined;
+          updateStatus(chainId, { phase: "confirming", error: undefined });
+        } else if (hash) {
+          // A saved submission: the hold decides before anything is sent or discarded.
+          updateStatus(chainId, { phase: "confirming", error: undefined });
+          const recovered = await recoverSavedLaunch(
+            launchHoldRef.current, client as never, proposal ? { safeTxHash: proposal } : { hash },
+            safeTxHash => waitForSafeExecutionHash(chainId, safeTxHash, { signal, lookMs: 15_000 }).catch(() => null),
+          );
+          if (recovered.kind === "held" || recovered.kind === "check") {
+            heldShown = true;
+            setLaunchHeld(recovered.kind === "held"
+              ? { chainId, hold: launchHoldRef.current, state: recovered.state }
+              : { chainId, hold: null, state: null });
+            throw new Error(recovered.kind === "held" ? recovered.state.line : LAUNCH_CHECK_LINE);
+          }
+          if (recovered.kind === "failed") {
+            provenReverted = true;
+            updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined });
+            throw new Error(`Launch failed on ${chainName(chainId)}.`);
+          }
+          // The hold proved it ran: follow that transaction, never send it again.
+          settledByHold = true;
+          hash = recovered.hash;
+          proposal = undefined;
+          // The authenticated success is saved with its hash before any domain read.
+          updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: undefined, settled: true });
         } else {
+          const resume = await launchResumeGate(launchHoldRef.current, client as never, priorStatus);
+          if (resume.kind === "held" || resume.kind === "unverified") {
+            heldShown = true;
+            setLaunchHeld(resume.kind === "held"
+              ? { chainId, hold: launchHoldRef.current, state: resume.state }
+              : { chainId, hold: null, state: null });
+            throw new Error(resume.kind === "held" ? resume.state.line : LAUNCH_CHECK_LINE);
+          }
+          if (resume.kind === "send" && priorStatus?.unverifiedSend) {
+            // The user took the hold's exit: nothing is out, so this sends again.
+            updateStatus(chainId, { phase: "failed", unverifiedSend: undefined, held: undefined });
+          }
+          if (resume.kind === "settled") {
+            // The hold proved this launch ran: follow it, never send it again.
+            settledByHold = true;
+            hash = resume.hash;
+            // The authenticated success is saved with its hash before any domain read.
+            updateStatus(chainId, { phase: "confirming", txHash: hash, unverifiedSend: undefined, settled: true });
+          }
+        }
+        if (!hash) {
           if (pinned.plans[chainId].multisigs?.length) {
             const { prepareLaunchMultisigs } = await import("@/lib/launch-multisig-direct");
             await prepareLaunchMultisigs({
@@ -1575,7 +1687,14 @@ export function CreateForm() {
             salt: pinned.salt,
           });
           directSafeCall = viaSafe ? { safe: address!, to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n } : undefined;
-          hash = await submitReviewedContractWrite({
+          // The fresh send's hold, on its exact call: the same launch key, so it is the one recovery read.
+          const hold = launchHold({
+            chainId, account: address!, safe: viaSafe, salt: pinned.salt, projectUri: pinned.projectUri,
+            call: { to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n },
+          });
+          launchHoldRef.current = hold;
+          const { sendUnderHold } = await import("@/lib/write-holds");
+          hash = await sendUnderHold(chainId, hold, client as never, gate => submitReviewedContractWrite({
             request,
             expectedAccount: address,
             review: (reviewed) =>
@@ -1631,20 +1750,30 @@ export function CreateForm() {
               assertWalletContext();
               if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
             },
-            beforeWrite: () => {
-              const saved = loadLaunchSession({ strict: true });
-              const status = saved?.statuses[chainId];
-              if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
-                  status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
-                  ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
-                throw new Error("The saved launch changed. Recover the original launch before continuing.");
+            beforeWrite: async () => {
+              // The SDK's atomic reservation, under its lock: another tab resuming this
+              // launch is refused here, before its wallet opens.
+              await gate.beforeSend();
+              try {
+                const saved = loadLaunchSession({ strict: true });
+                const status = saved?.statuses[chainId];
+                if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
+                    status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
+                    ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
+                  throw new Error("The saved launch changed. Recover the original launch before continuing.");
+                }
+                const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
+                if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
+                  throw new Error("The saved launch changed. Review the original launch before continuing.");
+                }
+                updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
+              } catch (error) {
+                gate.onRejected();
+                throw error;
               }
-              const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
-              if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
-                throw new Error("The saved launch changed. Review the original launch before continuing.");
-              }
-              updateStatus(chainId, { phase: "signing", directSafeCall, txHash: undefined, safeProposalHash: undefined });
             },
+            onWriteRejected: () => gate.onRejected(),
+            onWriteSubmitted: submitted => gate.afterSubmit(submitted),
             onBeforeWriteAborted: () => {
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
@@ -1660,6 +1789,14 @@ export function CreateForm() {
             },
             accountChangedError:
               "Connected account changed. Review the launch again.",
+          })).catch((error: unknown) => {
+            // Another attempt holds this launch (another tab's, or one still out): its state and exit, never a send.
+            // By name: the hold's module loads with the launch, not with the form.
+            if (error instanceof Error && error.name === "WriteHeldError" && "state" in error) {
+              heldShown = true;
+              setLaunchHeld({ chainId, hold, state: (error as Error & { state: WriteHeldState }).state });
+            }
+            throw error;
           });
           if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
             hash = undefined;
@@ -1694,6 +1831,9 @@ export function CreateForm() {
             throw new Error(`Launch failed inside the Safe on ${chainName(chainId)}.`);
           }
           if (status !== "success") throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
+        } else if (receipt.status !== "success" && settledByHold) {
+          // A settled success always wins (invariant D): a read that disagrees is retried, never a failure.
+          throw new Error(LAUNCH_SETTLED_CONFIRMING_LINE);
         } else if (receipt.status !== "success") {
           const saved = loadLaunchSession({ strict: true });
           if (!saved?.account) throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
@@ -1713,21 +1853,41 @@ export function CreateForm() {
           const { verifyCreatedLaunchMultisigs } = await import("@/lib/launch-multisig");
           await verifyCreatedLaunchMultisigs(client, pinned.plans[chainId], receipt.blockNumber);
         }
+        // Its proof reaches the hold this run opened, which releases it once verified.
+        await launchHoldRef.current?.onReceipt(receipt, client as never, proposal && directSafeCall
+          ? { calls: [{ to: directSafeCall.to, data: directSafeCall.data, value: directSafeCall.value }] }
+          : undefined).catch(() => null);
         const projectId = projectIdFromReceipt(receipt, chainId as JBChainId);
         if (!projectId) {
           updateStatus(chainId, {
             phase: "uncertain",
             txHash: hash,
-            error: `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
+            error: settledByHold
+              ? LAUNCH_SETTLED_CONFIRMING_LINE
+              : `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
           });
           setPhase("failed");
           return;
         }
         updateStatus(chainId, { phase: "done", projectId, safeProposalHash: undefined });
       } catch (e) {
+        if (heldShown) {
+          // The hold's state, or its check, is shown: the saved submission stays until its exit.
+          setPhase("failed");
+          return;
+        }
         // A competing tab can save a wallet request while this tab reviews.
         // A rejected preparation must never clear that other request's hold.
-        const saved = loadLaunchSession();
+        // Read strictly: nothing is written after a read that failed.
+        let saved: ReturnType<typeof loadLaunchSession>;
+        try {
+          saved = loadLaunchSession({ strict: true });
+        } catch {
+          setLaunchError(LAUNCH_UNREADABLE_LINE);
+          setLaunchUnreadable(true);
+          setPhase("failed");
+          return;
+        }
         const live = saved?.statuses[chainId];
         if (saved && saved.salt !== pinned.salt) {
           setLaunchError("The saved launch changed. Recover the original launch before continuing.");
@@ -1755,7 +1915,9 @@ export function CreateForm() {
                   phase: "uncertain",
                   txHash: hash,
                   safeProposalHash: proposal,
-                  error: `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
+                  error: settledByHold
+                    ? LAUNCH_SETTLED_CONFIRMING_LINE
+                    : `Transaction ${hash} was submitted, but confirmation is temporarily unavailable. Check it before trying again.`,
                 }
               : {
                   phase: "failed",
@@ -1794,7 +1956,17 @@ export function CreateForm() {
   };
 
   const runChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
-    const session = loadLaunchSession() ?? restoredSessionRef.current;
+    let session: ReturnType<typeof loadLaunchSession>;
+    try {
+      // Read strictly: a launch never runs, or writes, on a stale copy of an unreadable journal.
+      session = loadLaunchSession({ strict: true }) ?? restoredSessionRef.current;
+    } catch {
+      setLaunchError(LAUNCH_UNREADABLE_LINE);
+      setLaunchUnreadable(true);
+      setPhase("failed");
+      return;
+    }
+    setLaunchUnreadable(false);
     if (session && session.salt !== pinned.salt) {
       setLaunchError("Another tab has a different launch in progress. Return to that tab to continue.");
       setPhase("failed");
@@ -1947,6 +2119,122 @@ export function CreateForm() {
     if (pinned) void runChains(pinned);
   };
 
+  // A shown launch hold stays current: an exit that becomes due appears, and once
+  // it clears (its launch mined, or settled elsewhere) the resume follows it.
+  useWriteHoldWatch(
+    launchHeld?.hold ?? undefined,
+    launchHeld ? (getPublicClient(config, { chainId: launchHeld.chainId as SupportedChainId }) as never) : undefined,
+    state => {
+      const shown = launchHeldRef.current;
+      // The exit's own answer decides while it is in flight.
+      if (!shown?.state || launchExitingRef.current) return;
+      if (state.status === "clear") {
+        setLaunchHeld(null);
+        // Its launch ran: the resume follows it. A release elsewhere leaves nothing to follow.
+        if (state.settled?.result === "success") retry();
+      } else if (state.exit !== shown.state.exit || state.status !== shown.state.status) {
+        if (state.exit || state.checked === true) setLaunchHeld({ ...shown, state });
+      }
+    },
+  );
+
+  /**
+   * The launch journal, read strictly right before a retirement: null (and a refusal
+   * shown) when it can't be read or is gone, so nothing is written after an unreadable read.
+   */
+  const readLaunchForRetirement = () => {
+    try {
+      const journal = loadLaunchSession({ strict: true });
+      if (journal) {
+        setLaunchUnreadable(false);
+        return journal;
+      }
+    } catch {
+      setLaunchUnreadable(true);
+    }
+    setLaunchError(LAUNCH_UNREADABLE_LINE);
+    return null;
+  };
+
+  /** The user checked their wallet: drop the unreadable journal and reopen the form; the next launch pins a fresh salt. */
+  const discardUnreadableLaunch = () => {
+    if (!discardUnreadableLaunchSession()) {
+      setLaunchError("Could not cancel this deployment. Restore browser storage and try again.");
+      return;
+    }
+    restoredSessionRef.current = null;
+    pinnedRef.current = null;
+    statusesRef.current = {};
+    setStatuses({});
+    setLaunchHeld(null);
+    setLaunchUnreadable(false);
+    setLaunchError(null);
+    setRelayrProgress(null);
+    setPhase("form");
+    setConfirmOpen(false);
+  };
+
+  /**
+   * Takes the strict journal as the truth (another tab may have completed or failed chains) and
+   * reports whether the shown chain is a saved success, which a check or an exit never retires.
+   */
+  const keptSuccess = (journal: LaunchSession) => {
+    const shown = launchHeldRef.current;
+    statusesRef.current = journal.statuses;
+    setStatuses(journal.statuses);
+    const status = shown ? journal.statuses[shown.chainId] : undefined;
+    if (!isLaunchChainSuccess(status)) return false;
+    setLaunchHeld(null);
+    setLaunchError(status?.phase === "done" ? null : LAUNCH_SETTLED_CONFIRMING_LINE);
+    return true;
+  };
+
+  /** The user checked their wallet: the hold decides whether this launch is sent again. */
+  const exitLaunchHeld = async () => {
+    const shown = launchHeldRef.current;
+    if (!shown) return;
+    // The journal decides, read strictly: one that can't be read retires nothing, writes
+    // nothing, and keeps the attempt and its action.
+    const journal = readLaunchForRetirement();
+    if (!journal) return;
+    if (keptSuccess(journal)) return;
+    if (shown.hold && shown.state) {
+      const client = getPublicClient(config, { chainId: shown.chainId as SupportedChainId }) as PublicClient;
+      launchExitingRef.current = true;
+      const { released, state } = await shown.hold.exit(shown.state, { checkedWallet: true }, client as never)
+        .finally(() => { launchExitingRef.current = false; });
+      if (!released) {
+        if (state.status === "clear") {
+          // Settled meanwhile: the resume follows what ran, never sends again.
+          setLaunchHeld(null);
+          retry();
+        } else {
+          const { hidesShownExit } = await import("@/lib/write-holds");
+          if (!hidesShownExit(shown.state, state)) setLaunchHeld({ ...shown, state });
+        }
+        return;
+      }
+    }
+    // Right before retiring, the journal decides again (the exit may have taken a while): a
+    // success saved here or by another tab is never retired by a check or an exit.
+    const latest = readLaunchForRetirement();
+    if (!latest) return;
+    if (keptSuccess(latest)) return;
+    // The user took the exit (or checked it): the saved submission retires, so neither a
+    // new launch nor abandoning this one asks for proof of it again.
+    updateStatus(shown.chainId, {
+      phase: "failed", unverifiedSend: undefined, held: undefined, txHash: undefined, safeProposalHash: undefined,
+      directSafeCall: undefined, error: undefined,
+    });
+    setLaunchHeld(null);
+    setLaunchError(null);
+    // A journal holding a completed chain is never deleted: the rest resumes as the same project.
+    if (latest.chains.some(id => latest.statuses[id]?.phase === "done")) return;
+    // Otherwise a deliberate new launch never reuses the retired attempt's salt (as revnet):
+    // its launch is retired too and the form reopens; the next launch pins a fresh salt.
+    await abandonLaunch();
+  };
+
   const recoverSafeSetup = async (chainId: number, cancelled = false) => {
     const pinned = resumablePinned();
     if (!pinned) return;
@@ -1979,7 +2267,8 @@ export function CreateForm() {
    */
   const abandonLaunch = async () => {
     const abandon = () => {
-      const session = loadLaunchSession() ?? restoredSessionRef.current;
+      // Read strictly: an unreadable journal is never abandoned on a stale copy.
+      const session = loadLaunchSession({ strict: true }) ?? restoredSessionRef.current;
       if (session && session.salt !== pinnedRef.current?.salt &&
           session.salt !== restoredSessionRef.current?.salt) {
         throw new Error("Another tab started a different launch. Return to that tab to continue.");
@@ -2539,6 +2828,30 @@ export function CreateForm() {
         if (phase === "form") setLaunchError(null);
       }}
     >
+      {launchHeld ? (
+        launchHeld.state ? (
+          <WriteHeldNotice
+            chainId={launchHeld.chainId}
+            state={launchHeld.state}
+            onExit={launchHeld.state.exit ? () => void exitLaunchHeld() : undefined}
+          />
+        ) : (
+          <span className="block space-y-2 text-smoke-800">
+            <span className="block">{LAUNCH_CHECK_LINE}</span>
+            <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={() => void exitLaunchHeld()}>
+              I checked it. Launch again
+            </button>
+          </span>
+        )
+      ) : null}
+      {launchUnreadable ? (
+        <span className="block space-y-2 text-smoke-800">
+          <span className="block">{LAUNCH_UNREADABLE_WARNING}</span>
+          <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={discardUnreadableLaunch}>
+            I checked my wallet. Continue anyway
+          </button>
+        </span>
+      ) : null}
       {interruptedSetups.map(chainId => (
         <div key={chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3 text-xs text-smoke-700">
           <p>Safe creation was interrupted on {chainName(chainId)}. Check your wallet&apos;s activity before continuing.</p>

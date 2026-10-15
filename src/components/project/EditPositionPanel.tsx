@@ -10,7 +10,8 @@ import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } fr
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
-import { useChosen } from '@/hooks/useChosen'
+import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyEditPositionKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import {
@@ -29,13 +30,10 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  approvalStepIntent,
-  decimalKey,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -65,8 +63,10 @@ type Reviewed = {
   plan: EditLiquidityPlan
   steps: Step[]
   copy: { lead: string; detail: string; tech: string }
-  /** The write hold key of what the user chose: the pool, the position, its targets and range. */
+  /** The write hold key: a change to these positions in this pool. */
   intent: string
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy: string[]
 }
 
 /** A target prefilled at full precision, so an untouched field asks for exactly what the position holds. */
@@ -158,23 +158,13 @@ export function EditPositionPanel({
   const projectToken = pool.pairIsC0 ? pool.key.currency1 : pool.key.currency0
   const band = bandPrices(pool, position.tickLower, position.tickUpper)
 
-  // How each key input was chosen (useChosen): the current band and holdings
-  // are kept until the user types, drags or picks Fit.
-  const bounds = useChosen(
-    { min: String(Number(band.min.toPrecision(6))), max: String(Number(band.max.toPrecision(6))) },
-    'range',
-    'keep-current',
-  )
-  const minText = bounds.value.min
-  const maxText = bounds.value.max
-  const setBound = (edge: 'min' | 'max', value: string) => bounds.set({ ...bounds.value, [edge]: value })
+  const [minText, setMinText] = useState(String(Number(band.min.toPrecision(6))))
+  const [maxText, setMaxText] = useState(String(Number(band.max.toPrecision(6))))
   // Only a band the user actually changed re-mints; otherwise the position's
   // own ticks are kept exactly, never re-derived from rounded display prices.
   const [rangeTouched, setRangeTouched] = useState(false)
-  const tokTarget = useChosen(holdingText(position.tokenAmount, 18), 'token-target', 'keep-current')
-  const pairTarget = useChosen(holdingText(position.pairAmount, pairDec), 'pair-target', 'keep-current')
-  const tokText = tokTarget.value
-  const pairText = pairTarget.value
+  const [tokText, setTokText] = useState(holdingText(position.tokenAmount, 18))
+  const [pairText, setPairText] = useState(holdingText(position.pairAmount, pairDec))
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -259,7 +249,8 @@ export function EditPositionPanel({
       ceilingHint: pool.issuance,
     })
     if (!solved) return
-    bounds.choose('fit', { min: String(Number(solved.minPrice.toPrecision(6))), max: String(Number(solved.maxPrice.toPrecision(6))) })
+    setMinText(String(Number(solved.minPrice.toPrecision(6))))
+    setMaxText(String(Number(solved.maxPrice.toPrecision(6))))
     setRangeTouched(true)
     replaceReviewed(null)
   }
@@ -328,13 +319,13 @@ export function EditPositionPanel({
             ? `${formatPrice(resulting.min)} – ${formatPrice(resulting.max)} ${pairSym}/${sym}`
             : undefined,
       })
+      // A change to this position in this pool, whatever targets, range or Fit.
       const built: Reviewed = {
         account: connectedAddress, pool: market, plan, steps, copy,
-        intent: writeIntentKey('edit-position', {
-          chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId), tokenId: position.tokenId,
-          account: intent.address(connectedAddress),
-          token: tokTarget.key(decimalKey), pair: pairTarget.key(decimalKey),
-          range: bounds.key(b => ({ min: decimalKey(b.min), max: decimalKey(b.max) })),
+        intent: liquidityIntent({ chainId, pool: market.poolId, positions: [position.tokenId] }),
+        legacy: legacyEditPositionKeys({
+          chainId, positionManager, pool: market.poolId, tokenId: position.tokenId, account: connectedAddress,
+          tokText, pairText, min: minText, max: maxText,
         }),
       }
       replaceReviewed(built)
@@ -364,19 +355,21 @@ export function EditPositionPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          // Its amount follows the live pool: held as a step of the user's action.
-          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
+          // Its amount follows the live pool: held as a step of the liquidity action.
+          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
         )
       }
       if (step.kind === 'permit2-approve') {
-        const request = buildPermit2ApproveRequest({
-          chainId,
-          token: step.token,
-          positionManager,
-          amount: step.amount,
-          expiration: step.expiration,
-        })
-        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, positionManager) })
+        return tx.send(
+          buildPermit2ApproveRequest({
+            chainId,
+            token: step.token,
+            positionManager,
+            amount: step.amount,
+            expiration: step.expiration,
+          }),
+          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }) },
+        )
       }
       // Everything that touches funds is frozen inside unlockData; only the
       // deadline is stamped at send time.
@@ -391,8 +384,9 @@ export function EditPositionPanel({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
-          // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
+          // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
           intent: p.intent,
+          legacy: p.legacy,
           reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
           // Runs after the review, so however long it sat open, a changed
           // position or drift beyond the reviewed maxima still aborts first.
@@ -456,6 +450,7 @@ export function EditPositionPanel({
           value: p.plan.value,
           title: FINAL_STEP[p.plan.kind],
           intent: p.intent,
+          legacy: p.legacy,
         })
         setBatchProposed(true)
       } catch (e) {
@@ -646,7 +641,7 @@ export function EditPositionPanel({
           editing
             ? undefined
             : (edge, value) => {
-                setBound(edge, String(value))
+                ;(edge === 'min' ? setMinText : setMaxText)(String(value))
                 setRangeTouched(true)
               }
         }
@@ -661,7 +656,7 @@ export function EditPositionPanel({
             value={minText}
             disabled={editing}
             onChange={event => {
-              setBound('min', event.target.value)
+              setMinText(event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -675,7 +670,7 @@ export function EditPositionPanel({
             value={maxText}
             disabled={editing}
             onChange={event => {
-              setBound('max', event.target.value)
+              setMaxText(event.target.value)
               setRangeTouched(true)
             }}
           />
@@ -691,7 +686,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={tokText}
             disabled={editing}
-            onChange={event => tokTarget.set(event.target.value)}
+            onChange={event => setTokText(event.target.value)}
           />
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
@@ -704,7 +699,7 @@ export function EditPositionPanel({
             placeholder="0"
             value={pairText}
             disabled={editing}
-            onChange={event => pairTarget.set(event.target.value)}
+            onChange={event => setPairText(event.target.value)}
           />
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>

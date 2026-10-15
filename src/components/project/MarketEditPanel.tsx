@@ -10,7 +10,8 @@ import { erc20Abi, formatUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
 import { useSafeTx } from '@/hooks/useSafeTx'
-import { useChosen } from '@/hooks/useChosen'
+import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyEditMarketKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { bandPrices } from '@/lib/edit-liquidity'
@@ -31,13 +32,10 @@ import {
   proposeLiquidityBatch,
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
   buildPermit2ApproveRequest,
-  approvalStepIntent,
-  decimalKey,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
@@ -67,8 +65,10 @@ type Reviewed = {
   pool: Pool
   plan: MarketEditPlan
   steps: Step[]
-  /** The write hold key of what the user chose: the pool and its targets. */
+  /** The write hold key: a change to these positions in this pool. */
   intent: string
+  /** The keys the last release built for this action (legacy-intents). */
+  legacy: string[]
 }
 
 function parseAmount(text: string, decimals: number, symbol: string): bigint {
@@ -144,16 +144,14 @@ export function MarketEditPanel({
     [floor, pool.issuance],
   )
 
-  // How each key input was chosen (useChosen): the current holdings are kept,
-  // and the re-fit the app suggests is the app's until the user ticks it.
-  const keep = startEmpty ? undefined : 'keep-current'
-  const tokTarget = useChosen(startEmpty ? '0' : formatUnits(sides.tokenSide?.tokenAmount ?? 0n, 18), 'token-target', keep)
-  const pairTarget = useChosen(startEmpty ? '0' : formatUnits(sides.pairSide?.pairAmount ?? 0n, pairDec), 'pair-target', keep)
-  const tokText = tokTarget.value
-  const pairText = pairTarget.value
+  const [tokText, setTokText] = useState(
+    startEmpty ? '0' : formatUnits(sides.tokenSide?.tokenAmount ?? 0n, 18),
+  )
+  const [pairText, setPairText] = useState(
+    startEmpty ? '0' : formatUnits(sides.pairSide?.pairAmount ?? 0n, pairDec),
+  )
   const moved = corridor ? corridorMoved(pool, sides, corridor) : false
-  const refitChoice = useChosen(moved, 'refit')
-  const refit = refitChoice.value
+  const [refit, setRefit] = useState(moved)
   const [reviewed, setReviewed] = useState<Reviewed | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -257,13 +255,12 @@ export function MarketEditPanel({
         labelFor,
         'Edit the market',
       )
+      // A change to the market's positions in this pool, whatever targets or re-fit.
+      // Pool-wide (no positions), as revnet keys a market edit: it conflicts with the same actions in both apps.
       const built: Reviewed = {
         account: connectedAddress, pool: market, plan, steps,
-        intent: writeIntentKey('edit-market', {
-          chainId, positionManager: intent.address(positionManager), pool: intent.hex(market.poolId),
-          account: intent.address(connectedAddress),
-          token: tokTarget.key(decimalKey), pair: pairTarget.key(decimalKey), refit: refitChoice.key(),
-        }),
+        intent: liquidityIntent({ chainId, pool: market.poolId, positions: [] }),
+        legacy: legacyEditMarketKeys({ chainId, positionManager, pool: market.poolId, account: connectedAddress, tokText, pairText, refit }),
       }
       replaceReviewed(built)
     } catch (e) {
@@ -292,19 +289,21 @@ export function MarketEditPanel({
             spender: UNISWAP_PERMIT2_ADDRESS,
             amount: step.amount,
           }),
-          // Its amount follows the live pool: held as a step of the user's action.
-          { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, UNISWAP_PERMIT2_ADDRESS) },
+          // Its amount follows the live pool: held as a step of the liquidity action.
+          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
         )
       }
       if (step.kind === 'permit2-approve') {
-        const request = buildPermit2ApproveRequest({
-          chainId,
-          token: step.token,
-          positionManager,
-          amount: step.amount,
-          expiration: step.expiration,
-        })
-        return tx.send(request, { reviewedAccount, intent: approvalStepIntent(p.intent, step.kind, step.token, positionManager) })
+        return tx.send(
+          buildPermit2ApproveRequest({
+            chainId,
+            token: step.token,
+            positionManager,
+            amount: step.amount,
+            expiration: step.expiration,
+          }),
+          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }) },
+        )
       }
       return tx.send(
         buildModifyLiquiditiesRequest({
@@ -317,8 +316,9 @@ export function MarketEditPanel({
         {
           reviewedAccount,
           simulationBlockNumber: confirmedAt,
-          // Its deadline restamps, and a fresh plan re-prices it: held by the position the user chose.
+          // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
           intent: p.intent,
+          legacy: p.legacy,
           reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
           reverify: async () => {
             if (!client) return
@@ -380,6 +380,7 @@ export function MarketEditPanel({
           value: p.plan.value,
           title: 'Edit the market',
           intent: p.intent,
+          legacy: p.legacy,
         })
         setBatchProposed(true)
       } catch (e) {
@@ -567,7 +568,7 @@ export function MarketEditPanel({
             placeholder="0"
             value={tokText}
             disabled={editing}
-            onChange={event => tokTarget.set(event.target.value)}
+            onChange={event => setTokText(event.target.value)}
           />
           {inWallet(balances.data?.tok, 18, sym)}
         </label>
@@ -580,7 +581,7 @@ export function MarketEditPanel({
             placeholder="0"
             value={pairText}
             disabled={editing}
-            onChange={event => pairTarget.set(event.target.value)}
+            onChange={event => setPairText(event.target.value)}
           />
           {inWallet(balances.data?.pair, pairDec, pairSym)}
         </label>
@@ -592,7 +593,7 @@ export function MarketEditPanel({
             className="mt-0.5"
             checked={refit}
             disabled={editing}
-            onChange={event => refitChoice.set(event.target.checked)}
+            onChange={event => setRefit(event.target.checked)}
           />
           <span>
             Re-fit both sides to the current corridor ({formatPrice(corridor.floor)} –{' '}

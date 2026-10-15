@@ -56,9 +56,7 @@ describe('a Safe batch held by its intent', () => {
     expect(m.sendCalls).toHaveBeenCalledTimes(2)
   })
 
-  // Known open: the SDK aliases a batch hold's record call, its first call, and verifies a batch
-  // only with that first call as the record's. This flips to passing once the SDK takes the whole batch.
-  it.fails('never holds another batch that only shares its first call, and still refuses its own retry', async () => {
+  it('never holds another batch that only shares its first call, and still refuses its own retry', async () => {
     const OTHER = `0x${'cd'.repeat(32)}` as Hex
     m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL }).mockResolvedValueOnce({ id: OTHER })
     const approveThen = (intent: string, data: Hex) => ({
@@ -75,5 +73,15 @@ describe('a Safe batch held by its intent', () => {
     // The first batch, pending with the Safe, is refused again.
     await expect(proposeSafeBatch(approveThen('intent:a:test', '0xaaaa'))).rejects.toThrow()
     expect(m.sendCalls).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses a batch while one the last release held under its old key (by its first call) is unresolved', async () => {
+    // origin/main held a Safe batch under its own key, with the batch's first call as the hold's call; the reply was lost.
+    const { writeHolds } = await import('@/lib/write-holds')
+    const old = writeHolds.open({ chainId: 10, account: SAFE, safe: true, namespace: 'intent:add-liquidity:old', call: { to: TARGET, data: '0x1234', value: 0n } })
+    await old.send(m.client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    m.sendCalls.mockResolvedValue({ id: PROPOSAL })
+    await expect(proposeSafeBatch({ ...batch(9), intent: 'intent:liquidity:new', legacy: ['intent:add-liquidity:old'] })).rejects.toThrow()
+    expect(m.sendCalls).not.toHaveBeenCalled()
   })
 })

@@ -29,7 +29,8 @@ describe("direct launch Safe waits", () => {
     expect(source).toContain('const pageSignal = useUnmountSignal();')
     expect(source).toContain('const signal = pageSignal();')
     expect(source.match(/waitForSafeExecutionHash\(/g)).toHaveLength(2)
-    expect(source).toMatch(/waitForSafeExecutionHash\(\s*chainId,\s*proposal,\s*\{ signal \},\s*\)/)
+    // A saved proposal's recovery takes one look, under the page's signal, before its hold decides.
+    expect(source).toContain('waitForSafeExecutionHash(chainId, safeTxHash, { signal, lookMs: 15_000 })')
     expect(source).toContain('hash = await waitForSafeExecutionHash(chainId, proposal, { signal });')
     expect(source).toMatch(/prepareLaunchMultisigs\(\{[\s\S]*?\n\s+signal,\n\s+\}\);/)
   })
@@ -43,7 +44,7 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(run).toContain('const viaSafe = isSafeConnection(config);')
     expect(run).toMatch(/\.\.\.simulated,\s*chainId,/)
     expect(run).toContain('proposal = viaSafe ? hash : undefined;')
-    expect(run).toMatch(/beforeWrite: \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
+    expect(run).toMatch(/beforeWrite: async \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
     expect(run).toContain('onBeforeWriteAborted: () => {')
   })
 
@@ -67,5 +68,13 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(source).toContain('phase: "signing", unverifiedSend: true')
     expect(source).toContain('!canAbandonDirectLaunch(session)')
     expect(source).toContain(': canAbandonDirectLaunch(activeLaunchSession)')
+  })
+
+  it('puts the launch under the SDK hold: the reservation right before the wallet, and the hold deciding a resume', () => {
+    expect(source).toContain('launchHold({')
+    expect(source).toContain('launchResumeGate(launchHoldRef.current')
+    expect(source).toContain('sendUnderHold(chainId, hold, client as never, gate => submitReviewedContractWrite({')
+    expect(source).toContain('await gate.beforeSend();')
+    expect(source).not.toContain('This launch may already have been submitted. Recover the original wallet request before trying again.')
   })
 })

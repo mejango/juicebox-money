@@ -1,6 +1,7 @@
 'use client'
 
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { legacyRepayKey } from '@/lib/legacy-intents'
+import { approvalIntent, loanIntent } from '@bananapus/nana-sdk-core/review'
 
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
@@ -331,6 +332,8 @@ type RepayPlan = {
   approve: ReturnType<typeof buildErc20ApproveRequest> | null
   /** Its cap re-reads the fee on a fresh review: the write hold keys of the loan the user repays. */
   intents: { repay: string; approve: string }
+  /** The keys the last release built for these (legacy-intents). */
+  legacy: { repay: string[] }
 }
 
 function RepayFlow({
@@ -376,7 +379,7 @@ function RepayFlow({
   // Once the ERC-20 approval lands, send the repayment held in the plan.
   useEffect(() => {
     if (approveTx.phase === 'success' && plan?.approve) {
-      repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
+      repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveTx.phase])
@@ -443,8 +446,12 @@ function RepayFlow({
         collateral: fresh.collateral,
         isNative,
         intents: {
-          repay: writeIntentKey('repay-loan', { chainId, loanId: loan.id, holder: intent.address(holder) }),
-          approve: writeIntentKey('approve-loan-repay', { chainId, loanId: loan.id, holder: intent.address(holder), token: intent.address(fresh.sourceToken) }),
+          repay: loanIntent({ chainId, loanId: BigInt(loan.id) }),
+          approve: approvalIntent(loanIntent({ chainId, loanId: BigInt(loan.id) }), { step: 'repay-approval', token: fresh.sourceToken, spender: loans }),
+        },
+        // The keys the last release built: an attempt it left unresolved still holds these.
+        legacy: {
+          repay: [legacyRepayKey({ chainId, loanId: loan.id, holder })],
         },
         approve:
           allowance >= maxRepay
@@ -467,11 +474,11 @@ function RepayFlow({
     if (!plan || busy) return
     setFlowError(null)
     if (plan.isNative) {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
+      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
       return
     }
     if (!plan.approve || approveTx.phase === 'success') {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay })
+      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
       return
     }
     await approveTx.send(plan.approve, { reviewedAccount: plan.account, intent: plan.intents.approve })

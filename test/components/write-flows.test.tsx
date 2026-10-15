@@ -198,7 +198,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
-import { approvalStepIntent, cashOutIntent } from '@/lib/transaction-builders'
+import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
+import { legacyCashOutKeys } from '@/lib/legacy-intents'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const AUTO_ISSUE_CALL = {
@@ -642,10 +643,30 @@ describe('cash-out write flow', () => {
     return options.intent
   }
 
+  it('passes the key the last release built for this cash-out as legacy, so its unresolved attempt still holds the retry', async () => {
+    vi.useFakeTimers()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(createElement(CashOutPanel, {
+        chainId: 1, projectId: 42, projectName: 'Safe Project',
+        accountingToken: '0x4444444444444444444444444444444444444444', accountingTokenSymbol: 'USDC',
+      }))
+    })
+    const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
+    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
+    const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { legacy?: string[] }]
+    expect(options.legacy).toEqual(legacyCashOutKeys({ chainId: 1, projectId: 42, amount: '2', beneficiary: ALICE }))
+    await act(async () => renderer.unmount())
+  })
+
   it("keys a cash-out by its project, never by a token address that loads later", async () => {
     // The symbol read failed: the cash-out still proceeds through the terminal.
     mocks.tokenSymbol = undefined
     const before = await cashOutIntentSent()
+    expect(before).toBe(cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE }))
     mocks.tokenSymbol = { address: '0x3333333333333333333333333333333333333333', symbol: 'JBT' }
     expect(await cashOutIntentSent()).toBe(before)
   })
@@ -666,9 +687,9 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'Approve tokens for this sale').props.onClick())
     const [request, options] = mocks.send.mock.calls.at(-1)! as [{ functionName: string }, { intent?: string }]
     expect(request.functionName).toBe('approve')
-    const parent = cashOutIntent({ chainId: 1, projectId: 42, amount: 'policy:max', beneficiary: ALICE })
+    const parent = cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE })
     const spender = (request as unknown as { args: readonly string[] }).args[0]
-    expect(options.intent).toBe(approvalStepIntent(parent, 'token-approval', '0x3333333333333333333333333333333333333333', spender))
+    expect(options.intent).toBe(approvalIntent(parent, { step: 'token-approval', token: '0x3333333333333333333333333333333333333333', spender }))
   })
 
   it('names the whole approval queue when the pool out-quotes the treasury', async () => {

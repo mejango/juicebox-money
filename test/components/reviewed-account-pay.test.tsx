@@ -114,7 +114,7 @@ vi.mock('@/hooks/useTokenBalances', () => ({
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', async original => {
   const actual = await original<typeof import('@/components/project/ShopCartProvider')>()
-  const empty = { quantities: {}, chosen: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, reconcile: () => {}, clear: () => {} }
+  const empty = { quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }
   return { ...actual, useShopCart: () => (m.realCart ? actual.useShopCart() : empty) }
 })
 vi.mock('@/providers/preload-para', () => ({ preloadParaHost: () => {} }))
@@ -343,8 +343,24 @@ describe('a held payment whose token the app switched', () => {
   })
 })
 
+describe('a payment the last release left unresolved', () => {
+  it('refuses the same payment under the new project key until its exit', async () => {
+    // origin/main held this payment under its own key (token and typed amount), with its own calldata; the reply was lost.
+    const { legacyPayKeys } = await import('@/lib/legacy-intents')
+    const { writeHolds } = await import('@/lib/write-holds')
+    const [oldKey] = legacyPayKeys({ mode: 'pay', chainId: 1, projectId: 42, amount: '1', token: NATIVE, cart: {}, checkoutReady: false, beneficiary: ALICE, memo: '' })
+    const old = writeHolds.open({ chainId: 1, account: ALICE, safe: false, namespace: oldKey,
+      call: { to: TERMINAL, data: '0x1234', value: 10n ** 18n } })
+    await old.send(wallet.client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    await reviewPayment('1')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || (host.textContent?.includes('I checked my wallet. Send again') ?? false))
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+})
+
 describe('a checkout whose items are all gone', () => {
-  it('never pays without them, even once the shop stops resolving, until the cart is cleared', async () => {
+  it('just pays, under the same project key, once the cart is emptied', async () => {
     m.realCart = true
     const tier = (remaining: number) => ({
       id: 1, price: 10n ** 15n, discountPercent: 0, remaining, initial: 10, unlimited: false,
@@ -377,12 +393,9 @@ describe('a checkout whose items are all gone', () => {
     await act(async () => root.render(panel()))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     expect(cart.count).toBe(0)
-    expect(cart.chosen).toEqual({ 1: 2 })
+    // Nothing blocks: the amount pays as a plain payment, held by the project's one payment key.
     const pay = [...host.querySelectorAll('button')].find(item => item.textContent === 'Pay')!
-    expect(pay.disabled).toBe(true)
-    await act(async () => pay.click())
-    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
-    expect(wallet.writeContract).not.toHaveBeenCalled()
+    expect(pay.disabled).toBe(false)
   })
 })
 
