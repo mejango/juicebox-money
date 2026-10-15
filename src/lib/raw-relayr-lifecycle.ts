@@ -60,7 +60,7 @@ export async function isExpiredUnfundedRawQuote(session: RawRelayrState, chains:
  * saved-attempt recovery reads it: the one check. `stillSaved` is the owner's
  * strict journal re-read before it retires.
  */
-export function rawFundingAttempt(session: RawRelayrState, stillSaved: () => boolean): SavedAttempt<never> {
+function rawFundingAttempt(session: RawRelayrState, stillSaved: () => boolean): SavedAttempt<never> {
   const attempt: SavedAttempt<never> = {
     chainId: session.paymentChainId ?? session.payments?.at(-1)?.chainId ?? 1,
     account: session.account,

@@ -399,6 +399,12 @@ export function useSafeTx(chainId: number) {
           return e.hash
         }
         inFlight.current = false
+        // A proposal its Safe already has is shown as it is, never proposed again: the flow follows it.
+        if (e instanceof WriteHeldError && viaSafe && !e.state.exit && e.state.record.safe && e.state.record.hash) {
+          setSent({ chainId: request.chainId, hash: e.state.record.hash, safe: true })
+          setPhase('pending')
+          return e.state.record.hash
+        }
         // Held, or a success that went through while away: the SDK's view shows it, with its exit or "Send it again".
         if (e instanceof WriteHeldError || (e instanceof Error && e.message === HELD_AWAY_SUCCESS_LINE)) {
           setPhase('pending')
@@ -457,8 +463,9 @@ export function useSafeTx(chainId: number) {
       : shown.phase === 'confirming'
       ? safe
         ? 'submitted'
-        // A direct write the wallet has held a while, or whose receipt watch gave up: the SDK's line, no exit.
-        : watchGaveUp || shown.line === WRITE_HOLD_PENDING_LINE ? 'unconfirmed' : 'pending'
+        // A direct write the wallet has held a while, whose receipt watch gave up, or that this flow didn't send
+        // (an earlier one it was refused over): the SDK's line, no exit, nothing in flight here.
+        : !sent || watchGaveUp || shown.line === WRITE_HOLD_PENDING_LINE ? 'unconfirmed' : 'pending'
       : shown.phase === 'awaiting' || shown.phase === 'released'
         ? 'submitted'
         : shown.phase === 'held' || shown.phase === 'succeeded'
@@ -496,6 +503,9 @@ export function useSafeTx(chainId: number) {
       ? (reverted ? `Transaction reverted onchain (${watched}).` : (error ?? shown?.line ?? null))
       : error
   const notice = effectivePhase === 'submitted' && shown ? shown.line : null
+  const heldState = shown?.state && shown.state.status !== 'clear' && !shown.state.record.safe ? shown.state : null
+  /** The direct write the hold shows, when this flow didn't send it. */
+  const heldHash = heldState ? ('hash' in heldState && heldState.hash ? heldState.hash : heldState.record.hash) ?? null : null
   const awaitingProposal = shown?.phase === 'awaiting' && sent?.safe ? sent.hash : null
 
   return {
@@ -509,7 +519,7 @@ export function useSafeTx(chainId: number) {
     /** Whether the connected writer is a Safe connector. */
     isSafe,
     error: effectiveError,
-    hash: result?.hash ?? watched ?? null,
+    hash: result?.hash ?? watched ?? heldHash ?? null,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
     receipt: result?.receipt ?? null,

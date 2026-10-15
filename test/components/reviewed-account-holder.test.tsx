@@ -10,6 +10,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import type { Address } from 'viem'
+import { HELD_AWAY_SUCCESS_LINE, HELD_CONFIRMING_LINE, HELD_EXIT_LABEL, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, WRITE_HOLD_PENDING_LINE } from '@bananapus/nana-sdk-core/review'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const displayQueries = new QueryClient()
@@ -343,5 +344,28 @@ describe('a loan reviewed for one account', () => {
       { functionName: 'setPermissionsFor', account: ALICE },
       { functionName: 'borrowFrom', account: ALICE },
     ])
+  })
+})
+
+describe('the normal path, click for click as main', () => {
+  it('cashes out with the amount, Cash out, then Confirm & cash out: one review, one wallet prompt, and no hold or recovery notice, twice in a row', async () => {
+    vi.useFakeTimers()
+    const HOLD_COPY = [HELD_CONFIRMING_LINE, HELD_AWAY_SUCCESS_LINE, HELD_EXIT_LABEL, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, WRITE_HOLD_PENDING_LINE]
+    for (const round of [1, 2]) {
+      const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+      await type(renderer, amountInput, '2')
+      await act(async () => { vi.advanceTimersByTime(400) })
+      await click(renderer, 'Cash out 2 JBT')
+      await click(renderer, 'Confirm & cash out')
+      expect(wallet.requestReview).toHaveBeenCalledTimes(round)
+      expect(wallet.writeContract).toHaveBeenCalledTimes(round)
+      expect(HOLD_COPY.filter(line => text(renderer.root).includes(line))).toEqual([])
+      await act(async () => wallet.confirm(sentHash(round)))
+      await act(async () => { await vi.advanceTimersByTimeAsync(50) })
+      expect(HOLD_COPY.filter(line => text(renderer.root).includes(line))).toEqual([])
+      await act(async () => renderer.unmount())
+      rendered.splice(rendered.indexOf(renderer), 1)
+    }
+    expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }, { functionName: 'cashOutTokensOf', account: ALICE }])
   })
 })

@@ -153,7 +153,7 @@ function requestOf(signed: SignedLaunch, plan: LaunchSession['plans'][number]) {
  * recovery reads it: the one check, whose retirement marks the launch
  * cancellable. The journal's strict re-read is the final say before it retires.
  */
-export function relayrLaunchPaymentAttempt(salt: Hex, account: Address, paymentChainId: number, hash?: Hex): SavedAttempt<never> {
+function relayrLaunchPaymentAttempt(salt: Hex, account: Address, paymentChainId: number, hash?: Hex): SavedAttempt<never> {
   const attempt: SavedAttempt<never> = {
     chainId: paymentChainId,
     account,

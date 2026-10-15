@@ -89,7 +89,7 @@ function payerHold(session: PayerDeploymentSession, call: PayerDeploymentCall) {
  * verified clone; the journal's strict re-read is the final say before a check
  * or exit retires it.
  */
-export function payerAttemptOf(session: PayerDeploymentSession, index: number): SavedAttempt<Address> {
+function payerAttemptOf(session: PayerDeploymentSession, index: number): SavedAttempt<Address> {
   const call = session.calls[index]
   const outcome = session.outcomes[index]
   const safe = session.transport === 'safe'

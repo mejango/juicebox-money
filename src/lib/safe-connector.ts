@@ -17,7 +17,6 @@ import {
 export {
   SAFE_NONCE_GUIDANCE,
   SAFE_PREFIX,
-  SAFE_PROPOSAL_AWAITING,
   SAFE_PROPOSAL_UNCONFIRMED,
   atOnceExecution,
   findPendingSafeAppProposal,

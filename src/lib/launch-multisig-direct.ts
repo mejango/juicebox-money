@@ -81,7 +81,7 @@ async function withLaunchLock<T>(action: () => Promise<T>): Promise<T> {
 
 
 /** A launch's Safe setup on one chain: held by its launch (salt) and sender. No SDK builder covers it. */
-export function setupNamespace(chainId: number, account: Address, salt: Hex): string {
+function setupNamespace(chainId: number, account: Address, salt: Hex): string {
   return writeIntentKey('launch-safe-setup', { chainId, account: intent.address(account), salt: intent.hex(salt) })
 }
 

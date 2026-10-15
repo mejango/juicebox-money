@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react'
-import { TransactionNotFoundError, type Address, type Hex } from 'viem'
+import { encodeFunctionData, TransactionNotFoundError, type Abi, type Address, type Hex } from 'viem'
 import { vi } from 'vitest'
 
 type Receipt = {
@@ -44,7 +44,16 @@ function createFakeWallet() {
     }
   }
   let sentCount = 0
-  const writeContract = vi.fn(async () => sentHash((sentCount += 1)))
+  /** What each answered write sent, by its hash: the chain shows it as that call once confirmed. */
+  const sent = new Map<string, { to: Address; data: Hex; value: bigint }>()
+  const writeContract = vi.fn(async (request?: { address?: Address; abi?: Abi; functionName?: string; args?: readonly unknown[]; value?: bigint }) => {
+    const hash = sentHash((sentCount += 1))
+    if (request?.address && request.abi && request.functionName) {
+      sent.set(hash.toLowerCase(), { to: request.address, value: request.value ?? 0n,
+        data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args ?? [] } as never) })
+    }
+    return hash
+  })
   const requestReview = vi.fn(async () => true)
   const switchChain = vi.fn(async () => undefined)
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
@@ -71,7 +80,8 @@ function createFakeWallet() {
     getTransaction: vi.fn(async ({ hash }: { hash: Hex }) => {
       const receipt = receipts.get(hash.toLowerCase())
       if (!receipt) throw new TransactionNotFoundError({ hash })
-      return { hash, chainId: 1, from: receipt.from, to: receipt.to, input: '0x' as Hex, value: 0n, nonce: 0,
+      const call = sent.get(hash.toLowerCase())
+      return { hash, chainId: 1, from: receipt.from, to: call?.to ?? receipt.to, input: call?.data ?? ('0x' as Hex), value: call?.value ?? 0n, nonce: 0,
         blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }
     }),
     getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) =>
@@ -101,7 +111,7 @@ function createFakeWallet() {
     confirm(hash: Hex, blockNumber = 10n) {
       const key = hash.toLowerCase()
       const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash, blockHash: MINED_BLOCK,
-        transactionIndex: 0, from: account ?? ('0x0000000000000000000000000000000000000000' as Address), to: null, logs: [] }
+        transactionIndex: 0, from: account ?? ('0x0000000000000000000000000000000000000000' as Address), to: sent.get(key)?.to ?? null, logs: [] }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)
@@ -124,6 +134,7 @@ function createFakeWallet() {
       this.watchGivesUp = false
       account = undefined
       sentCount = 0
+      sent.clear()
       receipts.clear()
       awaiting.clear()
       writeContract.mockClear()

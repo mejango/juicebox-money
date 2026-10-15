@@ -35,8 +35,6 @@ import { captureWalletContext } from "@/lib/wallet-context";
 import {
   gasWithHeadroom,
   isDefiniteWalletRejection,
-  SAVED_ATTEMPT_UNREADABLE_LINE,
-  WriteHeldError,
   type SavedAttempt,
   type WriteHoldHandle,
 } from "@bananapus/nana-sdk-core/review";
@@ -1751,7 +1749,8 @@ export function CreateForm() {
               "Connected account changed. Review the launch again.",
           })).catch((error: unknown) => {
             // Another attempt holds this launch (another tab's, or one still out): its state and exit, never a send.
-            if (error instanceof WriteHeldError) {
+            // By name: the hold's module loads with the launch, not with the form.
+            if (error instanceof Error && error.name === "WriteHeldError") {
               heldShown = true;
               setLaunchRecovery({ chainId, attempt: launchAttemptOf({ ...launch, client, status: { phase: "signing", unverifiedSend: true } }) });
             }
@@ -1917,7 +1916,9 @@ export function CreateForm() {
    * launch decides (its check, then, only once storage proved unreadable, the warned exit).
    */
   const recoverUnreadable = async (pinned: NonNullable<typeof pinnedRef.current>, chainId: number) => {
-    const { launchAttemptOf } = await import("@/lib/launch-attempt");
+    const [{ launchAttemptOf }, { SAVED_ATTEMPT_UNREADABLE_LINE }] = await Promise.all([
+      import("@/lib/launch-attempt"), import("@bananapus/nana-sdk-core/review"),
+    ]);
     const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as PublicClient;
     setLaunchError(SAVED_ATTEMPT_UNREADABLE_LINE);
     setLaunchRecovery({ chainId, attempt: launchAttemptOf({

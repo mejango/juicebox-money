@@ -407,3 +407,23 @@ describe('a saved launch restored on the create page', () => {
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 })
+
+describe('the normal path, click for click as main', () => {
+  it('launches a chain with nothing out with one press: one review, one wallet prompt, and no hold or recovery notice', async () => {
+    journal({ 1: { phase: 'pending' } })
+    m.review.mockReset().mockResolvedValue(undefined)
+    m.writeContract.mockResolvedValue(HASH)
+    Object.assign(m.client, {
+      simulateContract: async (request: Record<string, unknown>) => ({ request }),
+      estimateContractGas: async () => 100_000n,
+    })
+    await mount()
+    await resume()
+    expect(m.review).toHaveBeenCalledOnce()
+    expect(m.writeContract).toHaveBeenCalledOnce()
+    for (const line of [EXIT, CHECK, 'This transaction may already be in your wallet', "This browser can't read its saved transactions", 'Confirming your transaction.']) {
+      expect(host.textContent).not.toContain(line)
+    }
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH })
+  })
+})

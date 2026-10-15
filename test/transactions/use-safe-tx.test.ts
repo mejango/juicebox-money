@@ -86,7 +86,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
 
-import { approvalIntent, redeemIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, HELD_AWAY_SUCCESS_LINE, HELD_SEND_AGAIN_LABEL, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
+import { approvalIntent, redeemIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { legacyCashOutKeys, legacyEditMarketKeys, legacyPayKeys } from '@/lib/legacy-intents'
 
@@ -745,12 +745,11 @@ describe('useSafeTx', () => {
         await expect(theirs.exit(seen, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })
         await theirs.send(mocks.publicClient as never, async gate => { await gate.beforeSend(); gate.afterSubmit(H2) })
 
-        // The first flow's next look sees B: it never shows or follows B's hash as its own.
+        // The first flow's next look sees B held: it shows the hold as it is, and never claims B's result.
         await act(async () => { vi.advanceTimersByTime(60_000) })
         await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
-        expect(first.ref.current!.hash).not.toBe(H2)
-        const shown = first.ref.current!.error
-        if (isValidElement(shown)) expect(heldNotice(shown).hash).not.toBe(H2)
+        expect(first.ref.current!.phase).not.toBe('success')
+        expect(first.ref.current!.receipt).toBeNull()
         otherTab.dispose()
         await act(async () => first.renderer.unmount())
       } finally {
@@ -1102,7 +1101,7 @@ describe('useSafeTx', () => {
       // A look at the hold (a poll, another flow) sees it clear while the exit is open.
       await act(async () => { await writeHolds.open(INPUT()).state(mocks.publicClient as never) })
       // Released elsewhere with no settlement known: this flow claims no result.
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: HELD_RELEASED_ELSEWHERE_LINE })
       await act(async () => { shown.onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
@@ -1119,7 +1118,7 @@ describe('useSafeTx', () => {
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledOnce()
       // Released elsewhere with no settlement known: this flow claims no result.
-      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: 'This transaction is no longer held here. Check your wallet before sending it again.' })
+      expect(hook.ref.current).toMatchObject({ phase: 'submitted', notice: HELD_RELEASED_ELSEWHERE_LINE })
       await act(async () => hook.renderer.unmount())
     })
   })
@@ -1136,39 +1135,6 @@ describe('useSafeTx', () => {
     })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     await act(async () => hook.renderer.unmount())
-  })
-
-  it('keeps checking slowly after the fast lookups end, so the hold clears by itself', async () => {
-    vi.useFakeTimers()
-    try {
-      const getTransactionReceipt = vi.fn().mockResolvedValue(null)
-      mocks.publicClient = { ...mocks.publicClient, getTransactionReceipt } as typeof mocks.publicClient
-      const hook = await renderHook()
-      await act(async () => {
-        await hook.ref.current!.send(request, reviewedByAlice)
-      })
-      mocks.receipt = { data: undefined, isError: true }
-      await act(async () => {
-        hook.renderer.update(createElement(Harness, { ref: hook.ref }))
-      })
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(150 * 4_000 + 100)
-      })
-      const fast = getTransactionReceipt.mock.calls.length
-      // The hook's 150 fast lookups.
-      expect(fast).toBeGreaterThanOrEqual(150)
-      expect(hook.ref.current).toMatchObject({ phase: 'unconfirmed' })
-
-      getTransactionReceipt.mockResolvedValue(mined(hook.ref.current!.hash!))
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(60_000)
-      })
-      expect(getTransactionReceipt.mock.calls.length).toBeGreaterThan(fast)
-      expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
-      await act(async () => hook.renderer.unmount())
-    } finally {
-      vi.useRealTimers()
-    }
   })
 
   it.each([
@@ -1211,39 +1177,16 @@ describe('useSafeTx', () => {
     expect(hook.ref.current!.phase).toBe('success')
   })
 
-  it('confirms from a direct receipt lookup when the block watcher stalls', async () => {
-    vi.useFakeTimers()
-    try {
-      const getTransactionReceipt = vi
-        .fn()
-        .mockResolvedValueOnce(null)
-        .mockResolvedValue(mined(HASH))
-      mocks.publicClient = {
-        ...mocks.publicClient,
-        getTransactionReceipt,
-      } as typeof mocks.publicClient
-      const hook = await renderHook()
-      await act(async () => {
-        await hook.ref.current!.send(request, reviewedByAlice)
-      })
-      expect(hook.ref.current).toMatchObject({ phase: 'pending', busy: true })
-
-      // The watcher never answers; the interval lookup does.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(4_100)
-      })
-      expect(getTransactionReceipt).toHaveBeenCalledTimes(1)
-      expect(hook.ref.current).toMatchObject({ phase: 'pending' })
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(4_100)
-      })
-      // Two lookups, then the write hold's own read as it verifies the receipt.
-      expect(getTransactionReceipt).toHaveBeenCalledTimes(3)
-      expect(hook.ref.current).toMatchObject({ phase: 'success', busy: false, error: null })
-      expect(hook.ref.current!.receipt).toMatchObject({ blockNumber: 5n })
-    } finally {
-      vi.useRealTimers()
-    }
+  it("settles from the hold's own reads when the receipt watch never answers", async () => {
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    expect(hook.ref.current).toMatchObject({ phase: 'pending' })
+    // The watcher never reports a receipt; the chain shows the transaction mined, and the view asks the hold again.
+    await act(async () => { globalThis.dispatchEvent?.(new Event('focus')) })
+    await settle(20)
+    expect(hook.ref.current).toMatchObject({ phase: 'success', hash: HASH })
+    expect(mocks.writeContract).toHaveBeenCalledOnce()
+    await act(async () => hook.renderer.unmount())
   })
 
   it('reports a disconnected wallet and reset clears terminal state', async () => {

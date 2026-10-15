@@ -11,14 +11,14 @@ import { savedAttempts, withUnreadableConsent, writeHolds } from '@/lib/write-ho
 /**
  * A saved attempt (a launch, a Safe setup, a payer deployment, a project
  * batch, a Relayr payment), recovered through the SDK (useSavedAttempt): the
- * hold's line and exit while it is held, or the one "I checked it. <next>."
- * check (and, only after storage proved unreadable, the warned exit). It
+ * hold's line and exit while it is held, or its one check action
+ * (checkedItLabel; and, only after storage proved unreadable, the warned exit). It
  * decides nothing: a retirement goes to `onRetired`, and an attempt that
  * settled, or has nothing left to recover, goes to `onFollow`.
  */
 export default function SavedAttemptRecovery({ attempt, checkNext, onRetired, onFollow }: {
   attempt: SavedAttempt<unknown>
-  /** The check's next step: "I checked it. <checkNext>." */
+  /** The check action's next step, as checkedItLabel words it. */
   checkNext: string
   /** The SDK retired the attempt: by the user's exit or check (`durable: false` when only in this tab), or warned over unreadable storage. */
   onRetired: (how: { by: 'exit' | 'check' | 'unreadable' }) => void

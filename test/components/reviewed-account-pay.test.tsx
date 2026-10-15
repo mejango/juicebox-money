@@ -18,6 +18,10 @@ import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFIFA_RECOVERY_QUERY_PREFIX, defifaWriteNamespace, readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
 import { buildDefifaPayMetadata, buildPayTx } from '@bananapus/nana-sdk-core/v6'
+import {
+  HELD_AWAY_SUCCESS_LINE, HELD_CONFIRMING_LINE, HELD_EXIT_LABEL, HELD_RELEASED_ELSEWHERE_LINE, HELD_RELEASED_LINE, HELD_SEND_AGAIN_LABEL,
+  SAVED_ATTEMPT_CHECK_LINE, SAVED_ATTEMPT_UNREADABLE_LINE, WRITE_HOLD_IN_TAB_LINE, WRITE_HOLD_PENDING_LINE,
+} from '@bananapus/nana-sdk-core/review'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -764,4 +768,30 @@ describe('compatible basic funding', () => {
       expect(request.args.at(-1)).toBe('0x')
     })
   }
+})
+
+/** Any line or label the SDK's hold or recovery shows: the normal path shows none of them. */
+const HOLD_COPY = [
+  HELD_CONFIRMING_LINE, HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_EXIT_LABEL, HELD_SEND_AGAIN_LABEL,
+  SAVED_ATTEMPT_CHECK_LINE, SAVED_ATTEMPT_UNREADABLE_LINE, WRITE_HOLD_PENDING_LINE, WRITE_HOLD_IN_TAB_LINE,
+]
+const holdCopyShown = () => HOLD_COPY.filter(line => host.textContent?.includes(line))
+
+describe('the normal path, click for click as main', () => {
+  it('pays with Pay, then Confirm & Pay: one review, one wallet prompt, its result, and no hold or recovery notice, twice in a row', async () => {
+    for (const round of [1, 2]) {
+      const clicksBefore = wallet.requestReview.mock.calls.length
+      await reviewPayment(String(round))
+      await click('Confirm & Pay')
+      await waitUntil(() => wallet.writeContract.mock.calls.length === round)
+      expect(wallet.requestReview.mock.calls.length - clicksBefore).toBe(1)
+      expect(holdCopyShown()).toEqual([])
+      await act(async () => wallet.confirm(sentHash(round)))
+      await waitUntil(() => !!button('Done', false))
+      expect(button('Done', false), 'the confirmed payment ends on Done').toBeDefined()
+      expect(holdCopyShown()).toEqual([])
+      await click('Done')
+    }
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
+  })
 })
