@@ -155,14 +155,16 @@ describe('native Defifa checkout through the reviewed engine', () => {
     await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 43, shop })))
     await act(async () => resolve({ request: simulated }))
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(text(renderer.root)).toContain('connected account or project changed')
+    // The switched account's identity closes the stale review: nothing is written, and its own review starts fresh.
+    expect(text(renderer.root)).toContain('Review mint')
   })
   it('refuses a wallet switch during the final fresh preparation', async () => {
     await openReview()
     controls.prepare.mockImplementationOnce(async () => { wallet.connect(BOB); return prepared() })
     await click('Confirm mint')
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(text(renderer.root)).toContain('connected account or project changed')
+    // The switched account's identity closes the stale review: nothing is written, and its own review starts fresh.
+    expect(text(renderer.root)).toContain('Review mint')
   })
   it.each(['price', 'default delegate', 'phase'])('refuses a stale %s after review', async what => {
     await openReview()

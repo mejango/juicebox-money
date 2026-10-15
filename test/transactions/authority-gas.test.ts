@@ -74,7 +74,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
-import { heldWritesSnapshot } from '@/lib/write-holds'
+import { listedHeld } from '../support/held-chain'
 import { modelNode } from '../support/chain-node'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
@@ -237,7 +237,7 @@ describe('an authority write held by its write hold', () => {
     await expect(runAuthorityCalls({ signal: flow, calls: calls() })).rejects.toThrow()
     await expect(runAuthorityCalls({ signal: flow, calls: calls() })).rejects.toThrow()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
-    const [shown] = heldWritesSnapshot()
+    const [shown] = await listedHeld(ALICE, 11155111, mocks.client)
     expect(shown.state).toMatchObject({ status: 'held-no-hash', exit: true })
     await expect(shown.hold.exit(shown.state, { checkedWallet: true }, mocks.client as never)).resolves.toMatchObject({ released: true })
     await runAuthorityCalls({ signal: flow, calls: calls() })
@@ -253,7 +253,7 @@ describe('an authority write held by its write hold', () => {
     await expect(runAuthorityCalls({ signal: flow, calls: safeCalls })).rejects.toThrow()
     await expect(runAuthorityCalls({ signal: flow, calls: safeCalls })).rejects.toThrow()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
-    expect(heldWritesSnapshot()[0]?.state).toMatchObject({ exit: true })
+    expect((await listedHeld(ALICE, 11155111, mocks.client))[0]?.state).toMatchObject({ exit: true })
   })
 })
 

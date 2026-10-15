@@ -1,6 +1,8 @@
 'use client'
 
 import { isAddressEqual, type Address, type Hex } from 'viem'
+import { writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { recoverSaved, strictRetirable } from '@/lib/write-holds'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { RelayrPaymentSubmittedError, RelayrQuoteTimeoutError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
 import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
@@ -52,8 +54,27 @@ export async function isExpiredUnfundedRawQuote(session: RawRelayrState, chains:
   return true
 }
 
+/**
+ * A quote's funding payment the app can't authenticate (a wallet that returned
+ * no hash, or a saved payment its proof can't confirm), as the SDK's
+ * saved-attempt recovery reads it: the one check. `stillSaved` is the owner's
+ * strict journal re-read before it retires.
+ */
+export function rawFundingAttempt(session: RawRelayrState, stillSaved: () => boolean): SavedAttempt<never> {
+  const attempt: SavedAttempt<never> = {
+    chainId: session.paymentChainId ?? session.payments?.at(-1)?.chainId ?? 1,
+    account: session.account,
+    namespaces: [writeIntentKey('relayr-funding', { bundle: session.quote?.bundle_uuid ?? '' })],
+    saved: { started: true, ...(session.paymentHash ? { hash: session.paymentHash } : {}) },
+    // The app's own proof of this payment already failed: nothing here can show it.
+    authenticate: async () => ({ result: 'unknown' }),
+    confirmRetirable: strictRetirable(() => attempt, stillSaved),
+  }
+  return attempt
+}
+
 /** Shared raw-call funding lifecycle. Owners durably save every transition before external writes. */
-export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, changedCallMessage, lostQuoteMessage, releasable = false, signal, onQuoted }: {
+export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, changedCallMessage, lostQuoteMessage, releasable = false, signal, onQuoted, checked }: {
   session: S
   entries: RelayrEntry[]
   saveState: (session: S, beforeWrite?: boolean) => void
@@ -71,8 +92,23 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
   signal?: AbortSignal
   /** The quote is saved and the next step is the fee payment. */
   onQuoted?: () => void
+  /**
+   * A funding payment that can't be authenticated gets the SDK's one check
+   * (rawFundingAttempt) instead of a dead end; `retired` is the owner's end of
+   * the attempt once the user checked it.
+   */
+  checked?: { stillSaved: () => boolean; retired: () => never }
 }): Promise<unknown> {
   const persist = (beforeWrite = false) => save(session, beforeWrite)
+  /** An unauthenticated payment: the SDK's check, or, once the user checked it, the owner's end of the attempt. */
+  const check = async (line: string): Promise<never> => {
+    if (checked) {
+      const client = relayrChainClient(rawFundingAttempt(session, checked.stillSaved).chainId) as unknown as WriteHoldClient
+      const recovered = await recoverSaved(rawFundingAttempt(session, checked.stillSaved), client, line)
+      if (recovered.status === 'none' && recovered.retired === 'check') checked.retired()
+    }
+    throw new Error(line)
+  }
       const requestQuote = async () => {
         await reverify()
         assertAccount()
@@ -186,15 +222,18 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           persist(true)
         }
       }
-      if (session.phase === 'payment-sending') throw new Error('The wallet funding result is uncertain. Keep the saved bundle pending; do not pay again.')
+      if (session.phase === 'payment-sending') await check('The wallet funding result is uncertain. Keep the saved bundle pending; do not pay again.')
       if (!paidNow && session.phase === 'executing') {
         // A payment that reverted funded nothing: the quote waits on the retry rule.
         // A send with no hash yet stays as it is, since it may still land.
         const confirmed = await proveSavedRelayrPayment(relayrChainClient, session.payments, session.account, () => {
           session.phase = 'payment-reverted'
           persist()
+        }).catch(async (error: unknown) => {
+          if (session.phase === 'payment-reverted') throw error
+          return check(error instanceof Error ? error.message : 'The fee payment cannot be confirmed yet. Do not pay again.')
         })
-        if (!confirmed) throw new Error('The fee payment cannot be confirmed yet. Do not pay again.')
+        if (!confirmed) await check('The fee payment cannot be confirmed yet. Do not pay again.')
       }
       let pollError: unknown
       try {

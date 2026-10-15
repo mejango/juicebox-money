@@ -26,10 +26,15 @@ import {
   isDefiniteWalletRejection,
   simulateStateChangingTransaction,
   TRANSACTION_SIMULATION_GAS,
+  writeIntentKey,
+  intent,
+  type SavedAttempt,
+  type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import { isSafeConnection, readSafeAppExecution, SAFE_NONCE_GUIDANCE, SAFE_PROPOSAL_UNCONFIRMED, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { publicClient } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
+import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictRetirable, writeHolds } from '@/lib/write-holds'
 
 type Setup = NonNullable<LaunchChainStatus['multisigSetup']>
 type LaunchMultisigSetupRequest = ReturnType<typeof buildSafeDeploymentTx> & {
@@ -75,6 +80,47 @@ async function withLaunchLock<T>(action: () => Promise<T>): Promise<T> {
 }
 
 
+/** A launch's Safe setup on one chain: held by its launch (salt) and sender. No SDK builder covers it. */
+export function setupNamespace(chainId: number, account: Address, salt: Hex): string {
+  return writeIntentKey('launch-safe-setup', { chainId, account: intent.address(account), salt: intent.hex(salt) })
+}
+
+/**
+ * A chain's saved Safe setup as the SDK's saved-attempt recovery reads it: only
+ * what the journal saved. Its domain check is the setup's own receipt creating
+ * every planned Safe; the journal's strict re-read is the final say before a
+ * check or exit retires it.
+ */
+export function setupAttemptOf(chainId: number, salt: Hex, account: Address, plan: LaunchPlan, setup: Setup): SavedAttempt<true> {
+  const client = publicClient(chainId as JBChainId)
+  const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
+  const attempt: SavedAttempt<true> = {
+    chainId,
+    account,
+    safe: !!setup.safe,
+    namespaces: [setupNamespace(chainId, account, salt)],
+    // The exact setup call: a saved hash the hold doesn't know (the last release held none) is adopted against it.
+    call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
+    saved: {
+      started: true,
+      ...(setup.safeProposalHash ? { safeTxHash: setup.safeProposalHash } : setup.txHash ? { hash: setup.txHash } : {}),
+    },
+    async authenticate(hash) {
+      if (!hash) return { result: 'unknown' }
+      const receipt = await client.getTransactionReceipt({ hash }).catch(() => null)
+      if (!receipt) return { result: 'unknown' }
+      if (receipt.status !== 'success') return { result: 'not-this', reason: 'Safe creation reverted.' }
+      return await verifySafeDeployments(client, plan.multisigs!).then(() => ({ result: 'proven' as const, value: true as const }), () => ({ result: 'unknown' as const }))
+    },
+    confirmRetirable: strictRetirable(() => attempt, () => {
+      const session = loadLaunchSession({ strict: true })
+      const now = session?.salt === salt ? session.statuses[chainId]?.multisigSetup : undefined
+      return !!now && now.phase !== 'done'
+    }),
+  }
+  return attempt
+}
+
 function requireSession(chainId: number, salt: Hex): LaunchSession {
   const session = loadLaunchSession({ strict: true })
   if (!session || session.salt !== salt || !session.chains.includes(chainId) || session.transport === 'relayr') {
@@ -115,6 +161,22 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
       onSetup?.(setup)
     }
     const client = publicClient(chainId as JBChainId)
+    // Recovery runs first (invariant A): a saved setup submission is recovered by the SDK from
+    // what the journal saved alone, before any read or preparation.
+    let recovered: Hex | undefined
+    const saved = read(true).statuses[chainId]?.multisigSetup
+    if (saved?.phase === 'signing' || saved?.phase === 'confirming') {
+      const attempt = setupAttemptOf(chainId, salt, account, plan, saved)
+      const outcome = await recoverSaved(attempt, client as unknown as WriteHoldClient)
+      if (outcome.status === 'done' && outcome.result === 'success') {
+        if (!outcome.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, 'Safe creation went through. It is still confirming.')
+        recovered = outcome.hash
+        persist({ phase: 'confirming', txHash: recovered, ...(saved.safe ? { safe: true as const } : {}) })
+      } else {
+        // A proven revert, or retired (the user's exit or check, a definite rejection): nothing is out.
+        persist({ phase: 'failed' })
+      }
+    }
     const priorLaunch = read(true).statuses[chainId]
     if (priorLaunch?.phase === 'failed' && priorLaunch.txHash) {
       const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: priorLaunch.txHash })
@@ -126,27 +188,26 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
     const prior = read().statuses[chainId]?.multisigSetup
     await checkLaunchMultisigs(client, plan)
 
-    let hash = prior?.phase === 'confirming' ? prior.txHash : undefined
-    let proposal = prior?.phase === 'confirming' ? prior.safeProposalHash : undefined
-    if (prior?.phase === 'confirming' && prior.safe && !proposal) {
-      throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
-    }
-    if (!hash && !proposal) {
+    let hash = recovered
+    let proposal: Hex | undefined
+    if (!hash) {
       if (await verifySafeDeployments(client, plan.multisigs!, { allowMissing: true })) {
         persist({ phase: 'done' })
         return
-      }
-      if (prior?.phase === 'signing') {
-        throw new Error('Safe creation may already have been submitted. Check your wallet and recover its hash before trying again.')
       }
       if (prior?.phase === 'done') {
         throw new Error('The previously created Safe could not be verified. Check the original setup transaction before continuing.')
       }
       const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
+      // Held by the SDK's write hold from just before the wallet opens until it settles.
+      const hold = writeHolds.open({
+        chainId, account, safe, namespace: setupNamespace(chainId, account, salt),
+        call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
+      })
       let walletInvoked = false
       try {
         onProgress('Review Safe creation')
-        hash = await submitReviewedContractWrite({
+        hash = await hold.send<Hex>(client as unknown as WriteHoldClient, gate => submitReviewedContractWrite({
           request,
           expectedAccount: account,
           // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
@@ -184,10 +245,19 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
             assertWalletContext()
             if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
           },
-          beforeWrite: () => {
-            read()
-            persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
+          beforeWrite: async () => {
+            await gate.beforeSend()
+            try {
+              read()
+              persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
+            } catch (error) {
+              gate.onRejected()
+              throw error
+            }
           },
+          onWriteRejected: () => gate.onRejected(),
+          onBeforeWriteAborted: () => gate.onRejected(),
+          onWriteSubmitted: submitted => gate.afterSubmit(submitted),
           write: simulated => {
             // The shared synchronous guard runs after the durable marker and
             // its callbacks, immediately before this wallet invocation.
@@ -195,7 +265,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
             return options.writeContract(simulated)
           },
           accountChangedError: 'Connected account changed. Review Safe creation again.',
-        })
+        }))
       } catch (error) {
         if (!walletInvoked || isDefiniteWalletRejection(error)) persist({ phase: 'failed' })
         throw error
@@ -230,23 +300,27 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
       throw new Error('Safe creation reverted. Review the setup before trying again.')
     }
     await verifyCreatedLaunchMultisigs(client, plan, receipt.blockNumber)
+    // Its proof reaches the hold, which settles it.
+    const setupCall = buildSafeDeploymentTx(chainId, plan.multisigs!)
+    await requireHeldSettlement(writeHolds.open({
+      chainId, account, safe: !!proposal, namespace: setupNamespace(chainId, account, salt),
+      call: { to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n },
+    }), client as unknown as WriteHoldClient, receipt, proposal ? { calls: [{ to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n }] } : undefined).catch(() => null)
     persist({ phase: 'done', txHash: hash })
   })
 }
 
-/** A user supplies the original hash, or explicitly confirms no request was submitted. */
-export async function recoverLaunchMultisigSetup(chainId: number, salt: Hex, hash?: Hex): Promise<void> {
+/**
+ * The SDK retired a chain's saved Safe setup (the user's exit or check): the
+ * journal records that nothing is out, so the launch prepares its setup again.
+ */
+export async function retireLaunchMultisigSetup(chainId: number, salt: Hex): Promise<void> {
   return withLaunchLock(async () => {
     const session = requireSession(chainId, salt)
     const status = session.statuses[chainId]
     const setup = status?.multisigSetup
-    if (!session.plans[chainId].multisigs?.length || setup?.phase !== 'signing' || setup.txHash || setup.safeProposalHash) {
-      throw new Error('There is no interrupted Safe creation to recover.')
-    }
-    if (hash !== undefined && !/^0x[0-9a-fA-F]{64}$/u.test(hash)) throw new Error('Enter a valid transaction or Safe proposal hash.')
-    status.multisigSetup = hash
-      ? { phase: 'confirming', txHash: hash, ...(setup.safe ? { safe: true, safeProposalHash: hash } : {}) }
-      : { phase: 'failed' }
+    if (setup?.phase !== 'signing' && setup?.phase !== 'confirming') return
+    status.multisigSetup = { phase: 'failed' }
     if (!saveLaunchSession(session)) throw new Error('Safe recovery could not be saved. Restore browser storage before continuing.')
   })
 }

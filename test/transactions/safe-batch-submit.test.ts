@@ -69,7 +69,8 @@ import {
   packMultiSend,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
-import { forgetHeldWrite, heldWritesSnapshot } from '@/lib/write-holds'
+import { listedHeld } from '../support/held-chain'
+import { HELD_RELEASED_ELSEWHERE_LINE } from '@bananapus/nana-sdk-core/review'
 import { modelNode } from '../support/chain-node'
 import {
   authorityCallForStep,
@@ -389,7 +390,6 @@ describe('Safe owner batch', () => {
 /** Each attempt below starts after the earlier proposal ended elsewhere: its write hold is gone. */
 function earlierProposalEnded() {
   resetWriteRecoveryForTests()
-  for (const shown of heldWritesSnapshot()) forgetHeldWrite(shown.state.record.id)
 }
 
 describe('Safe app batch', () => {
@@ -448,7 +448,7 @@ describe('Safe app batch', () => {
     await vi.waitFor(() => expect(mocks.waitForSafeExecutionHash).toHaveBeenCalled())
     earlierProposalEnded()
     executed(EXECUTION)
-    await expect(submitted).rejects.toThrow('This transaction is no longer held here. Check your wallet before sending it again.')
+    await expect(submitted).rejects.toThrow(HELD_RELEASED_ELSEWHERE_LINE)
   })
 
   it("holds a batch Safe's service lost with the warned exit, never pending without one", async () => {
@@ -459,7 +459,7 @@ describe('Safe app batch', () => {
     await expect(submitSafeBatch({
       signal: flow, chainId: 1, authority: SAFE, steps: presetSteps(), route: { kind: 'safe-app', authorityKind: 'safe' },
     })).rejects.toThrow('no record')
-    const [shown] = heldWritesSnapshot()
+    const [shown] = await listedHeld(SAFE, 1, mocks.client)
     expect(shown?.state).toMatchObject({ status: 'safe-unproven', exit: true })
     expect(shown.state).toHaveProperty('warning')
   })

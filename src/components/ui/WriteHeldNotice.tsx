@@ -1,28 +1,28 @@
 'use client'
 
-import { WRITE_EXIT_LABEL, writeExitMessage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
+import { writeExitMessage, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 
 /**
- * A held write as the SDK's write hold says: its one line, a link when it has
- * a hash, and, for a state that offers it, the exit with what sending again
- * costs. Inline elements only, so it can sit in a dialog's alert line.
+ * A held write as the SDK's held-write view shows it: its one line, a link
+ * when it has a hash, the view's notice and warning, and the action it offers
+ * (its exit, or "Send it again"). Display only; inline elements, so it can sit
+ * in a dialog's alert line.
  */
-export function WriteHeldNotice({ chainId, state, onExit }: {
+export function WriteHeldNotice({ chainId, view, action }: {
   chainId: number
-  state: WriteHeldState
-  /** Given only for a state with `exit: true`. */
-  onExit?: () => void
+  view: Pick<HeldWriteView, 'line' | 'warning' | 'notice' | 'state' | 'exit'>
+  action?: { label: string; run: () => unknown } | null
 }) {
-  const hash = 'hash' in state ? state.hash : state.record.hash
+  const state = view.state
+  const hash = state && state.status !== 'clear' ? ('hash' in state && state.hash ? state.hash : state.record.hash) : undefined
   const url = hash ? explorerTxUrl(chainId, hash) : null
-  // Only while this browser can't remember pending writes.
-  const notice = 'notice' in state && typeof state.notice === 'string' ? state.notice : null
-  const warning = 'warning' in state && state.warning ? state.warning : writeExitMessage(state.record.call)
+  // What sending again risks, beside the exit: the hold's warning, or the SDK's line for its call.
+  const warning = view.warning ?? (view.exit && state && state.status !== 'clear' ? writeExitMessage(state.record.call) : null)
   return (
     <span className="block space-y-2 text-smoke-800">
       <span className="block">
-        {state.line}
+        {view.line}
         {url ? (
           <>
             {' '}
@@ -32,13 +32,13 @@ export function WriteHeldNotice({ chainId, state, onExit }: {
           </>
         ) : null}
       </span>
-      {notice ? <span className="block text-xs text-smoke-600">{notice}</span> : null}
-      {onExit ? (
+      {view.notice ? <span className="block text-xs text-smoke-600">{view.notice}</span> : null}
+      {action ? (
         <>
-          <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={onExit}>
-            {WRITE_EXIT_LABEL}
+          <button type="button" className="btn-secondary min-h-[36px] px-4 text-sm" onClick={() => void action.run()}>
+            {action.label}
           </button>
-          <span className="block text-xs text-smoke-600">{warning}</span>
+          {warning ? <span className="block text-xs text-smoke-600">{warning}</span> : null}
         </>
       ) : null}
     </span>

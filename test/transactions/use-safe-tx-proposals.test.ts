@@ -919,7 +919,7 @@ describe("a send that asks Safe's queue first", () => {
 
 describe('a Safe proposal an app journal holds (Defifa)', () => {
   it('reports the follower giving up to the journal\'s own hold, so its exit appears and accepting it proposes exactly once more', async () => {
-    const { defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_CHANGE_EVENT } = await import('@/lib/defifa-write-recovery')
+    const { defifaWriteNamespace, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_CHANGE_EVENT } = await import('@/lib/defifa-write-recovery')
     // The recovery card listens for this event.
     const changed = vi.fn()
     vi.stubGlobal('dispatchEvent', changed)
@@ -934,7 +934,7 @@ describe('a Safe proposal an app journal holds (Defifa)', () => {
     await sendThrough()
     await settle()
     const record = readDefifaWriteRecovery(scope)!
-    const hold = defifaWriteHold(scope, record)
+    const hold = defifaWriteNamespace(scope, record)
     // Read from storage alone it offers no exit; the chain's answer below does.
     expect(hold.peek()).toMatchObject({ status: 'safe-unproven', exit: false })
     expect(changed).toHaveBeenCalledWith(expect.objectContaining({ type: DEFIFA_RECOVERY_CHANGE_EVENT }))
@@ -971,7 +971,7 @@ describe('a queued Safe proposal this app adopts', () => {
 
 describe('a queued Safe proposal an app journal adopts (Defifa)', () => {
   it("reports the adopted proposal's unproven end to the journal's hold, so its exit appears and accepting it proposes exactly once more", async () => {
-    const { defifaWriteHold, readDefifaWriteRecovery, sendRecoverableDefifaWrite } = await import('@/lib/defifa-write-recovery')
+    const { defifaWriteNamespace, readDefifaWriteRecovery, sendRecoverableDefifaWrite } = await import('@/lib/defifa-write-recovery')
     const scope = { chainId: 10, projectId: 8, account: SAFE, action: 'transfer' as const }
     const queuedHash = canonicalSafeTxHash(10, SAFE, safeProposalFor({ to: BOB, data: callData, value: 7n }, 5))
     // The Safe's queue already holds this exact call, and its execution can't be followed.
@@ -988,7 +988,7 @@ describe('a queued Safe proposal an app journal adopts (Defifa)', () => {
     expect(mocks.writeContract).not.toHaveBeenCalled()
     const record = readDefifaWriteRecovery(scope)!
     expect(record.hash).toBe(queuedHash)
-    const hold = defifaWriteHold(scope, record)
+    const hold = defifaWriteNamespace(scope, record)
     const shown = await hold.state(mocks.publicClient as never)
     expect(shown).toMatchObject({ status: 'safe-unproven', exit: true })
     await expect(hold.exit(shown, { checkedWallet: true }, mocks.publicClient as never)).resolves.toMatchObject({ released: true })

@@ -21,7 +21,8 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { gasWithHeadroom } from '@bananapus/nana-sdk-core/review'
+import { gasWithHeadroom, intent, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { recoverSaved, strictRetirable } from '@/lib/write-holds'
 import {
   buildForwardedTx,
   readRelayrPendingSessionsForAuthorization,
@@ -146,6 +147,29 @@ function requestOf(signed: SignedLaunch, plan: LaunchSession['plans'][number]) {
  * One authorization per destination, one reviewed payment on the user's selected chain.
  * The launch journal owns recovery: provider labels never establish creation or permit a new payment.
  */
+/**
+ * A Relayr launch payment the app can't authenticate (a saved hash its proof
+ * refused, or a wallet that returned none), as the SDK's saved-attempt
+ * recovery reads it: the one check, whose retirement marks the launch
+ * cancellable. The journal's strict re-read is the final say before it retires.
+ */
+export function relayrLaunchPaymentAttempt(salt: Hex, account: Address, paymentChainId: number, hash?: Hex): SavedAttempt<never> {
+  const attempt: SavedAttempt<never> = {
+    chainId: paymentChainId,
+    account,
+    namespaces: [writeIntentKey('relayr-launch-payment', { salt: intent.hex(salt) })],
+    saved: { started: true, ...(hash ? { hash } : {}) },
+    // The app's own proof of this payment already failed: nothing here can show it.
+    authenticate: async () => ({ result: 'unknown' }),
+    confirmRetirable: strictRetirable(() => attempt, () => {
+      const now = loadLaunchSession({ strict: true })
+      return !!now && now.salt === salt && !!now.relayr && !now.relayr.abandonable &&
+        ['payment-signing', 'submitted', 'executing'].includes(now.relayr.phase)
+    }),
+  }
+  return attempt
+}
+
 export async function runRelayrLaunch({ session, account, onStatus, onProgress }: {
   session: LaunchSession
   account: Address
@@ -465,10 +489,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           })
         } catch (error) {
           if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
-          // The saved hash is another transaction, which no later resume can change. While a request of the launch can
-          // still run, the refusal stands; once every one is dead, the launch can be cancelled (ruling R114).
+          // The saved hash is another transaction, which no later resume can change. Once every request of the
+          // launch is dead, the launch can be cancelled (ruling R114); before that, the SDK's one check retires it.
           const outcome = await outstandingOutcome(publishedRequests(resumed))
           if (outcome?.kind === 'discard') abandon(resumed, outcome.reason === 'ran' ? LAUNCH_MAY_HAVE_RUN : LAUNCH_PAYMENT_UNMATCHED, error)
+          const checked = await recoverSaved(relayrLaunchPaymentAttempt(current.salt, account, resumed.paymentChainId!, resumed.paymentHash),
+            publicClient(resumed.paymentChainId as JBChainId) as unknown as WriteHoldClient, error instanceof Error ? error.message : undefined)
+          if (checked.status === 'none' && checked.retired === 'check') abandon(resumed, LAUNCH_PAYMENT_UNMATCHED, error)
           throw error
         }
       }
@@ -493,6 +520,13 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         const outcome = await outstandingOutcome(publishedRequests(journal))
         if (outcome?.kind === 'discard' && outcome.reason === 'expired' && await originalPaymentExpired()) journal.abandonable = true
         persist()
+        if (!journal.abandonable) {
+          // A payment the wallet may have sent without its hash: the SDK's one check, whose retirement makes it cancellable.
+          const checked = await recoverSaved(relayrLaunchPaymentAttempt(current.salt, account, journal.paymentChainId!),
+            publicClient(journal.paymentChainId as JBChainId) as unknown as WriteHoldClient,
+            'Your wallet may have sent the Relayr payment without returning its hash. Check its activity before another payment.')
+          if (checked.status === 'none' && checked.retired === 'check') abandon(journal, LAUNCH_MAY_HAVE_RUN)
+        }
         throw new Error(journal.abandonable
           ? 'The launch authorizations and payment quote expired. You may abandon this launch, but the earlier payment may have been charged; check your wallet. No refund is implied.'
           : 'Your wallet may have sent the Relayr payment without returning its hash. Check its activity before another payment.')

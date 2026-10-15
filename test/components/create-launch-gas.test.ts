@@ -28,11 +28,10 @@ describe("direct launch Safe waits", () => {
   it("take the page's signal", () => {
     expect(source).toContain('const pageSignal = useUnmountSignal();')
     expect(source).toContain('const signal = pageSignal();')
-    expect(source.match(/waitForSafeExecutionHash\(/g)).toHaveLength(2)
-    // A saved proposal's recovery takes one look, under the page's signal, before its hold decides.
-    expect(source).toContain('waitForSafeExecutionHash(chainId, safeTxHash, { signal, lookMs: 15_000 })')
+    // A saved proposal's recovery is the SDK's; only a fresh send waits for its execution, under the page's signal.
+    expect(source.match(/waitForSafeExecutionHash\(/g)).toHaveLength(1)
     expect(source).toContain('hash = await waitForSafeExecutionHash(chainId, proposal, { signal });')
-    expect(source).toMatch(/prepareLaunchMultisigs\(\{[\s\S]*?\n\s+signal,\n\s+\}\);/)
+    expect(source).toMatch(/prepareLaunchMultisigs\(\{[\s\S]*?\n\s+signal,\n\s+\}\)\.catch\(/)
   })
 })
 
@@ -71,9 +70,10 @@ describe('direct launch submission and recovery boundaries', () => {
   })
 
   it('puts the launch under the SDK hold: the reservation right before the wallet, and the hold deciding a resume', () => {
-    expect(source).toContain('launchHold({')
-    expect(source).toContain('launchResumeGate(launchHoldRef.current')
-    expect(source).toContain('sendUnderHold(chainId, hold, client as never, gate => submitReviewedContractWrite({')
+    // A saved launch is recovered by the SDK first; a fresh one is sent under the hold of its launch key.
+    expect(source).toContain('const outcome = await savedAttempts.recover(attempt, client as never);')
+    expect(source).toContain('namespace: launchNamespace(launch),')
+    expect(source).toContain('hash = await hold.send<Hex>(client as never, gate => submitReviewedContractWrite({')
     expect(source).toContain('await gate.beforeSend();')
     expect(source).not.toContain('This launch may already have been submitted. Recover the original wallet request before trying again.')
   })

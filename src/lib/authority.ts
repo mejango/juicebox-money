@@ -24,7 +24,7 @@ import { requireTransactionReview } from '@/lib/transaction-review'
 import { connectedWallet } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { reviewDescription, safeWriteHold, sendUnderHold, settleUnderHold, showHeldWrite, unprovenUnderHold, writeHolds } from '@/lib/write-holds'
+import { requireHeldSettlement, reviewDescription, safeWriteHold, writeHolds } from '@/lib/write-holds'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
@@ -96,6 +96,11 @@ export type AuthorityCall = {
   onBeforeSubmissionAborted?: () => Promise<void>
   onSubmitted?: (hash: Hex, kind: 'direct' | 'safe-connector') => Promise<void>
   onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
+  /**
+   * A direct send's hold key when a journal recovers it (a project batch's call):
+   * held by it, and still by its exact call, as the last release held it.
+   */
+  holdNamespace?: string
 }
 
 export type AuthorityProgress = {
@@ -724,7 +729,7 @@ export async function runAuthorityCalls({
       const sentCall = { to: call.target, data: call.data, value: call.value ?? 0n }
       const hold = safeWriteHold(call.chainId, call.authority, sentCall)
       const holdClient = clientFor(call.chainId) as unknown as WriteHoldClient
-      const safeTxHash = await sendUnderHold(call.chainId, hold, holdClient, async gate => {
+      const safeTxHash = await hold.send<Hex>(holdClient, async gate => {
         await gate.beforeSend()
         await call.onSending?.('safe-connector')
         try {
@@ -757,7 +762,9 @@ export async function runAuthorityCalls({
       try {
         executionHash = await waitForSafeExecutionHash(call.chainId, safeTxHash, { signal })
       } catch (error) {
-        await unprovenUnderHold(call.chainId, hold, holdClient, safeTxHash, signal)
+        // The wait ended without an execution: unless the flow ended it, the hold takes it as
+        // unproven and offers its exit (HeldWritesNotice lists it).
+        if (!signal.aborted) await hold.onUnproven(holdClient, safeTxHash).catch(() => null)
         throw error
       }
       const receipt = await waitForTrackedReceipt(
@@ -785,7 +792,7 @@ export async function runAuthorityCalls({
         void hold.onReceipt(receipt, holdClient, { calls: [sentCall] }).catch(() => {})
         throw error
       }
-      await settleUnderHold(call.chainId, hold, holdClient, receipt, { calls: [sentCall] })
+      await requireHeldSettlement(hold, holdClient, receipt, { calls: [sentCall] })
       directResults.push(executionHash)
       continue
     }
@@ -860,12 +867,12 @@ export async function runAuthorityCalls({
         walletGuards.get(call)!()
         // Held by the SDK's write hold from just before the wallet opens: a lost
         // reply or an unread receipt is never sent again without the exit.
-        const hold = writeHolds.open({
-          chainId: call.chainId, account, safe: false,
-          call: { to: call.target, data: call.data, value: call.value ?? 0n },
-        })
+        const exact = { to: call.target, data: call.data, value: call.value ?? 0n }
+        const hold = call.holdNamespace
+          ? writeHolds.open({ chainId: call.chainId, account, safe: false, namespace: call.holdNamespace, call: exact }, { legacy: [{ call: exact }] })
+          : writeHolds.open({ chainId: call.chainId, account, safe: false, call: exact })
         const holdClient = client as unknown as WriteHoldClient
-        const hash = await sendUnderHold(call.chainId, hold, holdClient, async gate => {
+        const hash = await hold.send<Hex>(holdClient, async gate => {
           await gate.beforeSend()
           await call.onSending?.('direct')
           try {
@@ -894,15 +901,8 @@ export async function runAuthorityCalls({
           return sent
         })
         await call.onSubmitted?.(hash, 'direct')
-        let receipt: Awaited<ReturnType<typeof waitForTrackedReceipt>>
-        try {
-          receipt = await waitForTrackedReceipt(client, hash)
-        } catch (error) {
-          // Its receipt can't be read: it stays held, shown with its line, until the chain says.
-          const state = await hold.state(holdClient).catch(() => hold.peek())
-          if (state.status !== 'clear') showHeldWrite(call.chainId, hold, state)
-          throw error
-        }
+        // A receipt that can't be read leaves it held (HeldWritesNotice lists it) until the chain says.
+        const receipt = await waitForTrackedReceipt(client, hash)
         if (receipt.status !== 'success') {
           // The hold keeps a revert until it is final, so a retry can't double it.
           void hold.onReceipt(receipt, holdClient).catch(() => {})
@@ -912,7 +912,7 @@ export async function runAuthorityCalls({
             }.`,
           )
         }
-        await settleUnderHold(call.chainId, hold, holdClient, receipt)
+        await requireHeldSettlement(hold, holdClient, receipt)
         directResults.push(hash)
       }
       continue

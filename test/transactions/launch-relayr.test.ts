@@ -58,6 +58,15 @@ import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { relayrHeldMessage } from '@/lib/relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 import { friendlyError } from '@/lib/errors'
+import { savedAttempts } from '@/lib/write-holds'
+
+/** The user's check of what the SDK showed: it must be a check, and it retires for every tab. */
+async function checkIt(shown: { attempt: Parameters<typeof savedAttempts.recover>[0] }) {
+  const outcome = await savedAttempts.recover(shown.attempt, { getChainId: async () => shown.attempt.chainId } as never)
+  expect(outcome.status).toBe('check')
+  if (outcome.status !== 'check') throw new Error('expected the check')
+  await expect(savedAttempts.retire(shown.attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+}
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
@@ -764,6 +773,23 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
+  it("gives a payment the wallet may have sent without its hash the SDK's check: only the user's check makes it cancellable, and nothing is paid again", async () => {
+    m.pay.mockImplementation(async ({ reverify, onSending }) => {
+      await reverify(); onSending(); throw new Error('no hash returned')
+    })
+    await expect(run()).rejects.toThrow('no hash returned')
+    m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
+    // Its requests are dead, and the payment chain can't prove its own deadline passed.
+    for (const chainId of [1, 10]) clients.get(chainId)!.getBlock.mockResolvedValue({ number: 123n, hash: BLOCK, timestamp: BigInt(NOW + 3601) })
+    const shown = await run().catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringContaining('may have sent') })
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    await checkIt(shown)
+    await expect(run()).rejects.toThrow()
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
   it.each<[string, bigint, bigint[]]>([
     ['a nonce moves past the saved one', 0n, [0n, 1n]],
     ['the finalized nonce falls below the saved one, as after a reorg', 1n, [1n, 0n]],
@@ -1150,6 +1176,18 @@ describe('a saved launch payment the funding chain shows to be another transacti
     anotherTransaction()
     await expect(run()).rejects.toThrow(REFUSED)
     expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it("gives the user's check while a request can still run: only it makes the launch cancellable, and nothing is paid again", async () => {
+    await paidUnproven()
+    anotherTransaction()
+    const shown = await run().catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringContaining(REFUSED) })
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(false)
+    await checkIt(shown)
+    await expect(run()).rejects.toThrow(UNMATCHED)
+    expect(canAbandonRelayrLaunch(loadLaunchSession()!)).toBe(true)
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 

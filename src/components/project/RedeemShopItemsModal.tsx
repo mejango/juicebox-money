@@ -1,6 +1,7 @@
 'use client'
 
-import { redeemItemsIntent } from '@/lib/transaction-builders'
+import { legacyRedeemItemsKey } from '@/lib/legacy-intents'
+import { redeemIntent } from '@bananapus/nana-sdk-core/review'
 
 import {
   JB_CHAINS,
@@ -403,10 +404,14 @@ export function RedeemShopItemsModal({
         reviewedAccount: plan.quote.holder,
         reviewNotice: plan.reviewNotice,
         // Its minimum re-quotes on retry: held by the items the user chose to redeem.
-        intent: redeemItemsIntent({
-          chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook,
+        intent: redeemIntent({
+          chainId: plan.quote.chainId, project: target.projectId, hook: target.hook,
           tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
         }),
+        legacy: [legacyRedeemItemsKey({
+          chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook,
+          tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
+        })],
       })
     } catch (error) {
       setPrepareError(

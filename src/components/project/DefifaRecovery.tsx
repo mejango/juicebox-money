@@ -1,21 +1,21 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { usePublicClient } from 'wagmi'
 import { getFunctionSelector, type Address, type Hex, type PublicClient } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { verifyReviewedWriteReceipt, WRITE_EXIT_LABEL, writeExitMessage, writeHeldMessage, type WriteHeldState } from '@bananapus/nana-sdk-core/review'
+import { verifyReviewedWriteReceipt, writeExitMessage, writeHeldMessage, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
 import { DefifaNftTransactionRevertedError, restoreDefifaNftReceiptContext, verifyDefifaNftTransaction } from '@bananapus/nana-sdk-core/v6'
 import { reportedSafeExecution, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
-import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
-import { hidesShownExit } from '@/lib/write-holds'
+import { writeHolds } from '@/lib/write-holds'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
-import { clearDefifaWriteRecovery, defifaWriteHold, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, defifaWriteNamespace, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 /** How often a shown hold is asked again while this card is open. */
 const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
@@ -53,25 +53,24 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     return () => { window.removeEventListener('storage', refresh); window.removeEventListener(DEFIFA_RECOVERY_CHANGE_EVENT, refresh) }
   }, [queries])
   const original = saved.data?.[0]
-  // The SDK's write hold says what is held: its line, and the exit only for
+  // The SDK's held write says what is held: its line, and the exit only for
   // a state that offers it (no known hash, a dropped one, a replaced Safe nonce).
-  const [held, setHeld] = useState<WriteHeldState | null>(null)
-  const originalId = original?.record.id
-  // One hold per saved attempt, asked at once, on a timer while shown, and after a manual check.
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by the attempt; its evidence changes within it
-  const hold = useMemo(() => (original ? defifaWriteHold(original.scope, original.record) : undefined), [originalId])
-  const recheck = useWriteHoldWatch(client ? hold : undefined, client as never, state => {
-    if (state.status === 'clear') notifyRecovery()
-    else setHeld(current => (hidesShownExit(current, state) ? current : state))
-  }, { checkNow: true })
-  const shownHeld = held && original && held.record.id === original.record.id ? held : null
+  const held = useHeldWrite({
+    hold: writeHolds,
+    chainId: original?.record.chainId ?? chainId,
+    account: original?.record.account ?? account ?? '0x0000000000000000000000000000000000000000',
+    safe: original?.record.safe,
+    namespace: original ? defifaWriteNamespace(original.scope) : undefined,
+    call: original?.record.call,
+    client: client as WriteHoldClient | undefined,
+    onSettled: () => notifyRecovery(),
+    onReleased: () => notifyRecovery(),
+  })
+  const shownHeld = held.state && held.state.status !== 'clear' && original && held.state.record.id === original.record.id ? held.state : null
   const exit = async () => {
-    if (!original || !client || !shownHeld?.exit) return
+    if (!held.exitAction) return
     try {
-      // The hold asks the chain once more; a changed state stays held.
-      const { released, state } = await defifaWriteHold(original.scope, original.record).exit(shownHeld, { checkedWallet: true }, client as never)
-      if (released || state.status === 'clear') notifyRecovery()
-      else setHeld(current => (hidesShownExit(current, state) ? current : state))
+      if (await held.exitAction.run()) notifyRecovery()
     } catch (reason) {
       setError(describe(reason))
     }
@@ -116,7 +115,7 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
     } catch (reason) { if (actor.current.generation === generation) setError(describe(reason)) }
     finally {
       if (actor.current.generation === generation) setChecking(false)
-      recheck()
+      void held.check()
     }
   }
   if (active || !account) return children
@@ -124,12 +123,12 @@ export function DefifaRecovery({ chainId, projectId, account, hook, actions, act
   if (saved.isError) return <div role="alert" className="card space-y-3 p-5"><p>{describe(saved.error)}</p><button className="btn-secondary px-4 py-2" onClick={() => void saved.refetch()}>Retry saved action</button></div>
   if (original) return <div className="card space-y-3 p-5">
     <span className="field-label">Earlier {actionLabel[original.scope.action]} on {chainName(original.scope.chainId)}</span>
-    <p className="text-sm">{!shownHeld || shownHeld.status === 'held-no-hash' ? writeHeldMessage(actionLabel[original.scope.action]) : shownHeld.line}</p>
+    <p className="text-sm">{!shownHeld || shownHeld.status === 'held-no-hash' ? writeHeldMessage(actionLabel[original.scope.action]) : (held.line ?? shownHeld.line)}</p>
     <div className="flex flex-wrap gap-2">
       {original.record.hash ? <button type="button" className="btn-primary px-4 py-2" disabled={checking} onClick={() => void verify()}>{checking ? 'Checking original transaction…' : 'Check original transaction'}</button> : null}
-      {shownHeld?.exit ? <button type="button" className="btn-secondary px-4 py-2" disabled={checking} onClick={() => void exit()}>{WRITE_EXIT_LABEL}</button> : null}
+      {held.exitAction && shownHeld ? <button type="button" className="btn-secondary px-4 py-2" disabled={checking} onClick={() => void exit()}>{held.exitAction.label}</button> : null}
     </div>
-    {shownHeld?.exit ? <p className="text-xs text-smoke-600">{('warning' in shownHeld && shownHeld.warning) || writeExitMessage(original.record.call, actionLabel[original.scope.action])}</p> : null}
+    {held.exitAction && shownHeld ? <p className="text-xs text-smoke-600">{held.warning || writeExitMessage(original.record.call, actionLabel[original.scope.action])}</p> : null}
     {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
   </div>
   return <>{resolved ? <p className="mb-3 text-sm">{resolved.failed ? 'Original transaction failed onchain.' : 'Original transaction verified onchain.'} <a className="underline" target="_blank" rel="noopener noreferrer" href={explorerTxUrl(resolved.chainId, resolved.hash) ?? undefined}>View original transaction</a></p> : null}{children}</>

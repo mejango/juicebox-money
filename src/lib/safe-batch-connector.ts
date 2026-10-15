@@ -5,7 +5,7 @@ import { sendCalls } from 'wagmi/actions'
 import { isHex, size, type Abi, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
-import { reviewDescription, sendUnderHold, writeHolds } from '@/lib/write-holds'
+import { reviewDescription, writeHolds } from '@/lib/write-holds'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
@@ -103,7 +103,7 @@ export async function proposeSafeBatch({
     changedError: SAFE_CONNECTION_CHANGED,
   })
   const hold = safeBatchHold({ chainId, safe, intent, calls, legacy })
-  return sendUnderHold(chainId, hold, client as unknown as WriteHoldClient, async gate => {
+  return hold.send<Hex>(client as unknown as WriteHoldClient, async gate => {
     await gate.beforeSend()
     let id: string
     try {

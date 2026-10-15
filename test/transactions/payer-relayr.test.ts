@@ -42,6 +42,9 @@ vi.mock('@/lib/wallet-core', () => ({
     getLogs: (args: unknown) => mocks.getLogs(chain, args),
     getBytecode: (args: unknown) => mocks.getCode(chain, args),
     waitForTransactionReceipt: (args: unknown) => mocks.waitReceipt(chain, args),
+    // The account reads the SDK's write hold takes before a direct send opens the wallet.
+    getChainId: async () => chain,
+    getTransactionCount: async () => 3,
   }),
   connectedWallet: async (chain: number) => {
     mocks.chainId = chain
@@ -130,7 +133,8 @@ function confirmSavedFunding() {
 function receipt(chain: number) {
   const call = review.calls.find(call => call.chainId === chain)!
   const event = jbProjectPayerDeployerAbi.find(item => item.type === 'event')!
-  return { status: 'success', transactionHash: hashFor(chain), blockHash: BLOCK, blockNumber: 100n,
+  return { status: 'success', transactionHash: hashFor(chain), blockHash: BLOCK, blockNumber: 100n, transactionIndex: 0,
+    from: review.transport === 'direct' ? ALICE : EXECUTOR, to: review.transport === 'safe' ? ALICE : JB_PROJECT_PAYER_DEPLOYER,
     logs: [{ address: JB_PROJECT_PAYER_DEPLOYER,
       topics: encodeEventTopics({ abi: jbProjectPayerDeployerAbi, eventName: 'DeployProjectPayer', args: { projectPayer: PAYER } }),
       data: encodeAbiParameters(event.inputs.filter(input => !input.indexed), [BigInt(call.projectId), call.beneficiary, call.memo,
@@ -159,7 +163,7 @@ beforeEach(() => {
     args.functionName === 'DIRECTORY' ? directoryFor(chain) : args.functionName === 'IMPLEMENTATION' ? IMPLEMENTATION : ALICE)
   mocks.getTransaction.mockReset().mockImplementation(async (chain: number) => {
     const call = review.calls.find(call => call.chainId === chain)!
-    return { hash: hashFor(chain), chainId: chain, blockHash: BLOCK, blockNumber: 100n, value: 0n,
+    return { hash: hashFor(chain), chainId: chain, blockHash: BLOCK, blockNumber: 100n, value: 0n, nonce: 3, transactionIndex: 0,
       from: review.transport === 'direct' ? ALICE : EXECUTOR,
       to: review.transport === 'safe' ? ALICE : JB_PROJECT_PAYER_DEPLOYER,
       input: review.transport === 'safe' ? encodeFunctionData({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
@@ -167,8 +171,8 @@ beforeEach(() => {
     }
   })
   mocks.getReceipt.mockReset().mockImplementation(async (chain: number) => receipt(chain))
-  mocks.getBlock.mockReset().mockImplementation(async (_chain: number, args?: { blockTag?: string }) => args?.blockTag === 'finalized'
-    ? { number: 100n, hash: BLOCK, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: BLOCK })
+  mocks.getBlock.mockReset().mockImplementation(async (_chain: number, args?: { blockTag?: string; blockNumber?: bigint }) => args?.blockTag === 'finalized'
+    ? { number: 100n, hash: BLOCK, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: BLOCK, number: args?.blockNumber ?? 100n })
   mocks.getBlockNumber.mockReset().mockResolvedValue(100n)
   mocks.getLogs.mockReset().mockResolvedValue([])
   mocks.getCode.mockReset().mockResolvedValue(`0x363d3d373d3d3d363d73${IMPLEMENTATION.slice(2)}5af43d82803e903d91602b57fd5bf3`)
@@ -409,7 +413,17 @@ describe('payer deployment review and raw Relayr execution', () => {
       throw new Error('Wallet disconnected after send.')
     })
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/disconnected/)
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/wallet funding result is uncertain/)
+    const shown = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow).catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/wallet funding result is uncertain/) })
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    // The SDK's one check, never a dead end: once the user checked it, the attempt is archived and a new review may start.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const outcome = await savedAttempts.recover(shown.attempt, { getChainId: async () => shown.attempt.chainId } as never)
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(shown.attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/You checked this payment/)
+    expect(loadPayerDeployment(review.scope)).toBeNull()
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -433,13 +447,29 @@ describe('payer deployment review and raw Relayr execution', () => {
     mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
       ? { transactionHash: PAYMENT_HASH, to: ADMIN, blockHash: BLOCK, blockNumber: 100n, status: 'success' }
       : receipt(chain, args))
+    // It can't be authenticated: the SDK's one check, never a dead end and never a second payment.
+    let shown: unknown
     for (let resume = 0; resume < 2; resume += 1) {
-      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrProofError' })
+      shown = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow).catch(error => error)
+      expect(shown).toMatchObject({ name: 'SavedAttemptShownError' })
     }
     expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
     expect(mocks.poll).not.toHaveBeenCalled()
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
+    // Only the user's check retires it: the attempt is archived unresolved, and a new review may deploy again.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const { publicClient } = await import('@/lib/wallet-core')
+    const { attempt } = shown as { attempt: Parameters<typeof savedAttempts.recover>[0] }
+    const outcome = await savedAttempts.recover(attempt, publicClient(attempt.chainId as JBChainId) as never)
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    const id = loadPayerDeployment(review.scope)!.id
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/You checked this payment/)
+    expect(loadPayerDeployment(review.scope)).toBeNull()
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(id).toBe(review.id)
   })
 
   it('stops before publication if browser storage cannot preserve the frozen review', async () => {
@@ -548,7 +578,13 @@ describe('direct and Safe payer recovery', () => {
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0].state).toBe('sending')
-    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/without returning a hash/)
+    // The SDK holds the lost reply: shown with its line (and its exit when due), never sent again.
+    const shown = await runPayerDeployments(saved, vi.fn(), flow).catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/without returning a hash/) })
+    // The page shows the SDK's hold of it, whose exit comes when due: never a permanent refusal.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const { publicClient } = await import('@/lib/wallet-core')
+    await expect(savedAttempts.recover(shown.attempt, publicClient(11155111) as never)).resolves.toMatchObject({ status: 'held' })
     expect(mocks.send).toHaveBeenCalledTimes(1)
     await expect(finishPayerDeployment(review.scope, review.id)).rejects.toThrow(/Resolve the existing/)
   })

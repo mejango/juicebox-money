@@ -19,7 +19,6 @@ import {
   buildSetPermissionsTx,
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
 import {
   decodeAbiParameters,
   encodeAbiParameters,
@@ -702,18 +701,6 @@ export function buildPermit2ApproveRequest({
     functionName: 'approve' as const,
     args: [token, positionManager, amount, expiration] as const,
   }
-}
-
-// Write intents come from the SDK's shared builders (payIntent, cashOutIntent,
-// loanIntent, borrowIntent, bridgeIntent, approvalIntent, liquidityIntent).
-// Below, only writes they don't cover yet: identity and explicit choices only.
-
-/** Redeeming shop items: the collection, the selected token ids and holder; never the terminal or payout token the app resolves. */
-export function redeemItemsIntent(p: { chainId: number; projectId: number; hook: string; tokenIds: readonly bigint[]; holder: string }): string {
-  return writeIntentKey('redeem-items', {
-    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook),
-    tokenIds: [...p.tokenIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), holder: intent.address(p.holder),
-  })
 }
 
 /** Exact final Uniswap V4 PositionManager call with frozen mint bytes/value. */

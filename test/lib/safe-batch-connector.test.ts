@@ -27,7 +27,7 @@ vi.mock('@bananapus/nana-sdk-core/review', async original => ({
 }))
 
 import { proposeSafeBatch } from '@/lib/safe-batch-connector'
-import { heldWritesSnapshot } from '@/lib/write-holds'
+import { listedHeld } from '../support/held-chain'
 
 const batch = (deadline: number) => ({
   chainId: 10 as const, safe: SAFE, title: 'Add liquidity', intent: 'intent:add-liquidity:test',
@@ -45,7 +45,7 @@ describe('a Safe batch held by its intent', () => {
     await expect(proposeSafeBatch(batch(1))).rejects.toThrow()
     await expect(proposeSafeBatch(batch(2))).rejects.toThrow()
     expect(m.sendCalls).toHaveBeenCalledOnce()
-    const [shown] = heldWritesSnapshot()
+    const [shown] = await listedHeld(SAFE, 10, m.client)
     expect(shown.state).toMatchObject({ status: 'held-no-hash', exit: true })
     await expect(shown.hold.exit(shown.state, { checkedWallet: true }, m.client as never)).resolves.toMatchObject({ released: true })
     m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL })

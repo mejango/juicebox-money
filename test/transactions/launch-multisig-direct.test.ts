@@ -3,16 +3,47 @@ import { encodeFunctionData, encodeFunctionResult, type Address, type Hex } from
 import { CREATE_BATCH_ABI, SAFE_CREATE_ABI, SAFE_FACTORY, SAFE_SINGLETON, MULTICALL3, buildSafeInitializer, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { createSimpleProjectStage, DEFAULT_STORE_FLAGS, type LaunchPlan } from '@/lib/launch'
 import { LAUNCH_SESSION_KEY, loadLaunchSession, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
-import { prepareLaunchMultisigs, recoverLaunchMultisigSetup } from '@/lib/launch-multisig-direct'
+import { prepareLaunchMultisigs, retireLaunchMultisigSetup, setupAttemptOf } from '@/lib/launch-multisig-direct'
+import { savedAttempts } from '@/lib/write-holds'
 import safeFixture from '../fixtures/safe-1.4.1.json'
 
 const mocks = vi.hoisted(() => ({
+  /** The plan's Safes, for the chain mock's setup call. */
+  plan: (): SafeDeploymentPlan[] | undefined => undefined,
   account: vi.fn(), receipt: vi.fn(), review: vi.fn(), preflight: vi.fn(), verifyCreated: vi.fn(),
   verifySafe: vi.fn(), simulate: vi.fn(), estimateGas: vi.fn(), safe: vi.fn(), safeHash: vi.fn(), execution: vi.fn(), viewAs: vi.fn(),
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', () => ({ getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt }))
-vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ estimateGas: mocks.estimateGas }) }))
+vi.mock('@/lib/wallet-core', async () => {
+  const { buildSafeDeploymentTx } = await import('@bananapus/nana-sdk-core/safe')
+  const { encodeFunctionData, TransactionNotFoundError } = await import('viem')
+  const MINED = `0x${'90'.repeat(32)}` as Hex
+  /** The chain the SDK's hold reads: every transaction the flow's receipt mock knows is mined at block 90, sent as the setup call. */
+  const mined = async (hash: Hex) => {
+    // A receipt the flow's mock can't give is a node that can't answer (unknown, never "not found").
+    const receipt = await Promise.resolve(mocks.receipt({}, { chainId: 8453, hash })) as { status: string } | undefined
+    if (!receipt) throw new TransactionNotFoundError({ hash })
+    const call = buildSafeDeploymentTx(8453, mocks.plan()!)
+    return { receipt, call: { to: call.address, data: encodeFunctionData(call) } }
+  }
+  return { publicClient: () => ({
+    estimateGas: mocks.estimateGas,
+    getChainId: async () => 8453,
+    getBlockNumber: async () => 100n,
+    getTransactionCount: async () => 4,
+    getBlock: async ({ blockNumber }: { blockNumber?: bigint } = {}) => ({ number: blockNumber ?? 100n, hash: blockNumber === 90n ? MINED : `0x${'f1'.repeat(32)}`, timestamp: 1n }),
+    getTransaction: async ({ hash }: { hash: Hex }) => {
+      const { call } = await mined(hash)
+      return { hash, chainId: 8453, from: '0x1111111111111111111111111111111111111111', to: call.to, input: call.data, value: 0n, nonce: 3, blockNumber: 90n, blockHash: MINED, transactionIndex: 0 }
+    },
+    getTransactionReceipt: async ({ hash }: { hash: Hex }) => {
+      const { receipt, call } = await mined(hash)
+      return { logs: [], ...receipt, transactionHash: hash, from: '0x1111111111111111111111111111111111111111', to: call.to, blockNumber: 90n, blockHash: MINED, transactionIndex: 0 }
+    },
+    request: async () => null,
+  }) }
+})
 vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: mocks.viewAs }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
@@ -44,6 +75,7 @@ const plan: LaunchPlan = {
   approvalDeadline: 'none', approvalCustomAddress: null, allowAnyToken: true, chains: [CHAIN], linkChains: false,
   bridge: 'ccip', store, multisigs: [safe],
 }
+mocks.plan = () => plan.multisigs
 
 let storage: {
   getItem: ReturnType<typeof vi.fn<(key: string) => string | null>>
@@ -144,20 +176,23 @@ describe('direct launch Safe setup', () => {
     expect(mocks.review).not.toHaveBeenCalled()
   })
 
-  it('does not retry an ambiguous wallet submission until its hash is recovered', async () => {
+  it('holds an ambiguous wallet submission: the next run shows the SDK hold, never a second send', async () => {
     const args = options()
     args.writeContract.mockRejectedValue(new Error('Connection lost'))
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connection lost')
     expect(setup()).toEqual({ phase: 'signing' })
-    await expect(prepareLaunchMultisigs(options())).rejects.toThrow('may already have been submitted')
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
+    expect(args.writeContract).toHaveBeenCalledOnce()
   })
 
-  it('requires recovery when a wallet returns a malformed hash after submission', async () => {
+  it('holds a wallet reply that is no transaction hash, and reads no receipt for it', async () => {
     const args = options()
     args.writeContract.mockResolvedValue('0x1234')
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('no valid Safe setup hash')
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/transaction identity/)
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
+    expect(args.writeContract).toHaveBeenCalledOnce()
   })
 
   it('does not recreate a previously completed Safe that can no longer be verified', async () => {
@@ -346,22 +381,16 @@ describe('direct launch Safe setup', () => {
     expect(args.writeContract).toHaveBeenCalledWith(expect.objectContaining({ address: MULTICALL3, gas: 0n }))
   })
 
-  it('resumes a saved Safe proposal even when the current wallet is no longer Safe', async () => {
-    seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup: { phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH } } } })
+  it.each([
+    ['a saved Safe proposal', { phase: 'confirming' as const, safe: true as const, txHash: HASH, safeProposalHash: HASH }],
+    ['a legacy Safe execution with missing proposal evidence', { phase: 'confirming' as const, safe: true as const, txHash: EXECUTION }],
+  ])('recovers %s through the SDK first: shown as held, never proposed again', async (_kind, multisigSetup) => {
+    seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup } } })
     const args = options()
-    await prepareLaunchMultisigs(args)
-    expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH, { signal: args.signal })
-    expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: EXECUTION })
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
     expect(args.writeContract).not.toHaveBeenCalled()
-  })
-
-  it('keeps a legacy Safe execution with missing proposal evidence locked', async () => {
-    seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup: { phase: 'confirming', safe: true, txHash: EXECUTION } } } })
-    mocks.receipt.mockResolvedValue({ status: 'reverted', blockNumber: 123n })
-    const args = options()
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
-    expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: EXECUTION })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.preflight).not.toHaveBeenCalled()
+    expect(setup()).toEqual(multisigSetup)
   })
 
   it('keeps Safe proposal recovery data when execution tracking fails', async () => {
@@ -374,7 +403,9 @@ describe('direct launch Safe setup', () => {
 
   it("lets the launch lock go when the page's signal ends the wait for the Safe, keeping the proposal", async () => {
     let held = false
-    const request = vi.fn(async (_name, _options, action) => {
+    // The launch's own lock; the SDK's hold takes its own locks here too.
+    const request = vi.fn(async (name: string, _options, action) => {
+      if (name !== 'jbm-launch') return action({ name })
       held = true
       try { return await action({ name: 'jbm-launch' }) } finally { held = false }
     })
@@ -409,7 +440,7 @@ describe('direct launch Safe setup', () => {
     expect(setup()).toEqual({ phase: 'failed' })
   })
 
-  it.each(['reverted', 'unproven'] as const)('retains a Safe %s execution across reload without another wallet call', async status => {
+  it.each(['reverted', 'unproven'] as const)('retains a Safe %s execution across reload: the SDK shows it, with no other wallet call', async status => {
     mocks.safe.mockReturnValue(true)
     mocks.receipt.mockResolvedValue({ status: status === 'reverted' ? 'reverted' : 'success', blockNumber: 123n })
     mocks.execution.mockResolvedValue({ status })
@@ -417,14 +448,10 @@ describe('direct launch Safe setup', () => {
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: EXECUTION, safeProposalHash: HASH })
     const resumed = options()
-    await expect(prepareLaunchMultisigs(resumed)).rejects.toThrow('not confirmed')
+    await expect(prepareLaunchMultisigs(resumed)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
     expect(args.writeContract).toHaveBeenCalledTimes(1)
     expect(resumed.writeContract).not.toHaveBeenCalled()
     expect(mocks.verifyCreated).not.toHaveBeenCalled()
-    mocks.execution.mockResolvedValue({ status: 'success' })
-    await prepareLaunchMultisigs(resumed)
-    expect(resumed.writeContract).not.toHaveBeenCalled()
-    expect(setup()).toEqual({ phase: 'done', txHash: EXECUTION })
   })
 
   it('retains an at-once Safe reply whose outer execution reverted', async () => {
@@ -434,19 +461,19 @@ describe('direct launch Safe setup', () => {
     mocks.execution.mockResolvedValue({ status: 'reverted' })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
     expect(args.writeContract).toHaveBeenCalledTimes(1)
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
   })
 
-  it('permits retry only after the SDK proves exact Safe inner failure', async () => {
+  it("keeps a Safe setup the app saw fail inside the Safe held until the SDK settles it: no second proposal before then", async () => {
     mocks.safe.mockReturnValue(true)
     mocks.execution.mockResolvedValueOnce({ status: 'failed' })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('failed inside the Safe')
     expect(setup()).toEqual({ phase: 'failed', txHash: EXECUTION })
-    await prepareLaunchMultisigs(args)
-    expect(args.writeContract).toHaveBeenCalledTimes(2)
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'WriteHeldError' })
+    expect(args.writeContract).toHaveBeenCalledTimes(1)
     expect(mocks.execution).toHaveBeenCalledWith(expect.objectContaining({
       safe: ACCOUNT, proposalHash: HASH, batch: false,
       calls: [expect.objectContaining({ to: MULTICALL3, value: 0n })],
@@ -478,37 +505,51 @@ describe('direct launch Safe setup', () => {
 })
 
 describe('interrupted setup recovery', () => {
-  it.each([false, true])('restores the original hash with Safe proposal marker %s', async isSafe => {
-    seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'signing', ...(isSafe ? { safe: true as const } : {}) } } } })
-    await recoverLaunchMultisigSetup(CHAIN, SALT, HASH)
-    expect(setup()).toEqual({ phase: 'confirming', txHash: HASH, ...(isSafe ? { safe: true, safeProposalHash: HASH } : {}) })
-  })
+  const client = async () => (await import('@/lib/wallet-core')).publicClient(CHAIN) as never
 
-  it('permits retry only after the user explicitly confirms no setup was submitted', async () => {
+  it("gives a setup an earlier release left signing the SDK's check: only the user's check retires it, then a new setup is sent", async () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'signing' } } } })
-    await recoverLaunchMultisigSetup(CHAIN, SALT)
+    const shown = await prepareLaunchMultisigs(options()).catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError' })
+    const outcome = await savedAttempts.recover(shown.attempt, await client())
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(shown.attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    await retireLaunchMultisigSetup(CHAIN, SALT)
     expect(setup()).toEqual({ phase: 'failed' })
-    await prepareLaunchMultisigs(options())
+    const args = options()
+    await prepareLaunchMultisigs(args)
+    expect(args.writeContract).toHaveBeenCalledOnce()
     expect(setup()?.phase).toBe('done')
   })
 
-  it('rejects malformed recovery hashes without changing the marker', async () => {
-    seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'signing' } } } })
-    await expect(recoverLaunchMultisigSetup(CHAIN, SALT, '0x1234')).rejects.toThrow('valid transaction')
-    expect(setup()).toEqual({ phase: 'signing' })
-  })
-
-  it('cannot overwrite a submitted setup or another saved launch', async () => {
-    await expect(recoverLaunchMultisigSetup(CHAIN, HASH, HASH)).rejects.toThrow('saved launch changed')
+  it("keeps a confirming setup whose transaction this node can't show held by the SDK, never a dead end or a second send", async () => {
+    mocks.receipt.mockRejectedValue(new Error('RPC unavailable'))
     seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'confirming', txHash: HASH } } } })
-    await expect(recoverLaunchMultisigSetup(CHAIN, SALT, EXECUTION)).rejects.toThrow('no interrupted')
-    expect(setup()).toEqual({ phase: 'confirming', txHash: HASH })
+    const attempt = setupAttemptOf(CHAIN, SALT, ACCOUNT, plan, { phase: 'confirming', txHash: HASH })
+    const outcome = await savedAttempts.recover(attempt, await client())
+    // Its saved hash is adopted into the hold, which follows it and offers its exit when due.
+    expect(outcome.status).toBe('held')
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
+    expect(args.writeContract).not.toHaveBeenCalled()
   })
 
-  it('fails closed when recovered progress cannot be persisted', async () => {
+  it('refuses a stale check once another tab completed the setup', async () => {
+    seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'signing' } } } })
+    const attempt = setupAttemptOf(CHAIN, SALT, ACCOUNT, plan, { phase: 'signing' })
+    const outcome = await savedAttempts.recover(attempt, await client())
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'done', txHash: HASH } } } })
+    await expect(savedAttempts.retire(attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: false })
+    expect(setup()).toEqual({ phase: 'done', txHash: HASH })
+  })
+
+  it('fails closed when the retirement cannot be persisted', async () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'signing' } } } })
     storage.setItem.mockImplementation(() => { throw new Error('quota') })
-    await expect(recoverLaunchMultisigSetup(CHAIN, SALT, HASH)).rejects.toThrow('could not be saved')
+    await expect(retireLaunchMultisigSetup(CHAIN, SALT)).rejects.toThrow('could not be saved')
     expect(setup()).toEqual({ phase: 'signing' })
   })
 })

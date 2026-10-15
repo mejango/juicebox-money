@@ -46,6 +46,8 @@ vi.mock('@/lib/raw-relayr', () => ({
 }))
 
 import { RawQuoteNotObtainedError } from '@/lib/raw-relayr-lifecycle'
+import { writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { savedAttempts, writeHolds } from '@/lib/write-holds'
 import { projectBatchRecoveryReason, recheckProjectBatch, isProjectBatchDraft, isReplaceableProjectBatch, loadProjectBatch, loadProjectBatches, projectBatchRounds, projectBatchScope, runProjectBatch,
   type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
@@ -92,16 +94,18 @@ beforeEach(() => {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
   } })
-  vi.stubGlobal('navigator', { locks: {} })
+  vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: unknown, run?: (lock: object) => unknown) => (run ?? (options as (lock: object) => unknown))({}) } })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
   mocks.reportedExecution.mockResolvedValue(null)
-  mocks.client.getBlock.mockResolvedValue({ hash: BLOCK })
+  mocks.client.getBlock.mockImplementation(async ({ blockNumber }: { blockNumber?: bigint } = {}) => ({ hash: BLOCK, number: blockNumber ?? 10n, timestamp: 1n }))
+  // The account reads the SDK's write hold takes.
+  Object.assign(mocks.client, { getChainId: async () => 1, getTransactionCount: async () => 4 })
   mocks.client.getBlockNumber.mockResolvedValue(10n)
   mocks.client.getLogs.mockResolvedValue([])
   mocks.client.getTransaction.mockResolvedValue({ hash: HASH, chainId: 1, from: ACCOUNT,
-    to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK })
+    to: TARGET, input: '0x1234', value: 3n, blockHash: BLOCK, blockNumber: 10n, nonce: 3, transactionIndex: 0 })
   mocks.client.getTransactionReceipt.mockResolvedValue({ transactionHash: HASH,
-    blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [] })
+    blockHash: BLOCK, blockNumber: 10n, status: 'success', logs: [], from: ACCOUNT, to: TARGET, transactionIndex: 0 })
   mocks.authority.mockImplementation(async ({ calls }: { calls: ProjectBatchCall[] }) => {
     await calls[0].reverifyAuthority?.()
     await calls[0].onSending?.('direct')
@@ -470,7 +474,32 @@ describe('durable project batches', () => {
       throw new Error('transport lost after send')
     })
     await expect(run([call()])).rejects.toThrow('transport lost')
-    await expect(run()).rejects.toThrow('may still be pending')
+    // Nothing shows what became of it: the SDK's one check, never a resend and never a dead end.
+    const shown = await run().catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError' })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+    // Only the user's check retires the saved submission: then it is sent again, once.
+    const outcome = await savedAttempts.recover(shown.attempt, mocks.client as never)
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(shown.attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    expect((await run()).status).toBe('complete')
+    expect(mocks.authority).toHaveBeenCalledTimes(2)
+  })
+
+  it('follows a submission whose hash only its hold saved (a reload between them), never sending it again', async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('direct')
+      // The SDK hold saved the wallet's hash; the page closed before the journal did.
+      const batch = loadProjectBatch(scope)!
+      const hold = writeHolds.open({ chainId: 1, account: ACCOUNT, safe: false,
+        namespace: writeIntentKey('project-batch-call', { batch: batch.id, call: calls[0].id }), call: { to: TARGET, data: '0x1234', value: 3n } })
+      await hold.send(mocks.client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(HASH); return HASH })
+      throw new Error('page closed')
+    })
+    await expect(run([call()])).rejects.toThrow('page closed')
+    expect(loadProjectBatch(scope)!.submissions[call().id]).not.toHaveProperty('hash')
+    expect((await run()).status).toBe('complete')
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
@@ -881,7 +910,7 @@ describe('durable project batches', () => {
   it('fails before wallet review when browser locking or durable storage is unavailable', async () => {
     vi.stubGlobal('navigator', {})
     await expect(run([call()])).rejects.toThrow('Web Locks')
-    vi.stubGlobal('navigator', { locks: {} })
+    vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: unknown, run?: (lock: object) => unknown) => (run ?? (options as (lock: object) => unknown))({}) } })
     window.localStorage.setItem = () => { throw new Error('quota') }
     await expect(run([call()])).rejects.toThrow('recovery')
     expect(mocks.authority).not.toHaveBeenCalled()

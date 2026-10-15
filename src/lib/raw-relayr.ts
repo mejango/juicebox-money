@@ -170,6 +170,15 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     if (session.phase !== 'complete') {
       try {
         pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, assertAccount, releasable: true, signal, onQuoted,
+          // A funding payment the app can't authenticate gets the SDK's one check; once the user checked it, the
+          // bundle goes, and the owner reviews its calls again.
+          checked: {
+            stillSaved: () => { const now = loadRawRelayrSession(pendingScope); return !!now && now.phase !== 'complete' },
+            retired: () => {
+              forget(pendingScope)
+              throw new Error('You checked this payment. Review these payments again to route them.')
+            },
+          },
           reverify: async () => { assertAccount(); await reverify(); assertAccount() },
           saveState: (next, beforeWrite) => { session = next; save(session, beforeWrite); onProgress?.({ message: session.phase === 'executing' ? 'Routing payments…' : 'Getting the fee quote…' }); report(); proveAvailable() },
         })

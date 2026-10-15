@@ -1,6 +1,6 @@
 'use client'
 
-import { legacyBurnKeys } from '@/lib/legacy-intents'
+import { legacyBurnKey, legacyBurnKeys } from '@/lib/legacy-intents'
 import {
   JBCoreContracts,
   jbContractAddress,
@@ -9,7 +9,7 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { useMemo, useState } from 'react'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { burnIntent } from '@bananapus/nana-sdk-core/review'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -115,9 +115,12 @@ export function BurnTokensFlow({
         {
           // The holder whose tokens the reviewed request burns.
           reviewedAccount: plan.args[0],
-          // Not an SDK builder yet: the holder's burn of the project's token, no amount.
-          intent: writeIntentKey('burn', { chainId: plan.chainId, holder: intent.address(plan.args[0]), project: plan.args[1] }),
-          legacy: legacyBurnKeys({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1], amount }),
+          // The holder's burn of the project's token, no amount.
+          intent: burnIntent({ chainId: plan.chainId, project: plan.args[1], holder: plan.args[0] }),
+          legacy: [
+            legacyBurnKey({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1] }),
+            ...legacyBurnKeys({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1], amount }),
+          ],
           reverify: async reviewed => {
             const [latestBalanceResult, latestControllerResult] =
               await Promise.all([refetch(), refetchController()])

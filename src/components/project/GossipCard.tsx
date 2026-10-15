@@ -1,6 +1,6 @@
 'use client'
 
-import { legacyBridgeSyncKey } from '@/lib/legacy-intents'
+import { legacyBridgeSyncKey, legacySyncKey } from '@/lib/legacy-intents'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
@@ -33,7 +33,6 @@ import {
   type Abi,
   type Address,
   type PublicClient,
-  zeroAddress,
 } from 'viem'
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
@@ -49,7 +48,7 @@ import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
-import { bridgeIntent } from '@bananapus/nana-sdk-core/review'
+import { syncIntent } from '@bananapus/nana-sdk-core/review'
 
 // ------------------------------------------------------------ inline ABIs --
 
@@ -807,9 +806,12 @@ function GossipRow({
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
       await tx.send({ ...request, abi: request.abi as unknown as Abi }, {
         reviewedAccount: address,
-        // A sync moves no token: keyed by the sucker alone (the zero address as its token).
-        intent: bridgeIntent({ chainId: targetChainId, sucker: peer.syncSucker, token: zeroAddress, account: address }),
-        legacy: [legacyBridgeSyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address })],
+        // A sync moves no token: keyed by the sucker and account; never the fee it requotes.
+        intent: syncIntent({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+        legacy: [
+          legacySyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+          legacyBridgeSyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+        ],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')
