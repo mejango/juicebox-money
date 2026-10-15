@@ -1167,6 +1167,8 @@ describe('useSafeTx', () => {
       })
 
       expect(hook.ref.current).toMatchObject({ phase, busy: false })
+      // A flow (Defifa) verifies what reverted from the receipt, so a failure exposes it too.
+      expect(hook.ref.current!.receipt).toMatchObject({ status, transactionHash: HASH })
       if (error) expect(hook.ref.current!.error).toMatch(error)
       else expect(hook.ref.current!.error).toBeNull()
     },

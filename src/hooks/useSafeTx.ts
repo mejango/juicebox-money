@@ -206,6 +206,8 @@ export function useSafeTx(chainId: number) {
         setResult({ hash: settled.hash, receipt })
         setPhase('success')
       } else {
+        // A failure keeps its receipt too: a flow verifies what reverted before it lets the user go on.
+        setResult({ hash: settled.hash, receipt })
         setError(settledLine(settled))
         setPhase('error')
       }
@@ -522,7 +524,7 @@ export function useSafeTx(chainId: number) {
     hash: result?.hash ?? watched ?? heldHash ?? null,
     safeProposalHash: awaitingProposal,
     safeNonceGuidance: awaitingProposal ? SAFE_NONCE_GUIDANCE : null,
-    receipt: result?.receipt ?? null,
+    receipt: result?.receipt ?? receiptData ?? null,
     /** The transaction has a hash, but its result could not be confirmed here. */
     confirmationUncertain: effectivePhase === 'unconfirmed',
     send,

@@ -640,9 +640,16 @@ export async function runProjectBatch({
             continue
           }
           if (recovered.status === 'done' && recovered.result === 'success') {
-            journal.submissions[call.id] = { ...saved, ...(recovered.hash ? { hash: recovered.hash } : {}) }
-            persist(journal)
             if (!recovered.hash) throw new Error('This project action went through. Its result is still confirming. Check this batch again.')
+            if (saved.kind === 'safe-connector') {
+              // The hold settled the Safe's execution of this exact call (its hash is the execution, not a proposal):
+              // the action is done, checked by its own completion rule.
+              await verifyCompletion?.(call, await clientFor(call.chainId).getTransactionReceipt({ hash: recovered.hash }))
+              complete([call.id])
+              continue
+            }
+            journal.submissions[call.id] = { ...saved, hash: recovered.hash }
+            persist(journal)
           } else {
             // A proven revert, or retired (the user's check or exit): nothing is out, so it is sent again.
             delete journal.submissions[call.id]

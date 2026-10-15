@@ -71,7 +71,7 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 }))
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
-  payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
+  payerAttemptOf, payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
 import { isExpiredUnfundedRawQuote } from '@/lib/raw-relayr-lifecycle'
 import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
@@ -1059,4 +1059,20 @@ it('requires durable storage before reconciling a matching submitted funding err
   expect(saveState).toHaveBeenLastCalledWith(review, true)
   expect(mocks.poll).not.toHaveBeenCalled()
   expect(mocks.pay).toHaveBeenCalledOnce()
+})
+
+describe('a Safe payer deployment the journal saved without its proposal', () => {
+  it('is proven by its clone once the SDK hold settled the execution, so recovery follows it instead of a dead end', async () => {
+    mocks.safe = true
+    review = makeReview([1])
+    // The Safe app took the proposal, but its reply never reached the journal.
+    mocks.send.mockRejectedValueOnce(new Error('Safe reply lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reply lost/)
+    const saved = loadPayerDeployment(review.scope)!
+    expect(saved.outcomes[0]).toMatchObject({ state: 'sending' })
+    expect(saved.outcomes[0].safeProposalHash).toBeUndefined()
+    // The execution the hold settled authenticates as this deployment by its exact clone.
+    const proof = await payerAttemptOf(saved, 0).authenticate(hashFor(1))
+    expect(proof).toEqual({ result: 'proven', value: PAYER })
+  })
 })

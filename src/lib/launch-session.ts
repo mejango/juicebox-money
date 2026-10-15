@@ -57,6 +57,8 @@ export type LaunchChainStatus = {
     phase: 'signing' | 'confirming' | 'done' | 'failed'
     /** The interrupted wallet action was a Safe proposal, not a direct send. */
     safe?: true
+    /** The SDK hold settled `txHash` as this setup's success: no later read downgrades it (invariant D). */
+    settled?: true
     txHash?: `0x${string}`
     safeProposalHash?: `0x${string}`
   }
@@ -291,9 +293,10 @@ function readMultisigSetup(value: unknown): NonNullable<LaunchChainStatus['multi
   }
   const setup = value as NonNullable<LaunchChainStatus['multisigSetup']>
   if (
-    Object.keys(setup).some(key => !['phase', 'safe', 'txHash', 'safeProposalHash'].includes(key)) ||
+    Object.keys(setup).some(key => !['phase', 'safe', 'txHash', 'safeProposalHash', 'settled'].includes(key)) ||
     !['signing', 'confirming', 'done', 'failed'].includes(setup.phase) ||
     (setup.safe !== undefined && setup.safe !== true) ||
+    (setup.settled !== undefined && (setup.settled !== true || !setup.txHash)) ||
     [setup.txHash, setup.safeProposalHash].some(hash =>
       hash !== undefined && (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(hash)),
     ) ||

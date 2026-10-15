@@ -165,13 +165,16 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
     // what the journal saved alone, before any read or preparation.
     let recovered: Hex | undefined
     const saved = read(true).statuses[chainId]?.multisigSetup
-    if (saved?.phase === 'signing' || saved?.phase === 'confirming') {
+    if (saved?.phase === 'confirming' && saved.settled && saved.txHash) {
+      // A success saved before: it stays confirming, whatever a read says now (invariant D).
+      recovered = saved.txHash
+    } else if (saved?.phase === 'signing' || saved?.phase === 'confirming') {
       const attempt = setupAttemptOf(chainId, salt, account, plan, saved)
       const outcome = await recoverSaved(attempt, client as unknown as WriteHoldClient)
       if (outcome.status === 'done' && outcome.result === 'success') {
         if (!outcome.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, 'Safe creation went through. It is still confirming.')
         recovered = outcome.hash
-        persist({ phase: 'confirming', txHash: recovered, ...(saved.safe ? { safe: true as const } : {}) })
+        persist({ phase: 'confirming', txHash: recovered, settled: true, ...(saved.safe ? { safe: true as const } : {}) })
       } else {
         // A proven revert, or retired (the user's exit or check, a definite rejection): nothing is out.
         persist({ phase: 'failed' })
@@ -295,10 +298,14 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
         throw new Error('Safe creation failed inside the Safe. Review the setup before trying again.')
       }
       if (status !== 'success') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
+    } else if (receipt.status !== 'success' && recovered) {
+      // A settled success always wins: a read that disagrees is asked again, never a failure.
+      throw new Error('Safe creation went through. It is still confirming.')
     } else if (receipt.status !== 'success') {
       persist({ phase: 'failed', txHash: hash })
       throw new Error('Safe creation reverted. Review the setup before trying again.')
     }
+    // A settled success whose Safes can't be verified yet stays confirming (verifyCreatedLaunchMultisigs throws, nothing is written).
     await verifyCreatedLaunchMultisigs(client, plan, receipt.blockNumber)
     // Its proof reaches the hold, which settles it.
     const setupCall = buildSafeDeploymentTx(chainId, plan.multisigs!)

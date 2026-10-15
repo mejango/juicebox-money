@@ -503,6 +503,25 @@ describe('durable project batches', () => {
     expect(mocks.authority).toHaveBeenCalledTimes(1)
   })
 
+  it("completes a hashless Safe{Wallet} submission once the SDK settled its execution, never saving the execution as a proposal", async () => {
+    mocks.authority.mockImplementationOnce(async ({ calls }) => {
+      await calls[0].onSending('safe-connector')
+      throw new Error('Safe reply lost')
+    })
+    await expect(run([call()])).rejects.toThrow('Safe reply lost')
+    // The hold settled the Safe's execution of the exact call: its hash is the execution, not a Safe proposal.
+    const recover = vi.spyOn(savedAttempts, 'recover').mockResolvedValueOnce({ status: 'done', result: 'success', authenticated: false, hash: HASH } as never)
+    const verify = vi.fn(async () => {})
+    try {
+      expect((await run(undefined, { verifyCompletion: verify })).status).toBe('complete')
+    } finally {
+      recover.mockRestore()
+    }
+    expect(verify).toHaveBeenCalledWith(expect.objectContaining({ id: call().id }), expect.anything())
+    expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: HASH })
+    expect(mocks.authority).toHaveBeenCalledTimes(1)
+  })
+
   it('allows another review after a definite wallet rejection with no exposed submission', async () => {
     mocks.authority.mockImplementationOnce(async ({ calls }) => {
       await calls[0].onSending('direct')

@@ -317,6 +317,15 @@ describe('direct launch Safe setup', () => {
     expect(setup()).toEqual({ phase: 'done', txHash: HASH })
   })
 
+  it('keeps a setup success the SDK settled confirming when a later read disagrees, never failed or sent again', async () => {
+    seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'confirming', settled: true, txHash: HASH } } } })
+    mocks.receipt.mockResolvedValueOnce({ status: 'reverted', blockNumber: 123n })
+    const args = options()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('still confirming')
+    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(setup()).toEqual({ phase: 'confirming', settled: true, txHash: HASH })
+  })
+
   it('permits retry after proving the earlier project launch reverted and verifying its existing Safe', async () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', txHash: EXECUTION, multisigSetup: { phase: 'done', txHash: HASH } } } })
     mocks.receipt.mockResolvedValueOnce({ status: 'reverted', blockNumber: 124n })
