@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   getBlockNumber: vi.fn(), getLogs: vi.fn(),
   waitReceipt: vi.fn(), waitSafe: vi.fn(), simulate: vi.fn(), send: vi.fn(), review: vi.fn(),
   post: vi.fn(), pay: vi.fn(), poll: vi.fn(), funding: vi.fn(), paymentSent: vi.fn(),
+  /** The SDK's recovery outcome, when a test fixes it; the real recovery otherwise. */
+  recovered: undefined as unknown,
 }))
 
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }) }))
@@ -65,6 +67,11 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
   requireTransactionReview: mocks.review,
   requireFundingChainSelection: mocks.funding,
 }))
+vi.mock('@/lib/write-holds', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/write-holds')>()
+  return { ...actual, recoverSaved: ((...args: Parameters<typeof actual.recoverSaved>) =>
+    mocks.recovered ? Promise.resolve(mocks.recovered) : actual.recoverSaved(...args)) as typeof actual.recoverSaved }
+})
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   relayrPostBundle: mocks.post, relayrPay: mocks.pay, relayrPoll: mocks.poll,
@@ -153,6 +160,7 @@ beforeEach(() => {
   mocks.address = ALICE
   mocks.chainId = 1
   mocks.safe = false
+  mocks.recovered = undefined
   const values = new Map<string, string>()
   storage = { getItem: vi.fn((key: string) => values.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => { values.set(key, value) }), removeItem: vi.fn((key: string) => { values.delete(key) }) }
@@ -616,6 +624,42 @@ describe('direct and Safe payer recovery', () => {
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.outcomes[0].state).toBe('ready')
+  })
+
+  it('keeps a success the SDK settled but could not authenticate settled: a disagreeing receipt never fails it or deploys again', async () => {
+    review = makeReview([1])
+    mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
+    const saved = loadPayerDeployment(review.scope)!
+    expect(saved.outcomes[0].state).toBe('sending')
+    // The hold settled it as a success its clone proof could not yet read.
+    mocks.recovered = { status: 'done', result: 'success', authenticated: false, hash: hashFor(1), reason: 'Clone unreadable.' }
+    // A receipt read that disagrees: reverted.
+    mocks.getReceipt.mockImplementation(async () => ({ ...receipt(1), status: 'reverted' }))
+    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/still confirming/)
+    const settled = loadPayerDeployment(review.scope)!
+    expect(settled.outcomes[0]).toMatchObject({ state: 'submitted', hash: hashFor(1), settled: true })
+    // Resumed with the SDK's recovery real again: still followed, never failed, never sent again.
+    mocks.recovered = undefined
+    await expect(runPayerDeployments(settled, vi.fn(), flow)).rejects.toThrow(/still confirming/)
+    expect(loadPayerDeployment(review.scope)!.outcomes[0]).toMatchObject({ state: 'submitted', hash: hashFor(1), settled: true })
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+    // Once its receipt and clone read, it is verified.
+    mocks.getReceipt.mockImplementation(async (chain: number) => receipt(chain))
+    const done = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
+    expect(done.outcomes[0]).toMatchObject({ state: 'verified', hash: hashFor(1), payer: PAYER })
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a success the SDK settled without its transaction as confirming, never deploying again', async () => {
+    review = makeReview([1])
+    mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
+    mocks.recovered = { status: 'done', result: 'success', authenticated: false, reason: 'Proven by another tab.' }
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow))
+      .rejects.toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/still confirming/) })
+    expect(loadPayerDeployment(review.scope)!.outcomes[0].state).toBe('sending')
+    expect(mocks.send).toHaveBeenCalledTimes(1)
   })
 
   it('rechecks a canonical direct revert before a reviewed retry and keeps its failed transaction history', async () => {

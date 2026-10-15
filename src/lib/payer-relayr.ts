@@ -9,7 +9,7 @@ import { connectedWallet, publicClient } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isDefiniteWalletRejection, simulateStateChangingTransaction, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
-import { recoverSaved, requireHeldSettlement, strictRetirable, writeHolds } from '@/lib/write-holds'
+import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictRetirable, writeHolds } from '@/lib/write-holds'
 import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
@@ -49,6 +49,8 @@ type PayerDeploymentOutcome = {
   payer?: Address
   error?: string
   failedHashes?: Hex[]
+  /** The SDK settled it as a success: followed until verified, never failed or deployed again. */
+  settled?: true
 }
 
 /** Raw permissionless factory calls have no replay nonce: one journal owns the entire attempt. */
@@ -422,6 +424,8 @@ async function findSafePayerExecution(call: PayerDeploymentCall, outcome: PayerD
 
 /** What a look at a Safe payer proposal says when it ends before the Safe executes the proposal. */
 export const SAFE_PAYER_PENDING = 'The Safe proposal is still pending. Execute it in Safe, then check the deployment status.'
+/** A payer deployment the SDK settled as a success, whose receipt or clone can't be read yet. */
+const PAYER_SETTLED_CONFIRMING = 'The payer deployment went through. It is still confirming.'
 
 /**
  * Resolve existing outcomes only; never submit replacement clones when a send
@@ -533,13 +537,18 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         await verifyPayerDeployment(call, outcome.hash!, ...proofOf(session, outcome))
         continue
       }
-      if (outcome.state === 'sending' || (outcome.state === 'submitted' && !outcome.hash && !outcome.safeProposalHash)) {
+      if (!outcome.settled && (outcome.state === 'sending' || (outcome.state === 'submitted' && !outcome.hash && !outcome.safeProposalHash))) {
         // Recovery runs first: the SDK recovers a send whose wallet reply was lost, before any preparation.
-        const recovered = await recoverSaved(payerAttemptOf(session, index), publicClient(call.chainId) as unknown as WriteHoldClient,
+        const attempt = payerAttemptOf(session, index)
+        const recovered = await recoverSaved(attempt, publicClient(call.chainId) as unknown as WriteHoldClient,
           'The wallet may have sent this payer deployment without returning a hash. Check its activity before continuing.')
+        // A success another tab proved without its transaction: shown as confirming, never deployed again.
+        if (recovered.status === 'done' && recovered.result === 'success' && !recovered.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, PAYER_SETTLED_CONFIRMING)
         if (recovered.status === 'done' && recovered.result === 'success' && recovered.hash) {
           // The settled hash is the transaction itself (a Safe's execution), followed from here.
-          outcome = session.outcomes[index] = { ...outcome, state: 'submitted', hash: recovered.hash, ...(recovered.authenticated ? { state: 'verified', payer: recovered.value } : {}) }
+          outcome = session.outcomes[index] = recovered.authenticated
+            ? { ...outcome, state: 'verified', hash: recovered.hash, payer: recovered.value }
+            : { ...outcome, state: 'submitted', hash: recovered.hash, settled: true }
           persist()
           if (outcome.state === 'verified') continue
         } else if (recovered.status === 'done' && recovered.result === 'failed') {
@@ -617,12 +626,14 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         outcome = session.outcomes[index] = { ...outcome, hash }
         persist()
       }
-      if (!outcome.hash) throw new Error('The original payer deployment hash is unavailable.')
+      if (!outcome.hash) throw new Error(outcome.settled ? PAYER_SETTLED_CONFIRMING : 'The original payer deployment hash is unavailable.')
       await publicClient(call.chainId).waitForTransactionReceipt({ hash: outcome.hash, timeout: 60_000 })
       let payer: Address
       try {
         payer = await verifyPayerDeployment(call, outcome.hash, ...proofOf(session, outcome))
       } catch (error) {
+        // A settled success always wins: a read that disagrees is asked again, never a failure.
+        if (outcome.settled) throw new Error(PAYER_SETTLED_CONFIRMING)
         // An unavailable revert proof never permits another clone deployment.
         if (session.transport === 'direct' && await requireCanonicalDirectRevert(call, outcome.hash, session.account).then(() => true, () => false)) {
           session.outcomes[index] = { ...outcome, state: 'failed', failedHashes: [...(outcome.failedHashes ?? []), outcome.hash],
