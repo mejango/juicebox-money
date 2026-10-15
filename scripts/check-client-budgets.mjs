@@ -279,7 +279,13 @@ const budgets = {
   // test resets) measures 2616.0 KiB: round up, with CI headroom.
   // The launch hold (a lazy chunk with the launch) and the last release's frozen
   // intent keys (legacy-intents, for one release) measure 2621.3 KiB.
-  allScripts: 2624 * KIB,
+  // SDK 2.41.1 replaces the app's hold glue, Safe proposal registry, followers
+  // and launch recovery with the SDK's shared held-write view, React hooks and
+  // saved-attempt engine (now used by launches, Safe setup, payers, batches and
+  // Relayr payments). Main measures 2622.3 KiB in CI; this measures 2647.5 KiB,
+  // in lazy chunks: /page is unchanged (443.0 KiB) and /create drops 518.0 to
+  // 515.2 KiB. Round only the aggregate up, with CI headroom.
+  allScripts: 2650 * KIB,
   largestChunk: 450 * KIB,
   // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
   // back in unnoticed.

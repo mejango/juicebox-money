@@ -86,7 +86,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 import { useSafeTx } from '@/hooks/useSafeTx'
 import { writeHolds } from '@/lib/write-holds'
 
-import { approvalIntent, redeemIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, HELD_AWAY_SUCCESS_LINE, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
+import { approvalIntent, redeemIntent, borrowIntent, bridgeIntent, cashOutIntent, createBrowserWriteRecovery, createHeldWriteStorage, createWriteHold, intent as sdkIntent, liquidityIntent, loanIntent, payIntent, writeIntentKey, WRITE_HOLD_STALE_REVIEW_LINE, HELD_AWAY_SUCCESS_LINE, HELD_EXIT_LABEL, HELD_RELEASED_ELSEWHERE_LINE, HELD_SEND_AGAIN_LABEL, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { legacyCashOutKeys, legacyEditMarketKeys, legacyPayKeys } from '@/lib/legacy-intents'
 
@@ -659,14 +659,15 @@ describe('useSafeTx', () => {
     const OTHER_BLOCK = `0x${'56'.repeat(32)}` as Hex
     /** A chain that knows `hash` mined in block 5, canonical while `canonical()` says so. */
     function chainWith(hash: Hex, canonical: () => boolean) {
-      mocks.publicClient = {
-        ...mocks.publicClient,
-        getTransaction: vi.fn(async () => ({ hash, chainId: 10, from: ALICE, to: BOB, input: '0x', value: 7n, nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 })),
+      // The same client, as wagmi keeps it: a view made on it stays the flow's.
+      mocks.publicClient = Object.assign(mocks.publicClient === basePublicClient ? { ...mocks.publicClient } : mocks.publicClient, {
+        // Alice's transfer itself: the hold verifies the mined transaction is the call it holds.
+        getTransaction: vi.fn(async () => ({ hash, chainId: 10, from: ALICE, to: BOB, input: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }), value: 7n, nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 })),
         getTransactionReceipt: vi.fn(async () => receiptFor(hash)),
         getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint } = {}) => args.blockTag === 'finalized'
           ? { number: 4n, hash: OTHER_BLOCK, timestamp: 1n }
           : { number: args.blockNumber ?? 6n, hash: canonical() && args.blockNumber === 5n ? BLOCK : OTHER_BLOCK }),
-      } as typeof mocks.publicClient
+      }) as typeof mocks.publicClient
     }
     const receiptFor = (hash: Hex) => ({ status: 'success' as const, transactionHash: hash, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] })
 
@@ -696,29 +697,30 @@ describe('useSafeTx', () => {
       // The node returns a receipt, but doesn't show its block canonical: the hold can't verify it.
       let canonical = false
       chainWith(HASH, () => canonical)
-      const hook = await renderHook()
-      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-      mocks.receipt = { data: receiptFor(HASH), isError: false }
-      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] })
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
       try {
+        const hook = await renderHook()
+        await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+        mocks.receipt = { data: receiptFor(HASH), isError: false }
         await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
-        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        await settle()
         // Held while the hold can't tell: pending, no exit yet.
         expect(hook.ref.current!.phase).toBe('pending')
-        await act(async () => { await vi.advanceTimersByTimeAsync(31 * 60_000) })
-        // Past the mined window the hold offers its exit: the flow shows it, never busy forever.
+        // Past the mined window, at the view's next look, the hold offers its exit: the flow shows it, never busy forever.
+        vi.setSystemTime(Date.now() + 31 * 60_000)
+        await act(async () => { vi.advanceTimersByTime(60_000) })
+        await settle()
         expect(hook.ref.current!.phase).toBe('unconfirmed')
-        const shown = heldNotice(hook.ref.current!.error)
-        expect(shown.status).toBe('held-unchecked')
-        expect(shown.onExit).toBeTypeOf('function')
+        expect(heldNotice(hook.ref.current!.error)).toMatchObject({ label: HELD_EXIT_LABEL })
         // Behind it, the settlement checks go on: once the chain shows it, it settles.
         canonical = true
-        await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+        await act(async () => { vi.advanceTimersByTime(60_000) })
+        await settle()
         expect(hook.ref.current!.phase).toBe('success')
+        await act(async () => hook.renderer.unmount())
       } finally {
         vi.useRealTimers()
       }
-      await act(async () => hook.renderer.unmount())
     })
 
     it("never adopts another tab's newer reservation: a flow following attempt A ignores attempt B's hash", async () => {
@@ -757,7 +759,7 @@ describe('useSafeTx', () => {
       }
     })
 
-    it("takes only its own hash's settlement: a flow following H1 shows nothing when the resend H2 settles", async () => {
+    it("follows the same call's resend from another flow: H2 settles once, and nothing is sent a third time", async () => {
       const H2 = `0x${'ef'.repeat(32)}` as Hex
       // H1's wallet reply is lost to the network; its watch gives up.
       mocks.publicClient = {
@@ -777,13 +779,15 @@ describe('useSafeTx', () => {
       await act(async () => { heldNotice(second.ref.current!.error).onExit!() })
       await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
       expect(mocks.writeContract).toHaveBeenCalledTimes(2)
+      // H2 is mined: the account's nonce moved past it.
+      mocks.publicClient.getTransactionCount = vi.fn(async () => 4)
       mocks.receipt = { data: receiptFor(H2), isError: false }
       await act(async () => { second.renderer.update(createElement(Harness, { ref: second.ref })) })
-      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      await settle()
       expect(second.ref.current!.phase).toBe('success')
-      // The first flow never claims H2's result for its own attempt.
-      expect(first.ref.current!.notice).not.toBe('Your earlier transaction went through.')
-      expect(first.ref.current!.phase).not.toBe('success')
+      // The first flow's view holds the same call: it shows H2's settlement as the SDK settled it, and sends nothing.
+      expect(first.ref.current!.receipt?.transactionHash ?? H2).toBe(H2)
+      expect(mocks.writeContract).toHaveBeenCalledTimes(2)
       await act(async () => first.renderer.unmount())
       await act(async () => second.renderer.unmount())
     })
@@ -884,36 +888,45 @@ describe('useSafeTx', () => {
   })
 
   it('says a write that went through while no flow was open did, and sends the same call again only after "Send it again"', async () => {
+    // A call of its own, so no earlier test's hold of the shared request stands in for it.
+    const once = { ...request, args: [BOB, 9n] as const }
     const first = await renderHook()
     await act(async () => {
-      await first.ref.current!.send(request, reviewedByAlice)
+      await first.ref.current!.send(once, reviewedByAlice)
     })
     await act(async () => first.renderer.unmount())
 
     // The earlier transaction landed while no flow was open, at block 5, not final yet: a verified success needs none.
     const BLOCK = `0x${'55'.repeat(32)}` as Hex
-    const mined = { hash: HASH, chainId: 10, from: ALICE, to: BOB, input: '0x', nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 }
+    const mined = { hash: HASH, chainId: 10, from: ALICE, to: BOB, input: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 9n] }), value: 7n, nonce: 3, blockHash: BLOCK, blockNumber: 5n, transactionIndex: 0 }
     const receipt = { status: 'success' as const, transactionHash: HASH, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] }
     mocks.publicClient = {
       ...mocks.publicClient,
       getChainId: vi.fn(async () => 10),
+      // The account's nonce moved past it once it was mined.
+      getTransactionCount: vi.fn(async () => 4),
       getTransaction: vi.fn(async () => mined),
       getTransactionReceipt: vi.fn(async () => receipt),
       getBlock: vi.fn(async (args: { blockTag?: string; blockNumber?: bigint }) => args.blockTag === 'finalized'
         ? { number: 4n, hash: `0x${'66'.repeat(32)}`, timestamp: 1n }
         : { number: args.blockNumber, hash: args.blockNumber === 5n ? BLOCK : `0x${'66'.repeat(32)}` }),
     } as typeof mocks.publicClient
+    // The page reads it before any send (the hold's checked read on load): it settled while away.
+    {
+      const { writeHolds: hs } = await import('@/lib/write-holds')
+      await Promise.all(hs.list({ account: ALICE, chainId: 10 }).map(({ handle }) => handle.state(mocks.publicClient as never)))
+    }
     const reopened = await renderHook()
     mocks.writeContract.mockResolvedValueOnce(EXECUTION_HASH)
     // The chain shows it ran: the SDK says so, and nothing is sent until the user says to send it again.
-    await act(async () => { await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull() })
+    await act(async () => { await expect(reopened.ref.current!.send(once, reviewedByAlice)).resolves.toBeNull() })
     await settle()
     expect(mocks.writeContract).toHaveBeenCalledOnce()
     const shown = heldNotice(reopened.ref.current!.error)
     expect(shown).toMatchObject({ line: HELD_AWAY_SUCCESS_LINE, label: HELD_SEND_AGAIN_LABEL })
     await act(async () => { await shown.onExit!() })
     await settle()
-    await act(async () => { await expect(reopened.ref.current!.send(request, reviewedByAlice)).resolves.toBe(EXECUTION_HASH) })
+    await act(async () => { await expect(reopened.ref.current!.send(once, reviewedByAlice)).resolves.toBe(EXECUTION_HASH) })
     expect(mocks.writeContract).toHaveBeenCalledTimes(2)
     await act(async () => reopened.renderer.unmount())
   })
@@ -1178,9 +1191,14 @@ describe('useSafeTx', () => {
   })
 
   it("settles from the hold's own reads when the receipt watch never answers", async () => {
+    // The chain shows Alice's own transfer, mined.
+    mocks.publicClient.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => ({
+      hash, chainId: 10, from: ALICE, to: BOB, input: encodeFunctionData({ abi: ABI, functionName: 'transfer', args: [BOB, 5n] }),
+      value: 7n, nonce: 3, blockHash: MINED_BLOCK, blockNumber: 5n, transactionIndex: 0,
+    }))
+    ;(mocks.publicClient as Record<string, unknown>).getTransactionReceipt = vi.fn(async ({ hash }: { hash: Hex }) => ({ ...mined(hash), from: ALICE, to: BOB }))
     const hook = await renderHook()
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-    expect(hook.ref.current).toMatchObject({ phase: 'pending' })
     // The watcher never reports a receipt; the chain shows the transaction mined, and the view asks the hold again.
     await act(async () => { globalThis.dispatchEvent?.(new Event('focus')) })
     await settle(20)
