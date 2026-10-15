@@ -375,19 +375,8 @@ export function useSafeTx(chainId: number) {
         return hash
       }
       const input = { chainId: request.chainId, account, safe: viaSafe, ...(namespace ? { namespace } : {}), ...(legacy.length ? { legacy } : {}), call }
-      // The view's first read, as it starts, takes the call's lock for a moment: a send waits it out briefly.
-      // ponytail: fixed one-second wait; a longer hold is another window's send, refused as busy.
-      const sendHeld = async (): Promise<Hex> => {
-        for (const started = Date.now(); ; await new Promise(resolve => setTimeout(resolve, 0))) {
-          try {
-            return await latest.current.send(input, execute)
-          } catch (e) {
-            if (!(e instanceof WriteHoldBusyError) || walletInvoked || Date.now() - started > 1_000) throw e
-          }
-        }
-      }
       try {
-        const hash = await sendHeld()
+        const hash = await latest.current.send(input, execute)
         setSent({ chainId: request.chainId, hash, safe: viaSafe })
         setPhase('pending')
         // A Safe proposal is with its signers: the flow may close. A direct write keeps the lock until it settles.
