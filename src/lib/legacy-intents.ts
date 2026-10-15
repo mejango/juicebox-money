@@ -238,3 +238,32 @@ export function legacyAllowanceKeys(p: {
     currency: p.currency, beneficiary: intent.address(p.beneficiary),
   }))
 }
+
+// ---- frozen from origin/main c0d995b (#130, SDK 2.38): the five keys SDK 2.41's builders replace ----
+// REMOVE after one release (2026-11). An attempt the live build left unresolved under one of these
+// still holds the same action (passed as `legacy`), so a write pending from it blocks a resend.
+
+export const legacyRedeemItemsKey = (p: { chainId: number; projectId: number; hook: string; tokenIds: readonly bigint[]; holder: string }) =>
+  writeIntentKey('redeem-items', {
+    chainId: p.chainId, projectId: p.projectId, hook: intent.address(p.hook),
+    tokenIds: [...p.tokenIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)), holder: intent.address(p.holder),
+  })
+
+export const legacyUseAllowanceKey = (p: { chainId: number; projectId: number; token: string; currency: number; beneficiary: string }) =>
+  writeIntentKey('use-allowance', {
+    chainId: p.chainId, projectId: p.projectId, token: intent.address(p.token), currency: p.currency, beneficiary: intent.address(p.beneficiary),
+  })
+
+export const legacyBurnKey = (p: { chainId: number; holder: string; project: bigint }) =>
+  writeIntentKey('burn', { chainId: p.chainId, holder: intent.address(p.holder), project: p.project })
+
+export const legacySafeBatchKey = (p: { chainId: number; safe: string; calls: readonly { to: string; data: string; value?: bigint }[] }) =>
+  writeIntentKey('safe-batch', {
+    chainId: p.chainId, safe: intent.address(p.safe), calls: p.calls.map(call => [intent.address(call.to), intent.hex(call.data), call.value ?? 0n]),
+  })
+
+/** The sync key #130 built with SDK 2.38's bridgeIntent (the zero address as its token). */
+export const legacySyncKey = (p: { chainId: number; sucker: string; account: string }) =>
+  writeIntentKey('bridge', {
+    chainId: p.chainId, sucker: intent.address(p.sucker), token: intent.address('0x0000000000000000000000000000000000000000'), account: intent.address(p.account),
+  })

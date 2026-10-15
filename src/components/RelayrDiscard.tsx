@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { relayrDiscardLine } from '@bananapus/nana-sdk-core/review'
 import type { RelayrDiscardReason } from '@bananapus/nana-sdk-core/review/relayr'
 import { discardRelayrSession, RelayrDiscardError } from '@/lib/relayr'
+import { SavedAttemptFromError } from '@/components/ui/SavedAttemptFromError'
 
 /**
  * The one line and the Discard of a saved Relayr session whose requests are
@@ -49,24 +50,32 @@ export function RelayrDiscard({ scope, reason, paymentUnmatched, onDiscarded }: 
 
 /**
  * For an action that shows its own error: the session its last attempt said
- * to discard (ruling R114). `capture` takes each attempt's error, `element` is
- * the line and Discard to show in place of that error, and `reset` drops both
- * when the review closes. `clearError` clears the action's copy of the line.
+ * to discard (ruling R114), or the saved attempt the SDK's recovery is showing
+ * (its held line and exit, or its one check). `capture` takes each attempt's
+ * error, `element` is what to show in place of that error, and `reset` drops
+ * both when the review closes. `clearError` clears the action's copy of the line.
  * `closeReview`, after Discard, drops the reviewed calls of an action with no
  * recheck of its own or of a batch, so they go out again only after a fresh
  * review (ruling R114 (f)).
  */
 export function useRelayrDiscard(clearError: () => void, closeReview?: () => void) {
   const [failure, setFailure] = useState<RelayrDiscardError | null>(null)
+  const [shown, setShown] = useState<Error | null>(null)
   return {
-    active: failure !== null,
-    capture: (error: unknown) => setFailure(error instanceof RelayrDiscardError ? error : null),
+    active: failure !== null || shown !== null,
+    capture: (error: unknown) => {
+      setFailure(error instanceof RelayrDiscardError ? error : null)
+      setShown(error instanceof Error && error.name === 'SavedAttemptShownError' ? error : null)
+    },
     reset: () => {
-      if (failure) clearError()
+      if (failure || shown) clearError()
       setFailure(null)
+      setShown(null)
     },
     element: failure ? (
       <RelayrDiscard scope={failure.scope} reason={failure.reason} paymentUnmatched={failure.paymentUnmatched} onDiscarded={() => { setFailure(null); clearError(); closeReview?.() }} />
+    ) : shown ? (
+      <SavedAttemptFromError error={shown} onDone={() => { setShown(null); clearError() }} />
     ) : null,
   }
 }

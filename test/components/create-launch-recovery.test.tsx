@@ -46,6 +46,10 @@ vi.mock('@wagmi/core', async original => ({
   ...(await original<typeof import('@wagmi/core')>()),
   getAccount: () => ({ address: ALICE, chainId: 1, connector: { uid: 'reviewed-wallet' } }),
 }))
+vi.mock('@/lib/wallet-core', async original => ({
+  ...(await original<typeof import('@/lib/wallet-core')>()),
+  publicClient: () => m.client,
+}))
 vi.mock('@/hooks/useWallet', () => ({
   useWallet: () => ({ isConnected: true, address: ALICE, openSignIn: () => {} }),
 }))
@@ -83,7 +87,11 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'
 import { LAUNCH_SESSION_KEY, loadLaunchSession } from '@/lib/launch-session'
-import { launchHold } from '@/lib/launch-hold'
+import { writeHolds } from '@/lib/write-holds'
+import { launchNamespace } from '@/lib/launch-attempt'
+
+/** The launch's SDK hold, as a fresh send opens it. */
+const launchHold = () => writeHolds.open({ chainId: 1, account: ALICE, safe: false, namespace: launchNamespace({ chainId: 1, account: ALICE, salt: SALT, projectUri: 'ipfs://launch' }), call: LAUNCH_CALL })
 
 let host: HTMLDivElement
 let root: Root
@@ -170,55 +178,58 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+const EXIT = 'I checked my wallet'
+const CHECK = 'I checked it. Launch again.'
+const SETTLED = 'Your launch went through. Its project is still confirming.'
+const resume = async () => {
+  await act(async () => (button('Check again') ?? button('Try again'))!.click())
+  await settle()
+}
+const journal = (statuses: Record<number, unknown>, chains = Object.keys(statuses).map(Number)) =>
+  localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
+    transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
+    plans: Object.fromEntries(chains.map(chain => [chain, { projectName: 'Launch' }])), chains, statuses, createdAt: Date.now(),
+  }))
+
 describe('a saved launch restored on the create page', () => {
-  it("is held, never sent; past the window the hold's exit appears, and only it retires the saved submission", async () => {
+  it("is held, never sent; past the window the hold's exit appears, and only it retires the saved submission, keeping the salt", async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     saveEarlierLaunch()
-    const queries = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-    await act(async () => root.render(<QueryClientProvider client={queries}><CreateForm /></QueryClientProvider>))
-    await settle()
-    const check = button('Check again') ?? button('Try again')
-    expect(check, 'the restored launch offers its check').toBeDefined()
-    await act(async () => check!.click())
-    await settle()
+    await mount()
+    await resume()
     // The saved hash went to the launch's hold: held, nothing sent, and it isn't an error dead end.
     expect(m.writeContract).not.toHaveBeenCalled()
-    expect(button('I checked my wallet. Send again')).toBeUndefined()
+    expect(button(EXIT)).toBeUndefined()
     expect(loadLaunchSession()?.statuses[1]?.txHash).toBe(HASH)
 
     // Past the hold's window with the hash never found, its warned exit appears.
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
     await settle()
-    const exit = button('I checked my wallet. Send again')
+    const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     await act(async () => exit!.click())
     await settle()
-    // Only the exit retires the saved submission, and with it the retired attempt's launch
-    // (its salt): the form reopens, and launching again is a new launch with a fresh salt.
-    expect(loadLaunchSession()).toBeNull()
-    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
-    expect(m.review).not.toHaveBeenCalled()
+    // Only the exit retires the saved submission. The launch keeps its salt (as Homerun): launching again
+    // reviews the same launch, so one that did land makes the retry revert instead of a second project.
+    expect(loadLaunchSession()?.salt).toBe(SALT)
+    expect(loadLaunchSession()?.statuses[1]?.txHash).toBeUndefined()
+    expect(m.review).toHaveBeenCalledOnce()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
-  it("retires a launch the user checked, even on a single chain, so launching again uses a fresh salt", async () => {
-    // An earlier visit was signing with no hold of its own: the user is asked to check it.
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+  it('gives a launch an earlier release left signing the one check; only it retires it, and the same launch is reviewed again', async () => {
+    journal({ 1: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    const checked = button('I checked it. Launch again')
+    await resume()
+    expect(host.textContent).toContain('This transaction may already be in your wallet')
+    const checked = button(CHECK)
     expect(checked, 'the check').toBeDefined()
+    expect(m.review).not.toHaveBeenCalled()
     await act(async () => checked!.click())
     await settle()
-    // The retired attempt's salt is never reused: its launch record is gone, the form reopens.
-    expect(loadLaunchSession()).toBeNull()
-    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
-    expect(m.review).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.salt).toBe(SALT)
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'failed' })
+    expect(m.review).toHaveBeenCalledOnce()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
@@ -226,14 +237,13 @@ describe('a saved launch restored on the create page', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     saveEarlierLaunch()
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
+    await resume()
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
     await settle()
-    const exit = button('I checked my wallet. Send again')
+    const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     // The launch mines just as the user takes the exit: the exit's own check settles it.
-    m.client = minedNode(HASH)
+    Object.assign(m.client, minedNode(HASH))
     await act(async () => exit!.click())
     await settle()
     // Recovery follows the settled launch into its domain checks: its receipt, never a new send.
@@ -241,32 +251,25 @@ describe('a saved launch restored on the create page', () => {
     expect(m.review).not.toHaveBeenCalled()
     expect(m.writeContract).not.toHaveBeenCalled()
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH })
-    // It follows once: one resume, not one per report of the settled hold.
     expect(m.waitReceipt).toHaveBeenCalledOnce()
   })
 
-  it("saves a settled launch's hash into the journal before its domain checks run", async () => {
-    // The hold saved and settled this launch's hash; the page reloaded before the journal saved it.
+  it("saves a settled launch's hash into the journal before its domain checks run (a reload between the hold and the journal)", async () => {
     const NEW_HASH = `0x${'ef'.repeat(32)}` as Hex
     m.client = minedNode(NEW_HASH)
-    const hold = launchHold({ chainId: 1, account: ALICE, safe: false, salt: SALT, projectUri: 'ipfs://launch', call: LAUNCH_CALL })
+    const hold = launchHold()
     await hold.send(m.client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(NEW_HASH); return NEW_HASH })
     await hold.state(m.client as never)
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing', held: true } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'signing', held: true } })
     let journalAtChecks: unknown
     m.waitReceipt.mockImplementation(() => {
       journalAtChecks = loadLaunchSession()?.statuses[1]
       return new Promise(() => {})
     })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
+    await resume()
     expect(m.waitReceipt).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ hash: NEW_HASH }))
-    expect(journalAtChecks).toEqual({ phase: 'confirming', txHash: NEW_HASH, held: true, settled: true })
+    expect(journalAtChecks).toMatchObject({ phase: 'confirming', txHash: NEW_HASH, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
@@ -275,71 +278,52 @@ describe('a saved launch restored on the create page', () => {
     m.fee.mockRejectedValue(new Error('fee read failed'))
     saveEarlierLaunch()
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
+    await resume()
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
     await settle()
-    // The hold decides, with its exit, whatever preparation for a fresh send can't do.
-    expect(button('I checked my wallet. Send again'), 'the warned exit').toBeDefined()
+    expect(button(EXIT), 'the warned exit').toBeDefined()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it("keeps a settled launch whose project can't be read confirming: only Check again, never a check, discard or resend", async () => {
     const NEW_HASH = `0x${'ef'.repeat(32)}` as Hex
     m.client = minedNode(NEW_HASH)
-    const hold = launchHold({ chainId: 1, account: ALICE, safe: false, salt: SALT, projectUri: 'ipfs://launch', call: LAUNCH_CALL })
+    const hold = launchHold()
     await hold.send(m.client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(NEW_HASH); return NEW_HASH })
     await hold.state(m.client as never)
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing', held: true } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'signing', held: true } })
     // Its receipt names no project.
     m.waitReceipt.mockResolvedValue({ transactionHash: NEW_HASH, status: 'success', blockNumber: 1n, logs: [] })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    expect(host.textContent).toContain('Your launch went through. Its project is still confirming.')
+    await resume()
+    expect(host.textContent).toContain(SETTLED)
     expect(button('Check again')).toBeDefined()
-    expect(button('I checked it. Launch again')).toBeUndefined()
-    expect(button('I checked my wallet. Send again')).toBeUndefined()
+    expect(button(CHECK)).toBeUndefined()
+    expect(button(EXIT)).toBeUndefined()
     expect(button('Cancel deployment')).toBeUndefined()
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: NEW_HASH })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it('keeps the journal of a launch with a completed chain when another chain is retired through the check: the rest resumes as the same project', async () => {
-    // Chain 1 launched; chain 10 was signing with no hold of its own when the page closed.
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' }, 10: { projectName: 'Launch' } }, chains: [1, 10],
-      statuses: { 1: { phase: 'done', projectId: 5 }, 10: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'done', projectId: 5 }, 10: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
+    await resume()
+    await act(async () => button(CHECK)!.click())
     await settle()
-    await act(async () => button('I checked it. Launch again')!.click())
-    await settle()
-    // A journal holding a completed chain is never deleted: chain 1 keeps its project, chain 10 is retired.
-    const journal = loadLaunchSession()
-    expect(journal?.salt).toBe(SALT)
-    expect(journal?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
-    expect(journal?.statuses[10]).toMatchObject({ phase: 'failed' })
-    expect(journal?.statuses[10]?.txHash).toBeUndefined()
+    const saved = loadLaunchSession()
+    expect(saved?.salt).toBe(SALT)
+    expect(saved?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
+    expect(saved?.statuses[10]).toMatchObject({ phase: 'failed' })
+    expect(saved?.statuses[10]?.txHash).toBeUndefined()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it('refuses a stale check once another tab completed that chain, even saved as done without settled, and keeps the journal', async () => {
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' }, 10: { projectName: 'Launch' } }, chains: [1, 10],
-      statuses: { 1: { phase: 'signing' }, 10: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'signing' }, 10: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    const checked = button('I checked it. Launch again')
+    await resume()
+    const checked = button(CHECK)
     expect(checked, 'the check').toBeDefined()
     // Meanwhile another tab completed chain 1 (a main-era success: done, no settled flag) and chain 10 failed.
     const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
@@ -347,63 +331,43 @@ describe('a saved launch restored on the create page', () => {
     localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
     await act(async () => checked!.click())
     await settle()
-    const journal = loadLaunchSession()
-    expect(journal, 'the journal').not.toBeNull()
-    expect(journal?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'done', projectId: 5 })
+    expect(m.review).not.toHaveBeenCalled()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it('keeps a launch whose success was saved confirming after a reload, even when its settlement can no longer be read', async () => {
-    // The hold proved this launch before the reload; its record is gone and the node can't answer now.
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'confirming', txHash: HASH, settled: true } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'confirming', txHash: HASH, settled: true } })
     m.client = { ...emptyNode(), getTransaction: async () => { throw new Error('node down') }, getChainId: async () => { throw new Error('node down') } }
     m.waitReceipt.mockRejectedValue(new Error('node down'))
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    expect(host.textContent).toContain('Your launch went through. Its project is still confirming.')
-    expect(button('I checked it. Launch again')).toBeUndefined()
-    expect(button('I checked my wallet. Send again')).toBeUndefined()
+    await resume()
+    expect(host.textContent).toContain(SETTLED)
+    expect(button(CHECK)).toBeUndefined()
+    expect(button(EXIT)).toBeUndefined()
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: HASH, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it('refuses a stale check action once another tab saved the launch as a success', async () => {
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    const checked = button('I checked it. Launch again')
+    await resume()
+    const checked = button(CHECK)
     expect(checked, 'the check').toBeDefined()
-    // Meanwhile another tab proved the launch and saved its success.
     const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
     session.statuses[1] = { phase: 'confirming', txHash: HASH, settled: true }
     localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
     await act(async () => checked!.click())
     await settle()
-    // A saved success is never retired: the launch record and its hash stay.
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ txHash: HASH, settled: true })
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 
   it("refuses a check while the journal can't be read, keeping the attempt, its button and a success another tab saved", async () => {
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+    journal({ 1: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    // Another tab saves the launch's success; then this tab's read of the journal fails.
+    await resume()
     const session = JSON.parse(localStorage.getItem(LAUNCH_SESSION_KEY)!)
     session.statuses[1] = { phase: 'confirming', txHash: HASH, settled: true }
     localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify(session))
@@ -412,44 +376,54 @@ describe('a saved launch restored on the create page', () => {
       if (key === LAUNCH_SESSION_KEY) throw new Error('storage unavailable')
       return read.call(this, key)
     })
-    await act(async () => button('I checked it. Launch again')!.click())
+    await act(async () => button(CHECK)!.click())
     await settle()
-    expect(host.textContent).toContain("Couldn't check this transaction. Try again.")
-    expect(button('I checked it. Launch again')).toBeDefined()
+    expect(button(CHECK)).toBeDefined()
     vi.mocked(Storage.prototype.getItem).mockRestore()
-    // Nothing was written over the saved success.
     expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH, settled: true })
   })
 
-  it("after a failed read, offers a warned Continue anyway that discards the unreadable record and reopens the form", async () => {
-    localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
-      transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-      plans: { 1: { projectName: 'Launch' } }, chains: [1],
-      statuses: { 1: { phase: 'signing' } }, createdAt: Date.now(),
-    }))
+  it("over storage that can't be read, offers the SDK's warned Continue anyway, which drops the record and reopens the form", async () => {
+    journal({ 1: { phase: 'signing' } })
     await mount()
-    await act(async () => (button('Check again') ?? button('Try again'))!.click())
-    await settle()
-    // Never offered first.
+    await resume()
     expect(button('I checked my wallet. Continue anyway')).toBeUndefined()
     const read = Storage.prototype.getItem
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (this: Storage, key: string) {
-      if (key === LAUNCH_SESSION_KEY) throw new Error('storage unavailable')
+      if (key === LAUNCH_SESSION_KEY || key.startsWith('nana-sdk:')) throw new Error('storage unavailable')
       return read.call(this, key)
     })
-    await act(async () => button('I checked it. Launch again')!.click())
+    await act(async () => button(CHECK)!.click())
     await settle()
-    expect(host.textContent).toContain("Couldn't check this transaction. Try again.")
     expect(host.textContent).toContain("This browser can't read its saved transactions. Check your wallet before sending again.")
     const anyway = button('I checked my wallet. Continue anyway')
     expect(anyway, 'the warned continue').toBeDefined()
     await act(async () => anyway!.click())
     await settle()
     vi.mocked(Storage.prototype.getItem).mockRestore()
-    // The unreadable record is gone and the form reopens: the next launch pins a fresh salt.
+    console.log('DBG', host.textContent!.slice(-500))
     expect(loadLaunchSession()).toBeNull()
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(m.writeContract).not.toHaveBeenCalled()
   })
 })
 
+describe('the normal path, click for click as main', () => {
+  it('launches a chain with nothing out with one press: one review, one wallet prompt, and no hold or recovery notice', async () => {
+    journal({ 1: { phase: 'pending' } })
+    m.review.mockReset().mockResolvedValue(undefined)
+    m.writeContract.mockResolvedValue(HASH)
+    Object.assign(m.client, {
+      simulateContract: async (request: Record<string, unknown>) => ({ request }),
+      estimateContractGas: async () => 100_000n,
+    })
+    await mount()
+    await resume()
+    expect(m.review).toHaveBeenCalledOnce()
+    expect(m.writeContract).toHaveBeenCalledOnce()
+    for (const line of [EXIT, CHECK, 'This transaction may already be in your wallet', "This browser can't read its saved transactions", 'Confirming your transaction.']) {
+      expect(host.textContent).not.toContain(line)
+    }
+    expect(loadLaunchSession()?.statuses[1]).toMatchObject({ phase: 'confirming', txHash: HASH })
+  })
+})

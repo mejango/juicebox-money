@@ -3,6 +3,7 @@
   "entry": [
     "public/examples/*.mjs",
     "scripts/check-browser-build-data.ts",
+    "scripts/app-hold-logic.d.mts",
     "scripts/check-deployment-env.d.mts",
     "scripts/start-production.mjs",
     "scripts/verify-cash-out.ts",

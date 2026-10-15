@@ -23,7 +23,8 @@ import {
   hasRelayrPendingEvidence, loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
 } from '@/lib/relayr'
-import { isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { recoverSaved, safeHoldNamespace, safeProposalKey, strictRetirable } from '@/lib/write-holds'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls, type RawAttempt } from '@/lib/raw-relayr'
@@ -112,6 +113,37 @@ function readBatch(scope: string): ProjectBatch | null {
     throw new Error('The saved project action could not be verified. Keep the original action pending.')
   }
   return batch
+}
+
+/** A batch call's direct send: held by the batch and call, so its journal recovers it by name. */
+const batchCallNamespace = (batch: Pick<ProjectBatch, 'id'>, call: Pick<ProjectBatchCall, 'id'>) =>
+  writeIntentKey('project-batch-call', { batch: batch.id, call: call.id })
+
+/**
+ * A batch call whose wallet submission the journal saved without its hash, as
+ * the SDK's saved-attempt recovery reads it: held by the key its send was held
+ * by. Its domain check is the call's own verified receipt; the journal's strict
+ * re-read is the final say before a check or exit retires it.
+ */
+function batchCallAttempt(batch: ProjectBatch, call: ProjectBatchCall, kind: CallSubmission['kind'], verify: (hash: Hex) => Promise<TransactionReceipt>): SavedAttempt<TransactionReceipt> {
+  const exact = { to: call.target, data: call.data, value: call.value ?? 0n }
+  const attempt: SavedAttempt<TransactionReceipt> = {
+    chainId: call.chainId,
+    account: call.authority,
+    safe: kind !== 'direct',
+    namespaces: [kind === 'direct' ? batchCallNamespace(batch, call) : safeHoldNamespace(safeProposalKey(call.chainId, call.authority, exact))],
+    saved: { started: true },
+    async authenticate(hash) {
+      if (!hash) return { result: 'unknown' }
+      return verify(hash).then(receipt => ({ result: 'proven' as const, value: receipt }), () => ({ result: 'unknown' as const }))
+    },
+    // A strict, fresh read: storage that can't be read refuses (but under the warned exit).
+    confirmRetirable: strictRetirable(() => attempt, () => {
+      const now = readBatch(batch.scope)
+      return !!now && now.id === batch.id && !now.completedIds.includes(call.id) && !now.submissions[call.id]?.hash
+    }),
+  }
+  return attempt
 }
 
 const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
@@ -594,7 +626,37 @@ export async function runProjectBatch({
       }
       for (const call of pending) {
         checkAccount()
-        const saved = journal.submissions[call.id]
+        let saved: CallSubmission | undefined = journal.submissions[call.id]
+        if (saved && !saved.hash && saved.kind !== 'safe') {
+          // A submission saved without its hash (a reload between the hold saving it and the journal):
+          // the SDK recovers it from its hold first, never resending what may be out.
+          const recovered = await recoverSaved(
+            batchCallAttempt(journal, call, saved.kind, hash => verifySubmitted(call, hash)),
+            clientFor(call.chainId) as unknown as WriteHoldClient,
+          )
+          if (recovered.status === 'done' && recovered.result === 'success' && recovered.authenticated) {
+            await verifyCompletion?.(call, recovered.value)
+            complete([call.id])
+            continue
+          }
+          if (recovered.status === 'done' && recovered.result === 'success') {
+            if (!recovered.hash) throw new Error('This project action went through. Its result is still confirming. Check this batch again.')
+            if (saved.kind === 'safe-connector') {
+              // The hold settled the Safe's execution of this exact call (its hash is the execution, not a proposal):
+              // the action is done, checked by its own completion rule.
+              await verifyCompletion?.(call, await clientFor(call.chainId).getTransactionReceipt({ hash: recovered.hash }))
+              complete([call.id])
+              continue
+            }
+            journal.submissions[call.id] = { ...saved, hash: recovered.hash }
+            persist(journal)
+          } else {
+            // A proven revert, or retired (the user's check or exit): nothing is out, so it is sent again.
+            delete journal.submissions[call.id]
+            persist(journal)
+          }
+          saved = journal.submissions[call.id]
+        }
         if (saved) {
           if (!saved.hash) throw new Error('A wallet submission may still be pending. Check the original wallet activity; do not submit this call again.')
           let execution: Hex | null = null
@@ -654,6 +716,7 @@ export async function runProjectBatch({
         let sending: CallSubmission | undefined
         try {
           result = await runAuthorityCalls({ calls: [{ ...call,
+          holdNamespace: batchCallNamespace(journal, call),
           reverifyAuthority: async () => { checkAccount(); await reverify?.(call) },
           onSending: async kind => {
             sending = { kind, fromBlock }

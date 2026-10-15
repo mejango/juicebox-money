@@ -1,5 +1,6 @@
 'use client'
 
+import { SavedAttemptFromError } from '@/components/ui/SavedAttemptFromError'
 import { transactionMessage } from '@/lib/transaction-message'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
@@ -192,6 +193,8 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   const [editable, setEditable] = useState(false)
   const [adminInput, setAdminInput] = useState('')
   const [flowError, setFlowError] = useState<string | null>(null)
+  /** A saved payer send the SDK's recovery is showing: its held line and exit, or its one check. */
+  const [savedShown, setSavedShown] = useState<unknown>(null)
   const [review, setReview] = useState<PayerDeploymentSession | null>(null)
   const [session, setSession] = useState<PayerDeploymentSession | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -242,6 +245,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
       setReview(null)
       await refetchPayers()
     } catch (error) {
+      setSavedShown(error)
       setFlowError(error instanceof Error ? error.message : 'The payer deployments remain unresolved.')
       try { setSession(loadPayerDeployment(scope)) } catch { /* Keep the last in-memory recovery view. */ }
     } finally { setBusy(false) }
@@ -268,6 +272,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
       </button>
       {session && !complete ? <p className="mt-3 text-sm text-smoke-700">A saved deployment is {session.phase.replaceAll('-', ' ')}. Resume it to check the original addresses.</p> : null}
       {!dialogOpen && flowError ? <TxError error={flowError} className="mt-3 text-sm text-red-700" /> : null}
+      {!dialogOpen ? <SavedAttemptFromError error={savedShown} onDone={() => { setSavedShown(null); setFlowError(null) }} /> : null}
       {dialogOpen ? (
         <ModalShell title="Create payer address" subtitle="Choose the project chains that need a payer address." onClose={() => setDialogOpen(false)} busy={busy}>
           <div className="max-h-[min(72vh,46rem)] overflow-y-auto px-5 py-5 sm:px-6">
@@ -333,6 +338,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
               </>
             )}
             <TxError error={flowError} className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700" />
+            <SavedAttemptFromError error={savedShown} onDone={() => { setSavedShown(null); setFlowError(null) }} />
           </div>
         </ModalShell>
       ) : null}

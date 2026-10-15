@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
+import { appHoldLogic } from "./app-hold-logic.mjs";
 
 const failures = [];
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -20,6 +21,7 @@ function sourceFiles(root) {
 
 for (const path of sourceFiles("src")) {
   const source = read(path);
+  failures.push(...appHoldLogic(path, source));
 
   if (/from\s+["']viem\/chains["']/.test(source)) {
     failures.push(
@@ -63,7 +65,7 @@ if (!rpcTransport.includes("createPacedJBCenterLimiter()") ||
 }
 
 const safeConnector = read("src/lib/safe-connector.ts");
-for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "SAFE_PROPOSAL_AWAITING", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "reportedSafeExecution"]) {
+for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "reportedSafeExecution"]) {
   if (!new RegExp(`export \\{[^}]*\\b${name}\\b[^}]*\\} from ['"]@bananapus/nana-sdk-core/safe-service['"]`, "s").test(safeConnector)) {
     failures.push(`Safe connector must re-export SDK ${name}`);
   }

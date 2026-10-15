@@ -57,6 +57,8 @@ export type LaunchChainStatus = {
     phase: 'signing' | 'confirming' | 'done' | 'failed'
     /** The interrupted wallet action was a Safe proposal, not a direct send. */
     safe?: true
+    /** The SDK hold settled `txHash` as this setup's success: no later read downgrades it (invariant D). */
+    settled?: true
     txHash?: `0x${string}`
     safeProposalHash?: `0x${string}`
   }
@@ -291,9 +293,10 @@ function readMultisigSetup(value: unknown): NonNullable<LaunchChainStatus['multi
   }
   const setup = value as NonNullable<LaunchChainStatus['multisigSetup']>
   if (
-    Object.keys(setup).some(key => !['phase', 'safe', 'txHash', 'safeProposalHash'].includes(key)) ||
+    Object.keys(setup).some(key => !['phase', 'safe', 'txHash', 'safeProposalHash', 'settled'].includes(key)) ||
     !['signing', 'confirming', 'done', 'failed'].includes(setup.phase) ||
     (setup.safe !== undefined && setup.safe !== true) ||
+    (setup.settled !== undefined && (setup.settled !== true || !setup.txHash)) ||
     [setup.txHash, setup.safeProposalHash].some(hash =>
       hash !== undefined && (typeof hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/u.test(hash)),
     ) ||
@@ -371,25 +374,16 @@ export function canAbandonDirectLaunch(session: LaunchSession): boolean {
  * session (its salt and plans will never be reused) but KEEP the saved form
  * draft — the user abandons a failed run to fix its configuration, and a
  * deterministically-reverting config would otherwise loop on Retry forever
- * with no exit short of hand-clearing localStorage.
+ * with no exit short of hand-clearing localStorage. `retired`: the SDK retired
+ * its saved attempt over storage it can't read, so the journal goes unread.
  */
-/**
- * Drops a journal that can't be read, after the user confirmed they checked their wallet.
- * The only path that removes a record without reading it first.
- */
-export function discardUnreadableLaunchSession(): boolean {
+export function abandonLaunchSession(expectedSalt?: `0x${string}`, { retired = false }: { retired?: boolean } = {}): boolean {
   if (typeof window === 'undefined') return false
   try {
-    window.localStorage.removeItem(LAUNCH_SESSION_KEY)
-    return true
-  } catch {
-    return false
-  }
-}
-
-export function abandonLaunchSession(expectedSalt?: `0x${string}`): boolean {
-  if (typeof window === 'undefined') return false
-  try {
+    if (retired) {
+      window.localStorage.removeItem(LAUNCH_SESSION_KEY)
+      return true
+    }
     const session = loadLaunchSession({ strict: true })
     if (expectedSalt && session?.salt !== expectedSalt) return false
     if (session && session.transport !== 'relayr' && !canAbandonDirectLaunch(session)) return false

@@ -1,44 +1,80 @@
 import {
+  createSavedAttemptRecovery,
   createWriteHold,
-  WriteHeldError,
-  WriteHoldBusyError,
-  type WriteHeldState,
+  HELD_RELEASED_ELSEWHERE_LINE,
+  type SavedAttempt,
+  type SavedAttemptOutcome,
   type WriteHoldClient,
-  type WriteHoldGate,
   type WriteHoldHandle,
-  type WriteHoldSettled,
-  type WriteHoldState,
 } from '@bananapus/nana-sdk-core/review'
-import { keccak256, stringToHex, type Address, type Hex, type TransactionReceipt } from 'viem'
+import { keccak256, stringToHex, type Address, type TransactionReceipt } from 'viem'
 import { heldCall, type SafeAppCall } from '@/lib/safe-connector'
-import { showHeldWrite } from '@/lib/held-writes-registry'
 
 /**
  * The app's one SDK write hold: every wallet write is held through it
- * (storage or this tab's memory, one lock per exact call, the states, the
- * exits and the release rules).
+ * (storage or this tab's memory, one lock per exact call or intent, the
+ * states, the exits and the release rules).
  */
 export const writeHolds = createWriteHold()
 
-/** A hold that cleared with no settlement this flow can claim (an exit elsewhere): neutral, never a result. */
-export const WRITE_RELEASED_LINE = 'This transaction is no longer held here. Check your wallet before sending it again.'
+/** The app's one saved-attempt recovery over it: launches, Relayr sessions, payers, batches and Safe setup. */
+export const savedAttempts = createSavedAttemptRecovery({ hold: writeHolds })
 
 /**
- * Whether `next` would hide the exit `shown` already offers without the chain
- * having been checked: a contended read (`checked: false`) or a saved record
- * replayed before any check. Only a checked state (`checked: true`) hides it.
+ * A saved attempt the SDK's recovery is showing (held, or its one check): the
+ * flow stops there, before any preparation, until it settles or the user
+ * retires it (SavedAttemptRecovery).
  */
-export function hidesShownExit(shown: WriteHoldState | null | undefined, next: WriteHoldState): boolean {
-  return !!shown && shown.status !== 'clear' && shown.exit && next.status !== 'clear' && !next.exit && next.checked !== true
+export class SavedAttemptShownError extends Error {
+  readonly name = 'SavedAttemptShownError'
+  constructor(readonly attempt: SavedAttempt<unknown>, line: string) {
+    super(line)
+  }
 }
 
 /**
- * Whether a hold result is one a flow must show now: held, with its exit, and
- * not exactly what `shown` already offers. The direct and Safe paths both
- * move to it and keep their settlement checks running behind it.
+ * The SDK's recovery of a saved attempt, right after a flow finds it: `done`
+ * and `none` come back for the flow to follow or resend; a hold or a check
+ * stops the flow with SavedAttemptShownError, whose attempt the page shows.
  */
-export function offersExit(shown: WriteHoldState | null | undefined, next: WriteHoldState): next is WriteHeldState {
-  return next.status !== 'clear' && next.exit && JSON.stringify(shown) !== JSON.stringify(next)
+export async function recoverSaved<T>(
+  attempt: SavedAttempt<T>,
+  client: WriteHoldClient,
+  /** The flow's own line for where it stopped; the SDK's otherwise. The page shows the SDK's copy either way. */
+  line?: string,
+): Promise<Extract<SavedAttemptOutcome<T>, { status: 'done' | 'none' }>> {
+  const outcome = await savedAttempts.recover(attempt, client)
+  if (outcome.status === 'held') throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, line ?? outcome.state.line)
+  if (outcome.status === 'check') throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, line ?? outcome.line)
+  return outcome
+}
+
+/** Attempts whose user took the SDK's warned exit over storage this browser can't read. */
+const unreadableConsent = new WeakSet<object>()
+
+/**
+ * Run the SDK's warned exit (unreadableAction) for `attempt`: while it runs, a
+ * journal re-read that fails still lets it retire, in this tab alone. Only this
+ * explicit action ever does; a read exception otherwise never counts as released.
+ */
+export async function withUnreadableConsent<T>(attempt: object, run: () => Promise<T>): Promise<T> {
+  unreadableConsent.add(attempt)
+  try {
+    return await run()
+  } finally {
+    unreadableConsent.delete(attempt)
+  }
+}
+
+/** A journal re-read for confirmRetirable: false when it reads a kept success, and a failed read retires only under the warned exit. */
+export function strictRetirable(attempt: () => object, read: () => boolean): () => Promise<boolean> {
+  return async () => {
+    try {
+      return read()
+    } catch {
+      return unreadableConsent.has(attempt())
+    }
+  }
 }
 
 /** A review's description, with the hold's line when this browser can't remember pending writes. */
@@ -47,103 +83,22 @@ export function reviewDescription(...parts: (string | null | undefined)[]): stri
 }
 
 /**
- * Whether `next` belongs to the reservation `observed` shows: a state of another
- * reservation (another tab's newer attempt), or one naming none while one is
- * observed, is never this observer's.
+ * A lib flow's receipt goes to the SDK hold, which verifies it: only its
+ * settlement of this hash is the flow's success (acknowledged, since the flow
+ * reports it). Anything else stays held, listed app-wide by HeldWritesNotice,
+ * and ends the flow with the hold's line.
  */
-export function sameReservation(observed: WriteHoldState | null | undefined, next: WriteHoldState): boolean {
-  const mine = observed?.reservation
-  return mine === undefined || next.reservation === mine
-}
-
-/** The hash a settlement names, lowercased, or null (an expiry names none). */
-export function settledHashOf(settled?: WriteHoldSettled): string | null {
-  return settled && 'hash' in settled ? settled.hash.toLowerCase() : null
-}
-
-/** What a hold that ended on its own says: its result when the hold saw it, otherwise that it went through. Never a send. */
-export function settledLine(settled?: WriteHoldSettled): string {
-  if (settled?.result === 'failed') return 'Your earlier transaction failed onchain.'
-  if (settled?.result === 'expired') return 'Your earlier Safe proposal expired before it ran.'
-  return 'Your earlier transaction went through.'
-}
-
-export {
-  forgetHeldWrite,
-  heldWritesSnapshot,
-  showHeldWrite,
-  subscribeHeldWrites,
-  type ShownHeldWrite,
-} from '@/lib/held-writes-registry'
-
-/**
- * Hand one wallet write to the SDK's write hold, the one rule every module
- * that opens a wallet outside useSafeTx follows: it refuses a held call
- * (WriteHeldError), holds the call from just before the wallet opens, and a
- * write that may have reached the wallet stays held, shown app-wide with its
- * exit, whatever the send throws.
- */
-export async function sendUnderHold(
-  chainId: number,
-  hold: WriteHoldHandle,
-  client: WriteHoldClient,
-  send: (gate: WriteHoldGate) => Promise<Hex>,
-): Promise<Hex> {
-  let reached = false
-  try {
-    return await hold.send(client, gate => send({
-      ...gate,
-      beforeSend: async actualCall => {
-        await gate.beforeSend(actualCall)
-        reached = true
-      },
-    }))
-  } catch (error) {
-    if (error instanceof WriteHeldError) showHeldWrite(chainId, hold, error.state)
-    else if (reached && !(error instanceof WriteHoldBusyError)) {
-      const now = await hold.state(client).catch(() => null)
-      if (now && now.status !== 'clear') showHeldWrite(chainId, hold, now)
-    }
-    throw error
-  }
-}
-
-/**
- * A Safe proposal's wait for its execution ended without one. Unless its flow
- * ended the wait, the proposal is unproven: the hold says so app-wide, with its
- * warned exit, so it never stays pending without one.
- */
-export async function unprovenUnderHold(
-  chainId: number,
-  hold: WriteHoldHandle,
-  client: WriteHoldClient,
-  proposalHash: Hex,
-  signal: AbortSignal,
-): Promise<void> {
-  if (signal.aborted) return
-  const state = await hold.onUnproven(client, proposalHash).catch(() => hold.peek())
-  if (state.status !== 'clear') showHeldWrite(chainId, hold, state)
-}
-
-/**
- * After a held write's receipt (or Safe execution receipt): the hold verifies
- * it. Anything but this hash's settlement keeps it held and shown, and throws
- * the hold's line, so no caller reports success from the receipt alone.
- */
-export async function settleUnderHold(
-  chainId: number,
+export async function requireHeldSettlement(
   hold: WriteHoldHandle,
   client: WriteHoldClient,
   receipt: TransactionReceipt,
   proof?: Parameters<WriteHoldHandle['onReceipt']>[2],
 ): Promise<void> {
   const state = await hold.onReceipt(receipt, client, proof).catch(() => hold.peek())
-  if (state.status === 'clear') {
-    if (settledHashOf(state.settled) === receipt.transactionHash.toLowerCase()) return
-    throw new Error(WRITE_RELEASED_LINE)
-  }
-  showHeldWrite(chainId, hold, state)
-  throw new Error(state.line)
+  if (state.status !== 'clear') throw new Error(state.line)
+  const settled = state.settled
+  if (!settled || !('hash' in settled) || settled.hash.toLowerCase() !== receipt.transactionHash.toLowerCase()) throw new Error(HELD_RELEASED_ELSEWHERE_LINE)
+  if (settled.result === 'success') await hold.acknowledge(settled).catch(() => null)
 }
 
 /** A Safe proposal's key: its chain, Safe and exact call with any field stamped at send time blanked. */

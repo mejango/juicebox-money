@@ -24,6 +24,8 @@ const mocks = vi.hoisted(() => ({
   getBlockNumber: vi.fn(), getLogs: vi.fn(),
   waitReceipt: vi.fn(), waitSafe: vi.fn(), simulate: vi.fn(), send: vi.fn(), review: vi.fn(),
   post: vi.fn(), pay: vi.fn(), poll: vi.fn(), funding: vi.fn(), paymentSent: vi.fn(),
+  /** The SDK's recovery outcome, when a test fixes it; the real recovery otherwise. */
+  recovered: undefined as unknown,
 }))
 
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address, chainId: mocks.chainId, connector: { uid: mocks.connectorUid } }) }))
@@ -42,6 +44,9 @@ vi.mock('@/lib/wallet-core', () => ({
     getLogs: (args: unknown) => mocks.getLogs(chain, args),
     getBytecode: (args: unknown) => mocks.getCode(chain, args),
     waitForTransactionReceipt: (args: unknown) => mocks.waitReceipt(chain, args),
+    // The account reads the SDK's write hold takes before a direct send opens the wallet.
+    getChainId: async () => chain,
+    getTransactionCount: async () => 3,
   }),
   connectedWallet: async (chain: number) => {
     mocks.chainId = chain
@@ -62,13 +67,18 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
   requireTransactionReview: mocks.review,
   requireFundingChainSelection: mocks.funding,
 }))
+vi.mock('@/lib/write-holds', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/lib/write-holds')>()
+  return { ...actual, recoverSaved: ((...args: Parameters<typeof actual.recoverSaved>) =>
+    mocks.recovered ? Promise.resolve(mocks.recovered) : actual.recoverSaved(...args)) as typeof actual.recoverSaved }
+})
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   relayrPostBundle: mocks.post, relayrPay: mocks.pay, relayrPoll: mocks.poll,
 }))
 
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentRequest,
-  payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
+  payerAttemptOf, payerDeploymentScope, runPayerDeployments, SAFE_PAYER_PENDING, verifyPayerDeployment, type PayerDeploymentSession } from '@/lib/payer-relayr'
 import { isExpiredUnfundedRawQuote } from '@/lib/raw-relayr-lifecycle'
 import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr'
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
@@ -130,7 +140,8 @@ function confirmSavedFunding() {
 function receipt(chain: number) {
   const call = review.calls.find(call => call.chainId === chain)!
   const event = jbProjectPayerDeployerAbi.find(item => item.type === 'event')!
-  return { status: 'success', transactionHash: hashFor(chain), blockHash: BLOCK, blockNumber: 100n,
+  return { status: 'success', transactionHash: hashFor(chain), blockHash: BLOCK, blockNumber: 100n, transactionIndex: 0,
+    from: review.transport === 'direct' ? ALICE : EXECUTOR, to: review.transport === 'safe' ? ALICE : JB_PROJECT_PAYER_DEPLOYER,
     logs: [{ address: JB_PROJECT_PAYER_DEPLOYER,
       topics: encodeEventTopics({ abi: jbProjectPayerDeployerAbi, eventName: 'DeployProjectPayer', args: { projectPayer: PAYER } }),
       data: encodeAbiParameters(event.inputs.filter(input => !input.indexed), [BigInt(call.projectId), call.beneficiary, call.memo,
@@ -149,6 +160,7 @@ beforeEach(() => {
   mocks.address = ALICE
   mocks.chainId = 1
   mocks.safe = false
+  mocks.recovered = undefined
   const values = new Map<string, string>()
   storage = { getItem: vi.fn((key: string) => values.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => { values.set(key, value) }), removeItem: vi.fn((key: string) => { values.delete(key) }) }
@@ -159,7 +171,7 @@ beforeEach(() => {
     args.functionName === 'DIRECTORY' ? directoryFor(chain) : args.functionName === 'IMPLEMENTATION' ? IMPLEMENTATION : ALICE)
   mocks.getTransaction.mockReset().mockImplementation(async (chain: number) => {
     const call = review.calls.find(call => call.chainId === chain)!
-    return { hash: hashFor(chain), chainId: chain, blockHash: BLOCK, blockNumber: 100n, value: 0n,
+    return { hash: hashFor(chain), chainId: chain, blockHash: BLOCK, blockNumber: 100n, value: 0n, nonce: 3, transactionIndex: 0,
       from: review.transport === 'direct' ? ALICE : EXECUTOR,
       to: review.transport === 'safe' ? ALICE : JB_PROJECT_PAYER_DEPLOYER,
       input: review.transport === 'safe' ? encodeFunctionData({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction',
@@ -167,8 +179,8 @@ beforeEach(() => {
     }
   })
   mocks.getReceipt.mockReset().mockImplementation(async (chain: number) => receipt(chain))
-  mocks.getBlock.mockReset().mockImplementation(async (_chain: number, args?: { blockTag?: string }) => args?.blockTag === 'finalized'
-    ? { number: 100n, hash: BLOCK, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: BLOCK })
+  mocks.getBlock.mockReset().mockImplementation(async (_chain: number, args?: { blockTag?: string; blockNumber?: bigint }) => args?.blockTag === 'finalized'
+    ? { number: 100n, hash: BLOCK, timestamp: BigInt(Math.floor(Date.now() / 1_000)) } : { hash: BLOCK, number: args?.blockNumber ?? 100n })
   mocks.getBlockNumber.mockReset().mockResolvedValue(100n)
   mocks.getLogs.mockReset().mockResolvedValue([])
   mocks.getCode.mockReset().mockResolvedValue(`0x363d3d373d3d3d363d73${IMPLEMENTATION.slice(2)}5af43d82803e903d91602b57fd5bf3`)
@@ -409,7 +421,17 @@ describe('payer deployment review and raw Relayr execution', () => {
       throw new Error('Wallet disconnected after send.')
     })
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/disconnected/)
-    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/wallet funding result is uncertain/)
+    const shown = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow).catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/wallet funding result is uncertain/) })
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    // The SDK's one check, never a dead end: once the user checked it, the attempt is archived and a new review may start.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const outcome = await savedAttempts.recover(shown.attempt, { getChainId: async () => shown.attempt.chainId } as never)
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(shown.attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/You checked this payment/)
+    expect(loadPayerDeployment(review.scope)).toBeNull()
     expect(mocks.pay).toHaveBeenCalledTimes(1)
   })
 
@@ -433,13 +455,29 @@ describe('payer deployment review and raw Relayr execution', () => {
     mocks.getReceipt.mockImplementation(async (chain: number, args: { hash: Hex }) => args.hash === PAYMENT_HASH
       ? { transactionHash: PAYMENT_HASH, to: ADMIN, blockHash: BLOCK, blockNumber: 100n, status: 'success' }
       : receipt(chain, args))
+    // It can't be authenticated: the SDK's one check, never a dead end and never a second payment.
+    let shown: unknown
     for (let resume = 0; resume < 2; resume += 1) {
-      await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toMatchObject({ name: 'RelayrProofError' })
+      shown = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow).catch(error => error)
+      expect(shown).toMatchObject({ name: 'SavedAttemptShownError' })
     }
     expect(loadPayerDeployment(review.scope)).toMatchObject({ phase: 'executing', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] })
     expect(mocks.poll).not.toHaveBeenCalled()
     expect(mocks.post).toHaveBeenCalledTimes(1)
     expect(mocks.pay).toHaveBeenCalledTimes(1)
+    // Only the user's check retires it: the attempt is archived unresolved, and a new review may deploy again.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const { publicClient } = await import('@/lib/wallet-core')
+    const { attempt } = shown as { attempt: Parameters<typeof savedAttempts.recover>[0] }
+    const outcome = await savedAttempts.recover(attempt, publicClient(attempt.chainId as JBChainId) as never)
+    expect(outcome.status).toBe('check')
+    if (outcome.status !== 'check') return
+    await expect(savedAttempts.retire(attempt, { by: 'check', outcome })).resolves.toMatchObject({ retired: true })
+    const id = loadPayerDeployment(review.scope)!.id
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/You checked this payment/)
+    expect(loadPayerDeployment(review.scope)).toBeNull()
+    expect(mocks.pay).toHaveBeenCalledTimes(1)
+    expect(id).toBe(review.id)
   })
 
   it('stops before publication if browser storage cannot preserve the frozen review', async () => {
@@ -548,7 +586,13 @@ describe('direct and Safe payer recovery', () => {
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
     const saved = loadPayerDeployment(review.scope)!
     expect(saved.outcomes[0].state).toBe('sending')
-    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/without returning a hash/)
+    // The SDK holds the lost reply: shown with its line (and its exit when due), never sent again.
+    const shown = await runPayerDeployments(saved, vi.fn(), flow).catch(error => error)
+    expect(shown).toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/without returning a hash/) })
+    // The page shows the SDK's hold of it, whose exit comes when due: never a permanent refusal.
+    const { savedAttempts } = await import('@/lib/write-holds')
+    const { publicClient } = await import('@/lib/wallet-core')
+    await expect(savedAttempts.recover(shown.attempt, publicClient(11155111) as never)).resolves.toMatchObject({ status: 'held' })
     expect(mocks.send).toHaveBeenCalledTimes(1)
     await expect(finishPayerDeployment(review.scope, review.id)).rejects.toThrow(/Resolve the existing/)
   })
@@ -580,6 +624,42 @@ describe('direct and Safe payer recovery', () => {
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/browser storage/)
     expect(mocks.send).not.toHaveBeenCalled()
     expect(loadPayerDeployment(review.scope)?.outcomes[0].state).toBe('ready')
+  })
+
+  it('keeps a success the SDK settled but could not authenticate settled: a disagreeing receipt never fails it or deploys again', async () => {
+    review = makeReview([1])
+    mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
+    const saved = loadPayerDeployment(review.scope)!
+    expect(saved.outcomes[0].state).toBe('sending')
+    // The hold settled it as a success its clone proof could not yet read.
+    mocks.recovered = { status: 'done', result: 'success', authenticated: false, hash: hashFor(1), reason: 'Clone unreadable.' }
+    // A receipt read that disagrees: reverted.
+    mocks.getReceipt.mockImplementation(async () => ({ ...receipt(1), status: 'reverted' }))
+    await expect(runPayerDeployments(saved, vi.fn(), flow)).rejects.toThrow(/still confirming/)
+    const settled = loadPayerDeployment(review.scope)!
+    expect(settled.outcomes[0]).toMatchObject({ state: 'submitted', hash: hashFor(1), settled: true })
+    // Resumed with the SDK's recovery real again: still followed, never failed, never sent again.
+    mocks.recovered = undefined
+    await expect(runPayerDeployments(settled, vi.fn(), flow)).rejects.toThrow(/still confirming/)
+    expect(loadPayerDeployment(review.scope)!.outcomes[0]).toMatchObject({ state: 'submitted', hash: hashFor(1), settled: true })
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+    // Once its receipt and clone read, it is verified.
+    mocks.getReceipt.mockImplementation(async (chain: number) => receipt(chain))
+    const done = await runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)
+    expect(done.outcomes[0]).toMatchObject({ state: 'verified', hash: hashFor(1), payer: PAYER })
+    expect(mocks.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows a success the SDK settled without its transaction as confirming, never deploying again', async () => {
+    review = makeReview([1])
+    mocks.send.mockRejectedValueOnce(new Error('Wallet send response lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/response lost/)
+    mocks.recovered = { status: 'done', result: 'success', authenticated: false, reason: 'Proven by another tab.' }
+    await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow))
+      .rejects.toMatchObject({ name: 'SavedAttemptShownError', message: expect.stringMatching(/still confirming/) })
+    expect(loadPayerDeployment(review.scope)!.outcomes[0].state).toBe('sending')
+    expect(mocks.send).toHaveBeenCalledTimes(1)
   })
 
   it('rechecks a canonical direct revert before a reviewed retry and keeps its failed transaction history', async () => {
@@ -1023,4 +1103,20 @@ it('requires durable storage before reconciling a matching submitted funding err
   expect(saveState).toHaveBeenLastCalledWith(review, true)
   expect(mocks.poll).not.toHaveBeenCalled()
   expect(mocks.pay).toHaveBeenCalledOnce()
+})
+
+describe('a Safe payer deployment the journal saved without its proposal', () => {
+  it('is proven by its clone once the SDK hold settled the execution, so recovery follows it instead of a dead end', async () => {
+    mocks.safe = true
+    review = makeReview([1])
+    // The Safe app took the proposal, but its reply never reached the journal.
+    mocks.send.mockRejectedValueOnce(new Error('Safe reply lost.'))
+    await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reply lost/)
+    const saved = loadPayerDeployment(review.scope)!
+    expect(saved.outcomes[0]).toMatchObject({ state: 'sending' })
+    expect(saved.outcomes[0].safeProposalHash).toBeUndefined()
+    // The execution the hold settled authenticates as this deployment by its exact clone.
+    const proof = await payerAttemptOf(saved, 0).authenticate(hashFor(1))
+    expect(proof).toEqual({ result: 'proven', value: PAYER })
+  })
 })

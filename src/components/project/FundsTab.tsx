@@ -1,7 +1,7 @@
 'use client'
 
-import { legacyAllowanceKeys } from '@/lib/legacy-intents'
-import { intent, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { legacyAllowanceKeys, legacyUseAllowanceKey } from '@/lib/legacy-intents'
+import { allowanceIntent } from '@bananapus/nana-sdk-core/review'
 
 import { projectDisplayKey, invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 
@@ -979,11 +979,12 @@ function FundsTxFlow({
         quote,
         min,
         account: address,
-        // Not an SDK builder yet: the project's payout of this token and currency to this beneficiary, no amount.
-        intent: writeIntentKey('use-allowance', {
-          chainId, projectId, token: intent.address(ctx.token), currency: line.currency, beneficiary: intent.address(address),
-        }),
-        legacy: legacyAllowanceKeys({ chainId, projectId, terminal, token: ctx.token, amount, currency: line.currency, beneficiary: address }),
+        // The project's payout of this token and currency to this beneficiary, no amount.
+        intent: allowanceIntent({ chainId, project: projectId, terminal, token: ctx.token, currency: line.currency, beneficiary: address }),
+        legacy: [
+          legacyUseAllowanceKey({ chainId, projectId, token: ctx.token, currency: line.currency, beneficiary: address }),
+          ...legacyAllowanceKeys({ chainId, projectId, terminal, token: ctx.token, amount, currency: line.currency, beneficiary: address }),
+        ],
       })
     } catch (e) {
       setFlowError(e instanceof FlowError ? e.message : shortError(e))

@@ -211,6 +211,15 @@
     @apply cursor-not-allowed border-grey-200 text-grey-300 shadow-none;
   }
 
+  /* The SDK's unstyled HeldWritesNotice: its release is a secondary button. */
+  .held-writes-notice button {
+    @apply mt-1 inline-flex min-h-[36px] items-center justify-center rounded-lg border border-grey-300 bg-white px-4 font-sans font-medium text-grey-900;
+  }
+
+  .held-writes-notice button:disabled {
+    @apply cursor-not-allowed text-grey-300;
+  }
+
   .btn-tertiary {
     @apply inline-flex items-center justify-center rounded-lg border border-transparent bg-bluebs-25 font-sans font-medium text-bluebs-600;
   }

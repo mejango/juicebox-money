@@ -12,9 +12,9 @@ vi.mock('@/lib/defifa-write-recovery', async original => {
   clearDefifaWriteRecovery: m.clear,
   readDefifaWriteRecovery: (scope: Parameters<typeof actual.readDefifaWriteRecovery>[0]) => m.realEngine ? actual.readDefifaWriteRecovery(scope) : m.read(scope),
   DEFIFA_RECOVERY_QUERY_PREFIX: ['defifa-write-recovery'],
-  sendRecoverableDefifaWrite: async ({ send, request, options, onRecord, scope, safe }: Parameters<typeof import('@/lib/defifa-write-recovery').sendRecoverableDefifaWrite>[0]) => {
-    if (m.realEngine) return actual.sendRecoverableDefifaWrite({ send, request, options, onRecord, scope, safe })
-    const record = { version: 1 as const, id: 'owned-test', chainId: scope.chainId, account: scope.account, safe, call: { to: request.address, data: encodeFunctionData(request), value: '0' } }
+  sendRecoverableDefifaWrite: async ({ send, request, options, onRecord, scope }: Parameters<typeof import('@/lib/defifa-write-recovery').sendRecoverableDefifaWrite>[0]) => {
+    if (m.realEngine) return actual.sendRecoverableDefifaWrite({ send, request, options, onRecord, scope })
+    const record = { version: 1 as const, id: 'owned-test', chainId: scope.chainId, account: scope.account, safe: false, call: { to: request.address, data: encodeFunctionData(request), value: '0' } }
     return send(request, { ...options,
       beforeWrite: async () => {
         m.saved = record; onRecord?.(record)

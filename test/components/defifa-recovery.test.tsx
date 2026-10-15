@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { erc20Abi, erc721Abi, TransactionNotFoundError, type Address, type Hex } from 'viem'
 import { DefifaNftTransactionRevertedError } from '@bananapus/nana-sdk-core/v6'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
-import { readDefifaWriteRecovery, sendRecoverableDefifaWrite, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
+import { defifaWriteNamespace, readDefifaWriteRecovery, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
+import { writeHolds } from '@/lib/write-holds'
+import { encodeFunctionData } from 'viem'
 import type { TxRequest } from '@/hooks/useSafeTx'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
@@ -17,10 +19,14 @@ const EXECUTION = `0x${'b'.repeat(64)}` as Hex
 const scope = { chainId: 8453, projectId: 27, account: ACCOUNT, action: 'transfer' as DefifaWriteAction }
 const request: TxRequest = { chainId: 8453, address: HOOK, abi: erc721Abi, functionName: 'safeTransferFrom', args: [ACCOUNT, RECIPIENT, 123n] }
 const m = vi.hoisted(() => ({ transaction: vi.fn(), receipt: vi.fn(), restore: vi.fn(), verify: vi.fn(), approval: vi.fn(), safe: vi.fn(), reported: vi.fn() }))
-vi.mock('wagmi', () => ({ usePublicClient: () => ({
+// One client, as wagmi gives: the node knows the saved hash and it hasn't been mined yet.
+const client = vi.hoisted(() => ({} as Record<string, unknown>))
+vi.mock('wagmi', () => ({ usePublicClient: () => Object.assign(client, {
   getTransactionReceipt: m.receipt,
   getChainId: async () => 8453,
-  // The node knows the saved hash and it hasn't been mined yet.
+  getBlockNumber: async () => 100n,
+  getTransactionCount: async () => 3,
+  getBlock: async () => ({ number: 100n, hash: `0x${'f1'.repeat(32)}`, timestamp: 1n }),
   getTransaction: m.transaction,
 }) }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original(), restoreDefifaNftReceiptContext: m.restore, verifyDefifaNftTransaction: m.verify }))
@@ -37,10 +43,18 @@ const render = async (account = ACCOUNT, action: DefifaWriteAction = 'transfer')
   await act(async () => root!.render(<QueryClientProvider client={queries}><DefifaRecovery chainId={8453} projectId={27} account={account} hook={HOOK} actions={[action]} active={false}><p>Fresh NFT controls</p></DefifaRecovery></QueryClientProvider>))
   await settle()
 }
-const save = (known = true, safe = false, action: DefifaWriteAction = 'transfer') => sendRecoverableDefifaWrite({
-  scope: { ...scope, action }, request: action === 'pay' ? { ...request, abi: erc20Abi, functionName: 'approve', args: [RECIPIENT, 7n] } : request,
-  safe, options: { reviewedAccount: ACCOUNT }, send: async (_request, options) => { await options.beforeWrite?.(); return known ? HASH : null },
-})
+/** A Defifa write as useSafeTx sends it: under the SDK hold of its namespace, its wallet reply saved when it returned one. */
+const save = async (known = true, safe = false, action: DefifaWriteAction = 'transfer', client: Record<string, unknown> = {}) => {
+  const sent = action === 'pay' ? { ...request, abi: erc20Abi, functionName: 'approve', args: [RECIPIENT, 7n] } as TxRequest : request
+  const hold = writeHolds.open({ chainId: 8453, account: ACCOUNT, safe, namespace: defifaWriteNamespace({ ...scope, action }),
+    call: { to: sent.address, data: encodeFunctionData(sent as never), value: 0n } })
+  await hold.send({ getChainId: async () => 8453, getBlockNumber: async () => 100n, getTransactionCount: async () => 3, ...client } as never, async gate => {
+    await gate.beforeSend()
+    if (!known) throw new Error('The wallet reply was lost.')
+    gate.afterSubmit(HASH)
+    return HASH
+  }).catch(() => undefined)
+}
 const click = async () => { await act(async () => host.querySelector<HTMLButtonElement>('button')!.click()); await settle() }
 beforeEach(() => {
   localStorage.clear()
@@ -61,7 +75,7 @@ describe('original native action recovery', () => {
     expect(host.textContent).toContain("Your earlier NFT transfer hasn't confirmed yet. Check your wallet.")
     expect(host.textContent).not.toContain('Fresh NFT controls')
     expect(host.querySelector('input')).toBeNull()
-    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet. Send again'])
+    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet'])
     await act(async () => root!.unmount()); root = undefined
     await render()
     expect(host.textContent).toContain("Your earlier NFT transfer hasn't confirmed yet.")
@@ -74,7 +88,7 @@ describe('original native action recovery', () => {
 
   it('offers the checked-wallet exit for a Safe reservation with no hash', async () => {
     await save(false, true); await render()
-    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet. Send again'])
+    expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['I checked my wallet'])
     await click()
     expect(readDefifaWriteRecovery(scope)).toBeNull()
     expect(host.textContent).toContain('Fresh NFT controls')
@@ -83,9 +97,7 @@ describe('original native action recovery', () => {
   /** A hash the node never sees, saved with the account's nonce: held, and its exit due 30 minutes after the wallet returned it. */
   const saveUnseen = async () => {
     m.transaction.mockImplementation(async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) })
-    await sendRecoverableDefifaWrite({ scope, request, safe: false, options: { reviewedAccount: ACCOUNT },
-      client: { getBlockNumber: async () => 100n, getTransactionCount: async () => 3 },
-      send: async (_request, options) => { await options.beforeWrite?.(); return HASH } })
+    await save(true, false, 'transfer', { getTransaction: m.transaction })
   }
   const buttons = () => [...host.querySelectorAll('button')].map(button => button.textContent)
 
@@ -97,8 +109,8 @@ describe('original native action recovery', () => {
       vi.setSystemTime(Date.now() + 31 * 60_000)
       await act(async () => { vi.advanceTimersByTime(60_000) }); await settle()
       expect(host.textContent).toContain("This transaction can't be checked onchain.")
-      expect(buttons()).toContain('I checked my wallet. Send again')
-      await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'I checked my wallet. Send again')!.click()); await settle()
+      expect(buttons()).toContain('I checked my wallet')
+      await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'I checked my wallet')!.click()); await settle()
       expect(readDefifaWriteRecovery(scope)).toBeNull()
       expect(host.textContent).toContain('Fresh NFT controls')
     } finally {
@@ -114,7 +126,7 @@ describe('original native action recovery', () => {
       vi.setSystemTime(Date.now() + 31 * 60_000)
       await click()
       expect(host.textContent).toContain('RPC unavailable')
-      expect(buttons()).toContain('I checked my wallet. Send again')
+      expect(buttons()).toContain('I checked my wallet')
     } finally {
       vi.useRealTimers()
     }
@@ -122,7 +134,8 @@ describe('original native action recovery', () => {
 
   it('gives a saved hash still pending one line and no exit', async () => {
     await save(); await render()
-    expect(host.textContent).toContain('Still pending in your wallet. Speed it up or cancel it there.')
+    // The SDK view's one line for a write the wallet just sent.
+    expect(host.textContent).toContain('Confirming your transaction.')
     expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['Check original transaction'])
   })
 

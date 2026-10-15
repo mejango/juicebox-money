@@ -8,7 +8,8 @@ import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
 import { connectedWallet, publicClient } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { isDefiniteWalletRejection, simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, simulateStateChangingTransaction, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictRetirable, writeHolds } from '@/lib/write-holds'
 import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
@@ -48,6 +49,8 @@ type PayerDeploymentOutcome = {
   payer?: Address
   error?: string
   failedHashes?: Hex[]
+  /** The SDK settled it as a success: followed until verified, never failed or deployed again. */
+  settled?: true
 }
 
 /** Raw permissionless factory calls have no replay nonce: one journal owns the entire attempt. */
@@ -55,6 +58,8 @@ export type PayerDeploymentSession = {
   version: 1
   id: string
   archived?: boolean
+  /** The SDK retired its saved send (the user's check or exit): archived unresolved, so a new review may replace it. */
+  retired?: true
   scope: string
   account: Address
   transport: 'direct' | 'safe' | 'relayr'
@@ -69,6 +74,64 @@ export type PayerDeploymentSession = {
   /** Every payment sent for the quote, as relayrPaymentDetails authenticated it, under the hash it was mined. */
   payments?: RelayrSentPayment[]
   records: RelayrTransactionRecord[]
+}
+
+/** One chain's payer deployment of one attempt: held by the attempt and chain. No SDK builder covers it. */
+const payerNamespace = (id: string, chainId: number) => writeIntentKey('payer-deploy', { attempt: id, chainId })
+
+/**
+ * How a saved deployment is proven: from its sender, and through its Safe proposal when the journal has it. A
+ * Safe execution whose proposal the journal never saw (the hold proved the Safe ran this exact call) is proven by
+ * its clone alone.
+ */
+function proofOf(session: PayerDeploymentSession, outcome: Pick<PayerDeploymentOutcome, 'safeProposalHash'>): [Address | undefined, boolean, Hex | undefined] {
+  if (session.transport === 'relayr') return [undefined, false, undefined]
+  return [session.account, session.transport === 'safe', outcome.safeProposalHash]
+}
+
+/** The SDK hold over one chain's direct or Safe payer deployment. */
+function payerHold(session: PayerDeploymentSession, call: PayerDeploymentCall) {
+  return writeHolds.open({ chainId: call.chainId, account: session.account, safe: session.transport === 'safe', namespace: payerNamespace(session.id, call.chainId),
+    call: { to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n } })
+}
+
+/**
+ * A chain's saved payer deployment as the SDK's saved-attempt recovery reads
+ * it: only what the journal saved. Its domain check is the exact factory call's
+ * verified clone; the journal's strict re-read is the final say before a check
+ * or exit retires it.
+ */
+export function payerAttemptOf(session: PayerDeploymentSession, index: number): SavedAttempt<Address> {
+  const call = session.calls[index]
+  const outcome = session.outcomes[index]
+  const safe = session.transport === 'safe'
+  const attempt: SavedAttempt<Address> = {
+    chainId: call.chainId,
+    account: session.account,
+    safe,
+    namespaces: [payerNamespace(session.id, call.chainId)],
+    call: { to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n },
+    saved: {
+      started: true,
+      ...(safe && outcome.safeProposalHash ? { safeTxHash: outcome.safeProposalHash } : outcome.hash ? { hash: outcome.hash } : {}),
+    },
+    async authenticate(hash) {
+      if (!hash) return { result: 'unknown' }
+      try {
+        // A Safe execution the journal never saw the proposal of: the hold proved the Safe ran this exact call, so its clone is checked alone.
+        const proposal = safe ? outcome.safeProposalHash : undefined
+        return { result: 'proven', value: await verifyPayerDeployment(call, hash, ...proofOf(session, { ...outcome, safeProposalHash: proposal })) }
+      } catch (error) {
+        return { result: 'unknown', reason: error instanceof Error ? error.message : undefined }
+      }
+    },
+    // A strict, fresh read: storage that can't be read refuses (but under the warned exit).
+    confirmRetirable: strictRetirable(() => attempt, () => {
+      const now = readJournal(session.id)
+      return !!now && !now.archived && now.outcomes[index]?.state !== 'verified'
+    }),
+  }
+  return attempt
 }
 
 export function payerDeploymentScope(projects: readonly (readonly [number, number])[]): string {
@@ -105,7 +168,7 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
       !Array.isArray(value.outcomes) || value.outcomes.length !== value.calls.length ||
       !Array.isArray(value.records)) throw new Error('The saved payer deployment is malformed. Keep it pending.')
   value.calls.forEach(assertCall)
-  if (value.archived && (value.phase !== 'complete' || !value.outcomes.every(outcome => outcome.state === 'verified'))) {
+  if (value.archived && !value.retired && (value.phase !== 'complete' || !value.outcomes.every(outcome => outcome.state === 'verified'))) {
     throw new Error('An unresolved payer deployment cannot be archived.')
   }
   if (value.transport === 'relayr' && (value.calls.length < 2 || !relayrSupportsChains(value.calls.map(call => call.chainId)))) {
@@ -291,7 +354,8 @@ export async function verifyPayerDeployment(call: PayerDeploymentCall, hash: Hex
   const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })
   if (canonical.hash !== receipt.blockHash) throw new Error('The payer deployment receipt is no longer canonical.')
   if (safe) {
-    if (!account || !safeProposalHash || safeExecutionResult(receipt, account, safeProposalHash).status !== 'success') {
+    // Without a saved proposal, the Safe's exact execTransaction and the clone event it emitted (caller = the Safe) are the proof.
+    if (!account || (safeProposalHash && safeExecutionResult(receipt, account, safeProposalHash).status !== 'success')) {
       throw new Error('The receipt does not prove the exact original Safe payer proposal executed successfully.')
     }
     if (!account || !transaction.to || !isAddressEqual(transaction.to, account)) throw new Error('The payer deployment did not execute through the reviewed Safe.')
@@ -360,6 +424,8 @@ async function findSafePayerExecution(call: PayerDeploymentCall, outcome: PayerD
 
 /** What a look at a Safe payer proposal says when it ends before the Safe executes the proposal. */
 export const SAFE_PAYER_PENDING = 'The Safe proposal is still pending. Execute it in Safe, then check the deployment status.'
+/** A payer deployment the SDK settled as a success, whose receipt or clone can't be read yet. */
+const PAYER_SETTLED_CONFIRMING = 'The payer deployment went through. It is still confirming.'
 
 /**
  * Resolve existing outcomes only; never submit replacement clones when a send
@@ -401,13 +467,22 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     }
     if (session.phase === 'complete') {
       for (let index = 0; index < session.calls.length; index++) {
-        await verifyPayerDeployment(session.calls[index], session.outcomes[index].hash!, session.transport === 'relayr' ? undefined : session.account, session.transport === 'safe', session.outcomes[index].safeProposalHash)
+        await verifyPayerDeployment(session.calls[index], session.outcomes[index].hash!, ...proofOf(session, session.outcomes[index]))
       }
       return session
     }
     if (session.transport === 'relayr') {
       const pollError = await runRawRelayrLifecycle({
         session, entries: session.calls.map(entryOf), preferredPaymentChainId: startChainId,
+        checked: {
+          stillSaved: () => { const now = readJournal(session.id); return !!now && !now.archived && now.phase !== 'complete' },
+          retired: () => {
+            // The user checked this payment: the attempt is archived unresolved, so a new review may deploy again.
+            session = save({ ...session, archived: true, retired: true }, true)
+            onUpdate(snapshot(session))
+            throw new Error('You checked this payment. Open a new review to deploy the payer addresses again.')
+          },
+        },
         changedCallMessage: 'The original payer quote changed a reviewed deployment.',
         lostQuoteMessage: 'The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.',
         saveState: (next, beforeWrite) => { session = next; persist(beforeWrite) },
@@ -459,10 +534,32 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       const call = session.calls[index]
       let outcome = session.outcomes[index]
       if (outcome.state === 'verified') {
-        await verifyPayerDeployment(call, outcome.hash!, session.account, session.transport === 'safe', outcome.safeProposalHash)
+        await verifyPayerDeployment(call, outcome.hash!, ...proofOf(session, outcome))
         continue
       }
-      if (outcome.state === 'sending') throw new Error('The wallet may have sent this payer deployment without returning a hash. Check its activity before continuing.')
+      if (!outcome.settled && (outcome.state === 'sending' || (outcome.state === 'submitted' && !outcome.hash && !outcome.safeProposalHash))) {
+        // Recovery runs first: the SDK recovers a send whose wallet reply was lost, before any preparation.
+        const attempt = payerAttemptOf(session, index)
+        const recovered = await recoverSaved(attempt, publicClient(call.chainId) as unknown as WriteHoldClient,
+          'The wallet may have sent this payer deployment without returning a hash. Check its activity before continuing.')
+        // A success another tab proved without its transaction: shown as confirming, never deployed again.
+        if (recovered.status === 'done' && recovered.result === 'success' && !recovered.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, PAYER_SETTLED_CONFIRMING)
+        if (recovered.status === 'done' && recovered.result === 'success' && recovered.hash) {
+          // The settled hash is the transaction itself (a Safe's execution), followed from here.
+          outcome = session.outcomes[index] = recovered.authenticated
+            ? { ...outcome, state: 'verified', hash: recovered.hash, payer: recovered.value }
+            : { ...outcome, state: 'submitted', hash: recovered.hash, settled: true }
+          persist()
+          if (outcome.state === 'verified') continue
+        } else if (recovered.status === 'done' && recovered.result === 'failed') {
+          outcome = session.outcomes[index] = { chainId: call.chainId, state: 'failed', hash: recovered.hash, failedHashes: outcome.failedHashes }
+          persist()
+        } else {
+          // Retired (the user's exit or check, or a definite rejection): nothing is out.
+          outcome = session.outcomes[index] = { chainId: call.chainId, state: 'ready', failedHashes: outcome.failedHashes }
+          persist()
+        }
+      }
       if (outcome.state === 'failed') {
         if (session.transport !== 'direct' || !outcome.hash || (outcome.failedHashes?.length ?? 0) >= 16) {
           throw new Error('The original payer deployment must be resolved before creating another address.')
@@ -494,7 +591,19 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           throw error
         }
         try {
-          const hash = await wallet.sendTransaction({ chain: wallet.chain, account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
+          // Held by the SDK's write hold from just before the wallet opens until it settles.
+          const hash = await payerHold(session, call).send<Hex>(publicClient(call.chainId) as unknown as WriteHoldClient, async gate => {
+            await gate.beforeSend()
+            let sent: Hex
+            try {
+              sent = await wallet.sendTransaction({ chain: wallet.chain, account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
+            } catch (error) {
+              if (isDefiniteWalletRejection(error)) gate.onRejected()
+              throw error
+            }
+            gate.afterSubmit(sent)
+            return sent
+          })
           outcome = session.outcomes[index] = session.transport === 'safe'
             ? { ...outcome, state: 'submitted', safeProposalHash: hash }
             : { ...outcome, state: 'submitted', hash }
@@ -517,24 +626,45 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         outcome = session.outcomes[index] = { ...outcome, hash }
         persist()
       }
-      if (!outcome.hash) throw new Error('The original payer deployment hash is unavailable.')
+      if (!outcome.hash) throw new Error(outcome.settled ? PAYER_SETTLED_CONFIRMING : 'The original payer deployment hash is unavailable.')
       await publicClient(call.chainId).waitForTransactionReceipt({ hash: outcome.hash, timeout: 60_000 })
       let payer: Address
       try {
-        payer = await verifyPayerDeployment(call, outcome.hash, session.account, session.transport === 'safe', outcome.safeProposalHash)
+        payer = await verifyPayerDeployment(call, outcome.hash, ...proofOf(session, outcome))
       } catch (error) {
-        if (session.transport === 'direct') {
-          try {
-            await requireCanonicalDirectRevert(call, outcome.hash, session.account)
-            session.outcomes[index] = { ...outcome, state: 'failed', failedHashes: [...(outcome.failedHashes ?? []), outcome.hash],
-              error: 'The original deployment reverted. Review this chain again to retry; no payer was created.' }
-            persist()
-          } catch { /* An unavailable proof never permits another clone deployment. */ }
+        // A settled success always wins: a read that disagrees is asked again, never a failure.
+        if (outcome.settled) throw new Error(PAYER_SETTLED_CONFIRMING)
+        // An unavailable revert proof never permits another clone deployment.
+        if (session.transport === 'direct' && await requireCanonicalDirectRevert(call, outcome.hash, session.account).then(() => true, () => false)) {
+          session.outcomes[index] = { ...outcome, state: 'failed', failedHashes: [...(outcome.failedHashes ?? []), outcome.hash],
+            error: 'The original deployment reverted. Review this chain again to retry; no payer was created.' }
+          persist()
+          throw error
+        }
+        // A saved hash the app can't authenticate: the SDK decides (held, the one check, or its settlement).
+        const recovered = await recoverSaved(payerAttemptOf(session, index), publicClient(call.chainId) as unknown as WriteHoldClient,
+          error instanceof Error ? error.message : undefined)
+        if (recovered.status === 'done' && recovered.result === 'success' && recovered.authenticated) {
+          session.outcomes[index] = { ...outcome, state: 'verified', hash: recovered.hash ?? outcome.hash, payer: recovered.value }
+          persist()
+          continue
+        }
+        if (recovered.status === 'none') {
+          // Retired by the user's check or exit: nothing is held, and the next run reviews it again.
+          session.outcomes[index] = { chainId: call.chainId, state: 'ready', failedHashes: outcome.failedHashes }
+          persist()
         }
         throw error
       }
       session.outcomes[index] = { ...outcome, state: 'verified', payer }
       persist()
+      // Its proof reaches the hold, which settles it.
+      const client = publicClient(call.chainId)
+      const verified = await client.getTransactionReceipt({ hash: outcome.hash }).catch(() => null)
+      if (verified) {
+        await requireHeldSettlement(payerHold(session, call), client as unknown as WriteHoldClient, verified,
+          viaSafe ? { calls: [{ to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n }] } : undefined).catch(() => null)
+      }
     }
     session.phase = 'complete'
     persist()
@@ -554,8 +684,7 @@ export async function finishPayerDeployment(scope: string, expectedId: string): 
       throw new Error('Resolve the existing payer deployments before starting another attempt.')
     }
     for (let index = 0; index < session.calls.length; index++) {
-      await verifyPayerDeployment(session.calls[index], session.outcomes[index].hash!,
-        session.transport === 'relayr' ? undefined : session.account, session.transport === 'safe', session.outcomes[index].safeProposalHash)
+      await verifyPayerDeployment(session.calls[index], session.outcomes[index].hash!, ...proofOf(session, session.outcomes[index]))
     }
     // Keep a permanent attempt tombstone. New reviews may replace its aliases;
     // a stale tab holding this attempt can never recreate its transaction sends.

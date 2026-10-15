@@ -1,59 +1,30 @@
 'use client'
 
-import { useState, useSyncExternalStore } from 'react'
-import type { WriteHoldState } from '@bananapus/nana-sdk-core/review'
-import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { useWriteHoldWatch } from '@/hooks/useWriteHoldWatch'
-import { publicClient } from '@/lib/wallet-core'
-import {
-  forgetHeldWrite,
-  heldWritesSnapshot,
-  hidesShownExit,
-  sameReservation,
-  showHeldWrite,
-  subscribeHeldWrites,
-  WRITE_RELEASED_LINE,
-  type ShownHeldWrite,
-} from '@/lib/write-holds'
+import { HeldWritesNotice, useHeldWrites } from '@bananapus/nana-sdk-core/review/react'
+import type { WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
+import type { Address } from 'viem'
+import { SUPPORTED_CHAINS } from '@/lib/chains'
+import { publicClient } from '@/lib/wallet-core'
+import { writeHolds } from '@/lib/write-holds'
 
-/** The held writes HeldWritesNotice shows, loaded only once one is held. */
-export default function HeldWritesList() {
-  const held = useSyncExternalStore(subscribeHeldWrites, heldWritesSnapshot, () => [])
-  if (!held.length) return null
+/** The SDK's held-write notice for each supported chain (HeldWritesNotice loads it). */
+export default function HeldWritesList({ account }: { account: Address }) {
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] space-y-2" role="status">
-      {held.map(item => <HeldWrite key={item.state.record.id} item={item} />)}
+    <div className="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))] space-y-2">
+      {SUPPORTED_CHAINS.map(chain => <ChainHeldWrites key={chain.id} chainId={chain.id} account={account} />)}
     </div>
   )
 }
 
-function HeldWrite({ item }: { item: ShownHeldWrite }) {
-  const client = publicClient(item.chainId as JBChainId)
-  const [ended, setEnded] = useState<string | null>(null)
-  const id = item.state.record.id
-  const show = (state: WriteHoldState) => {
-    if (!sameReservation(item.state, state)) return
-    if (state.status === 'clear') forgetHeldWrite(id)
-    else if (state.record.id === id && !hidesShownExit(item.state, state)) showHeldWrite(item.chainId, item.hold, state)
-  }
-  useWriteHoldWatch(item.hold, client as never, show)
-  const exit = async () => {
-    const { released, state } = await item.hold.exit(item.state, { checkedWallet: true }, client as never)
-    if (released) forgetHeldWrite(id)
-    else if (state.status === 'clear') setEnded(WRITE_RELEASED_LINE)
-    else show(state)
-  }
+function ChainHeldWrites({ chainId, account }: { chainId: number; account: Address }) {
+  const client = publicClient(chainId as JBChainId) as unknown as WriteHoldClient
+  // Only what needs the user: a write that is only confirming shows in its own flow.
+  const items = useHeldWrites({ hold: writeHolds, chainId, account, client }).filter(item => item.view.phase === 'held')
   return (
-    <div className="rounded-xl border border-smoke-300 bg-bone p-3 text-sm shadow-lg">
-      {ended ? (
-        <p className="flex items-start justify-between gap-3">
-          <span>{ended}</span>
-          <button type="button" className="text-xs underline" onClick={() => forgetHeldWrite(id)}>Close</button>
-        </p>
-      ) : (
-        <WriteHeldNotice chainId={item.chainId} state={item.state} onExit={item.state.exit ? () => void exit() : undefined} />
-      )}
-    </div>
+    <HeldWritesNotice
+      items={items}
+      className="held-writes-notice space-y-2 rounded-xl border border-smoke-300 bg-bone p-3 text-sm text-smoke-800 shadow-lg"
+    />
   )
 }

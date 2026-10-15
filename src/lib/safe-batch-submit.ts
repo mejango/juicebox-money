@@ -1,6 +1,7 @@
 'use client'
 
-import { settleUnderHold, unprovenUnderHold } from '@/lib/write-holds'
+import { requireHeldSettlement } from '@/lib/write-holds'
+import { legacySafeBatchKey } from '@/lib/legacy-intents'
 
 import { getAccount } from '@wagmi/core'
 import { getAddress, type Address, type Hex } from 'viem'
@@ -17,7 +18,7 @@ import {
   readAuthorityIdentity,
 } from '@bananapus/nana-sdk-core/safe'
 import { composeBatch, dependsOnPrior, type BatchStep } from '@/lib/safe-batch'
-import { intent, simulateCallSequence, waitForTrackedReceipt, writeIntentKey } from '@bananapus/nana-sdk-core/review'
+import { safeBatchIntent, simulateCallSequence, waitForTrackedReceipt } from '@bananapus/nana-sdk-core/review'
 import {
   proposeSafeBatch,
   safeBatchHold,
@@ -304,24 +305,25 @@ export async function submitSafeBatch({
   if (route.kind === 'safe-app') {
     onProgress?.('Continue in Safe, then execute the proposal…')
     // These calls carry no restamped fields: the batch is held by its exact calls.
-    const batchIntent = writeIntentKey('safe-batch', {
-      chainId, safe: intent.address(authority), calls: sequence.map(call => [intent.address(call.to), intent.hex(call.data), call.value ?? 0n]),
-    })
+    const batchIntent = safeBatchIntent({ chainId, safe: authority, calls: sequence })
+    const legacy = [legacySafeBatchKey({ chainId, safe: authority, calls: sequence })]
     const safeTxHash = await proposeSafeBatch({
       chainId,
       safe: authority,
       calls: sequence,
       title: `Review batch on ${chainName(chainId)}`,
       intent: batchIntent,
+      legacy,
     })
     await onProposed?.(safeTxHash)
     // Tracked to its execution, as a single Safe app authority call is.
-    const hold = safeBatchHold({ chainId, safe: authority, intent: batchIntent, calls: sequence })
+    const hold = safeBatchHold({ chainId, safe: authority, intent: batchIntent, calls: sequence, legacy })
     let executionHash: Hex
     try {
       executionHash = await waitForSafeExecutionHash(chainId, safeTxHash, { signal })
     } catch (error) {
-      await unprovenUnderHold(chainId, hold, client as never, safeTxHash, signal)
+      // The wait ended without an execution: unless the flow ended it, the hold takes it as unproven.
+      if (!signal.aborted) await hold.onUnproven(client as never, safeTxHash).catch(() => null)
       throw error
     }
     const receipt = await waitForTrackedReceipt(client, executionHash)
@@ -340,7 +342,7 @@ export async function submitSafeBatch({
       throw error
     }
     // Success is the hold's settlement of this execution: anything else stays held, or neutral.
-    await settleUnderHold(chainId, hold, client as never, receipt, proof)
+    await requireHeldSettlement(hold, client as never, receipt, proof)
     return { kind: 'safe-app', safeTxHash, executionHash }
   }
 
