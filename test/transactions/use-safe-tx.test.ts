@@ -342,6 +342,8 @@ describe('useSafeTx', () => {
       const first = hook.ref.current!.send(request, reviewedByAlice)
       await Promise.resolve()
       await expect(hook.ref.current!.send(request, reviewedByAlice)).resolves.toBeNull()
+      // The review opens once the held view's first read is done.
+      await vi.waitFor(() => expect(mocks.requestReview).toHaveBeenCalledOnce())
       finishReview(false)
       await first
     })
