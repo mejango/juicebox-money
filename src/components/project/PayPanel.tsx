@@ -7,6 +7,7 @@ import {
   currentRulesetQuery,
   projectDisplayQuery,
 } from '@/lib/project-display-queries'
+import { PaymentNotice } from "@/components/project/PaymentNotice";
 import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
 import {
   bytes32ToCidV0,
@@ -35,6 +36,7 @@ import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
 import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1747,6 +1749,7 @@ export function PayPanel({
       setSequenceCompletedKinds(current =>
         current.filter(kind => kind !== "router-signature"),
       );
+      setSequenceStatus(null);
       setSequenceError(reason instanceof Error ? reason.message : "The payment could not be completed.");
     } finally {
       setSequenceStarted(false);
@@ -1831,9 +1834,10 @@ export function PayPanel({
   if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
     const pending = nativeMarket ? inventory : identity;
     const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
+    if (!failed) return <ProjectPayPanelSkeleton embedded />;
     return <div className="space-y-2 text-sm text-smoke-600">
-      <p>{failed ? (nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.') : (nativeMarket ? 'Checking Defifa NFT tiers…' : 'Checking this project’s NFT protocol…')}</p>
-      {failed ? <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button> : null}
+      <p>{nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.'}</p>
+      <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button>
       {addBalanceAction}
     </div>;
   }
@@ -2309,11 +2313,6 @@ export function PayPanel({
         </p>
       ) : null}
 
-      {payDisclosure ? (
-        <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-          {payDisclosure}
-        </p>
-      ) : null}
       {surfaceError ? (
         <p className="mt-3 text-sm text-red-600">
           Couldn&apos;t verify this project&apos;s accepted tokens — payments
@@ -2372,7 +2371,8 @@ export function PayPanel({
       {sequenceOpen ? (
         <TxConfirmDialog
           open
-          eyebrow="Payment sequence"
+          eyebrow={null}
+          notice={<PaymentNotice text={payDisclosure} />}
           title={
             sequenceComplete
               ? mode === "pay"

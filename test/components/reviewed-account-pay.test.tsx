@@ -128,7 +128,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status }: {
+  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status, notice }: {
     open: boolean
     action: string
     onConfirm: () => void
@@ -136,11 +136,13 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
     complete?: boolean
     error?: ReactNode
     status?: ReactNode
+    notice?: ReactNode
   }) =>
     open ? (
       <section data-tx-confirm>
         <p data-status>{status}</p>
         <p data-error>{error}</p>
+        {notice}
         {!complete ? <button type="button" onClick={onClose}>Close review</button> : null}
         {complete ? (
           <button type="button" onClick={onClose}>Done</button>
@@ -237,9 +239,9 @@ async function click(label: string) {
  * frozen actions. Proposals stay with the Safe for the page, so each Safe test
  * pays its own amount.
  */
-async function reviewPayment(amount = '1') {
+async function reviewPayment(amount = '1', payDisclosure?: string) {
   await act(async () =>
-    root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
+    root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} payDisclosure={payDisclosure} />),
   )
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
   await act(async () => {
@@ -250,6 +252,7 @@ async function reviewPayment(amount = '1') {
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 450))
   })
+  if (payDisclosure) expect(host.textContent).not.toContain(payDisclosure)
   await click('Pay')
   expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
 }
@@ -307,6 +310,31 @@ describe('a payment reviewed for one account', () => {
 
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     expect(dialogError()).toBe(CHANGED)
+  })
+
+  it('moves the project notice from the form into the payment confirmation', async () => {
+    const notice = 'Project terms.\n\nContact the project after paying.'
+    await reviewPayment('1', notice)
+    const disclosure = host.querySelector('[data-tx-confirm] details')!
+    expect(disclosure).not.toBeNull()
+    expect(disclosure.querySelector('p')?.textContent).toBe(notice)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it.each(['native', 'erc20'] as const)('clears progress when the %s wallet review is cancelled', async token => {
+    m.token = token
+    let answerReview!: (answer: boolean) => void
+    wallet.requestReview.mockImplementationOnce(() => new Promise<boolean>(resolve => { answerReview = resolve }))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.requestReview.mock.calls.length === 1)
+    expect(host.querySelector('[data-status]')?.textContent).toBe(
+      token === 'native' ? 'Review and execute the payment.' : 'Review and approve USDC access.',
+    )
+    await act(async () => answerReview(false))
+    await waitUntil(() => !!host.querySelector('[data-error]')?.textContent?.includes('cancelled'))
+    expect(host.querySelector('[data-status]')?.textContent).toBe('')
+    expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
   it('pays from the account that reviewed it, as its beneficiary', async () => {
@@ -578,6 +606,22 @@ describe('a payment from a Safe', () => {
 
 
 describe('native market payment guard', () => {
+  it('shows the payment-form shimmer while protocol identity loads and uses cached success during refresh', async () => {
+    m.queries.payNftProtocol = { data: undefined, isSuccess: false, isError: false }
+    const panel = <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+    await act(async () => root.render(panel))
+    expect(host.querySelector('[role="status"]')?.getAttribute('aria-label')).toBe('Loading payment details')
+    expect(host.querySelectorAll('.skeleton-shimmer').length).toBeGreaterThan(0)
+    expect(host.textContent).not.toContain('NFT protocol')
+    expect(host.querySelector('button')).toBeNull()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    m.queries.payNftProtocol = { data: null, isSuccess: true, isError: false, isFetching: true }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+    expect(host.querySelector('[aria-label="Amount"]')).not.toBeNull()
+    expect(host.querySelector('[aria-label="Loading payment details"]')).toBeNull()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
   it('allows ordinary payment after verified identity even when cosmetic full-shop reads fail', async () => {
     m.queries.nativeInventory = { data: null, isSuccess: false, isError: true }
     m.queries.payShop = { data: null, isError: true }
@@ -591,6 +635,15 @@ describe('native market payment guard', () => {
     await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
     expect(host.textContent).toContain('Could not verify')
     expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+  })
+
+  it('uses the same shimmer while a verified native market loads its inventory', async () => {
+    m.queries.payNftProtocol = { data: { protocol: 'defifa' }, isSuccess: true }
+    m.queries.nativeInventory = { data: undefined, isSuccess: false, isError: false }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Market" isRevnet={false} chains={[[1, 42]]} />))
+    expect(host.querySelector('[aria-label="Loading payment details"]')).not.toBeNull()
+    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
   it('keeps native payment blocked if full inventory fails', async () => {

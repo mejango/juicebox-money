@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { zeroAddress, type AbiFunction, type AbiParameter } from 'viem'
 import {
   describeJBHookMetadata,
@@ -375,12 +375,14 @@ function PrettyCall({
   index,
   total,
   nested = false,
+  headerAction,
 }: {
   call: TransactionReviewCall
   index: number
   total: number
   /** One call inside a batch: numbered as a call, no chain chip of its own. */
   nested?: boolean
+  headerAction?: ReactNode
 }) {
   const fn = functionFromCall(call)
   const args = call.args ?? []
@@ -396,14 +398,17 @@ function PrettyCall({
         </p>
       ) : null}
       {nested ? null : (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
-            <ChainIcon chainId={call.chainId} size={16} />
-            {chainName(call.chainId)}
-          </span>
-          <span className="font-mono text-[11px] text-smoke-500">
-            chain {call.chainId}
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
+              <ChainIcon chainId={call.chainId} size={16} />
+              {chainName(call.chainId)}
+            </span>
+            <span className="font-mono text-[11px] text-smoke-500">
+              chain {call.chainId}
+            </span>
+          </div>
+          {headerAction}
         </div>
       )}
 
@@ -576,12 +581,9 @@ function ReviewModal({
       >
         <header className="flex shrink-0 items-start justify-between gap-4 border-b border-smoke-200 bg-white px-4 py-4 sm:px-6">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
-              Client safety check
-            </p>
             <h2
               id={titleId}
-              className="mt-1 font-agrandir text-xl font-medium text-ink"
+              className="font-agrandir text-xl font-medium text-ink"
             >
               {request.title ??
                 (isAuthorization ? 'Review authorization' : 'Review transaction')}
@@ -611,20 +613,6 @@ function ReviewModal({
             </div>
           ) : null}
 
-          <div className="mt-5 flex justify-end">
-            <button
-              type="button"
-              onClick={copyPrompt}
-              className="btn-link min-h-[36px] text-xs"
-            >
-              {copyState === 'copied'
-                ? 'Prompt copied — paste into your LLM'
-                : copyState === 'failed'
-                  ? 'Could not copy prompt'
-                  : '[copy tx audit prompt]'}
-            </button>
-          </div>
-
           <div className="mt-4 space-y-4">
             {request.calls.map((call, index) => (
               <PrettyCall
@@ -632,6 +620,19 @@ function ReviewModal({
                 call={call}
                 index={index}
                 total={request.calls.length}
+                headerAction={index === 0 ? (
+                  <button
+                    type="button"
+                    onClick={copyPrompt}
+                    className="btn-link min-h-[36px] text-xs"
+                  >
+                    {copyState === 'copied'
+                      ? 'Prompt copied — paste into your LLM'
+                      : copyState === 'failed'
+                        ? 'Could not copy prompt'
+                        : '[copy tx audit prompt]'}
+                  </button>
+                ) : null}
               />
             ))}
           </div>

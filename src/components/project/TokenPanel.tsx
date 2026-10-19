@@ -7,8 +7,11 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import type { ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { erc20Abi, zeroAddress } from 'viem'
-import { useReadContract, useReadContracts } from 'wagmi'
+import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
+import { currentRulesetQuery } from '@/lib/project-display-queries'
+import { chainName } from '@/lib/urn'
 import { ChainIcon } from '@/components/ChainIcon'
 import { TokenPanelSkeleton } from '@/components/LoadingSkeletons'
 import { AddressLink } from '@/components/ui/AddressLink'
@@ -17,7 +20,8 @@ import { ConceptTerm } from '@/components/project/ConceptTerm'
 /**
  * The project's own token, as a card (website/ parity: renderTokenPanel).
  * Reads JBTokens.tokenOf — bendystraw's `token` field is the ACCOUNTING
- * token, not this. Zero address = credits only, ERC-20 not deployed yet.
+ * token, not this. Zero address means no ERC-20; rules and total supply
+ * establish whether credits are being issued or already exist.
  */
 export function TokenPanel({
   chainId,
@@ -42,6 +46,20 @@ export function TokenPanel({
   })
 
   const deployed = !!tokenAddress && tokenAddress !== zeroAddress
+  const creditsOnly = tokenAddress === zeroAddress
+  const publicClient = usePublicClient({ chainId })
+  const ruleset = useQuery({
+    ...currentRulesetQuery(publicClient!, { chainId, projectId: BigInt(projectId) }),
+    enabled: creditsOnly && !!publicClient,
+  })
+  const { data: totalSupply, isLoading: supplyLoading, isSuccess: supplyKnown } = useReadContract({
+    abi: jbTokensAbi,
+    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    functionName: 'totalSupplyOf',
+    args: [BigInt(projectId)],
+    chainId,
+    query: { enabled: creditsOnly, staleTime: 60_000 },
+  })
 
   const { data: meta } = useReadContracts({
     contracts: [
@@ -61,9 +79,19 @@ export function TokenPanel({
     query: { enabled: deployed, staleTime: 60_000 },
   })
 
-  if (isLoading) {
+  if (isLoading || (creditsOnly && (supplyLoading || (!!publicClient && ruleset.isPending)))) {
     return <TokenPanelSkeleton compact={compact} />
   }
+
+  const creditEvidence = creditsOnly && supplyKnown && ruleset.isSuccess
+  const noIssuance = ruleset.data?.ruleset.weight === 0n
+  const creditDescription = !creditEvidence
+    ? 'Token and credit information is temporarily unavailable.'
+    : noIssuance
+      ? totalSupply === 0n
+        ? `This project does not currently offer tokens or credits for payments on ${chainName(chainId)}. No tokens or credits are in circulation on this chain.`
+        : `Payments on ${chainName(chainId)} do not currently issue new credits. Existing credit balances are still recorded within Juicebox.`
+      : 'Payments can issue credits recorded within Juicebox. If the project creates a wallet token (ERC-20), holders can claim it in exchange for those credits.'
 
   // One row list for both variants; a row can align items-center instead of
   // items-baseline per variant (the full Address row centers, compact's
@@ -163,8 +191,7 @@ export function TokenPanel({
         </dl>
       ) : (
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Balances are recorded within Juicebox as credits. If the project creates
-          a wallet token (ERC-20), holders can claim it in exchange for those credits.
+          {creditDescription}
         </p>
       )}
     </div>

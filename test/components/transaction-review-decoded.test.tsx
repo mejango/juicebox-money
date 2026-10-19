@@ -23,7 +23,7 @@ vi.mock('next/image', () => ({
 
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
+import { requireTransactionReview, buildTransactionReviewPrompt, type TransactionReviewRequest } from '@/lib/transaction-review'
 import '../dialog-shim'
 
 const TOKEN = '0x3333333333333333333333333333333333333333'
@@ -174,4 +174,35 @@ describe('decoded transaction review', () => {
     expect(text).toContain('plus the exact message your signature commits to')
     expect(text).not.toContain('typed data')
   })
+})
+
+
+it('keeps the audit action inside the first transaction card and copies the complete review', async () => {
+  const request: TransactionReviewRequest = {
+    kind: 'transaction',
+    calls: [
+      { chainId: 1, from: ACCOUNT, to: TARGET, data: '0x', value: 1n, label: 'First payment' },
+      { chainId: 8453, from: ACCOUNT, to: TOKEN, data: '0x', value: 2n, label: 'Second payment' },
+    ],
+  }
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
+  try {
+    await review(request)
+    const dialog = document.querySelector('dialog')!
+    expect(dialog.querySelector('header')?.textContent).not.toContain('Client safety check')
+    expect(dialog.querySelector('h2')?.textContent).toBe('Review transaction')
+    const button = [...dialog.querySelectorAll('button')].find(item => item.textContent === '[copy tx audit prompt]')!
+    const card = button.closest('section')!
+    expect(card.querySelector('h3')?.textContent).toBe('First payment')
+    expect(button.parentElement?.textContent).toContain('chain 1')
+    expect(dialog.querySelectorAll('section')).toHaveLength(2)
+    expect([...dialog.querySelectorAll('button')].filter(item => item.textContent === '[copy tx audit prompt]')).toHaveLength(1)
+    await act(async () => button.click())
+    expect(writeText).toHaveBeenCalledWith(buildTransactionReviewPrompt(request))
+  } finally {
+    if (previous) Object.defineProperty(navigator, 'clipboard', previous)
+    else Reflect.deleteProperty(navigator, 'clipboard')
+  }
 })

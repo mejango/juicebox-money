@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { PaymentNotice } from '@/components/project/PaymentNotice'
 import { LoadingText } from '@/components/ui/LoadingText'
 import { withFailedStep } from '@/components/ui/TxSteps'
 import { topLayerDialogs } from '../dialog-shim'
@@ -387,5 +388,40 @@ describe('TxSteps failed steps', () => {
   it('leaves the steps alone when nothing failed', () => {
     const steps = [{ title: 'Approve' }]
     expect(withFailedStep(steps, 0, false)).toBe(steps)
+  })
+})
+
+
+describe('payment review notices', () => {
+  it('keeps the full project notice at the bottom of a single-title review and allows native expansion', () => {
+    const text = 'Please read before paying.\n\nContact us after donating.\n' + 'Full project terms. '.repeat(80) + '<script>doNotRun()</script>'
+    render(<TxConfirmDialog open eyebrow={null} title="Confirm payment"
+      rows={[{ label: 'Send', value: '0.0001 ETH' }]} steps={[{ title: 'Pay' }]}
+      activeIndex={-1} action="Confirm & Pay" onConfirm={() => {}} onClose={() => {}}
+      error="Payment was cancelled." notice={<PaymentNotice text={text} />} />)
+    const dialog = only()
+    expect(dialog.querySelector('header')?.textContent).toBe('Confirm payment')
+    const details = dialog.querySelector('details')!
+    const summary = details.querySelector('summary')!
+    const full = details.querySelector('p')!
+    expect(details.open).toBe(false)
+    expect(summary.textContent).toContain('Payment notice')
+    expect(full.textContent).toBe(text)
+    expect(full.className).toContain('whitespace-pre-wrap')
+    expect(details.querySelector('script')).toBeNull()
+    expect(dialog.querySelector('[role="alert"]')!.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(details.compareDocumentPosition(dialog.querySelector('footer')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    act(() => summary.click())
+    expect(details.open).toBe(true)
+    expect(full.textContent).toBe(text)
+    act(() => summary.click())
+    expect(details.open).toBe(false)
+  })
+
+  it('omits empty notices and retains the default eyebrow for other reviews', () => {
+    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1} action="Continue"
+      onConfirm={() => {}} onClose={() => {}} notice={<PaymentNotice text="  " />} />)
+    expect(only().querySelector('details')).toBeNull()
+    expect(only().querySelector('header')?.textContent).toBe('ReviewConfirm')
   })
 })

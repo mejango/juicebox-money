@@ -33,6 +33,7 @@ export function TxConfirmDialog({
   title,
   rows,
   children,
+  notice,
   steps,
   activeIndex,
   stepsIntro,
@@ -49,11 +50,13 @@ export function TxConfirmDialog({
 }: {
   open: boolean
   onClose: () => void
-  eyebrow?: string
+  eyebrow?: string | null
   title: ReactNode
   rows?: readonly TxConfirmRow[]
   /** Extra body content under the rows (warnings, notes, custom grids). */
   children?: ReactNode
+  /** Project notice or disclosure at the end of the body, above the actions. */
+  notice?: ReactNode
   steps: readonly TxStep[]
   activeIndex: number
   stepsIntro?: string
@@ -101,12 +104,14 @@ export function TxConfirmDialog({
     >
         <header className="flex items-start justify-between gap-4 border-b border-smoke-200 bg-bone px-5 py-4">
           <div className="min-w-0">
-            <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
-              {eyebrow}
-            </p>
+            {eyebrow ? (
+              <p className="text-xs font-medium uppercase tracking-wide text-bluebs-600">
+                {eyebrow}
+              </p>
+            ) : null}
             <h2
               id={titleId}
-              className="mt-1 font-agrandir text-xl font-medium text-ink"
+              className={`${eyebrow ? 'mt-1 ' : ''}font-agrandir text-xl font-medium text-ink`}
             >
               {title}
             </h2>
@@ -143,6 +148,7 @@ export function TxConfirmDialog({
             </>
           )}
           {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? <LinkedText text={transactionMessage(error)} /> : error}</p> : null}
+          {notice}
         </div>
         {complete || action || (busy && onCancel) ? (
           <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
