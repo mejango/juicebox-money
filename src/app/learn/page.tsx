@@ -41,7 +41,7 @@ export default function LearnPage() {
             { href: '/build', title: 'Ready to build', text: 'Launch a project or connect your app.' },
           ].map(item => (
             <a key={item.href} href={item.href} className="rounded-xl border border-smoke-300 p-4 text-ink transition-colors hover:border-bluebs-600 hover:bg-bluebs-25 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bluebs-600">
-              <span className="block font-agrandir font-medium underline underline-offset-4">{item.title}</span>
+              <span className="block font-agrandir font-medium">{item.title}</span>
               <span className="mt-2 block text-sm leading-relaxed text-smoke-700">{item.text}</span>
             </a>
           ))}
