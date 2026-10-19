@@ -76,7 +76,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteOrigin),
   title: {
     default: siteTitle,
-    template: '%s — Juicebox',
+    template: '%s | Juicebox',
   },
   description: siteDescription,
   icons: {

@@ -179,7 +179,7 @@ export async function generateMetadata({
     // The same project answers at /@handle, /<chain>:<id>, and the %40 form. Name one.
     alternates: { canonical: pagePath },
     openGraph: {
-      title: `${name} — Juicebox`,
+      title: `${name} | Juicebox`,
       description,
       url: pageUrl,
       type: "website",
@@ -195,7 +195,7 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title: `${name} — Juicebox`,
+      title: `${name} | Juicebox`,
       description,
       images: [imageUrl],
     },
