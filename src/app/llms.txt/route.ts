@@ -8,26 +8,27 @@ const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
  */
 const LLMS_TXT = `# Juicebox
 
-> Juicebox lets projects collect money, share tokens, and set rules for funds.
-> This site uses the V6 contracts on Ethereum, Optimism, Base and Arbitrum.
-> Project data comes from those chains and Bendystraw, a searchable index of
-> chain records.
+> Accept money from anyone, anywhere, transparently on your terms. A Juicebox
+> project takes payments, issues tokens as incentives, pays out on a schedule, and
+> lets holders cash out, under rules its owner sets. This site runs Juicebox V6 on
+> Ethereum, Optimism, Base, and Arbitrum, reading the contracts and Bendystraw, an
+> index of their records.
 
 ## URL grammar
 
-- \`/<chain>:<projectId>\` — a project identified by its network and ID, e.g. \`/base:10\`.
+- \`/<chain>:<projectId>\`: a project identified by its network and ID, e.g. \`/base:10\`.
   Chain slugs: \`eth\`, \`op\`, \`base\`, \`arb\`, plus \`sep\`, \`opsep\`, \`basesep\`, \`arbsep\` for testnets.
-- \`/@<handle>\` — the same project by its verified ENS handle, e.g. \`/@slopshop\`.
+- \`/@<handle>\`: the same project by its verified ENS handle, e.g. \`/@slopshop\`.
   A handle is only served when ENS and the JBProjectHandles registry agree that the
   project's current owner or operator claimed it, so it names exactly one project.
-- \`/account/<address-or-ens>\` — holdings and activity for one account. Not indexed.
+- \`/account/<address-or-ens>\`: holdings and activity for one account. Not indexed.
 
 Each project page carries schema.org Organization JSON-LD with its canonical URL,
 identifier, description and logo.
 
 ## Pages
 
-- [Home](${siteOrigin}/): projects ranked by funds held.
+- [Home](${siteOrigin}/): projects ranked by balance.
 - [Learn](${siteOrigin}/learn): how Juicebox works.
 - [Glossary](${siteOrigin}/learn#learn-glossary): definitions for terms used in the guides.
 - [Fees](${siteOrigin}/learn#learn-fees): the full explanation of costs and the revnet tokens shared with payers.
@@ -38,19 +39,30 @@ identifier, description and logo.
 - [Create](${siteOrigin}/create): the project launch flow.
 - [Audit](${siteOrigin}/audit): audits, source, and review prompts.
 
+## For agents
+
+- [Juicebox MCP](https://juicebox.center/mcp): reads, quotes, metadata pinning, and unsigned
+  transaction plans. Holds no keys; the user signs.
+- [Juicebox Center API](https://juicebox.center/api): RPC, IPFS, and indexed data in one place.
+- [Juicebox V6 skills](https://github.com/mejango/juicebox-skills): instructions for launching,
+  paying, cashing out, loans, and integrations.
+- [Launch with an AI assistant](${siteOrigin}/build#founders-launch-with-an-agent): the MCP or a .jb draft.
+- [Juicebox Center for apps](${siteOrigin}/build#apps-juicebox-center): one place for chain data, files, and indexed data.
+- [Audit prompts](${siteOrigin}/audit): review the whole system or one transaction.
+
 ## JSON endpoints
 
 Read-only, no key required, cached at the edge.
 
-- \`GET /api/search?q=<text>\` — projects matching a name, handle or id.
-- \`GET /api/top-projects?limit=<1-32>&offset=<n>\` — projects ranked by funds held.
-- \`GET /api/project-name?chainId=<id>&projectId=<id>\` — project name and the group linking its chains (sucker group).
-- \`GET /api/project-ready?chainId=<id>&projectId=<id>\` — whether a launched project is indexed yet.
-- \`GET /api/participants?suckerGroupId=<id>\` — token holders across chains.
-- \`GET /api/movements?suckerGroupId=<id>\` — payments and cash outs.
-- \`GET /api/price-history?suckerGroupId=<id>&chainId=<id>\` — price of newly created tokens over time.
-- \`GET /api/loans?...\` — loans taken against project tokens.
-- \`GET /api/project-og/<chainId>/<projectId>\` — 1200x630 PNG link-preview card.
+- \`GET /api/search?q=<text>\`: projects matching a name, handle or id.
+- \`GET /api/top-projects?limit=<1-32>&offset=<n>\`: projects ranked by balance.
+- \`GET /api/project-name?chainId=<id>&projectId=<id>\`: project name and the group linking its chains (sucker group).
+- \`GET /api/project-ready?chainId=<id>&projectId=<id>\`: whether a launched project is indexed yet.
+- \`GET /api/participants?suckerGroupId=<id>\`: token holders across chains.
+- \`GET /api/movements?suckerGroupId=<id>\`: payments and cash outs.
+- \`GET /api/price-history?suckerGroupId=<id>&chainId=<id>\`: price of newly created tokens over time.
+- \`GET /api/loans?...\`: loans taken against project tokens.
+- \`GET /api/project-og/<chainId>/<projectId>\`: 1200x630 PNG link-preview card.
 
 ## Source
 

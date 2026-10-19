@@ -32,8 +32,8 @@ export default function AuditPage() {
         Read the code directly, then use a prompt to review the whole system or one exact transaction.
       </p>
       <p className="mt-4 max-w-2xl text-base leading-relaxed text-smoke-700">
-        Defenders who manage to steal funds and return them are encouraged to keep 10% as a reward,
-        paid by all projects together.
+        Return funds you take while defending the protocol and keep 10% as a reward, paid by all
+        projects together.
       </p>
 
       <section className="mt-12" aria-labelledby="audit-code">
