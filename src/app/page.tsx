@@ -396,8 +396,10 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
               </span>
             </span>
             <span className="flex shrink-0 flex-col items-center -space-y-1">
-              {[...new Set(card.chainIds)].map(chainId => (
-                <ChainIcon key={chainId} chainId={chainId} size={16} standalone />
+              {[...new Set(card.chainIds)].map((chainId, index) => (
+                <span key={chainId} className="relative flex" style={{ zIndex: card.chainIds.length - index }}>
+                  <ChainIcon chainId={chainId} size={16} standalone />
+                </span>
               ))}
             </span>
           </ProjectLink>

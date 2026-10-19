@@ -1279,8 +1279,8 @@ export function ActivityList({
     <div>
       {header}
       {visible.length ? (
-        // pr-3 keeps the chain logos clear of the scrollbar, which draws over content on overlay-scrollbar systems.
-        <ul className="max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto py-1 pr-3 min-[801px]:max-h-[max(780px,82vh)]">
+        // Reserve a gutter for classic scrollbars and padding for overlay scrollbars.
+        <ul className="max-h-[70dvh] divide-y divide-smoke-100 overflow-y-auto py-1 pr-6 [scrollbar-gutter:stable] min-[801px]:max-h-[max(780px,82vh)]">
           {mergeCrossChainGroups(groupSameTxEvents(visible)).map(({ group, chains }) => (
             <Row
               key={group[0].id}
