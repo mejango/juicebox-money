@@ -55,7 +55,7 @@ const WHY_JUICEBOX_POINTS = [
   'Accept payments from around the world.',
   'Incentivize supporters, customers, and contributors.',
   'Set money rules that anyone can check.',
-  'Start with flexible terms and lock the parts you want to make permanent.',
+  'Start with flexible terms and lock in important bits over time.',
   'Share funds and tokens with recipients you choose.',
   'Build your own payment experience with open-source tools.',
   'Follow payments, payouts, and changes to the rules in the public record.',
