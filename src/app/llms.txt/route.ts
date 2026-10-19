@@ -1,3 +1,4 @@
+import { CHAIN_SLUGS, JUICEBOX_CENTER_API_URL, JUICEBOX_MCP_URL, JUICEBOX_SKILLS_URL } from '@/lib/agent-guide'
 import { publicReadHeaders } from '@/lib/api-cache'
 
 const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
@@ -17,7 +18,7 @@ const LLMS_TXT = `# Juicebox
 ## URL grammar
 
 - \`/<chain>:<projectId>\`: a project identified by its network and ID, e.g. \`/base:10\`.
-  Chain slugs: \`eth\`, \`op\`, \`base\`, \`arb\`, plus \`sep\`, \`opsep\`, \`basesep\`, \`arbsep\` for testnets.
+  Chain slugs: ${CHAIN_SLUGS}.
 - \`/@<handle>\`: the same project by its verified ENS handle, e.g. \`/@slopshop\`.
   A handle is only served when ENS and the JBProjectHandles registry agree that the
   project's current owner or operator claimed it, so it names exactly one project.
@@ -41,10 +42,10 @@ identifier, description and logo.
 
 ## For agents
 
-- [Juicebox MCP](https://juicebox.center/mcp): reads, quotes, metadata pinning, and unsigned
+- [Juicebox MCP](${JUICEBOX_MCP_URL}): reads, quotes, metadata pinning, and unsigned
   transaction plans. Holds no keys; the user signs.
-- [Juicebox Center API](https://juicebox.center/api): RPC, IPFS, and indexed data in one place.
-- [Juicebox V6 skills](https://github.com/mejango/juicebox-skills): instructions for launching,
+- [Juicebox Center API](${JUICEBOX_CENTER_API_URL}): RPC, IPFS, and indexed data in one place.
+- [Juicebox V6 skills](${JUICEBOX_SKILLS_URL}): instructions for launching,
   paying, cashing out, loans, and integrations.
 - [Launch with an AI assistant](${siteOrigin}/build#founders-launch-with-an-agent): the MCP or a .jb draft.
 - [Juicebox Center for apps](${siteOrigin}/build#apps-juicebox-center): one place for chain data, files, and indexed data.
