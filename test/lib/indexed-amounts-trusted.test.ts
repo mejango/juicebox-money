@@ -1,11 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
-vi.mock('wagmi', () => ({ useConfig: () => ({}) }))
-vi.mock('wagmi/actions', () => ({ getPublicClient: () => undefined }))
+import { indexedAmountsTrusted } from '@/lib/indexed-amounts-trusted'
 
-import { indexedAmountsTrusted } from '@/hooks/useIndexedAmountsTrusted'
-
-// TEMPORARY: remove with useIndexedAmountsTrusted once Bendystraw records each event's token.
+// TEMPORARY: remove with indexedAmountsTrusted once Bendystraw records each event's token.
 describe('indexedAmountsTrusted', () => {
   it('trusts indexed amounts only when every deployment has at most one accounting context', () => {
     expect(indexedAmountsTrusted([1, 1, 0])).toBe(true)
