@@ -37,7 +37,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     title: 'Choose a project or revnet',
     paragraphs: [
       'A Juicebox project accepts money, issues tokens, and follows rules its owner can change when those rules allow it. A revnet fixes its terms at launch; its operator keeps a smaller set of controls.',
-      'Project builders can launch with an AI assistant or the launch form, without code. App builders connect their product through the SDK and Juicebox Center. Contract builders add new behavior in Solidity.',
+      'Project builders can launch with an [AI assistant](#founders-launch-with-an-agent) or the [launch form](/create), without code. App builders connect their product through the [SDK](#apps-set-up-the-sdk) and [Juicebox Center](#apps-juicebox-center). Contract builders add new behavior in Solidity.',
     ],
     blocks: [
       {
@@ -74,7 +74,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'steps',
         items: [
-          'Launch a project: have an AI assistant prepare it, or fill in the launch form on a test network. Review the terms, then try a small payment and payout before using real funds.',
+          'Launch a project: have an [AI assistant](#founders-launch-with-an-agent) prepare it, or fill in the [launch form](/create) on a test network. Review the terms, then try a small payment and payout before using real funds.',
           'Build an app: follow Your first test payment. Read a project, preview a payment, and check the result.',
           'Write a contract: choose one behavior to add. Read the V6 contract reference, build it, and test against a local copy of the chain.',
         ],
@@ -96,7 +96,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Start here',
     title: 'Find the right contract',
     paragraphs: [
-      'The deploy-all-v6 repository lists deployed contracts by chain. It includes each address and the format used to call it, called an ABI. The SDK includes the same address map. A project can use its own contracts, so use JBDirectory to find the contracts currently managing its rules and payments before building a transaction.',
+      'Juicebox publishes [every deployed contract by chain](https://github.com/Bananapus/deploy-all-v6/tree/main/deployments), with its address and the format used to call it, called an ABI. The [SDK](#apps-set-up-the-sdk) includes the same address map. A project can use its own contracts, so use JBDirectory to find the contracts currently managing its rules and payments before building a transaction.',
     ],
     blocks: [
       {
@@ -137,15 +137,15 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'points',
         items: [
           { key: 'Chains', text: 'Ethereum, Optimism, Base, and Arbitrum, plus their Sepolia test networks. Find the list in the SDK’s SUPPORTED_CHAINS and JB_CHAINS.' },
-          { key: 'Source', text: 'the repos ending in -v6 are current. Older Juicebox versions are not interchangeable with them, and this site redirects unknown routes to the legacy app for those.' },
+          { key: 'Source', text: '[the V6 source](https://github.com/Bananapus/version-6) is current. Older Juicebox versions are not interchangeable with it, and this site redirects unknown routes to the legacy app for those.' },
         ],
       },
       {
         type: 'links',
         items: [
-          { href: 'https://github.com/Bananapus/deploy-all-v6', label: 'deploy-all-v6 (addresses)' },
-          { href: 'https://github.com/Bananapus/nana-core-v6', label: 'nana-core-v6' },
-          { href: 'https://github.com/Bananapus/version-6', label: 'Every V6 repo' },
+          { href: 'https://github.com/Bananapus/deploy-all-v6', label: 'Deployed addresses' },
+          { href: 'https://github.com/Bananapus/nana-core-v6', label: 'Core contract source' },
+          { href: 'https://github.com/Bananapus/version-6', label: 'Every V6 repository' },
         ],
       },
     ],
@@ -155,7 +155,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Start here',
     title: 'Find a contract call',
     paragraphs: [
-      'The contract call and SDK builder behind each action. Some actions need more than one transaction, such as approving a token before paying. Examples later in this guide use placeholders; replace them before use.',
+      'The contract call and [SDK](#apps-set-up-the-sdk) builder behind each action. Some actions need more than one transaction, such as approving a token before paying. Examples later in this guide use placeholders; replace them before use.',
     ],
     blocks: [
       {
@@ -197,8 +197,8 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Launch with an AI assistant',
     paragraphs: [
-      'Describe the project to an assistant and let it do the setup. Connect it to the Juicebox MCP at https://juicebox.center/mcp: it reads projects, models terms, pins your name and logo to IPFS once you approve the upload, and prepares the exact launch transaction for each chain. It holds no keys and signs nothing. You review the plan and sign in your wallet.',
-      'Or have the assistant write a .jb draft. Import it at the top of the launch form, check every section, and launch from there.',
+      'Describe the project to an assistant and let it do the setup. Connect it to the [Juicebox MCP](https://juicebox.center/mcp): it reads projects, models terms, pins your name and logo to IPFS once you approve the upload, and prepares the exact launch transaction for each chain. It holds no keys and signs nothing. You review the plan and sign in your wallet.',
+      'Or have the assistant write a .jb draft. Import it at the top of the [launch form](/create), check every section, and launch from there.',
     ],
     blocks: [
       {
@@ -218,7 +218,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Launch without code',
     paragraphs: [
-      'The launch form covers Flavor, Look and feel, Rules or Stages when needed, Shop, and Launch. The simple flavor skips Rules and uses preset terms. Other projects can schedule new terms when their rules allow it. A revnet fixes its main financial terms at launch, while its operator keeps a limited set of controls.',
+      'The [launch form](/create) covers Flavor, Look and feel, Rules or Stages when needed, Shop, and Launch. The simple flavor skips Rules and uses preset terms. Other projects can schedule new terms when their rules allow it. A revnet fixes its main financial terms at launch, while its operator keeps a limited set of controls.',
     ],
     blocks: [
       {
@@ -252,7 +252,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Choose the project’s rules',
     paragraphs: [
-      'A group of project terms is called a ruleset. It can repeat on a schedule, with each repeat called a cycle. These are the settings in the launch form.',
+      'A group of project terms is called a ruleset. It can repeat on a schedule, with each repeat called a cycle. These are the settings in the [launch form](/create).',
     ],
     blocks: [
       {
@@ -412,7 +412,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'One place for chain data, files, and indexed data',
     paragraphs: [
-      'Juicebox Center (juicebox.center) runs the shared services an app needs, so you hold no provider keys. Read any supported chain through its RPC, pin and read files on IPFS, query Bendystraw data through its API, and connect assistants through its MCP.',
+      'Juicebox Center (juicebox.center) runs the shared services an app needs, so you hold no provider keys. Read any supported chain through its RPC, pin and read files on IPFS, query [Bendystraw](#apps-indexed-data) data through its API, and connect assistants through its [MCP](#founders-launch-with-an-agent).',
     ],
     blocks: [
       {
@@ -619,7 +619,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         type: 'text',
-        text: 'Chain reads go through Juicebox Center’s RPC. Connections include browser wallets, WalletConnect, Coinbase, and Safe. Para provides an embedded wallet and card purchases. A Safe’s L1 and L2 versions differ, so a Safe that controls a project on one chain may not exist at the same address on another; check before offering an action there.',
+        text: 'Chain reads go through [Juicebox Center](#apps-juicebox-center)’s RPC. Connections include browser wallets, WalletConnect, Coinbase, and Safe. Para provides an embedded wallet and card purchases. A Safe’s L1 and L2 versions differ, so a Safe that controls a project on one chain may not exist at the same address on another; check before offering an action there.',
       },
       {
         type: 'links',
@@ -643,7 +643,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         items: [
           { key: 'Shape', text: 'JBProjectMetadata: name, description, projectTagline, logoUri, coverImageUri, infoUri, payButton, payDisclosure, tags, twitter, telegram, discord, archived.' },
           { key: 'Read', text: 'getProjectMetadata(publicClient, { jbControllerAddress, projectId }) resolves the project’s uri and fetches it; ipfsUri and cidFromIpfsUri handle the encoding.' },
-          { key: 'Pin', text: 'this site pins JSON, images (25 MB), and media (500 MB) straight from the browser to Juicebox Center, which is origin-allowlisted and guards against empty files. The gateway is juicebox.center/ipfs/.' },
+          { key: 'Pin', text: 'this site pins JSON, images (25 MB), and media (500 MB) straight from the browser to [Juicebox Center](#apps-juicebox-center), which is origin-allowlisted and guards against empty files. The gateway is juicebox.center/ipfs/.' },
           { key: 'Write', text: 'the owner updates the pointer with JBController.setUriOf (SET_PROJECT_URI).' },
         ],
       },
@@ -918,9 +918,9 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         label: 'Foundry',
         rows: [
           ['TestBaseWorkflow', '@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol: deploys the full protocol locally with a mock USDC and two terminals, plus Permit2. Extend it for unit tests of hooks and integrations'],
-          ['Fork tests', 'Create a local copy of the chain at one fixed block, called a fork. Configure foundry.toml rpc_endpoints and test against the deploy-all-v6 addresses'],
+          ['Fork tests', 'Create a local copy of the chain at one fixed block, called a fork. Configure foundry.toml rpc_endpoints and test against the published deployment addresses'],
           ['Sizes', 'forge build --sizes early; several V6 contracts sit near EIP-170 and were split or trimmed to fit. Plan for library extraction if you are close'],
-          ['Bytecode parity', 'compare the deployed machine code with deploy-all-v6 artifacts. Matching source alone is insufficient because linked libraries change the resulting code'],
+          ['Bytecode parity', 'compare the deployed machine code with the published deployment artifacts. Matching source alone is insufficient because linked libraries change the resulting code'],
         ],
       },
       {

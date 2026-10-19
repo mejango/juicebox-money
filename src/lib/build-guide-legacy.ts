@@ -688,14 +688,14 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           "Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.",
           "Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.",
           "suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.",
-          "The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.",
+          "The [SDK](#apps-set-up-the-sdk)’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.",
           "Do not send GraphQL text from a browser to an index you expose. Register each query on your server under an operation id and have the browser post { operation, variables } to a same-origin route that validates them. Keep heavy history and ranking queries server-only.",
           "Pool reserves need no RPC: sum the indexed positions at the latest swap’s sqrtPriceX96. The jb-bendystraw skill has the recipe."
         ]
       },
       {
         "type": "info",
-        "text": "Give your assistant the /jb-bendystraw skill for help with queries, charts, and holder lists. It is part of the Juicebox V6 skills library. Bendystraw source: github.com/peripheralist/bendystraw."
+        "text": "Give your assistant the /jb-bendystraw skill for help with queries, charts, and holder lists. It is part of the [Juicebox V6 skills library](https://github.com/mejango/juicebox-skills). See the [Bendystraw source](https://github.com/peripheralist/bendystraw)."
       }
     ]
   },
@@ -712,7 +712,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "type": "steps",
         "items": [
           "Start from the product flow closest to yours — such as Pay, Cash Out, project creation, ruleset editing, or the Shop — and identify its component, supporting reads, and transaction builder.",
-          "Give your assistant the relevant source, tests, guide link, V6 contracts, and Juicebox V6 skills library (github.com/mejango/juicebox-skills) to help it explain anything Juicebox.",
+          "Give your assistant the relevant source, tests, guide link, V6 contracts, and [Juicebox V6 skills library](https://github.com/mejango/juicebox-skills) to help it explain anything Juicebox.",
           "Use indexed data for browsing. Refresh the chain data the transaction depends on just before building and sending it.",
           "Prepare one request and check that encoding and decoding preserves its fields. Test the behavior your product depends on before asking a wallet to sign."
         ]

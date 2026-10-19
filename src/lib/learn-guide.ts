@@ -63,7 +63,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "Projects can add extras, like a shop or buying tokens from a market, which change what a payment or cash out does. Pay gives you tokens or items. Add to balance sends money without creating tokens."
+        "text": "Pay gives you tokens or items. Add to balance sends money without creating tokens."
       }
     ],
     "part": "The basics"
@@ -161,7 +161,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-tokens",
     "title": "Tokens and reserved tokens",
     "paragraphs": [
-      "Creating new tokens is called issuance. At 500 tokens per ETH, a 2 ETH payment creates 1,000 tokens. A rate of zero creates none. A payment can also buy existing tokens from a market instead.",
+      "Creating new tokens is called issuance. At 500 tokens per ETH, a 2 ETH payment creates 1,000 tokens. A rate of zero creates none.",
       "A project can set aside part of every new batch for chosen recipients. These are its reserved tokens. With 20% reserved, a payment that creates 1,000 tokens gives 800 to the payer and reserves 200, which are sent to recipients in a later transaction. Revnets call reserved tokens splits.",
       "You can hold tokens as credits inside Juicebox, or as standard ERC-20 tokens that wallets and markets use. Both count toward your balance; claiming turns credits into ERC-20 tokens one for one."
     ],
@@ -324,7 +324,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "items": [
           "Open Cash out on the chain where you hold the tokens.",
           "Enter an amount, and check what you’ll receive and the minimum you’ll accept.",
-          "Approve in your wallet and wait for confirmation. The review shows whether the cash out goes through the project or sells on a market."
+          "Approve in your wallet and wait for confirmation."
         ]
       },
       {
@@ -351,17 +351,12 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "title": "Fees",
     "paragraphs": [
       "Juicebox charges 2.5% when money leaves a project: payouts, allowance withdrawals, and cash outs with a tax above 0%. The fee is a payment into the Juicebox Protocol revnet (JBP6), so it comes back as JBP6 tokens: to the owner for payouts, to the chosen recipient for withdrawals, and to you for cash outs.",
-      "Paying a project has no fee. Launching one costs a creation fee of up to 0.001 ETH per chain. A 100 ETH payout sends 2.5 ETH to JBP6 and 97.5 ETH to recipients, and the owner receives JBP6 tokens.",
-      "Revnets add their own fees on cash outs and loans; revnet.money explains them."
+      "Paying a project has no fee. Launching one costs a creation fee of up to 0.001 ETH per chain. A 100 ETH payout sends 2.5 ETH to JBP6 and 97.5 ETH to recipients, and the owner receives JBP6 tokens."
     ],
     "blocks": [
       {
         "type": "links",
         "items": [
-          {
-            "href": "https://revnet.money/learn#fees",
-            "label": "Revnet fees"
-          },
           {
             "href": "/build#start-your-first-build",
             "label": "Fee details for builders"
@@ -477,7 +472,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "paragraphs": [
       "A revnet is a Juicebox project with its token schedule fixed at launch: tokenized incentives backed by a balance sheet. Each period in the schedule is a stage, and later stages can create fewer tokens per payment.",
       "A revnet has no owner who can change its terms. An operator can manage details like its name, recipients, and shop, but can’t change the schedule or withdraw from the balance sheet.",
-      "Revnet holders can also borrow against their tokens. The tokens are burned while the loan is open and minted back when it’s repaid within 10 years."
+      "Revnet holders can also borrow against their tokens. The tokens are burned while the loan is open and minted back when it’s repaid within 10 years. Revnets add their own fees on cash outs and loans."
     ],
     "blocks": [
       {
@@ -501,6 +496,10 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
           {
             "href": "https://revnet.money/learn#loans",
             "label": "How loans work"
+          },
+          {
+            "href": "https://revnet.money/learn#fees",
+            "label": "Revnet fees"
           }
         ]
       }
