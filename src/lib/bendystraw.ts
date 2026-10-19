@@ -625,6 +625,8 @@ export type BsFreshActivityEvent = BsActivityEvent & {
     tokenSymbol: string | null
     decimals: number | null
   } | null
+  /** TEMPORARY: set by getHomepageActivity; see indexedAmountsTrusted. */
+  hideAmounts?: boolean
 }
 
 /**

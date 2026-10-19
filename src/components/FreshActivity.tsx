@@ -149,7 +149,10 @@ function Row({
   )
 
   const parts = combinedActivityParts(group, tokenUnit)
+  // TEMPORARY: see indexedAmountsTrusted.
+  const hideAmounts = group.some(item => item.hideAmounts)
   const rawAmountFallback =
+    !hideAmounts &&
     !hasPositiveIndexedAmount(parts.amountUsd) &&
     event.project?.tokenSymbol &&
     event.project.decimals !== null
@@ -191,7 +194,7 @@ function Row({
             <ActivityMeta
               chainId={event.chainId}
               txHash={event.txHash}
-              amountUsd={parts.amountUsd}
+              amountUsd={hideAmounts ? null : parts.amountUsd}
               amountToken={rawAmountFallback}
               direction={parts.direction}
             />
