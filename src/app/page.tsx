@@ -110,9 +110,9 @@ const JUICEBOX_FEATURES = [
     art: 'wide',
   },
   {
-    title: 'Rewards on schedule',
+    title: 'Fuel your victory',
     description:
-      'Schedule incentives for your contributors and community.',
+      'Automate payouts and incentives so you can focus on the road ahead.',
     illustration: autoIssuanceIllustration,
     art: 'wide',
     wide: true,
