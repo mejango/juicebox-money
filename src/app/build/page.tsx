@@ -44,7 +44,7 @@ export default function BuildPage() {
         </p>
         <nav className="mt-6 grid gap-3 sm:grid-cols-3" aria-label="Choose your Juicebox building path">
           {[
-            { href: '#founders-launch-from-the-wizard', title: 'Launch a project', text: 'Set your terms and manage funds. No code needed.' },
+            { href: '#founders-launch-with-an-agent', title: 'Launch a project', text: 'With an AI assistant or the launch form. No code needed.' },
             { href: '/build/first-payment', title: 'Build an app', text: 'Read a test project, preview a payment, and check the result.' },
             { href: '#contracts-install-and-launch', title: 'Write contracts', text: 'Add your own behavior to payments, tokens, and project rules.' },
           ].map(item => (

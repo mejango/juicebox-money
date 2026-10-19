@@ -4,43 +4,6 @@ import type { GuideSection } from '@/components/GuideSections'
 
 export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
-    "id": "build-fund",
-    "part": "Life of a project",
-    "title": "Get funded",
-    "paragraphs": [
-      "A project receives payments through its payment contracts, called terminals. Use the current terms and a fresh quote to show the tokens the payer will receive."
-    ],
-    "blocks": [
-      {
-        "type": "code",
-        "label": "JBMultiTerminal.pay (call outline)",
-        "code": "pay(\n  projectId,\n  token,              // which token to pay with\n  amount,             // how much\n  beneficiary,        // who receives the minted tokens\n  minReturnedTokens,  // minimum amount the recipient must receive\n  memo,               // message attached to the payment\n  metadata            // extra data for hooks\n)\n// Returns: number of tokens minted for the beneficiary"
-      },
-      {
-        "type": "table",
-        "label": "Checking balances",
-        "rows": [
-          [
-            "JBTerminalStore.balanceOf(terminal, projectId, token)",
-            "Terminal balance for a specific token"
-          ],
-          [
-            "JBTerminalStore.currentSurplusOf(...)",
-            "Surplus across specified terminals and tokens"
-          ],
-          [
-            "JBTerminalStore.currentTotalSurplusOf(...)",
-            "Surplus aggregated across ALL terminals"
-          ]
-        ]
-      },
-      {
-        "type": "info",
-        "text": "Use addToBalanceOf() to add funds without receiving tokens, such as a grant, donation, or returned funds."
-      }
-    ]
-  },
-  {
     "id": "build-tokens-mgmt",
     "part": "Life of a project",
     "title": "Manage tokens",
@@ -130,77 +93,6 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "type": "info",
         "text": "Recipients and their shares are stored as splits. Calling sendPayoutsOf() sends funds to those recipients; any leftover goes to the project owner."
       }
-    ]
-  },
-  {
-    "id": "build-cashout",
-    "part": "Life of a project",
-    "title": "Cash out",
-    "paragraphs": [
-      "Holders can exchange tokens for available project funds, called surplus. With one asset in one terminal, surplus is the balance above the remaining payout limit. A cash out removes the exchanged tokens from supply.",
-      "The cash out tax controls how much stays for remaining holders. At 0%, the base formula returns a proportional share. Higher rates return less when only part of the supply is exchanged; 100% returns zero. Use a quote that includes the project’s extensions to find the final amount."
-    ],
-    "blocks": [
-      {
-        "type": "code",
-        "label": "JBMultiTerminal.cashOutTokensOf (call outline)",
-        "code": "cashOutTokensOf(\n  holder,\n  projectId,\n  cashOutCount,         // how many tokens to burn\n  tokenToReclaim,       // which token to receive\n  minTokensReclaimed,   // minimum amount the recipient must receive\n  beneficiary,          // who receives the funds\n  metadata\n)"
-      },
-      {
-        "type": "info",
-        "text": "Set minTokensReclaimed to the minimum the recipient accepts. The contract must enforce the same minimum shown in the review."
-      },
-      {
-        "type": "links",
-        "items": [
-          {
-            "href": "/learn#learn-cash-outs",
-            "label": "Cash out formula and worked example"
-          }
-        ]
-      }
-    ]
-  },
-  {
-    "id": "build-revnet-deploy",
-    "part": "Life of a revnet",
-    "title": "Deploy a revnet",
-    "paragraphs": [
-      "Create a revnet and its stage schedule with REVDeployer.deployFor().",
-      "Stages set how a revnet’s terms change over time. For example, an early stage can create more tokens per payment, followed by stages that gradually create fewer.",
-      "Each stage sets the new-token rate, scheduled cuts, reserved share, and cash out tax. Stages begin automatically at their scheduled times."
-    ],
-    "blocks": [
-      {
-        "type": "code",
-        "label": "REVDeployer.deployFor (call outline)",
-        "code": "deployFor(\n  revnetId,                        // project ID (or 0 for auto)\n  configuration,                   // REVConfig with stages\n  accountingContextsToAccept[],    // tokens the terminal should accept\n  suckerDeploymentConfiguration,   // cross-chain setup\n  tiered721HookConfiguration,      // optional NFT tiers\n  allowedPosts[]                   // optional croptop posts\n)\n// New revnet (revnetId == 0): include the current project creation fee.\n// Existing project ID: send no native value."
-      },
-      {
-        "type": "text",
-        "text": "A revnet uses the same payment and cash out calls as other projects. REVOwner applies its terms through an extension. Include that extension when requesting a quote, and check the operator’s remaining permissions."
-      },
-      {
-        "type": "table",
-        "label": "Reading stage state",
-        "rows": [
-          [
-            "JBController.currentRulesetOf(projectId)",
-            "Active stage parameters"
-          ],
-          [
-            "JBController.upcomingRulesetOf(projectId)",
-            "Next ruleset, including an automatic cycle of the current stage; empty only when no ruleset follows."
-          ],
-          [
-            "JBController.allRulesetsOf(projectId, startingId, size)",
-            "Complete stage history"
-          ]
-        ]
-      }
-    ],
-    "aliases": [
-      "build-revnet-stages"
     ]
   },
   {
@@ -626,7 +518,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "Name parts are in reverse order. handleOf returns the dot-joined labels without a .eth suffix; the suffix is only added when computing the namehash for verification. `_formatHandle` (JBProjectHandles.sol:220-232) walks the array from the LAST element to the first, so the innermost label goes last. For \"myproject.eth\" → [\"myproject\"]. For \"sub.myproject.eth\" → [\"myproject\", \"sub\"]. Parts cannot contain dots, ASCII control characters, DEL, \"eth\", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s."
+        "text": "Name parts are in reverse order. handleOf returns the dot-joined labels without a .eth suffix; the suffix is only added when computing the namehash for verification. handleOf walks the array from the last element to the first, so the innermost label goes last. For \"myproject.eth\" → [\"myproject\"]. For \"sub.myproject.eth\" → [\"myproject\", \"sub\"]. Parts cannot contain dots, ASCII control characters, DEL, \"eth\", or be empty. Unicode normalization (ENSIP-15) is the caller/client’s responsibility, not the contract’s."
       }
     ]
   },
@@ -796,7 +688,9 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           "Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.",
           "Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.",
           "suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.",
-          "The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId."
+          "The SDK’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.",
+          "Do not send GraphQL text from a browser to an index you expose. Register each query on your server under an operation id and have the browser post { operation, variables } to a same-origin route that validates them. Keep heavy history and ranking queries server-only.",
+          "Pool reserves need no RPC: sum the indexed positions at the latest swap’s sqrtPriceX96. The jb-bendystraw skill has the recipe."
         ]
       },
       {

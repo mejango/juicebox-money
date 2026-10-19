@@ -222,7 +222,7 @@ for (const viewport of [
           const retiredSections = route.path === '/learn'
             ? ['learn-permissions', 'learn-migration', 'learn-buyback', 'learn-croptop', 'learn-handles']
             : route.path === '/build'
-              ? ['build-launch', 'build-configure', 'build-evolve', 'build-revnet-what', 'build-revnet-stages', 'founders-fees', 'build-revnet-fees']
+              ? ['build-launch', 'build-configure', 'build-evolve', 'build-revnet-what', 'build-revnet-stages', 'founders-fees', 'build-revnet-fees', 'founders-launch-from-the-wizard', 'build-fund', 'build-cashout', 'build-revnet-deploy']
               : []
           const missing = await page.evaluate(ids => ids.filter(id => {
             const matches = Array.from(document.querySelectorAll('[id]')).filter(node => node.id === id)
