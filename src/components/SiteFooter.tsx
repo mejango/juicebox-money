@@ -51,7 +51,7 @@ export function SiteFooter() {
           </div>
         </div>
 
-        <div className="mt-8 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-slate-700 pt-5 text-xs text-slate-200">
+        <div className="mt-8 flex flex-col items-start gap-1 border-t border-slate-700 pt-5 text-xs text-slate-200">
           <span>© {new Date().getFullYear()} Juicebox. All rights reserved.</span>
           {version ? <span>Version #{version.slice(0, 7)}</span> : null}
         </div>
