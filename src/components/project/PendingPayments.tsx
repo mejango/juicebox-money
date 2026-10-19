@@ -228,16 +228,16 @@ export function PendingPayments({ chainId, projectId, chains }: {
       ...(outcomes[call.id] ? [{ label: 'Outcome', value: outcomes[call.id], strong: true }] : []),
     ]
   })
-  return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments awaiting processing">
+  return <section className="mb-6 rounded-xl border border-smoke-200 p-4" aria-label="Payments needing processing">
     <details>
-      <summary className="cursor-pointer text-sm font-medium">{rows.length ? `${rows.length} ${rows.length === 1 ? 'payment' : 'payments'} awaiting processing.` : 'Saved payment batch'}</summary>
+      <summary className="cursor-pointer text-sm font-medium">{rows.length ? `${rows.length} ${rows.length === 1 ? 'payment needs' : 'payments need'} processing.` : 'Saved payment batch'}</summary>
       <p className="mt-3 text-sm text-smoke-500">These payments did not have sufficient gas to process automatically.</p>
       {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
       {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
       {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status"><LoadingText text={transactionMessage(status)} /></p> : null}
       <p className="mt-2 text-sm text-smoke-500" role="status"><LoadingText text={pending.isPending ? 'Loading pending payments…' : pending.error ? 'Payment count unavailable.' : checking ? verification.error ? 'Payment status unavailable.' : 'Checking payments…' : `${available.length} ${available.length === 1 ? 'payment' : 'payments'} ready to retry`} /></p>
       {recovery || rows.length > 1 ? <button type="button" className="btn-secondary mt-3 min-h-[40px] px-3 text-sm" disabled={busy || (!recovery && (unreadable || checking || !available.length))} onClick={() => begin(available)}>
-        {recovery ? 'Resume saved batch' : 'Retry'}
+        {recovery ? 'Resume saved batch' : 'Retry all'}
       </button> : null}
       {pending.error ? <p className="mt-2 text-sm text-red-600">Pending payments could not be loaded. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry</button></p> : null}
       {unreadable ? <p className="mt-2 text-sm text-red-600">Some payments could not be checked. <button type="button" className="underline" onClick={() => void queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })}>Retry checks</button></p> : null}
@@ -249,7 +249,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
             {!verified.has(pendingPaymentId(item.payment)) ? <p className="mt-1 text-smoke-500"><LoadingText text={verification.error ? 'Could not check this payment.' : 'Checking payment status…'} /></p> : null}
             {item.error ? <p className="mt-1 text-red-600">{transactionMessage(item.error)}</p> : item.review && !item.review.ready ? <p className="mt-1 text-smoke-500">Available {new Date(Number(item.review.readyAt) * 1_000).toLocaleString()}</p> : null}
           </div>
-          <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>
+          <button type="button" className="min-h-8 text-xs font-medium text-bluebs-700 underline underline-offset-2 hover:text-bluebs-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 disabled:opacity-50" disabled={busy || !item.review?.ready} onClick={() => item.review && begin([item.review])}>
             Retry
           </button>
         </li>)}

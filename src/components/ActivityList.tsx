@@ -144,7 +144,7 @@ function ActivityTypeFilter({
 
   return (
     <details className="group relative z-20">
-      <summary className="flex min-h-11 cursor-pointer list-none select-none items-center justify-between gap-2 rounded-lg border border-smoke-300 bg-bone px-3 text-sm text-smoke-700 transition-colors hover:border-smoke-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 [&::-webkit-details-marker]:hidden">
+      <summary className="flex min-h-11 cursor-pointer list-none select-none items-center gap-2 text-sm text-smoke-700 transition-colors hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bluebs-400 [&::-webkit-details-marker]:hidden">
         <span>{selectedLabel}</span>
         <svg
           aria-hidden="true"

@@ -54,7 +54,7 @@ export function activityAmountLabel(
     : formatIndexedUsd(amountUsd)
 }
 
-/** "on <chain>" — sits next to the row's time; the icon links to the tx. */
+/** Chain icons beside the row's time, each linking to its transaction. */
 export function ActivityOnChain({
   chainId,
   txHash,
@@ -70,38 +70,35 @@ export function ActivityOnChain({
   // avatar stack — leftmost on top — each still its own tx link.
   const stacked = entries.length > 1
   return (
-    <>
-      <span>on</span>
-      <span className="inline-flex items-center">
-        {entries.map((entry, index) => {
-          const explorer = explorerHostname(entry.chainId)
-          const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
-          const overlap = stacked && index > 0 ? '-ml-1.5' : ''
-          const depth = stacked ? { zIndex: entries.length - index } : undefined
-          return txUrl ? (
-            <a
-              key={entry.chainId}
-              href={txUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`View transaction on ${chainName(entry.chainId)}`}
-              className={`relative inline-flex rounded-full transition-opacity hover:z-10 hover:opacity-70 ${overlap}`}
-              style={depth}
-            >
-              <ChainIcon chainId={entry.chainId} size={18} />
-            </a>
-          ) : (
-            <span
-              key={entry.chainId}
-              className={`relative inline-flex ${overlap}`}
-              style={depth}
-            >
-              <ChainIcon chainId={entry.chainId} size={18} standalone />
-            </span>
-          )
-        })}
-      </span>
-    </>
+    <span className="inline-flex items-center">
+      {entries.map((entry, index) => {
+        const explorer = explorerHostname(entry.chainId)
+        const txUrl = explorer ? `https://${explorer}/tx/${entry.txHash}` : null
+        const overlap = stacked && index > 0 ? '-ml-1.5' : ''
+        const depth = stacked ? { zIndex: entries.length - index } : undefined
+        return txUrl ? (
+          <a
+            key={entry.chainId}
+            href={txUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`View transaction on ${chainName(entry.chainId)}`}
+            className={`relative inline-flex rounded-full transition-opacity hover:z-10 hover:opacity-70 ${overlap}`}
+            style={depth}
+          >
+            <ChainIcon chainId={entry.chainId} size={18} />
+          </a>
+        ) : (
+          <span
+            key={entry.chainId}
+            className={`relative inline-flex ${overlap}`}
+            style={depth}
+          >
+            <ChainIcon chainId={entry.chainId} size={18} standalone />
+          </span>
+        )
+      })}
+    </span>
   )
 }
 

@@ -109,7 +109,7 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     await page.goto('/eth:1', { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
     await expect.poll(() => blockReads).toBeGreaterThan(0)
-    const panel = page.getByRole('region', { name: 'Payments awaiting processing', exact: true })
+    const panel = page.getByRole('region', { name: 'Payments needing processing', exact: true })
     await expect(panel).toBeVisible()
     await panel.locator('summary').click()
     await expect(panel.getByRole('listitem')).toHaveCount(payments.length)
@@ -123,7 +123,7 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     expect(writes).toEqual([])
     releaseVerification()
 
-    await expect(panel.locator('summary')).toHaveText('3 payments awaiting processing.')
+    await expect(panel.locator('summary')).toHaveText('3 payments need processing.')
     const retry = panel.getByRole('listitem').filter({ hasText: '0.125 ETH' })
     const finalization = panel.getByRole('listitem').filter({ hasText: '0.25 ETH' })
     const cooling = panel.getByRole('listitem').filter({ hasText: '0.375 ETH' })
@@ -131,7 +131,7 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     await expect(finalization.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
     await expect(cooling.getByRole('button', { name: 'Retry', exact: true })).toBeDisabled()
     await expect(cooling.getByText(/^Available /)).toBeVisible()
-    await expect(panel.getByRole('button', { name: 'Retry', exact: true }).first()).toBeEnabled()
+    await expect(panel.getByRole('button', { name: 'Retry all', exact: true })).toBeEnabled()
     expect(verifiedCalls.filter(name => name === 'pendingCallCommitmentOf')).toHaveLength(3)
     expect(verifiedCalls.filter(name => name === 'pendingCallFailureOf')).toHaveLength(3)
 
@@ -147,7 +147,7 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     // The deterministic build has no connected wallet. Both controls must
     // remain behind sign-in and the standard review instead of sending calls.
     await retry.getByRole('button', { name: 'Retry', exact: true }).click()
-    await panel.getByRole('button', { name: 'Retry', exact: true }).first().click()
+    await panel.getByRole('button', { name: 'Retry all', exact: true }).click()
     expect(writes).toEqual([])
     expect(browserErrors).toEqual([])
     await panel.evaluate(element => element.scrollIntoView({ block: 'start' }))
