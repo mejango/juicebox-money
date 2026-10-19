@@ -95,18 +95,18 @@ const JUICEBOX_FEATURES = [
     reverse: true,
   },
   {
-    title: 'Move between networks',
-    description:
-      'Let holders move tokens and their backing funds between supported networks.',
-    illustration: settlementIllustration,
-    art: 'wide',
-  },
-  {
     title: 'One community, everywhere',
     description:
       'Use your project token across Ethereum, Base, Arbitrum, Optimism, and more as new legit networks emerge.',
     illustration: accountsIllustration,
     art: 'tall',
+  },
+  {
+    title: 'Move between networks',
+    description:
+      'Let holders move tokens and their backing funds between supported networks.',
+    illustration: settlementIllustration,
+    art: 'wide',
   },
   {
     title: 'Rewards on schedule',
