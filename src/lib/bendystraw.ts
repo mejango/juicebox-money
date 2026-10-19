@@ -284,6 +284,9 @@ export async function searchProjects(
     .slice(0, limit)
 }
 
+/** The token a terminal event moved. Null when the indexer could not tell (valued at 0 USD). */
+export type EventToken = { token?: string | null; decimals?: number | null }
+
 export type BsActivityEvent = {
   id: string
   chainId: number
@@ -297,13 +300,13 @@ export type BsActivityEvent = {
     beneficiary: string
     memo: string | null
     newlyIssuedTokenCount: string
-  } | null
+  } & EventToken | null
   cashOutTokensEvent: {
     cashOutCount: string
     reclaimAmount: string
     reclaimAmountUsd: string | null
     beneficiary: string
-  } | null
+  } & EventToken | null
   projectCreateEvent?: {
     from: string
   } | null
@@ -311,7 +314,7 @@ export type BsActivityEvent = {
     amount: string
     from: string
     memo: string | null
-  } | null
+  } & EventToken | null
   mintTokensEvent?: {
     beneficiaryTokenCount: string
     beneficiary: string
@@ -324,14 +327,14 @@ export type BsActivityEvent = {
     amountPaidOutUsd: string | null
     caller: string
     from: string
-  } | null
+  } & EventToken | null
   sendPayoutToSplitEvent?: {
     amount: string
     amountUsd: string | null
     beneficiary: string
     splitProjectId: number
     from: string
-  } | null
+  } & EventToken | null
   sendReservedTokensToSplitEvent?: {
     tokenCount: string
     beneficiary: string
@@ -441,22 +444,22 @@ export type BsActivityEvent = {
 const ACTIVITY_EVENT_FIELDS = `
   id chainId projectId timestamp from txHash
   payEvent {
-    amount amountUsd beneficiary memo newlyIssuedTokenCount
+    amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals
   }
   cashOutTokensEvent {
-    cashOutCount reclaimAmount reclaimAmountUsd beneficiary
+    cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals
   }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from }
+  addToBalanceEvent { amount memo from token decimals }
   mintTokensEvent {
     beneficiary beneficiaryTokenCount caller from
   }
   sendPayoutsEvent {
-    amount amountPaidOut amountPaidOutUsd caller from
+    amount amountPaidOut amountPaidOutUsd caller from token decimals
   }
   sendReservedTokensToSplitsEvent { tokenCount from }
   sendPayoutToSplitEvent {
-    amount amountUsd beneficiary splitProjectId from
+    amount amountUsd beneficiary splitProjectId from token decimals
   }
   sendReservedTokensToSplitEvent {
     tokenCount beneficiary splitProjectId hook from
@@ -625,8 +628,6 @@ export type BsFreshActivityEvent = BsActivityEvent & {
     tokenSymbol: string | null
     decimals: number | null
   } | null
-  /** TEMPORARY: set by getHomepageActivity; see indexedAmountsTrusted. */
-  hideAmounts?: boolean
 }
 
 /**

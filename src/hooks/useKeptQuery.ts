@@ -16,7 +16,7 @@ const clientSnapshot = () => true
 const serverSnapshot = () => false
 
 /** The same per-component hydration boundary used by Revnet and Sticky. */
-export function useHydrated() {
+function useHydrated() {
   return useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot)
 }
 

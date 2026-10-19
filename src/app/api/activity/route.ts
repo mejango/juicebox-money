@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { publicReadHeaders } from '@/lib/api-cache'
-import { getHomepageActivity } from '@/lib/top-projects'
+import { getRecentActivity } from '@/lib/bendystraw'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   const limit = pageParam(searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT)
   const offset = pageParam(searchParams.get('offset'), 0)
   try {
-    const page = await getHomepageActivity(limit + 1, offset)
+    const page = await getRecentActivity(limit + 1, offset)
     return NextResponse.json(
       { events: page.slice(0, limit), hasMore: page.length > limit },
       { headers: publicReadHeaders },

@@ -9,7 +9,7 @@ import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { combinedActivityParts, groupSameTxEvents } from './ActivityList'
+import { activityAmountToken, combinedActivityParts, groupSameTxEvents } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
@@ -149,19 +149,19 @@ function Row({
   )
 
   const parts = combinedActivityParts(group, tokenUnit)
-  // TEMPORARY: see indexedAmountsTrusted.
-  const hideAmounts = group.some(item => item.hideAmounts)
-  const rawAmountFallback =
-    !hideAmounts &&
-    !hasPositiveIndexedAmount(parts.amountUsd) &&
-    event.project?.tokenSymbol &&
-    event.project.decimals !== null
-      ? {
-          raw: parts.amountRaw,
-          symbol: event.project.tokenSymbol.replace(/^\$+/, ''),
-          decimals: event.project.decimals,
-        }
-      : null
+  const rawAmountFallback = !hasPositiveIndexedAmount(parts.amountUsd)
+    ? activityAmountToken(
+        parts.amountRaw,
+        parts.amountAsset,
+        event.project?.tokenSymbol && event.project.decimals !== null
+          ? {
+              symbol: event.project.tokenSymbol.replace(/^\$+/, ''),
+              decimals: event.project.decimals,
+            }
+          : null,
+        event.chainId,
+      )
+    : null
   const actor = parts.actor
   const explorer = explorerHostname(event.chainId)
   const actorUrl = explorer
@@ -194,7 +194,7 @@ function Row({
             <ActivityMeta
               chainId={event.chainId}
               txHash={event.txHash}
-              amountUsd={hideAmounts ? null : parts.amountUsd}
+              amountUsd={parts.amountUsd}
               amountToken={rawAmountFallback}
               direction={parts.direction}
             />

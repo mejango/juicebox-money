@@ -21,12 +21,8 @@ import shopIllustration from '@/assets/illustrations/shop.png'
 import splitsIllustration from '@/assets/illustrations/splits.png'
 import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
-import type { BsFreshActivityEvent } from '@/lib/bendystraw'
-import {
-  getHomepageActivity,
-  getTopBalanceProjects,
-  type TopBalanceProject,
-} from '@/lib/top-projects'
+import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
+import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { ActivityRows } from '@/components/LoadingSkeletons'
@@ -269,7 +265,7 @@ async function ReservesPanel() {
 }
 
 async function ActivityPanel() {
-  const activity = await settled<BsFreshActivityEvent[]>(getHomepageActivity(9), [])
+  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(9), [])
   return (
     <FreshActivity
       initialEvents={activity.slice(0, 8)}
