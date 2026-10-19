@@ -56,7 +56,7 @@ const WHY_JUICEBOX_POINTS = [
   'Incentivize supporters, customers, and contributors.',
   'Set money rules that anyone can check.',
   'Start with flexible terms and lock in important bits over time.',
-  'Share funds and tokens with recipients you choose.',
+  'Share payouts and cash outs with anyone.',
   'Build your own payment experience with open-source tools.',
   'Follow payments, payouts, and changes to the rules in the public record.',
   'Fully automatable and AI compatible, on any permissioned spectrum you want.',
