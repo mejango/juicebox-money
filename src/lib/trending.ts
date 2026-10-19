@@ -4,7 +4,6 @@ import {
   BsProject,
 } from './bendystraw'
 import { fillIndexedMetadata } from './project-metadata-fill'
-import { deploymentKey, getHomepageIndexedTrust } from './top-projects'
 import { legacyProjectHref, toUrn } from './urn'
 
 /**
@@ -65,16 +64,12 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     { policy: 'stable' },
   )
 
-  const [groups, trust] = await Promise.all([
-    Promise.all(
-      data.suckerGroups.items.map(async group => ({
-        ...group,
-        projects: { items: await fillIndexedMetadata(group.projects.items) },
-      })),
-    ),
-    getHomepageIndexedTrust().catch(() => null),
-  ])
-  const trusted = new Set(trust?.trusted)
+  const groups = await Promise.all(
+    data.suckerGroups.items.map(async group => ({
+      ...group,
+      projects: { items: await fillIndexedMetadata(group.projects.items) },
+    })),
+  )
   return groups.flatMap(group => {
     const members = group.projects.items
     const representative =
@@ -89,14 +84,8 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     // decimals is only correct when every member agrees — a USDC member paired
     // with an ETH one renders the total 1e12x off and calls it ETH. The query
     // caps members at 8; a full page can't be checked for agreement at all.
-    // TEMPORARY: a V6 group whose indexed amounts are untrusted states no
-    // volume; see indexedAmountsTrusted.
     const accounting =
-      members.length < 8 &&
-      (group.version !== 6 ||
-        members.every(m => trusted.has(deploymentKey(m.chainId, m.projectId))))
-        ? suckerGroupAccountingToken(members)
-        : null
+      members.length < 8 ? suckerGroupAccountingToken(members) : null
 
     const urn = toUrn(representative.chainId, representative.projectId)
     return [

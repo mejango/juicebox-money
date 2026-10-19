@@ -10,7 +10,6 @@ import {
 import {
   getHomepageBalanceGroups,
   getHomepageEthPrice,
-  getHomepageIndexedTrust,
 } from './top-projects'
 
 export type ReservePoint = {
@@ -81,11 +80,10 @@ function feePointsFrom(
 
 const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
-    const [groups, ethPrice, addToBalances, trust] = await Promise.all([
+    const [groups, ethPrice, addToBalances] = await Promise.all([
       getHomepageBalanceGroups(),
       getHomepageEthPrice(),
       getAddToBalanceInflows().catch(() => [] as BsAddToBalance[]),
-      getHomepageIndexedTrust(),
     ])
     // `volume` counts payments only. Funds added straight to a terminal are money
     // that passed through too, and without them a treasury can report holding more
@@ -97,10 +95,7 @@ const cachedHomepageReserves = unstable_cache(
         (addedByGroup.get(event.suckerGroupId) ?? 0n) + BigInt(event.amount),
       )
     }
-    // TEMPORARY: untrusted groups add only their live balance below, and no
-    // volume or history.
     const supported = groups.flatMap(group => {
-      if (trust.untrusted[group.id]) return []
       const token = suckerGroupAccountingToken(group.projects.items)
       if (!token) return []
       const symbol = token.symbol.replace(/^\$+/, '').toUpperCase()
@@ -146,14 +141,6 @@ const cachedHomepageReserves = unstable_cache(
         else if (symbol === 'USDC') chain.usdc += chainAmount
         else chain.otherAssets.add(symbol)
       }
-    }
-    for (const row of Object.values(trust.untrusted).flat()) {
-      eth += row.eth
-      usdc += row.usdc
-      const chain = perChain.get(row.chainId)
-      if (!chain) continue
-      chain.eth += row.eth
-      chain.usdc += row.usdc
     }
 
     const histories = await Promise.all(
@@ -336,7 +323,7 @@ const cachedHomepageReserves = unstable_cache(
       feePoints: downsample(rawFeePoints),
     }
   },
-  ['juicebox-homepage-reserves-v6'],
+  ['juicebox-homepage-reserves-v5'],
   { revalidate: 600 },
 )
 
