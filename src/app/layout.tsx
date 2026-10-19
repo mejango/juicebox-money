@@ -22,7 +22,7 @@ const assetOrigin =
 const socialImage = new URL('/assets/juicebox-social.png', assetOrigin).href
 const siteTitle = 'Juicebox - fund your thing'
 const siteDescription =
-  'Raise money from anyone, anywhere, transparently on your terms.'
+  'Accept money from anyone, anywhere, transparently on your terms.'
 
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
 // Headings — PP Agrandir Medium.

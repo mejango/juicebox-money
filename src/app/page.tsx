@@ -23,6 +23,7 @@ import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
 import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
+import { ChainIcon } from '@/components/ChainIcon'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 import { ActivityRows } from '@/components/LoadingSkeletons'
 import { Skeleton } from '@/components/ui/Skeleton'
@@ -71,11 +72,11 @@ const JUICEBOX_FEATURES = [
     wide: true,
   },
   {
-    title: 'One community, everywhere',
+    title: 'A Shop built into your project',
     description:
-      'Use your project token across supported networks.',
-    illustration: accountsIllustration,
-    art: 'tall',
+      'Sell digital items through your project’s shop.',
+    illustration: shopIllustration,
+    art: 'square',
   },
   {
     title: 'Share with your team',
@@ -101,11 +102,11 @@ const JUICEBOX_FEATURES = [
     art: 'wide',
   },
   {
-    title: 'A Shop built into your project',
+    title: 'One community, everywhere',
     description:
-      'Sell digital items through your project’s shop.',
-    illustration: shopIllustration,
-    art: 'square',
+      'Use your project token across Ethereum, Base, Arbitrum, Optimism, and more as new legit networks emerge.',
+    illustration: accountsIllustration,
+    art: 'tall',
   },
   {
     title: 'Rewards on schedule',
@@ -393,6 +394,11 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
                 </span>
               </span>
             </span>
+            <span className="grid shrink-0 grid-cols-2 items-center gap-0.5">
+              {[...new Set(card.chainIds)].map(chainId => (
+                <ChainIcon key={chainId} chainId={chainId} size={16} standalone />
+              ))}
+            </span>
           </ProjectLink>
         </li>
       ))}
@@ -481,7 +487,7 @@ function HeroColumn() {
           </span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
-          Raise money from anyone, anywhere, transparently on your terms.
+          Accept money from anyone, anywhere, transparently on your terms.
         </p>
         <Link
           href="/create"
@@ -489,7 +495,7 @@ function HeroColumn() {
         >
           Start a project
         </Link>
-        <AuditPromptLink className="mt-5 text-sm text-smoke-600 xl:mt-3" />
+        <AuditPromptLink className="mt-8 text-sm text-smoke-600 xl:mt-6" />
       </div>
     </section>
   )
@@ -512,8 +518,8 @@ export default function HomePage() {
             Why Juicebox?
           </h2>
           <p className="mx-auto mt-5 max-w-4xl text-center font-agrandir text-xl font-medium leading-snug text-smoke-700 sm:text-2xl">
-            What open source businesses, campaigns, and indie projects actually
-            want:
+            Open source businesses, campaigns, and indie projects actually
+            want to:
           </p>
 
           <ol className="mx-auto mt-10 w-fit max-w-5xl list-decimal space-y-5 pl-8 marker:font-agrandir marker:text-lg marker:font-medium marker:text-bluebs-600">
