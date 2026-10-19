@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import './GuideSections.css'
 
 /**
@@ -14,6 +15,23 @@ const AUDIENCE_LABEL: Record<GuideAudience, string> = {
 }
 
 type GuideLink = { href: string; label: string }
+
+const INLINE_LINK = /\[([^\]]+)\]\(([^)\s]+)\)/g
+
+/** Guide prose may link a word with `[label](href)`; everything else renders as text. */
+export function Inline({ text }: { text: string }) {
+  const parts: ReactNode[] = []
+  let last = 0
+  for (const match of text.matchAll(INLINE_LINK)) {
+    parts.push(
+      text.slice(last, match.index),
+      <a key={match.index} className="guide-inline-link" href={match[2]}>{match[1]}</a>,
+    )
+    last = match.index + match[0].length
+  }
+  parts.push(text.slice(last))
+  return <>{parts}</>
+}
 
 type GuideBlock =
   | { type: 'text'; text: string }
@@ -44,7 +62,7 @@ export type GuideSection = {
 function Block({ block, id }: { block: GuideBlock; id: string }) {
   switch (block.type) {
     case 'text':
-      return <p className="guide-text">{block.text}</p>
+      return <p className="guide-text"><Inline text={block.text} /></p>
     case 'code':
       return (
         <figure className="guide-code">
@@ -115,7 +133,7 @@ function Block({ block, id }: { block: GuideBlock; id: string }) {
           {block.items.map((item, i) => (
             <li key={item} className="guide-step">
               <span className="guide-step-num" aria-hidden="true">{i + 1}</span>
-              <span className="guide-text mb-0">{item}</span>
+              <span className="guide-text mb-0"><Inline text={item} /></span>
             </li>
           ))}
         </ol>
@@ -125,13 +143,13 @@ function Block({ block, id }: { block: GuideBlock; id: string }) {
         <ul className="my-4 space-y-2" role="list">
           {block.items.map(item => (
             <li key={item.key} className="guide-text mb-0 pl-4 -indent-4">
-              <strong className="font-medium text-ink">{item.key}:</strong> {item.text}
+              <strong className="font-medium text-ink">{item.key}:</strong> <Inline text={item.text} />
             </li>
           ))}
         </ul>
       )
     case 'info':
-      return <div className="guide-info">{block.text}</div>
+      return <div className="guide-info"><Inline text={block.text} /></div>
     case 'links':
       return (
         <ul className="guide-resource-links guide-text" role="list">
@@ -224,7 +242,7 @@ export function GuideSections({
                   ) : null}
                   {section.paragraphs?.map(paragraph => (
                     <p key={paragraph} className="guide-text">
-                      {paragraph}
+                      <Inline text={paragraph} />
                     </p>
                   ))}
                   {section.blocks?.map((block, i) => (

@@ -196,6 +196,12 @@
   text-underline-offset: 0.15em;
 }
 
+.juicebox-guide .guide-inline-link {
+  color: #4864c8;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+}
+
 .juicebox-guide .guide-section-footer {
   margin-top: 1rem;
   font-size: 0.875rem;
