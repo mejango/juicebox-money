@@ -59,7 +59,7 @@ const WHY_JUICEBOX_POINTS = [
   'Share payouts and cash outs with anyone.',
   'Build custom experiences with open-source tools.',
   'Follow payments, payouts, and changes to the rules in the public record.',
-  'Fully automatable and AI compatible, on any permissioned spectrum you want.',
+  'Automate and delegate to AIs, as needed.',
 ]
 
 const JUICEBOX_FEATURES = [
