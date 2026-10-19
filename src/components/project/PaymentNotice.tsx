@@ -5,7 +5,7 @@ export function PaymentNotice({ text }: { text?: string }) {
   return (
     <details className="group rounded-xl border border-smoke-200 bg-white text-sm text-smoke-700">
       <summary className="cursor-pointer list-none rounded-xl p-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-bluebs-500 [&::-webkit-details-marker]:hidden">
-        <span className="block font-medium text-ink">Payment notice</span>
+        <span className="block font-medium text-ink">Payment notice from the project</span>
         <span className="mt-2 line-clamp-3 whitespace-pre-line break-words text-xs leading-relaxed group-open:hidden">
           {text}
         </span>
