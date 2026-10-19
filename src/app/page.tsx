@@ -111,7 +111,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Rewards on schedule',
     description:
-      'Schedule token rewards for your contributors and community.',
+      'Schedule incentives for your contributors and community.',
     illustration: autoIssuanceIllustration,
     art: 'wide',
     wide: true,
