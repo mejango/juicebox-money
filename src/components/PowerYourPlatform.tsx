@@ -95,7 +95,7 @@ export function PowerYourPlatform() {
             </h2>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
               Build your own marketplace, community, game, or payment app. Juicebox handles
-              payments, project tokens, and rules for the funds. You design the experience.
+              payments, programmable incentives, and rules for the funds. You design the experience.
             </p>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
               Use projects with terms their owners can change, revnets with financial schedules
