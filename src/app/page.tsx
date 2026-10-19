@@ -395,7 +395,7 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
                 </span>
               </span>
             </span>
-            <span className="grid shrink-0 grid-cols-2 items-center gap-0.5">
+            <span className="flex shrink-0 flex-col items-center -space-y-1">
               {[...new Set(card.chainIds)].map(chainId => (
                 <ChainIcon key={chainId} chainId={chainId} size={16} standalone />
               ))}
