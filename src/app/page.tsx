@@ -90,6 +90,7 @@ const JUICEBOX_FEATURES = [
     description:
       'Agreements are enforced, keeping everyone accountable.',
     illustration: marketIllustration,
+    imageMaxWidth: 'max-w-[520px]',
     art: 'tall',
     wide: true,
     reverse: true,
@@ -547,17 +548,19 @@ export default function HomePage() {
                 const isReversed = 'reverse' in feature && feature.reverse
                 const art = feature.art
                 const imageSizeClass =
-                  art === 'wide'
-                    ? isWide
-                      ? 'max-w-[560px]'
-                      : 'max-w-[480px]'
-                    : art === 'tall'
+                  'imageMaxWidth' in feature
+                    ? feature.imageMaxWidth
+                    : art === 'wide'
                       ? isWide
-                        ? 'max-w-[420px]'
-                        : 'max-w-[320px]'
-                      : isWide
-                        ? 'max-w-[440px]'
-                        : 'max-w-[340px]'
+                        ? 'max-w-[560px]'
+                        : 'max-w-[480px]'
+                      : art === 'tall'
+                        ? isWide
+                          ? 'max-w-[420px]'
+                          : 'max-w-[320px]'
+                        : isWide
+                          ? 'max-w-[440px]'
+                          : 'max-w-[340px]'
 
                 return (
                   <article
