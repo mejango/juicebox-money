@@ -1,5 +1,5 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { ActivityList } from '@/components/ActivityList'
+import { ProjectActivityList } from '@/app/[urn]/ProjectActivityList'
 import { ProjectDataStatus, type Deployment } from '@/components/project/ProjectDataStatus'
 import { getProjectActivityDisplay } from '@/lib/project-server-data'
 
@@ -24,7 +24,7 @@ export async function ProjectActivity({
   return (
     <>
       {!result ? <ProjectDataStatus deployments={deployments} notice="partial" /> : null}
-      <ActivityList
+      <ProjectActivityList
         events={result?.value.items ?? []}
         total={result?.value.totalCount ?? 0}
         error={!result}
@@ -33,6 +33,7 @@ export async function ProjectActivity({
         projectId={projectId}
         suckerGroupId={suckerGroupId}
         accountingToken={accountingToken}
+        deployments={deployments.map(row => [row.chainId, row.projectId])}
         isRevnet={isRevnet}
       />
     </>

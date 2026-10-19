@@ -1004,21 +1004,27 @@ function Row({
   chains,
   tokenUnit,
   accountingToken,
+  hideAmounts = false,
 }: {
   group: BsActivityEvent[]
   /** Every chain this action ran on; defaults to the group's own chain. */
   chains?: { chainId: number; txHash: string }[]
   tokenUnit: string
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
+  /** TEMPORARY: see useIndexedAmountsTrusted. */
+  hideAmounts?: boolean
 }) {
   const event = group[0]
-  const { actor, actions, direction, kind, headline, memo, amountUsd, amountRaw } =
-    combinedActivityParts(group, tokenUnit)
+  const parts = combinedActivityParts(group, tokenUnit)
+  const { actor, actions, direction, kind, headline, memo } = parts
+  const amountUsd = hideAmounts ? null : parts.amountUsd
+  const amountRaw = hideAmounts ? null : parts.amountRaw
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
   const actorNode = <ActorLink href={actorLink} actor={actor} />
-  const amountToken = accountingToken ? { raw: amountRaw, ...accountingToken } : null
+  const amountToken =
+    accountingToken && !hideAmounts ? { raw: amountRaw, ...accountingToken } : null
   // No amount and no flow tag = nothing for the title slot; the actor takes
   // its place (bare, no "to/from/by") instead of leaving a blank line.
   const hasTitle =
@@ -1103,6 +1109,7 @@ export function ActivityList({
   projectId,
   suckerGroupId,
   accountingToken,
+  hideAmounts = false,
   isRevnet,
   error = false,
   total,
@@ -1112,6 +1119,8 @@ export function ActivityList({
   chainId: JBChainId
   projectId: number
   suckerGroupId?: string | null
+  /** TEMPORARY: see useIndexedAmountsTrusted. */
+  hideAmounts?: boolean
   /**
    * Set when the project's verified deployments agree on one accounting-token
    * kind — rows then show raw token amounts instead of indexed USD.
@@ -1288,6 +1297,7 @@ export function ActivityList({
               chains={chains}
               tokenUnit={tokenUnit}
               accountingToken={accountingToken}
+              hideAmounts={hideAmounts}
             />
           ))}
         </ul>
