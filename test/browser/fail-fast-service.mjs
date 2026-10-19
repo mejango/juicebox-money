@@ -120,14 +120,14 @@ const projectFields = `
 `
 const activityEventFields = `
   id chainId projectId timestamp from txHash
-  payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount }
-  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary }
+  payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals }
+  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from }
+  addToBalanceEvent { amount memo from token decimals }
   mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
-  sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from }
+  sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from token decimals }
   sendReservedTokensToSplitsEvent { tokenCount from }
-  sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from }
+  sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from token decimals }
   sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
@@ -353,6 +353,14 @@ const contractFixtures = [
     functionName: 'tokenOf',
     args: [1n],
     result: zeroAddress,
+  },
+  {
+    name: 'JBTokens.totalSupplyOf',
+    address: TOKENS,
+    abi: jbTokensAbi,
+    functionName: 'totalSupplyOf',
+    args: [1n],
+    result: 0n,
   },
   {
     name: 'JBTerminalStore.balanceOf',
@@ -929,6 +937,8 @@ const graphqlFixtures = [
               beneficiary: '0x2222222222222222222222222222222222222222',
               memo: 'Browser fixture payment',
               newlyIssuedTokenCount: '5000000000000000000',
+              token: USDC.toLowerCase(),
+              decimals: 6,
             },
             cashOutTokensEvent: null,
             projectCreateEvent: null,

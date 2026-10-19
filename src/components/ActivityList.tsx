@@ -22,7 +22,9 @@ import {
   getProjectActivity,
   getProjectActivityByProject,
   type BsActivityEvent,
+  type EventToken,
 } from '@/lib/bendystraw'
+import { knownTokenSymbol } from '@/lib/token-symbol'
 import { explorerHostname } from '@/lib/chainDisplay'
 import {
   formatCompactAmount,
@@ -614,6 +616,7 @@ export function combinedActivityParts(
           }
         })
       : ordered
+  const amountPart = parts.find(part => part.amountRaw != null && part.amountRaw !== '0')
   const actions = (withFragments.length ? withFragments : ordered).map(
     entry => parts[ordered.indexOf(entry)].action,
   )
@@ -627,9 +630,17 @@ export function combinedActivityParts(
       ? sumOf(pays.map(entry => entry.payEvent!.amountUsd))
       : parts.find(part => part.amountUsd != null)?.amountUsd,
     // A cash out sold through the pool reclaims "0"; the sale's proceeds follow.
-    amountRaw: fanOut
-      ? sumOf(pays.map(entry => entry.payEvent!.amount))
-      : parts.find(part => part.amountRaw != null && part.amountRaw !== '0')?.amountRaw,
+    amountRaw: fanOut ? sumOf(pays.map(entry => entry.payEvent!.amount)) : amountPart?.amountRaw,
+    // A fan-out's total has a token only when every pay was in the same one.
+    amountAsset: fanOut
+      ? pays.every(
+          entry =>
+            entry.payEvent!.token?.toLowerCase() === pays[0].payEvent!.token?.toLowerCase() &&
+            entry.payEvent!.decimals === pays[0].payEvent!.decimals,
+        )
+        ? { token: pays[0].payEvent!.token, decimals: pays[0].payEvent!.decimals }
+        : { token: null, decimals: null }
+      : amountPart?.amountAsset,
     // A distribution is done "by" its caller; its receipts' inbound flow is
     // theirs, not the row's.
     direction: distributed
@@ -775,6 +786,8 @@ export function activityParts(
   memo: string | null
   amountUsd: string | null | undefined
   amountRaw: string | null | undefined
+  /** The token `amountRaw` is in; undefined for an amount the indexer stores no token for. */
+  amountAsset: EventToken | undefined
 } {
   const pay = event.payEvent
   const cashOut = event.cashOutTokensEvent
@@ -970,6 +983,12 @@ export function activityParts(
     <>updated the project</>
   )
   const memo = pay?.memo ?? event.addToBalanceEvent?.memo ?? null
+  const terminalEvent =
+    pay ??
+    cashOut ??
+    event.addToBalanceEvent ??
+    event.sendPayoutsEvent ??
+    event.sendPayoutToSplitEvent
   // A reserved distribution leads with the count the way value flows lead
   // with the amount: "3.6m ART" tagged "reserved distro".
   const headline: ActivityHeadline | null =
@@ -996,7 +1015,28 @@ export function activityParts(
       event.sendPayoutsEvent?.amountPaidOut ??
       event.sendPayoutToSplitEvent?.amount ??
       swap?.terminalTokenAmount,
+    amountAsset: terminalEvent
+      ? { token: terminalEvent.token, decimals: terminalEvent.decimals }
+      : undefined,
   }
+}
+
+/**
+ * How to label a row's raw amount: in the event's own token when it names a
+ * known one, in `fallback` when the event has no token field (swaps, or a
+ * query that does not select it), and not at all (USD instead) when the token
+ * is unknown or unresolved.
+ */
+export function activityAmountToken(
+  raw: string | null | undefined,
+  asset: EventToken | undefined,
+  fallback: Omit<ActivityAmountToken, 'raw'> | null | undefined,
+  chainId: number,
+): ActivityAmountToken | null {
+  if (!asset || asset.token === undefined) return fallback ? { raw, ...fallback } : null
+  const symbol = asset.token ? knownTokenSymbol(asset.token, { chainId }) : null
+  // ponytail: other ERC-20s fall back to USD, add a symbol read if they show up.
+  return symbol && asset.decimals != null ? { raw, symbol, decimals: asset.decimals } : null
 }
 
 function Row({
@@ -1012,13 +1052,15 @@ function Row({
   accountingToken?: Omit<ActivityAmountToken, 'raw'> | null
 }) {
   const event = group[0]
-  const { actor, actions, direction, kind, headline, memo, amountUsd, amountRaw } =
+  const { actor, actions, direction, kind, headline, memo, amountUsd, amountRaw, amountAsset } =
     combinedActivityParts(group, tokenUnit)
   const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
   const actorNode = <ActorLink href={actorLink} actor={actor} />
-  const amountToken = accountingToken ? { raw: amountRaw, ...accountingToken } : null
+  const amountToken = accountingToken
+    ? activityAmountToken(amountRaw, amountAsset, accountingToken, event.chainId)
+    : null
   // No amount and no flow tag = nothing for the title slot; the actor takes
   // its place (bare, no "to/from/by") instead of leaving a blank line.
   const hasTitle =
