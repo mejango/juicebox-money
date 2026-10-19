@@ -119,7 +119,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Borrow against tokens',
     description:
-      'Eligible holders can borrow funds and recover their tokens by repaying before the deadline.',
+      'On some projects, holders can borrow funds and recover their tokens by repaying before the deadline.',
     illustration: loansIllustration,
     art: 'tall',
   },
