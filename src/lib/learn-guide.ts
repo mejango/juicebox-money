@@ -128,7 +128,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "type": "steps",
         "items": [
           "Confirm the project, chain, and currency. A project on several chains keeps a separate balance on each.",
-          "Open Rulesets, or Terms for a revnet. Check how many tokens you’ll receive, where the money goes, when you can cash out, and what can change.",
+          "Open the Rulesets tab, called Terms on some projects. Check how many tokens you’ll receive, where the money goes, when you can cash out, and what can change.",
           "Read the project description and any item terms, and check who runs the project.",
           "Enter an amount and review the result. Keep some ETH for gas. Paying with a token like USDC needs an approval first.",
           "Approve in your wallet and wait for confirmation. If it stays pending, check its status before trying again."
@@ -350,7 +350,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-fees",
     "title": "Fees",
     "paragraphs": [
-      "Juicebox charges 2.5% when money leaves a project: payouts, allowance withdrawals, and cash outs with a tax above 0%. The fee is a payment into the Juicebox Protocol revnet (JBP6), so it comes back as JBP6 tokens: to the owner for payouts, to the chosen recipient for withdrawals, and to you for cash outs.",
+      "Juicebox charges 2.5% when money leaves a project: payouts, allowance withdrawals, and cash outs with a tax above 0%. The fee is a payment into the Juicebox Protocol’s own project (JBP6), so it comes back as JBP6 tokens: to the owner for payouts, to the chosen recipient for withdrawals, and to you for cash outs.",
       "Paying a project has no fee. Launching one costs a creation fee of up to 0.001 ETH per chain. A 100 ETH payout sends 2.5 ETH to JBP6 and 97.5 ETH to recipients, and the owner receives JBP6 tokens."
     ],
     "blocks": [
@@ -398,7 +398,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "Croptop lets people post content to a project’s shop for supporters to collect. The project sets who can post, the minimum price, and how many copies can be collected. Posting adds 5% of the item price, paid to the Croptop Publishing Network revnet (CPN), and the poster chooses who receives its CPN tokens."
+        "text": "Croptop lets people post content to a project’s shop for supporters to collect. The project sets who can post, the minimum price, and how many copies can be collected. Posting adds 5% of the item price, paid to the Croptop Publishing Network project (CPN), and the poster chooses who receives its CPN tokens."
       },
       {
         "type": "links",
