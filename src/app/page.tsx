@@ -79,9 +79,9 @@ const JUICEBOX_FEATURES = [
     art: 'square',
   },
   {
-    title: 'Share with your team',
+    title: 'Share with a team or community',
     description:
-      'Set aside part of each new token issue for contributors, partners, and communities.',
+      'Set aside payouts and incentives for contributors, partners, and communities.',
     illustration: splitsIllustration,
     art: 'wide',
   },
