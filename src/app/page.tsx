@@ -133,7 +133,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Control on your terms',
     description:
-      'Manage the project yourself or give others specific tasks. Use a shared wallet when decisions need several approvals.',
+      'Manage the project yourself or give others specific permissions.',
     illustration: operatorIllustration,
     art: 'tall',
     wide: true,
