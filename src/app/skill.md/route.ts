@@ -25,15 +25,15 @@ ${JUICEBOX_ONE_LINER} juicebox.money runs Juicebox V6 on Ethereum, Optimism, Bas
 
 ## Find a project
 
-\`/<chain>:<id>\` (e.g. \`/base:10\`) or \`/@<handle>\`. Chains: ${CHAIN_SLUGS}. Holders: \`jb_get_holders\`.
+\`/<chain>:<id>\` (e.g. \`/base:10\`) or \`/@<handle>\`. Chains: ${CHAIN_SLUGS}. Holders: \`jb_get_holders\`. Biggest by balance: ${siteOrigin}/api/top-projects (the balance is the total across chains).
 
 ## Jobs
 
-1. Launch: learn the goal, choose a project or a revnet, and set the rules, payouts, and reserved tokens. Prepare with \`jb_prepare_omnichain_launch\` for one project linked across chains, or \`jb_prepare_launch\` for one chain. Or write a .jb draft for ${siteOrigin}/create. Walk through every setting before the user signs. Ask before pinning the name and logo; without a pin the project launches nameless; add it later with \`jb_prepare_set_project_uri\`. After launch, give the token its ERC-20 name and ticker with \`jb_prepare_deploy_erc20\`. Guide: ${siteOrigin}/build#founders-launch-with-an-agent
-2. Check before paying: the owner and what they can change, payouts, reserved tokens, cash out tax, chains. Say what a payer gets, what the owner can do, and how holders get out.
+1. Launch: learn the goal, choose a project or a revnet, and set the rules, payouts, and reserved tokens. Prepare with \`jb_prepare_omnichain_launch\` for one project linked across chains, or \`jb_prepare_launch\` for one chain. Payout limits apply on each chain: 2 ETH a month on two chains is 1 ETH each, or up to 4 ETH in total. Or write a .jb draft for ${siteOrigin}/create. Walk through every setting before the user signs. Ask before pinning the name and logo; without a pin the project launches nameless; add it later with \`jb_prepare_set_project_uri\`. After launch, give the token its ERC-20 name and ticker with \`jb_prepare_deploy_erc20\`. Guide: ${siteOrigin}/build#founders-launch-with-an-agent
+2. Check before paying: the owner and what they can change, payouts, reserved tokens, cash out tax, chains, which token the balance holds (holders cash out in it), and who holds the most. If \`jb_get_project\` shows \`isRevnet\`, use https://revnet.money/skill.md. Say what a payer gets, what the owner can do, and how holders get out.
 3. Pay: quote, and where a pool exists compare \`jb_quote_pool_buy\`, which skips reserved tokens. Set a minimum.
 4. Cash out: use the hook-aware quote. Holders get part of the surplus: the balance not scheduled for payouts.
-5. Owner actions: schedule new rules, send payouts, edit splits. Check the notice and approval each change needs.
+5. Owner actions: send payouts (\`jb_quote_payout\`, \`jb_prepare_payout\`) and schedule new rules (\`jb_get_rulesets\`, \`jb_preview_ruleset_change\`, \`jb_prepare_ruleset_change\`); splits change with the rules. New rules start next cycle, after the approval hook's notice if there is one. A project without cycles changes at once.
 
 For revnets, use https://revnet.money/skill.md.
 
