@@ -37,6 +37,7 @@ import { SecuredReserves } from '@/components/SecuredReserves'
 import { formatTokenAmount, timeAgo } from '@/lib/format'
 import { getNewProjects, type NewProject } from '@/lib/new-projects'
 import { getHomepageReserves } from '@/lib/homepage-reserves'
+import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
 
 export const revalidate = 120
 
@@ -490,7 +491,7 @@ function HeroColumn() {
           </span>
         </h1>
         <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
-          Accept money from anyone, anywhere, transparently on your terms.
+          {JUICEBOX_ONE_LINER}
         </p>
         <Link
           href="/create"

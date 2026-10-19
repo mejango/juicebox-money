@@ -1,5 +1,6 @@
 import { CHAIN_SLUGS, JUICEBOX_CENTER_API_URL, JUICEBOX_MCP_URL, JUICEBOX_SKILLS_URL } from '@/lib/agent-guide'
 import { publicReadHeaders } from '@/lib/api-cache'
+import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
 
 const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
 
@@ -9,9 +10,9 @@ const siteOrigin = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
  */
 const LLMS_TXT = `# Juicebox
 
-> Accept money from anyone, anywhere, transparently on your terms. A Juicebox
-> project takes payments, issues tokens as incentives, pays out on a schedule, and
-> lets holders cash out, under rules its owner sets. This site runs Juicebox V6 on
+> ${JUICEBOX_ONE_LINER}
+> A Juicebox project takes payments, issues tokens as incentives, pays out on a
+> schedule, and lets holders cash out, under rules its owner sets. This site runs Juicebox V6 on
 > Ethereum, Optimism, Base, and Arbitrum, reading the contracts and Bendystraw, an
 > index of their records.
 
@@ -42,6 +43,7 @@ identifier, description and logo.
 
 ## For agents
 
+- [Agent skill](${siteOrigin}/skill.md): how to launch, check, pay, cash out, and run projects here.
 - [Juicebox MCP](${JUICEBOX_MCP_URL}): reads, quotes, metadata pinning, and unsigned
   transaction plans. Holds no keys; the user signs.
 - [Juicebox Center API](${JUICEBOX_CENTER_API_URL}): RPC, IPFS, and indexed data in one place.

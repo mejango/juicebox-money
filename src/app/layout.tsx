@@ -7,6 +7,7 @@ import { SiteNavigation } from '@/components/SiteNavigation'
 import { Providers } from '@/providers/Providers'
 import { HeldWritesNotice } from '@/components/ui/HeldWritesNotice'
 import { ScrollToTop } from '@/components/ScrollToTop'
+import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
 
 const siteOrigin =
   process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3001'
@@ -21,8 +22,7 @@ const assetOrigin =
     : siteOrigin)
 const socialImage = new URL('/assets/juicebox-social.png', assetOrigin).href
 const siteTitle = 'Juicebox - fund your thing'
-const siteDescription =
-  'Accept money from anyone, anywhere, transparently on your terms.'
+const siteDescription = JUICEBOX_ONE_LINER
 
 // The brand's three faces (DESIGN.md §Type), self-hosted from /public/fonts.
 // Headings — PP Agrandir Medium.
