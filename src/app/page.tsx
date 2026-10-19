@@ -126,7 +126,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Payments that fit anywhere',
     description:
-      'Give your project a payment address or add payments to your own app.',
+      'Anyone can build on Juicebox. Create your own apps, tools, and payment experiences.',
     illustration: extrasIllustration,
     art: 'wide',
   },
