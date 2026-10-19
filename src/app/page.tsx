@@ -74,7 +74,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'A Shop built into your project',
     description:
-      'Sell digital items through your project’s shop.',
+      'Sell things through your project’s shop.',
     illustration: shopIllustration,
     art: 'square',
   },
@@ -111,7 +111,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Rewards on schedule',
     description:
-      'Choose when token rewards become available. Anyone can then send them to the set recipients.',
+      'Schedule token rewards for your contributors and community.',
     illustration: autoIssuanceIllustration,
     art: 'wide',
     wide: true,
