@@ -86,9 +86,9 @@ const JUICEBOX_FEATURES = [
     art: 'wide',
   },
   {
-    title: 'Clear terms for supporters',
+    title: 'Clear terms for everyone',
     description:
-      'Show what a payment receives and when tokens can be exchanged for project funds.',
+      'Agreements are enforced, keeping everyone accountable.',
     illustration: marketIllustration,
     art: 'tall',
     wide: true,
