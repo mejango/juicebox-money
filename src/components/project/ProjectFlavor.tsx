@@ -7,7 +7,7 @@ import { useProjectNftProtocol } from '@/hooks/useProjectNftProtocol'
 export function ProjectFlavor({ chainId, projectId, isRevnet }: { chainId: JBChainId; projectId: number; isRevnet: boolean }) {
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet)
   if (isRevnet) return <>Revnet</>
-  if (identity.isSuccess) return <>{identity.data?.protocol === 'defifa' ? 'Defifa' : 'Project'}</>
+  if (identity.isSuccess) return <>{identity.data?.protocol === 'defifa' ? 'Defifa' : 'Custom'}</>
   if (identity.isError) return <button type="button" className="underline" onClick={() => void identity.refetch()}>Unavailable. Retry</button>
   return <span role="status">Checking…</span>
 }

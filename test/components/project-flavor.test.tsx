@@ -4,11 +4,11 @@ const identity = vi.hoisted(() => ({ result: { isSuccess: true, isError: false, 
 vi.mock('@/hooks/useProjectNftProtocol', () => ({ useProjectNftProtocol: () => identity.result }))
 import { ProjectFlavor } from '@/components/project/ProjectFlavor'
 describe('verified project flavor', () => {
-  it('labels native protocol as Defifa and preserves ordinary Project and Revnet', () => {
+  it('labels native protocol as Defifa and labels ordinary projects Custom and preserves Revnet', () => {
     identity.result.data = { protocol: 'defifa' }
     expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Defifa')
     identity.result.data = { protocol: 'jb721' }
-    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Project')
+    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Custom')
     identity.result.data = null
     expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet />)).toBe('Revnet')
   })
