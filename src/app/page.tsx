@@ -66,7 +66,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Rules you can trust',
     description:
-      'Choose which terms can change and which stay fixed.',
+      'Choose which terms can change and which stay fixed. Evolve guardrails over time.',
     illustration: termsIllustration,
     art: 'tall',
     wide: true,
