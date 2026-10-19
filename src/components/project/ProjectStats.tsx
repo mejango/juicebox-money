@@ -495,8 +495,8 @@ export function ProjectStats({
                 ? "owner"
                 : "owners"
               : holderCountIsExact && holderCount === 1
-                ? "token holder"
-                : "token holders"
+                ? "holder"
+                : "holders"
           }
           value={holderValue}
           className="border-l border-smoke-200 pl-4"
