@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ openSignIn: vi.fn() }) }))
 vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => ({}) }))
+vi.mock('@/hooks/useIndexedAmountsTrusted', () => ({ useIndexedAmountsTrusted: () => true }))
 vi.mock('@/hooks/useProjectTokenSymbol', () => ({
   useProjectTokenSymbol: () => ({ data: { symbol: 'TEST' } }),
 }))

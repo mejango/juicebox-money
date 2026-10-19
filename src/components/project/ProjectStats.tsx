@@ -1,5 +1,6 @@
 'use client'
 
+import { useIndexedAmountsTrusted } from '@/hooks/useIndexedAmountsTrusted'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
@@ -274,6 +275,8 @@ export function ProjectStats({
   const config = useConfig()
   const queryClient = useQueryClient()
   const raisedTooltipId = useId()
+  // TEMPORARY: see useIndexedAmountsTrusted.
+  const raisedTrusted = useIndexedAmountsTrusted(chains)
   const treasuryTooltipId = useId()
   const { data, isLoading, isFetching: treasuryFetching } = useKeptQuery(projectDisplayQuery(queryClient, {
     staleTime: 30000,
@@ -388,6 +391,16 @@ export function ProjectStats({
       className="mt-2 space-y-1 md:flex md:items-center md:gap-x-4 md:space-y-0"
     >
       <div className="flex items-center gap-x-4 md:contents">
+        {raisedTrusted !== true ? (
+          <Stat
+            label="raised"
+            value={
+              raisedTrusted === undefined
+                ? <Skeleton as="span" className="inline-block h-7 w-24 rounded align-middle" />
+                : '—'
+            }
+          />
+        ) : (
         <HoverBreakdownStat
           label="raised"
           value={formatUsd18(totalRaisedUsd)}
@@ -418,6 +431,7 @@ export function ProjectStats({
             <span className="tabular-nums">{formatUsd18(totalRaisedUsd)}</span>
           </div>
         </HoverBreakdownStat>
+        )}
 
         {hasBreakdown ? (
           <HoverBreakdownStat
