@@ -355,14 +355,6 @@ const contractFixtures = [
     result: zeroAddress,
   },
   {
-    name: 'JBTokens.totalSupplyOf',
-    address: TOKENS,
-    abi: jbTokensAbi,
-    functionName: 'totalSupplyOf',
-    args: [1n],
-    result: 0n,
-  },
-  {
     name: 'JBTerminalStore.balanceOf',
     address: TERMINAL_STORE,
     abi: jbTerminalStoreAbi,

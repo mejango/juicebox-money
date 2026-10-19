@@ -1,6 +1,5 @@
 'use client'
 
-import { useIndexedAmountsTrusted } from '@/hooks/useIndexedAmountsTrusted'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
@@ -877,8 +876,6 @@ function AllHoldersCard({
   // transacted since the extension. `(chainId, projectId)` keys never move.
   const refs = chains.length ? chains : [[chainId, projectId] as [number, number]]
   const refsParam = refs.map(([cid, pid]) => `${cid}:${pid}`).join(',')
-  // TEMPORARY: see useIndexedAmountsTrusted.
-  const paidTrusted = useIndexedAmountsTrusted(refs) === true
 
   const { data, isLoading, isError } = useKeptQuery({
     queryKey: ['participants', refsParam, suckerGroupId],
@@ -1024,7 +1021,7 @@ function AllHoldersCard({
                           ))}
                         </span>
                         <span className="text-smoke-700">
-                          {paidTrusted ? indexedPaidLabel(holder.volumeUsd) : '—'}
+                          {indexedPaidLabel(holder.volumeUsd)}
                         </span>
                       </div>
                     ))}

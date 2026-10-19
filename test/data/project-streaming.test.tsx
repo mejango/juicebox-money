@@ -47,7 +47,6 @@ vi.mock('@/components/project/SafeBatchProvider', () => ({ SafeBatchProvider: ({
 vi.mock('@/components/project/ShopCartProvider', () => ({ ShopCartProvider: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/providers/ProjectRouteContext', () => ({ ProjectRouteBoundary: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/components/project/Tabs', () => ({ ProjectTabs: ({ activity, sidebar, tabs }: { activity: ReactNode; sidebar: ReactNode; tabs: { label: string; content: ReactNode }[] }) => <main><nav>Project tabs ready</nav>{sidebar}{activity}{tabs.map(tab => <section key={tab.label}>{tab.content}</section>)}</main> }))
-vi.mock('@/hooks/useIndexedAmountsTrusted', () => ({ useIndexedAmountsTrusted: () => true }))
 vi.mock('@/components/ActivityList', () => ({ ActivityList: ({ error, initialEventsUpdatedAt }: { error: boolean; initialEventsUpdatedAt?: number }) => <p data-updated-at={initialEventsUpdatedAt}>{error ? 'Activity unavailable' : 'Activity ready'}</p> }))
 
 import ProjectPage from '@/app/[urn]/page'

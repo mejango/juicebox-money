@@ -177,7 +177,7 @@ export function OverviewTab({
           suckerGroupId={suckerGroupId}
         />
       ) : (
-        <FundingChart suckerGroupId={suckerGroupId} chains={chains} />
+        <FundingChart suckerGroupId={suckerGroupId} />
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

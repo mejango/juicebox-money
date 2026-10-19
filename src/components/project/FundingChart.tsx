@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { useIndexedAmountsTrusted } from '@/hooks/useIndexedAmountsTrusted'
 import { SecuredReserveChart } from '@/components/SecuredReserveChart'
 import { ChartRangeSelect } from '@/components/project/StepChartBase'
 import {
@@ -131,14 +130,9 @@ function bucketize(
  */
 export function FundingChart({
   suckerGroupId,
-  chains,
 }: {
   suckerGroupId: string | null
-  /** [chainId, projectId] for every deployment. */
-  chains: [number, number][]
 }) {
-  // TEMPORARY: see useIndexedAmountsTrusted.
-  const trusted = useIndexedAmountsTrusted(chains)
   const [moments, setMoments] = useState<BsPriceMoment[] | null>(null)
   const [adds, setAdds] = useState<BsAddToBalance[]>([])
   const [metric, setMetric] = useState<Metric>('volume')
@@ -177,7 +171,7 @@ export function FundingChart({
     [moments, adds, metric, rangeSeconds],
   )
 
-  if (!suckerGroupId || trusted !== true) return null
+  if (!suckerGroupId) return null
   if (moments !== null && points.length === 0) return null
 
   const selected = METRICS.find(item => item.value === metric)!
