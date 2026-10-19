@@ -54,7 +54,7 @@ const FRUIT_SEPARATOR = [
 const WHY_JUICEBOX_POINTS = [
   'Accept payments from around the world.',
   'Incentivize supporters, customers, and contributors.',
-  'Set rules for the money that anyone can check.',
+  'Set money rules that anyone can check.',
   'Start with flexible terms and lock the parts you want to make permanent.',
   'Share funds and tokens with recipients you choose.',
   'Build your own payment experience with open-source tools.',
