@@ -81,7 +81,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Share with a team or community',
     description:
-      'Set aside payouts and incentives for contributors, partners, and communities.',
+      'Set aside payouts and incentives for contributors, partners, and other supporters.',
     illustration: splitsIllustration,
     art: 'wide',
   },
