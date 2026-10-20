@@ -74,8 +74,15 @@ describe('floorAtMoment', () => {
     expect(floorAtMoment(moment, { ...options, perPointRates: true })).toBeCloseTo(2.925)
   })
 
-  it('converts the USD floor to the accounting token on a token axis', () => {
-    expect(floorAtMoment(moment, { ...options, perPointRates: false })).toBeCloseTo(0.0014625, 8)
+  it('converts the USD floor to the accounting token at that token’s own rate on a token axis', () => {
+    // The group moment's rate follows whichever chain last moved; a USDC
+    // move would read as $1. The accounting token's own rate is used.
+    const lastMovedUsdc = { ...moment, accountingTokenUsdRate: String(E18) }
+    expect(floorAtMoment(lastMovedUsdc, { ...options, perPointRates: false, accountingUsdRate: 2_000 })).toBeCloseTo(0.0014625, 8)
+  })
+
+  it('leaves out a several-token moment before any accounting-token rate', () => {
+    expect(floorAtMoment(moment, { ...options, perPointRates: false })).toBeNull()
   })
 
   it('keeps the exact raw balance on a native axis when the group accepts one token', () => {
@@ -86,8 +93,8 @@ describe('floorAtMoment', () => {
     expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: true })).toBeCloseTo(4.875, 8)
   })
 
-  it('keeps the raw balance for a moment the indexer could not value', () => {
+  it('keeps the raw balance for a single-token moment the indexer could not value', () => {
     const unvalued = { ...moment, balance: String(E18), balanceUsd: '0' }
-    expect(floorAtMoment(unvalued, { ...options, perPointRates: false })).toBeCloseTo(0.000975, 8)
+    expect(floorAtMoment(unvalued, { ...options, severalTokens: false, perPointRates: true })).toBeCloseTo(1.95, 8)
   })
 })

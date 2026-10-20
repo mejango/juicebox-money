@@ -1421,6 +1421,26 @@ export async function getProjectTokenBalanceMoments(): Promise<BsTokenBalanceMom
   return page.items
 }
 
+export type BsTokenUsdRate = {
+  timestamp: number
+  /** 18-dec USD per one whole token at that moment's block. */
+  tokenUsdRate: string | null
+}
+
+/** One deployment's indexed USD rates for one of its tokens, oldest first. */
+export async function getTokenUsdRates(
+  { chainId, projectId, token }: { chainId: number; projectId: number; token: string },
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<BsTokenUsdRate[]> {
+  const page = await getPagedItems<BsTokenUsdRate>(
+    TOKEN_USD_RATES_QUERY,
+    'projectTokenBalanceMoments',
+    { chainId, projectId, token: token.toLowerCase() },
+    { max: Number.POSITIVE_INFINITY, policy: 'stable', signal },
+  )
+  return page.items
+}
+
 export type BsGroupVolumeMoment = {
   suckerGroupId: string
   timestamp: number
@@ -1582,6 +1602,19 @@ const TOKEN_BALANCE_MOMENTS_QUERY = `query($limit: Int!, $offset: Int!) {
     offset: $offset
   ) {
     items { chainId projectId token decimals balance timestamp tokenUsdRate }
+    totalCount
+  }
+}`
+
+const TOKEN_USD_RATES_QUERY = `query($chainId: Int!, $projectId: Int!, $token: String!, $limit: Int!, $offset: Int!) {
+  projectTokenBalanceMoments(
+    where: { chainId: $chainId, projectId: $projectId, token: $token, version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { timestamp tokenUsdRate }
     totalCount
   }
 }`
@@ -1842,12 +1875,12 @@ const BENEFICIARY_EVENT_SOURCES = [
   {
     list: 'payEvents',
     field: 'payEvent',
-    selection: 'amount amountUsd beneficiary memo newlyIssuedTokenCount',
+    selection: 'amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol',
   },
   {
     list: 'cashOutTokensEvents',
     field: 'cashOutTokensEvent',
-    selection: 'cashOutCount reclaimAmount reclaimAmountUsd beneficiary',
+    selection: 'cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol',
   },
   {
     list: 'mintTokensEvents',
@@ -1878,7 +1911,7 @@ const BENEFICIARY_EVENT_SOURCES = [
   {
     list: 'sendPayoutToSplitEvents',
     field: 'sendPayoutToSplitEvent',
-    selection: 'amount amountUsd beneficiary splitProjectId',
+    selection: 'amount amountUsd beneficiary splitProjectId token decimals tokenSymbol',
   },
   {
     list: 'sendReservedTokensToSplitEvents',

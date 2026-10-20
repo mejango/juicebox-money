@@ -1049,6 +1049,36 @@ export function activityAmountToken(
   return symbol && asset.decimals != null ? { raw, symbol, decimals: asset.decimals } : null
 }
 
+function hasPositiveIndexedAmount(value: string | null | undefined): boolean {
+  if (!value) return false
+  try {
+    return BigInt(value) > 0n
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The amount label for a cross-project feed row: the event's own token when
+ * it names a known one, else USD. An amount with no token field (a swap)
+ * falls back to the project's accounting token only when it has no USD value.
+ */
+export function feedAmountToken(
+  parts: Pick<ReturnType<typeof combinedActivityParts>, 'amountRaw' | 'amountAsset' | 'amountUsd'>,
+  project: { tokenSymbol: string | null; decimals: number | null } | null | undefined,
+  chainId: number,
+): ActivityAmountToken | null {
+  if (parts.amountAsset?.token === undefined && hasPositiveIndexedAmount(parts.amountUsd)) return null
+  return activityAmountToken(
+    parts.amountRaw,
+    parts.amountAsset,
+    project?.tokenSymbol && project.decimals !== null
+      ? { symbol: project.tokenSymbol.replace(/^\$+/, ''), decimals: project.decimals }
+      : null,
+    chainId,
+  )
+}
+
 function Row({
   group,
   chains,

@@ -48,7 +48,7 @@ import {
   resolveMarket,
   type MarketResult,
 } from '@/components/project/MarketSection'
-import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { getTokenUsdRates, type BsRevnetPriceHistory } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
   netCashOutDisplayValue,
@@ -63,6 +63,7 @@ import {
   axisRate,
   floorAtMoment,
   poolReservesSeriesFrom,
+  usdRateOf,
   type PricePoint,
 } from '@/lib/price-series'
 import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
@@ -71,6 +72,8 @@ import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 
 const PRICE_REFRESH_MS = 15_000
+/** One cadence for the floor history and the rates that price it, so new moments never meet a stale rate. */
+const HISTORY_REFRESH = { staleTime: 30_000, refetchInterval: PRICE_REFRESH_MS, refetchOnWindowFocus: true, retry: 1 }
 
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
@@ -373,10 +376,7 @@ export function RevnetPriceCard({
     cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
-    staleTime: 30_000,
-    refetchInterval: PRICE_REFRESH_MS,
-    refetchOnWindowFocus: true,
-    retry: 1,
+    ...HISTORY_REFRESH,
     queryFn: async (): Promise<BsRevnetPriceHistory> => {
       // chainId is an endpoint-routing hint (testnet groups live on the
       // testnet indexer); it never filters the group.
@@ -397,6 +397,23 @@ export function RevnetPriceCard({
   // ETH-denominated ruleset must keep using the live base/accounting feed rather than reading
   // a USD number as if it were ETH. Per-point where available, live rate everywhere else.
   const perPointRates = references?.baseCurrency === BASE_CURRENCY_USD
+
+  // A group of several tokens prices its native-axis floor from the USD
+  // balance, in the accounting token at that token's own indexed rate.
+  const backingToken = data.contexts[0]?.token
+  const { data: accountingRates } = useKeptQuery(
+    cachedQuery({
+      queryKey: ['tokenUsdRates', chainId, projectId, backingToken ?? null],
+      enabled: severalTokens && !perPointRates && !!backingToken,
+      ...HISTORY_REFRESH,
+      queryFn: async ({ signal }) =>
+        (await getTokenUsdRates({ chainId, projectId, token: backingToken! }, { signal }))
+          .flatMap(row => {
+            const rate = usdRateOf(row.tokenUsdRate)
+            return rate === undefined ? [] : [{ timestamp: row.timestamp, rate }]
+          }),
+    }),
+  )
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
@@ -434,6 +451,7 @@ export function RevnetPriceCard({
           perPointRates,
           historyRate,
           severalTokens,
+          accountingUsdRate: accountingRates?.findLast(rate => rate.timestamp <= timestamp)?.rate,
         })
         if (!value) return []
         // With one accounting token the raw balance moves only with funds, so
@@ -458,7 +476,7 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [all, data, history?.moments, historyRate, perPointRates, severalTokens])
+  }, [accountingRates, all, data, history?.moments, historyRate, perPointRates, severalTokens])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()

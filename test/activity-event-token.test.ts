@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activityAmountToken, combinedActivityParts } from '@/components/ActivityList'
+import { activityAmountToken, combinedActivityParts, feedAmountToken } from '@/components/ActivityList'
 import type { BsActivityEvent } from '@/lib/bendystraw'
 
 const ETH = '0x000000000000000000000000000000000000eeee'
@@ -63,5 +63,25 @@ describe('activity amounts on a project that accepts several tokens', () => {
     const parts = combinedActivityParts([event], 'tokens')
     expect(activityAmountToken(parts.amountRaw, parts.amountAsset, null, 1)).toBeNull()
     expect(parts.amountUsd).toBe('5000000000000000000')
+  })
+})
+
+describe('cross-project feeds show the event’s own token over USD', () => {
+  const project = { tokenSymbol: 'USDC', decimals: 6 }
+  const feed = (event: BsActivityEvent) => feedAmountToken(combinedActivityParts([event], 'tokens'), project, 1)
+  const priced = (event: BsActivityEvent) => ({ ...event, payEvent: { ...event.payEvent!, amountUsd: '250000000000000000' } })
+
+  it('labels a priced ETH pay in ETH, not USD', () => {
+    expect(feed(priced(pay('a', ETH, 18)))).toEqual({ raw: '100000000000000', symbol: 'ETH', decimals: 18 })
+  })
+
+  it('drops to USD for an unknown token', () => {
+    expect(feed(priced(pay('a', '0x00000000000000000000000000000000000000aa', 18)))).toBeNull()
+  })
+
+  it('uses the project token for an amount with no token field only when it has no USD value', () => {
+    const swap = { amountRaw: '5000000', amountAsset: undefined, amountUsd: undefined }
+    expect(feedAmountToken(swap, project, 1)).toEqual({ raw: '5000000', symbol: 'USDC', decimals: 6 })
+    expect(feedAmountToken({ ...swap, amountUsd: '5000000000000000000' }, project, 1)).toBeNull()
   })
 })
