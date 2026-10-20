@@ -75,6 +75,10 @@ export function SearchBox({
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const searchGenerationRef = useRef(0)
+  // Bumped by every submit, navigation, edit and unmount, so a submit that
+  // waited on the handle normalizer never overrides a newer one.
+  const submissionRef = useRef(0)
+  useEffect(() => () => { submissionRef.current += 1 }, [])
 
   const urn = parseUrn(query.trim())
   const projectHandle = useProjectHandleFromRoute(query.trim())
@@ -220,6 +224,7 @@ export function SearchBox({
 
   const go = (path: string, projectHint?: ProjectNavigationHint) => {
     searchGenerationRef.current += 1
+    submissionRef.current += 1
     abortRef.current?.abort()
     if (projectHint) rememberProjectNavigation(path, projectHint)
     setOpen(false)
@@ -236,6 +241,7 @@ export function SearchBox({
   // retain a tuple resolved before the ENS record was rebound.
   const goHandle = (path: string) => {
     searchGenerationRef.current += 1
+    submissionRef.current += 1
     abortRef.current?.abort()
     setOpen(false)
     setMobileOpen(false)
@@ -255,8 +261,9 @@ export function SearchBox({
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (handlePath) goHandle(handlePath)
     else if (handlePending) {
-      const handle = await projectHandleFromRoute(query.trim())
-      if (handle) goHandle(`/@${encodeURIComponent(handle.handle)}`)
+      const submission = ++submissionRef.current
+      const handle = await projectHandleFromRoute(query.trim()).catch(() => null)
+      if (handle && submission === submissionRef.current) goHandle(`/@${encodeURIComponent(handle.handle)}`)
     }
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
@@ -275,7 +282,10 @@ export function SearchBox({
         type="text"
         autoFocus={autoFocus}
         value={query}
-        onChange={e => setQuery(e.target.value)}
+        onChange={e => {
+          submissionRef.current += 1
+          setQuery(e.target.value)
+        }}
         onFocus={() =>
           (results.length > 0 || account || ensPending || searchUnavailable) &&
           setOpen(true)
