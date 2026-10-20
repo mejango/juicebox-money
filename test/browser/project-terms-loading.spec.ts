@@ -14,8 +14,15 @@ test.beforeAll(() => {
   }
   const terms = scriptsFor('TermsTab')
   const heavy = scriptsFor('DeferredProjectTabs')
+  // A chunk another lazy import also needs (shared viem code the owner's Safe
+  // check loads on view) is not the heavy tabs' own code.
+  const elsewhere = new Set(
+    Object.entries(manifest)
+      .filter(([key]) => !key.startsWith('components/project/LazyProjectTabs.tsx -> '))
+      .flatMap(([, entry]) => entry.files.map(file => `/_next/${file}`)),
+  )
   termsScripts = terms.filter(file => !heavy.includes(file))
-  heavyScripts = heavy.filter(file => !terms.includes(file))
+  heavyScripts = heavy.filter(file => !terms.includes(file) && !elsewhere.has(file))
   expect(termsScripts.length, 'Terms must load independently of the heavy tab group').toBeGreaterThan(0)
   expect(heavyScripts.length, 'heavy tabs must retain a separate chunk').toBeGreaterThan(0)
 })
