@@ -12,7 +12,7 @@ import { isAddressEqual, type Address } from "viem";
 import { ActionRowsSkeleton, ActivityRows, OverviewTabSkeleton, ProjectHeaderSkeleton, ProjectPayPanelSkeleton, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
 import { ProjectHeader, ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice } from "@/app/[urn]/ProjectMetadataSections";
 import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
-import { PendingPayments } from "@/components/project/PendingPayments";
+import { PendingPaymentsGate } from "@/components/project/PendingPaymentsGate";
 import { ChainIcon } from "@/components/ChainIcon";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
 import { AddressLink } from "@/components/ui/AddressLink";
@@ -482,7 +482,7 @@ async function ProjectPageContents({ urn, result: pending }: {
           }
           activity={
             <section className="min-[801px]:mt-8">
-              <PendingPayments key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
+              <PendingPaymentsGate key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
               <Suspense fallback={<div role="status" aria-label="Loading activity"><ActivityRows /></div>}>
               <ProjectActivity
                 chainId={urn.chainId}
