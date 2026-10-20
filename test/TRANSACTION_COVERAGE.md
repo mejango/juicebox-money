@@ -32,8 +32,6 @@ and the check fails on a missing marker.
 | Cash out Defifa NFTs | SDK native `cashOutTokensOf` with zero fungible count, NFT IDs and currency/token rewards, canonical receipt | **P/E** | `components/defifa-owned-nfts.test.tsx` |
 | Transfer Defifa NFT | SDK verified-owner `safeTransferFrom`, fresh pause/receiver simulation and canonical receipt | **P/E** | `components/defifa-owned-nfts.test.tsx` |
 | Pay a project | `JBMultiTerminal.pay` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx` |
-| Swap for project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
-| Sign a swap authorization | Permit2 `PermitSingle` EIP-712 + Universal Router `PERMIT2_PERMIT` | **E** | `contracts/permit2-swap.test.ts`, `transactions/reviewed-permit2-signature.test.ts` |
 | Swap project tokens | Uniswap V4 Universal Router `execute` | **E** | `contracts/transaction-builders.test.ts` |
 | Add to treasury balance | `JBMultiTerminal.addToBalanceOf` | **E** | `contracts/transaction-builders.test.ts` |
 | Approve an ERC-20 | `ERC20.approve` | **E** | `contracts/transaction-builders.test.ts`, `components/reviewed-account-pay.test.tsx`, `components/reviewed-account-holder.test.tsx` |

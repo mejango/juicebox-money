@@ -230,8 +230,8 @@
       ]
     },
     "src/components/project/PayPanel.tsx": {
-      "hooks": 3,
-      "sends": 3,
+      "hooks": 2,
+      "sends": 2,
       "sendSites": [
         {
           "id": "approve-payment-token",
@@ -240,15 +240,8 @@
           ]
         },
         {
-          "id": "authorize-swap-router",
-          "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
           "id": "execute-payment-route",
           "actions": [
-            "Swap for project tokens",
             "Pay a project",
             "Add to treasury balance"
           ]
@@ -438,12 +431,6 @@
       "src/lib/authority.ts": 2,
       "src/lib/payer-relayr.ts": 1,
       "src/lib/relayr.ts": 1
-    },
-    "useSignTypedData": {
-      "src/hooks/useReviewedPermit2Signature.ts": 1
-    },
-    "signTypedDataAsync": {
-      "src/hooks/useReviewedPermit2Signature.ts": 1
     },
     "signTypedData": {
       "src/lib/relayr.ts": 1,

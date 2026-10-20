@@ -29,6 +29,11 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
 const CHANGED = 'The connected account changed. Review again.'
+const PREPARED = {
+  metadata: `0x${'ab'.repeat(32)}` as `0x${string}`,
+  preview: { beneficiaryTokenCount: 10n ** 21n, reservedTokenCount: 0n },
+  minReturnedTokens: 99n * 10n ** 19n,
+}
 
 const displayQueries = new QueryClient()
 
@@ -168,13 +173,11 @@ function query(key: string) {
         data: { contexts: [contextFor(m.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
         isError: false,
       }
-    case 'previewPay':
+    case 'prepareUserPay':
       return {
-        data: { beneficiaryTokenCount: 10n ** 21n, reservedTokenCount: 0n },
+        data: PREPARED,
         isFetching: false, isError: false, isPlaceholderData: false, isStale: false, refetch: vi.fn(),
       }
-    case 'payMarket':
-      return { data: { status: 'none' } }
     case 'payAllowance':
       return { data: 0n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
     case 'payShopCredits':
@@ -337,7 +340,7 @@ describe('a payment reviewed for one account', () => {
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
-  it('pays from the account that reviewed it, as its beneficiary', async () => {
+  it("pays from the account that reviewed it, as its beneficiary, with prepareUserPay's metadata and minimum", async () => {
     await reviewPayment()
     await click('Confirm & Pay')
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
@@ -345,6 +348,28 @@ describe('a payment reviewed for one account', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[3]).toBe(ALICE)
+    expect(request.args[4]).toBe(PREPARED.minReturnedTokens)
+    expect(request.args[6]).toBe(PREPARED.metadata)
+  })
+})
+
+describe('a payment prepareUserPay cannot prepare', () => {
+  it('blocks paying and offers a retry instead of crashing', async () => {
+    const refetch = vi.fn(async () => ({}))
+    m.queries.prepareUserPay = { data: undefined, isFetching: false, isError: true, isPlaceholderData: false, isStale: false, refetch }
+    await act(async () =>
+      root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
+    )
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await waitUntil(() => host.textContent?.includes('Try again') ?? false)
+    expect(button('Pay').disabled).toBe(true)
+    await click('Try again')
+    expect(refetch).toHaveBeenCalled()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 })
 
@@ -542,43 +567,6 @@ describe('a payment from a Safe', () => {
     await clickIn('first', 'Dismiss')
     expect(panelButton('first', 'Pay')!.disabled).toBe(false)
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
-  })
-
-  it("keeps a router authorization proposed to the Safe on the panel after Done, held while the Safe has it", async () => {
-    m.safe = true
-    m.token = 'erc20'
-    // A direct swap from USDC, which Permit2 has not authorized the router to spend.
-    const poolKey = { currency0: USDC, currency1: TERMINAL, fee: 3000, tickSpacing: 60, hooks: zeroAddress }
-    const quote = {
-      kind: 'direct-swap',
-      poolKey,
-      zeroForOne: true,
-      quotedTokenCount: 10n ** 21n,
-      minimumTokenCount: 10n ** 21n,
-      beneficiaryTokenCount: 10n ** 21n,
-      reservedTokenCount: 0n,
-      inputRoute: { kind: 'single-v4' },
-    }
-    m.queries = {
-      payMarket: { data: { status: 'pool', poolId: `0x${'12'.repeat(32)}`, key: poolKey, pairIsC0: true } },
-      directPaySwapQuote: {
-        data: quote, isFetching: false, isError: false, isPlaceholderData: false, isStale: false,
-        refetch: vi.fn(async () => ({ data: quote })),
-      },
-      payAllowance: { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) },
-      payPermit2Allowance: { data: [0n, 0, 0], isFetched: true, refetch: vi.fn(async () => ({ data: [0n, 0, 0] })) },
-      payWalletBytecode: { data: '0x1234', isFetched: true, isError: false },
-    }
-    await reviewPayment('4')
-    await click('Confirm & Pay')
-    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    await click('Done')
-    await waitUntil(() => panelSays(AWAITING))
-    // The SDK's follower decides how it ends (executed, replaced or unproven); until then it is never proposed again.
-    expect(panelSays(AWAITING)).toBe(true)
-    expect(button('Pay').disabled).toBe(true)
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
   })
 
   it("ends an approval whose result can't be proven on Done, freeing the panel, and keeps the call held", async () => {
@@ -797,7 +785,7 @@ describe('compatible basic funding', () => {
         ? { data: { protocol: 'defifa' }, isSuccess: true }
         : { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
       m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
-      m.queries.previewPay = { data: null, isError: true }
+      m.queries.prepareUserPay = { data: null, isError: true }
       m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: Math.floor(Date.now() / 1000) + 3600, pausePay: true, terminals: [TERMINAL], unknown: [] }, isError: false }
       await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
       expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
