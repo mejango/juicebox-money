@@ -1,306 +1,65 @@
+import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
-import { runInNewContext } from 'node:vm'
+import { createServer } from 'node:net'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { gzipSync } from 'node:zlib'
+import {
+  deterministicEnvironment,
+  fixtureOrigin,
+  fixturePort,
+} from './lib/browser-environment.mjs'
+import { referencedChunks } from './lib/referenced-chunks.mjs'
 
+// First-load JavaScript per route is what a visitor downloads before the page is
+// interactive: every non-`nomodule` script the server-rendered HTML references,
+// in its script tags and in the RSC payload the client hydrates from. Next's
+// merged client-reference manifests can't stand in for it: inside a route group
+// a client module shared by two entries carries the chunk list of whichever
+// entry merged last, so leaks between routes read as nothing, and chunk paths
+// carrying the deployment's `?dpl=` suffix were dropped outright (the /[urn]
+// ceiling read 168.7 KiB against a real ~639). This check starts the
+// deterministic browser build against the fail-fast fixture, fetches every
+// shipped page route and gzips what its HTML references. Each ceiling is the
+// route's measured size rounded up; lower it when a change shrinks the route.
+//
+// Run after `npm run build:browser`. Every shipped page route must be listed.
 const KIB = 1024
-const distDir = resolve(process.env.NEXT_DIST_DIR || '.next')
-const legacyManifestPath = join(distDir, 'app-build-manifest.json')
+const account = `0x${'1'.repeat(40)}`
+const routes = [
+  { route: '/', path: '/', kib: 407 },
+  { route: '/learn', path: '/learn', kib: 407 },
+  { route: '/build', path: '/build', kib: 409 },
+  { route: '/build/first-payment', path: '/build/first-payment', kib: 407 },
+  { route: '/audit', path: '/audit', kib: 411 },
+  { route: '/create', path: '/create', kib: 479 },
+  { route: '/[urn]', path: '/eth:1', kib: 634 },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 477 },
+  // Every unmatched path lands in a page that calls notFound(); pages stream, so
+  // it answers 200 with the 404 page inside and loads that page's chunks too.
+  { route: '/_not-found', path: '/account/not-an-account', kib: 477, text: 'This juicebox is empty' },
+  // Hands deeper legacy paths to old.juicebox.money; there is no page to load.
+  { route: '/[urn]/[...rest]', path: '/v3/45', status: 307 },
+]
 
 const budgets = {
-  routes: {
-    // The root layout carries shared Wagmi and an always-ready transaction
-    // review queue. The full decoder/dialog loads on request; home measures
-    // ~423 KiB after that split. SDK 2.12.1 (+2.7 KiB), the lazy shop-read split that
-    // took the shop tab back off home (531 -> 431 KiB) and Sticky split rows (+1.3 KiB)
-    // measure 432.7 KiB; round up to the next KiB.
-    // SDK 2.16.0's review decoder (lazy) reads a Safe's router-gateway calls with the SDK's
-    // full gateway ABI. Webpack keeps every export any chunk uses in the one copy of the
-    // SDK's generated-ABI module, which home already loads, so the ABI lands there (+1.1
-    // KiB): home measures 434.7 KiB against 433.5 KiB on main with the same toolchain.
-    // SDK 2.18.0 puts each generated ABI in a module of its own, so home loads only the
-    // ABIs it uses: 428.9 KiB. Ratcheted down to keep the gain.
-    // Taking the SDK's Safe checks: home already loads the SDK's safe module through the
-    // launch code, and webpack keeps one copy of it with every export any chunk uses, so
-    // the authority reads, creation proof and same-address deployment land there too:
-    // home measures 434.3 KiB against 429.5 KiB on main with the same toolchain.
-    // SDK 2.21.0 (the Center provider's node-lag retry with the read's signal, the
-    // Safe service's Retry-After reading and signal, MultiSend 1.4.1, Relayr's typed
-    // refusals and bundle guard) brings home from 434.4 to 435.1 KiB on the same
-    // toolchain; taking it in place of jbm's copies, with the Safe wait and Bendystraw
-    // read signals, measures 435.3. Round up to the next KiB.
-    // On the final locked graph, ac8430c + official SDK 2.24.1 measures home
-    // 447,505 B and create 517,401 B. SDK 2.24.2 plus the Safe changes is 4/2 B
-    // smaller; round those existing baseline costs up to 438/506 KiB.
-    // Bounded alias navigation adds its shared identity gate. On matching
-    // physical locked installs, 096540c/f5e293f measure 447,195/448,951 B.
-    // Heavy read/controller imports were separated before rounding this cost.
-    // SDK 2.25.0 reconciliation on matched physical Node26.7/npm12 builds:
-    // 6a0598d -> 7e39b80 measures home 448,960 -> 449,801 B (+841 B).
-    // Per-component persisted-query hydration and final wallet guards stay
-    // eager where needed. Round only this measured route cost to 440 KiB.
-    // Defifa inventory, exact Node26.7/npm12.0.1 physical installs: origin aee4ccf
-    // measures 450,269 B; SDK-only 2.28.0 measures 451,059 B; final adoption 451,583 B.
-    // Lazy inventory imports did not reduce this route and added aggregate bytes.
-    // Local adoption leaves only 1 B under 441 KiB. Linux hosted CI run
-    // 38104405718 measures 441.0 KiB rounded and exceeds that exact ceiling;
-    // preserve the same build graph and round its measured cost to 442 KiB.
-    // Project/create/aggregate/largest/style/lazy gates remain unchanged.
-    // The app-wide held-write notice (its registry and lazy list loader in the
-    // root layout, so every route can show an authority or batch hold with its
-    // exit) measures home 442.9 KiB. Round this route up, with CI headroom.
-    // Paying the terminal through SDK 3.0.0's prepareUserPay (buyback skipSplits)
-    // brings home from 443.4 to 444.7 KiB on the same toolchain; same headroom.
-    '/page': 446 * KIB,
-    '/[urn]/page': 570 * KIB,
-    // Rules/shop editors load when their step opens; drafts and validation
-    // stay in the parent. Create measures ~481 KiB, within the original cap.
-    // It shares home's chunks, so SDK 2.12.1 and the shop-read split land here too
-    // (561 -> 487 KiB), plus Sticky split rows and launch checks (+4.9 KiB): 492.0 KiB.
-    // SDK 2.14.0's shared review runtime measures 493.0 KiB before adoption; its fee
-    // label and cancel error, which home also loads, bring create to 493.2 KiB.
-    // SDK 2.16.0's gateway ABI in that shared generated-ABI chunk brings create to 495.1 KiB
-    // (493.8 KiB on main with the same toolchain).
-    // SDK 2.18.0's per-ABI modules bring create to 490.7 KiB. Ratcheted down to keep the gain.
-    // Shared explicit shop/overload validation adds 1.9 KiB (492.6 measured
-    // against the 2.18.0 baseline); round the new launch safeguards up to 493.
-    // The SDK's Safe checks add the same safe-module copy as home, and create's Safe app
-    // connection carries the one copy of the SDK's safe-service module, which holds the
-    // queue, signature and execution checks jbm uses: 501.3 KiB against 492.6 KiB.
-    // Holding a Safe proposal's action whatever its send-time stamp, ending one that can
-    // no longer run, the at-once probe and the receipt hour measure 502.8 KiB; binding an
-    // execution on the transaction already read, 502.9.
-    // SDK 2.21.0 brings create from 502.1 to 503.0 KiB on the same toolchain (the same
-    // SDK modules as home); taking it in place of jbm's copies, with the launch's Safe
-    // wait signals, measures 503.3. Round up to the next KiB.
-    // The same shared gate measures 517,232/518,996 B in that comparison.
-    // Service-neutral status/error presentation measures 518,999 -> 519,278 B
-    // (+279 B) on the matching physical locked graph. Its import-free formatter
-    // stays in create's existing chunk; round only this measured route cost.
-    // The same comparison measures create 519,284 -> 521,420 B (+2,136 B).
-    // Exact saved-call recovery and final wallet checks are required. The
-    // failure-only SDK proof is already lazy; its 327 B local adapter appears
-    // once here, not on home. Independent review rejected another recovery
-    // chunk that adds loading/compression cost without solving aggregate growth.
-    // The same comparison measures create 521,889 -> 523,483 -> 525,190 B.
-    // Preserve all wallet/dialog boundaries and round the measured route cost.
-    // SDK 2.31.0 with every ordinary write held by the SDK's write recovery (its
-    // IndexedDB lock fallback, nonce evidence and the held-write notice with its
-    // exit, in place of the in-memory registry) measures create 513.3 KiB on the
-    // Node 26.7 / npm 12 browser build. Round only this route up to the next KiB.
-    // The same root-layout notice, plus authority writes and Safe batches held
-    // through the write hold, measure create 515.4 KiB. Round up.
-    // The direct launch under the SDK write hold (its held line and exit in the
-    // launch dialog; the hold itself loads with the launch) measures 517.0 KiB.
-    '/create/page': 518 * KIB,
-  },
-  // Counts every emitted chunk, including ones a visitor may never download.
+  // Every emitted chunk, including ones a visitor may never download.
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
-  // of strictly lazy vendor SDK here; the per-route budgets above and the
-  // per-SDK lazy-load assertions below are what actually protect first paint.
-  // Six project batch groups and durable Safe/nonce recovery measured 2402.8
-  // KiB. Deferring review and create editors adds 5.1 KiB across emitted
-  // chunks (separate gzip streams), while initial home/create loads shrink by
-  // 13.0/20.3 KiB. Final aggregate is 2407.9 KiB; allow 2.1 KiB of headroom.
-  // Route ceilings are unchanged, and the assertions below protect lazy UI.
-  // The Safe operator batch (tray, batch and preset dialogs, MultiSend and
-  // sequence simulation, LP flows proposing one batch) measured 2403.6 KiB
-  // before and 2414.6 KiB after on the same toolchain; allow 2.4 KiB of headroom.
-  // Executed rollout records/history, gateway route discovery and Safe migration
-  // checks measure 2422.8 KiB in the current deterministic CI build (+5.8 KiB
-  // over the prior cap). The snapshot and gateway ABI each emit once; retain
-  // their complete history/decoding surface and round up to the next KiB.
-  // Initial-route, largest-chunk and lazy-wallet/review constraints stay fixed.
-  // SDK 2.5.0 adds ~0.6 KiB gzip: aggregate 2423.5 KiB. Round up to 2424 KiB;
-  // all route, largest-chunk and lazy-loading checks still pass.
-  // Pending-payment inventory, authenticated retries and the resumable review
-  // panel add 5.7 KiB gzip (2429.2 total). Existing route/lazy-load caps stay fixed.
-  // Live fee-buyback review with SDK 2.5.1 measures 2431.7 KiB in Linux CI
-  // (2426.4 KiB locally). Round the measured CI aggregate up to 2432 KiB;
-  // route, largest-chunk and lazy-loading limits stay fixed.
-  // Inline Owner/Operator Safe creation, exact policy verification and setup
-  // recovery measure 2443.1 KiB versus 2432.0 KiB on unchanged main with the
-  // same Node/npm toolchain. Allow 1.9 KiB headroom for this new capability.
-  // Deferred Safe/review/chart UI keeps create at 482.9 KiB within its 485 KiB
-  // route limit; existing route, largest-chunk and wallet-load caps stay fixed.
-  // Main already measured 2446.5 KiB before 840b2ca hid it. SDK 2.12.1, the separate
-  // lazy shop-read chunk and Sticky splits (+6.5 KiB) measure 2459.5 KiB.
-  // SDK 2.14.0's shared review runtime measures 2461.3 KiB before adoption. Gas rows,
-  // the one fee picker and cancel-aware errors measure 2462.8 KiB; 1.0 KiB of that is
-  // the browser-test modal-proof page, whose own review module copy now carries
-  // formatEther for the fee label and splits into a separate chunk.
-  // One review per project/payer batch, nested calls under any reviewed call, the
-  // payer and Safe-write gas moved onto their reviews, and Safe gas 0 on every
-  // Safe-app send measure 2463.4 KiB against 2462.8 KiB before (+0.6 KiB across
-  // the review dialog, project, payer and Safe chunks); round up to the next KiB.
-  // Recognizing Safe{Wallet} over WalletConnect (a peer watcher the root layout
-  // mounts, kept apart from the Safe service code, and a hook that re-renders
-  // Safe-aware screens once the peer is read) and letting the Safe execution wait
-  // read the chain measure 2464.1 KiB against 2463.8 KiB before on the same SDK
-  // build; round up to the next KiB. Route caps are unchanged.
-  // axios 1.20.0 (in Para's lazy chunk, +1.0), DOMPurify 3.4.16 (+0.4) and Next 16.3.8's
-  // client runtime (+0.2) measure 2465.8 KiB against 2464.3 KiB on the same toolchain;
-  // allow 1.2 KiB of headroom. Route, largest-chunk and lazy-load caps are unchanged.
-  // SDK 2.16.0's shared decoders, receipts and preflights (stricter decoding, the gateway
-  // ABI in the generated-ABI chunk above, the sequence preflight sharing a module with the
-  // single-call one) measure 2467.5 KiB against 2465.8 KiB on main with the same toolchain;
-  // round up to the next KiB.
-  // SDK 2.18.0 splits the generated ABIs into one module each. First loads drop (home 434.7
-  // -> 428.9 KiB, create 495.1 -> 490.7 KiB), but webpack now copies each ABI module into
-  // every lazy chunk that uses it, so all client JavaScript measures 2473.7 KiB against
-  // 2467.7 KiB; round up to the next KiB. revnet.money took the same trade in its #58.
-  // Deployment diagnostics, retry boundaries, their browser proof and shared
-  // launch guards measure 2486.4 KiB (+12.7 from that baseline). The dialog is
-  // a shared lazy chunk and contract checks stay server-side; round up to 2487.
-  // The SDK's Safe checks replace jbm's own copies: 2489.2 KiB against 2486.4 KiB on
-  // main with the same toolchain; round up to the next KiB. Binding a Safe app's
-  // execution to its reviewed call, the Safe proposal end state and registry, the
-  // creation-record cache and the canonical-handle rule measure 2490.7 KiB.
-  // Holding a Safe proposal's action whatever its send-time stamp, the expiry and
-  // replaced watch, the at-once probe, the receipt hour and the pay panel's Safe stage
-  // line measure 2492.2 KiB; round up to the next KiB. The chain's last word before an
-  // unproven end and the one-block queue lookup, on main's project Extras, measure 2492.5;
-  // binding an execution on the transaction already read, 2492.7.
-  // SDK 2.17's Relayr binding, payment proofs and retry rule, the release of a
-  // quote nothing can fund (ruling R104), the request classification, holds and
-  // Discard of ruling R114 and the reservations of ruling R117 measure 2507.0 KiB
-  // against 2492.7 KiB on main with the same toolchain (+14.3): +13.6 before
-  // rulings R117 and R114 (e), (f), which add 0.7. On main before the SDK's Safe
-  // checks the same branch measured +10.9, so 2.7 KiB appear with that merge.
-  // About 5 KiB is the launch journal, its Safe checks and the create draft,
-  // which webpack emits both in create's page chunk and in a shared lazy chunk;
-  // importing the SDK's Relayr family check on create instead would load the
-  // whole Relayr module there (+6.2 KiB on create's first load). Round up to the
-  // next KiB.
-  // SDK 2.21.0 measures 2508.2 KiB against 2507.0 on main with the same toolchain
-  // (+1.2): the Center provider's lag retry and limiter hooks, the Safe service's
-  // Retry-After reading and signal, MultiSend 1.4.1, Relayr's typed refusals and
-  // bundle guard. Deleting jbm's copies of those, and every Safe wait and Bendystraw
-  // read taking its flow's signal (a hook in each waiting component, the signal
-  // through each reader), measures 2509.0. Round up to the next KiB.
-  // SDK 2.22.0 alone leaves 2508.9 (its Relayr session rules are unused until
-  // called). Calling them in place of jbm's copies (the finalized-block reads,
-  // the request classification, the session outcome and ruling R118's recheck
-  // rule) measures 2509.4, with home (435.3) and create (503.3) unchanged.
-  // The cap stays.
-  // SDK 2.23.0's quote release, retry and payment-proof rules take the place of jbm's
-  // copies (the release and retry rules, the sent-payment record and its snapshot):
-  // 2509.7 KiB against 2509.5 on main with the same toolchain, with home (435.3), the
-  // project route (168.5) and create (503.3) unchanged. The cap stays.
-  // A launch or saved session whose payment the chain shows to be another transaction
-  // classifies its requests and ends with a line that says so (the launch's cancelling
-  // lines and their pass through friendlyError, the session's Discard line and payment
-  // note, its mark and the account view's one line): 2510.02 KiB against 2509.7 on main
-  // with the same toolchain, with home (435.3), the project route (168.5) and create
-  // (503.3) unchanged. Round up to the next KiB.
-  // The shared SDK Safe Relayr lifecycle, durable unpaid quotes, original-call
-  // recovery and legacy receipt adapter measure 2517.6 KiB against 2513.4 on
-  // unchanged main with the same toolchain. Round up to the next KiB; route,
-  // largest-chunk, style and lazy-loading limits stay fixed.
-  // Safe recovery checks saved accounts/nonces and preserves malformed funding
-  // history. With the same SDK patch, unchanged main measures 2518.4 KiB and
-  // these client changes 2519.2 KiB. Round up only the aggregate ceiling.
-  // Linux CI run 37562644216 measures 2521.7 KiB, versus 2519.6 locally.
-  // The controlled local baseline/current comparison is 2,580,158/2,580,108 B
-  // (-50 B); round the observed CI total up to 2522 without changing other caps.
-  // With the same physical dependency graph, 75841bd + official SDK 2.24.2
-  // measures 2,582,256 B; shared Account/queue reads and Safe progress measure
-  // 2,587,564 B (+5,308 B). Round up only the aggregate to 2527 KiB.
-  // Passive Safe preparation measures 2,587,667 B (+103 B on the same graph),
-  // 19 B over 2527 KiB. Round only the aggregate ceiling up to 2528 KiB.
-  // Bounded display reuse and verified alias navigation: physical baseline
-  // 096540c/f5e293f measure 2,588,016/2,592,848 B (+4,832 B). Server React
-  // barrels and duplicate controller imports were removed before measuring.
-  // Round only these measured costs; project/largest/style/lazy caps stay fixed.
-  // Terms alone now transfers 3,604 B instead of 180,159 B in the matched
-  // browser fixture. The separate chunk duplicates 1,197 B of shared help text
-  // (no SDK/ABI copies) and adds compression overhead: aggregate 2,592,848 ->
-  // 2,594,575 B. Keep the simple import boundary and round only this measured
-  // total to the next KiB; initial-route/largest/style/lazy limits stay fixed.
-  // The same service-neutral copy measures 2,594,575 -> 2,595,210 B (+635 B).
-  // Webpack emits the small formatter in create and an existing shared lazy
-  // chunk; all 185 chunks and initial-route file counts remain unchanged.
-  // Round this cost; home/project/largest/style/lazy limits stay fixed.
-  // Shared SDK 2.25.0 rules, hydration and durable wallet recovery measure
-  // 2,595,769 -> 2,597,812 B (+2,043 B) on that matched physical graph.
-  // Both builds emit 185 chunks; largest chunk (429,344 B), styles (18,872 B)
-  // and every lazy wallet/dialog boundary are unchanged. Independent review
-  // accepts rounding only this measured aggregate to 2537 KiB (76 B headroom).
-  // First hosted failure: CI37724379008; exact comparison is in tasks/todo.md.
-  // Defifa comparison on the same exact locked graph/toolchain: baseline
-  // 2,598,612 B (already above 2537 KiB), SDK-only 2,599,443 B, adoption
-  // 2,618,207 B. This includes read-only native UI, guarded lifecycle callers
-  // and the browser-only proof route. Lazy SDK readers grew aggregate by 1.9 KiB
-  // with no initial-route saving, so retain the existing static reader imports.
-  // Round measured delivery cost; project/largest/style/lazy gates remain fixed.
-  // Generic Defifa inventory and verified Flavor on matched Node26.7/npm12
-  // builds: baseline2618208 B ->2618460 B (+252 B), with193chunks each.
-  // Consumer curve code is removed (5056 B below its prior delivery).
-  // Round only this measured aggregate cost; every other gate is unchanged.
-  // Native Defifa checkout/holdings/recovery on exact Node26.7/npm12 builds:
-  // main 4f2e9d1 measures 2,618,445 B; unchanged main with SDK 2.29.0
-  // measures 2,618,981 B (+536 B); final official adoption is 2,640,204 B
-  // (+21,223 B for lazy native actions and original-write recovery).
-  // Round only this measured aggregate to the next KiB. Every route,
-  // largest-chunk, stylesheet and lazy-boundary ceiling stays unchanged.
-  // Shared NFT checkout previews and final native intent guards, exact locked
-  // Node26.7/npm12 builds: main 483cad2 is 2,640,148 B, adoption is
-  // 2,641,755 B (+1,607 B). Moving URI batching to the existing lazy reader
-  // keeps create within its unchanged 513 KiB ceiling. Shared amount/cart
-  // presentation adds 903 B, final 2,642,658 B (+2,510 B vs main).
-  // Round only aggregate to its next KiB; every other gate stays fixed.
-  // Pending-payment recovery: five-minute cancellable fee quotes, per-payment
-  // results, release of unquoted and hashless routing attempts, and a Review
-  // again step measure 2582.0 KiB on the same toolchain against main's
-  // 2581 KiB ceiling. Round only the aggregate to the next KiB.
-  // Dialog UX round 2 (unconfirmed-send registry held across dialog unmount, the
-  // liquidity runs' suspend on unconfirmed, and the tall-confirm browser proof
-  // route) measures 2587.4 KiB on the Node 26.7 / npm 12 browser build. Round
-  // only the aggregate to the next KiB.
-  // SDK 2.31.0 and the SDK's write recovery for every ordinary write (durable
-  // holds, chain release, the exit) in place of that registry measure 2592.5 KiB
-  // against 2587.4 KiB on the same toolchain. Round only the aggregate up.
-  // Holding a write until its receipt is final, the pending line in place of
-  // the exit, and keeping a ran Safe proposal across reloads measure 2593.7 KiB.
-  // SDK 2.32.0's write hold controller (its Safe proposal follow, the exits and
-  // every held state) in place of the app's own glue measures 2597.4 KiB.
-  // Holding the free mint through the same write hold, and rechecking a held
-  // Defifa action while its card is open, measure 2598.0 KiB: round up.
-  // Entering the hold when a receipt watch gives up (with its recheck) and
-  // routing adopted Safe proposals to an app journal's hold measure 2598.9 KiB.
-  // SDK 2.34.0 (readable settlements, one exit gate, candidate executions,
-  // attachHash) and showing success only once the hold settles it measure
-  // 2600.9 KiB: round up, with headroom for CI.
-  // Intent keys for writes whose calldata regenerates on retry (deadlines,
-  // Permit2 expirations, quotes) measure 2601.7 KiB: round up, with CI headroom.
-  // Central holds for authority writes and Safe batches, the app-wide notice
-  // (lazy) and SDK 2.34.1 measure 2609.7 KiB: round up, with CI headroom.
-  // SDK 2.35.0 (its canonical intent keys, legacy holds, stale reviews and the
-  // in-tab notice) measures 2612.3 KiB: round up, with CI headroom.
-  // SDK 2.38.0 (the shared intent builders, batch identity, checked states and
-  // test resets) measures 2616.0 KiB: round up, with CI headroom.
-  // The launch hold (a lazy chunk with the launch) and the last release's frozen
-  // intent keys (legacy-intents, for one release) measure 2621.3 KiB.
-  // SDK 2.41.1 replaces the app's hold glue, Safe proposal registry, followers
-  // and launch recovery with the SDK's shared held-write view, React hooks and
-  // saved-attempt engine (now used by launches, Safe setup, payers, batches and
-  // Relayr payments). Main measures 2622.3 KiB in CI; this measures 2647.5 KiB,
-  // in lazy chunks: /page is unchanged (443.0 KiB) and /create drops 518.0 to
-  // 515.2 KiB. Round only the aggregate up, with CI headroom.
+  // of strictly lazy vendor SDK; the route ceilings and the lazy-load
+  // assertions below are what protect first paint. History: git log -p.
   allScripts: 2650 * KIB,
   largestChunk: 450 * KIB,
-  // Halved when Para's modal stylesheet left with its modal; ratcheted so it cannot drift
-  // back in unnoticed.
   styles: 20 * KIB,
 }
 
-function formatKiB(bytes) {
-  return `${(bytes / KIB).toFixed(1)} KiB gzip`
+const distDir = resolve(process.env.NEXT_DIST_DIR || '.next')
+const appRoutesManifestPath = join(distDir, 'app-path-routes-manifest.json')
+if (!existsSync(join(distDir, 'standalone', 'server.js')) || !existsSync(appRoutesManifestPath)) {
+  throw new Error(`Missing standalone build under ${distDir}. Run \`npm run build:browser\` first.`)
 }
 
-function gzipSize(path) {
-  return gzipSync(readFileSync(path)).byteLength
-}
+const failures = []
+const fail = message => failures.push(message)
+const formatKiB = bytes => `${(bytes / KIB).toFixed(1)} KiB gzip`
 
 function filesBelow(directory) {
   if (!existsSync(directory)) return []
@@ -310,247 +69,172 @@ function filesBelow(directory) {
   })
 }
 
-function fail(message) {
-  process.stderr.write(`Client budget failed: ${message}\n`)
-  process.exitCode = 1
+const gzipSizes = new Map()
+function gzipSize(asset) {
+  const cached = gzipSizes.get(asset)
+  if (cached !== undefined) return cached
+  const path = join(distDir, asset)
+  if (!existsSync(path)) throw new Error(`A page references a missing client asset: ${asset}`)
+  const size = gzipSync(readFileSync(path)).byteLength
+  gzipSizes.set(asset, size)
+  return size
 }
 
-function loadPages() {
-  if (existsSync(legacyManifestPath)) {
-    return JSON.parse(readFileSync(legacyManifestPath, 'utf8')).pages ?? {}
-  }
+// `page.browsertest.tsx` routes compile only into the deterministic browser
+// build and never ship; they need no budget and their own chunks don't count.
+const appDirectory = resolve('src', 'app')
+const proofRoutes = new Set(
+  filesBelow(appDirectory)
+    .filter(file => file.endsWith(`${sep}page.browsertest.tsx`))
+    .map(file => `/${relative(appDirectory, dirname(file)).split(sep).join('/')}`),
+)
+const shippedRoutes = Object.entries(JSON.parse(readFileSync(appRoutesManifestPath, 'utf8')))
+  .filter(([appPath]) => appPath.endsWith('/page'))
+  .map(([, route]) => route)
+  .filter(route => !proofRoutes.has(route))
+  // Next's own fallback for a root-layout crash; nothing in src/app renders it.
+  .filter(route => route !== '/_global-error')
+const listed = new Set(routes.map(entry => entry.route))
+for (const route of shippedRoutes) {
+  if (!listed.has(route)) fail(`${route} is a shipped page with no rendered-HTML budget in this check`)
+}
 
-  // Next 16 moved App Router assets into one client-reference manifest per
-  // route. Each manifest already includes that route's shared layout chunks.
-  const pages = {}
-  const buildManifestPath = join(distDir, 'build-manifest.json')
-  const buildManifest = existsSync(buildManifestPath)
-    ? JSON.parse(readFileSync(buildManifestPath, 'utf8'))
-    : {}
-  const commonScripts = [
-    ...(buildManifest.rootMainFiles ?? []),
-    ...(buildManifest.polyfillFiles ?? []),
-  ]
-  for (const route of ['/page', '/[urn]/page', '/create/page']) {
-    const staticHtml =
-      route === '/page'
-        ? join(distDir, 'server', 'app', 'index.html')
-        : route === '/create/page'
-          ? join(distDir, 'server', 'app', 'create.html')
-          : null
-    if (staticHtml && existsSync(staticHtml)) {
-      pages[route] = [
-        ...new Set(
-          [...readFileSync(staticHtml, 'utf8').matchAll(/(?:src|href)="([^"?]+\.js)(?:\?[^"?]*)?"/g)]
-            .map(match => match[1])
-            .filter(file => file.startsWith('/_next/'))
-            .map(file => file.slice('/_next/'.length)),
-        ),
-      ]
+async function freePort() {
+  const probe = createServer()
+  await new Promise((done, reject) => {
+    probe.once('error', reject)
+    probe.listen(0, '127.0.0.1', done)
+  })
+  const { port } = probe.address()
+  await new Promise(done => probe.close(done))
+  return port
+}
+
+async function waitFor(url, child, label) {
+  for (let attempt = 0; attempt < 600; attempt += 1) {
+    if (child.exitCode !== null) throw new Error(`${label} exited before it was ready (status ${child.exitCode})`)
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) })
+      if (response.status < 500) return
+    } catch {
+      // Not listening yet.
+    }
+    await new Promise(done => setTimeout(done, 100))
+  }
+  throw new Error(`${label} did not become ready at ${url}`)
+}
+
+const appPort = await freePort()
+const appOrigin = `http://127.0.0.1:${appPort}`
+const environment = { ...process.env, ...deterministicEnvironment(appPort) }
+const children = []
+const start = args => {
+  const child = spawn(process.execPath, args, { env: environment, stdio: 'ignore' })
+  children.push(child)
+  return child
+}
+const measured = []
+try {
+  const fixture = start(['test/browser/fail-fast-service.mjs', '--port', String(fixturePort)])
+  await waitFor(`${fixtureOrigin}/health`, fixture, 'Browser fixture')
+  const app = start(['scripts/start-standalone.mjs'])
+  await waitFor(`${appOrigin}/api/healthz`, app, 'App')
+
+  for (const entry of routes) {
+    const response = await fetch(new URL(entry.path, appOrigin), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(120_000),
+    })
+    const html = await response.text()
+    if (response.status !== (entry.status ?? 200)) {
+      fail(`${entry.path} answered ${response.status}, expected ${entry.status ?? 200}`)
       continue
     }
-    const manifestPath = join(
-      distDir,
-      'server',
-      'app',
-      `${route.slice(1)}_client-reference-manifest.js`,
-    )
-    if (!existsSync(manifestPath)) continue
-    const context = { globalThis: {} }
-    runInNewContext(readFileSync(manifestPath, 'utf8'), context, {
-      filename: manifestPath,
-      timeout: 1_000,
-    })
-    const manifest = context.globalThis.__RSC_MANIFEST?.[route]
-    pages[route] = [
-      ...new Set(
-        commonScripts.concat(
-          Object.values(manifest?.clientModules ?? {})
-          .flatMap(module => module.chunks ?? [])
-          .filter(file => typeof file === 'string' && file.endsWith('.js'))
-          .map(decodeURIComponent),
-        ),
-      ),
-    ]
+    if (entry.text && !html.includes(entry.text)) {
+      fail(`${entry.path} did not render "${entry.text}"`)
+      continue
+    }
+    if (entry.kib === undefined) continue
+    const assets = referencedChunks(html)
+    if (!assets.length) {
+      fail(`${entry.path} references no client JavaScript`)
+      continue
+    }
+    measured.push({ ...entry, assets, size: assets.reduce((sum, asset) => sum + gzipSize(asset), 0) })
   }
-  return pages
+} finally {
+  for (const child of children) child.kill('SIGTERM')
 }
 
-const pages = loadPages()
-if (!Object.keys(pages).length) {
-  throw new Error(
-    `Missing App Router manifests under ${distDir}. Run \`npm run build\` before \`npm run budget\`.`,
+process.stdout.write('Client JavaScript budgets (rendered HTML)\n')
+for (const entry of measured) {
+  const limit = entry.kib * KIB
+  const marker = entry.size <= limit ? 'PASS' : 'FAIL'
+  process.stdout.write(
+    `${marker} ${entry.route.padEnd(22)} ${formatKiB(entry.size).padStart(15)} / ${formatKiB(limit)}  ${String(entry.assets.length).padStart(3)} chunks  ${entry.path}\n`,
   )
+  if (entry.size > limit) fail(`${entry.route} loads ${formatKiB(entry.size)} (budget ${entry.kib} KiB)`)
 }
-const layoutFiles = pages['/layout'] ?? []
+const routeAssets = new Set(measured.flatMap(entry => entry.assets))
+const eagerIn = files => measured.flatMap(entry => entry.assets.filter(asset => files.has(asset)).map(asset => `${entry.route} ${asset}`))
 
-process.stdout.write('Client JavaScript budgets\n')
-for (const [route, limit] of Object.entries(budgets.routes)) {
-  if (!pages[route]) {
-    fail(`route ${route} is missing from the app build manifest`)
+const proofOnly = asset =>
+  [...proofRoutes].some(route => asset.startsWith(`static/chunks/app${route}/`)) && !routeAssets.has(asset)
+const chunks = filesBelow(join(distDir, 'static', 'chunks'))
+  .filter(path => path.endsWith('.js'))
+  .map(path => relative(distDir, path).split(sep).join('/'))
+  .filter(asset => !proofOnly(asset))
+const sources = new Map(chunks.map(asset => [asset, readFileSync(join(distDir, asset), 'utf8')]))
+const chunksWith = markers => new Set(chunks.filter(asset => markers.some(marker => sources.get(asset).includes(marker))))
+
+const allScriptSize = chunks.reduce((sum, asset) => sum + gzipSize(asset), 0)
+process.stdout.write(
+  `${allScriptSize <= budgets.allScripts ? 'PASS' : 'FAIL'} all scripts    ${formatKiB(allScriptSize)} / ${formatKiB(budgets.allScripts)}\n`,
+)
+if (allScriptSize > budgets.allScripts) fail('aggregate client JavaScript exceeds budget')
+
+const largest = chunks.map(asset => ({ asset, size: gzipSize(asset) })).sort((a, b) => b.size - a.size)[0]
+process.stdout.write(
+  `${largest.size <= budgets.largestChunk ? 'PASS' : 'FAIL'} largest chunk  ${formatKiB(largest.size)} / ${formatKiB(budgets.largestChunk)}\n`,
+)
+if (largest.size > budgets.largestChunk) fail(`largest client chunk exceeds budget (${largest.asset})`)
+
+// Code that must stay off every route's first load. Markers are strings only
+// that code can contain — never a connector id or display name, which our own
+// source carries. Wagmi's `reconnect()` calls `getProvider()` on every
+// configured connector, so a vendor wallet SDK becomes eager the moment its
+// `shouldRestore` gate is dropped.
+const lazyCode = [
+  ['transaction review dialog', ['Raw transaction payload'], true],
+  ['deployment diagnostic dialog', ['Read-only checks of the selected project'], true],
+  ['Para wallet runtime', ['mpcWorker-bundle', 'api.beta.getpara', 'api.getpara'], true],
+  ['WalletConnect SDK', ['walletconnect.org', 'wc@2:', '@reown/appkit'], false],
+  ['Coinbase Wallet SDK', ['CoinbaseWalletSDK', 'keys.coinbase.com', 'walletlink'], false],
+  ['Safe SDK', ['safe-apps-provider', 'SafeAppProvider'], false],
+]
+for (const [label, markers, required] of lazyCode) {
+  const files = chunksWith(markers)
+  if (!files.size) {
+    if (required) fail(`${label} is missing from the production build`)
     continue
   }
-  const files = [...new Set([...layoutFiles, ...pages[route]])].filter(file =>
-    file.endsWith('.js'),
-  )
-  const actual = files.reduce((sum, file) => {
-    const path = join(distDir, file)
-    if (!existsSync(path)) {
-      fail(`${route} references missing asset ${file}`)
-      return sum
-    }
-    return sum + gzipSize(path)
-  }, 0)
-  const marker = actual <= limit ? 'PASS' : 'FAIL'
-  process.stdout.write(
-    `${marker} ${route.padEnd(14)} ${formatKiB(actual)} / ${formatKiB(limit)}\n`,
-  )
-  if (actual > limit) fail(`${route} exceeds its JavaScript budget`)
+  const eager = eagerIn(files)
+  if (eager.length) fail(`${label} is eagerly loaded: ${eager.join(', ')}`)
+  else process.stdout.write(`PASS ${label} is lazy-loaded\n`)
 }
 
-const chunks = filesBelow(join(distDir, 'static', 'chunks')).filter(path =>
-  path.endsWith('.js'),
-)
-if (!chunks.length) {
-  fail('no client JavaScript chunks were found')
-} else {
-  const allScriptSize = chunks.reduce((sum, path) => sum + gzipSize(path), 0)
-  const allScriptMarker = allScriptSize <= budgets.allScripts ? 'PASS' : 'FAIL'
-  process.stdout.write(
-    `${allScriptMarker} all scripts    ${formatKiB(allScriptSize)} / ${formatKiB(
-      budgets.allScripts,
-    )}\n`,
-  )
-  if (allScriptSize > budgets.allScripts) {
-    fail('aggregate client JavaScript exceeds budget')
-  }
-
-  const largest = chunks
-    .map(path => ({ path, size: gzipSize(path) }))
-    .sort((a, b) => b.size - a.size)[0]
-  const marker = largest.size <= budgets.largestChunk ? 'PASS' : 'FAIL'
-  process.stdout.write(
-    `${marker} largest chunk  ${formatKiB(largest.size)} / ${formatKiB(
-      budgets.largestChunk,
-    )}\n`,
-  )
-  if (largest.size > budgets.largestChunk) {
-    fail(`largest client chunk exceeds budget (${largest.path})`)
-  }
-
-  // The global queue must be available before a write, but its full calldata
-  // decoder and dialog have no work until a review is requested.
-  const reviewFiles = new Set(
-    chunks
-      .filter(path => readFileSync(path, 'utf8').includes('Raw transaction payload'))
-      .map(path => relative(distDir, path).split(sep).join('/')),
-  )
-  if (!reviewFiles.size) {
-    fail('transaction review dialog is missing from the production build')
-  } else {
-    const eager = Object.keys(budgets.routes).flatMap(route =>
-      (pages[route] ?? []).filter(file => reviewFiles.has(file)),
-    )
-    if (eager.length) {
-      fail(`transaction review dialog is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
-    } else {
-      process.stdout.write('PASS transaction review dialog is lazy-loaded\n')
-    }
-  }
-
-  const diagnosticFiles = new Set(
-    chunks
-      .filter(path => readFileSync(path, 'utf8').includes('Read-only checks of the selected project'))
-      .map(path => relative(distDir, path).split(sep).join('/')),
-  )
-  if (!diagnosticFiles.size) {
-    fail('deployment diagnostic dialog is missing from the production build')
-  } else {
-    const eager = Object.keys(budgets.routes).flatMap(route =>
-      (pages[route] ?? []).filter(file => diagnosticFiles.has(file)),
-    )
-    if (eager.length) fail(`deployment diagnostic dialog is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
-    else process.stdout.write('PASS deployment diagnostic dialog is lazy-loaded\n')
-  }
-
-  const paraScripts = chunks.filter(path => {
-    const source = readFileSync(path, 'utf8')
-    return (
-      source.includes('mpcWorker-bundle') ||
-      source.includes('api.beta.getpara') ||
-      source.includes('api.getpara')
-    )
-  })
-  if (!paraScripts.length) {
-    fail('Para embedded-wallet runtime is missing from the production build')
-  } else {
-    const paraFiles = new Set(
-      paraScripts.map(path => relative(distDir, path).split(sep).join('/')),
-    )
-    for (const route of ['/page', '/[urn]/page', '/create/page']) {
-      const eagerPara = (pages[route] ?? []).filter(file => paraFiles.has(file))
-      if (eagerPara.length) {
-        fail(`Para wallet runtime is eagerly loaded by ${route}: ${eagerPara.join(', ')}`)
-      }
-    }
-    process.stdout.write('PASS Para wallet runtime is lazy-loaded\n')
-  }
-
-  // Same contract for the other vendor wallet SDKs. wagmi's `reconnect()`
-  // calls `getProvider()` on every configured connector, so any of these can
-  // become an eager download from one missing `shouldRestore` gate — and
-  // WalletConnect's SDK alone is larger than the whole per-route budget.
-  //
-  // Markers must be strings only the vendor bundle can contain — never a
-  // connector id or display name, which our own source carries and which would
-  // flag the module that merely *references* the wallet.
-  const vendorWallets = [
-    ['WalletConnect', ['walletconnect.org', 'wc@2:', '@reown/appkit']],
-    ['Coinbase Wallet', ['CoinbaseWalletSDK', 'keys.coinbase.com', 'walletlink']],
-    ['Safe', ['safe-apps-provider', 'SafeAppProvider']],
-  ]
-  for (const [label, markers] of vendorWallets) {
-    const vendorFiles = new Set(
-      chunks
-        .filter(path => {
-          const source = readFileSync(path, 'utf8')
-          return markers.some(marker => source.includes(marker))
-        })
-        .map(path => relative(distDir, path).split(sep).join('/')),
-    )
-    if (!vendorFiles.size) continue
-    const eager = []
-    for (const route of ['/page', '/[urn]/page', '/create/page']) {
-      eager.push(...(pages[route] ?? []).filter(file => vendorFiles.has(file)))
-    }
-    if (eager.length) {
-      fail(`${label} SDK is eagerly loaded: ${[...new Set(eager)].join(', ')}`)
-    } else {
-      process.stdout.write(`PASS ${label} SDK is lazy-loaded\n`)
-    }
-  }
-}
-
-const styles = filesBelow(join(distDir, 'static', 'css')).filter(path =>
-  path.endsWith('.css'),
-)
+const styles = filesBelow(join(distDir, 'static', 'css')).filter(path => path.endsWith('.css'))
 const compiledStyles = styles.map(path => readFileSync(path, 'utf8')).join('\n')
-// Nothing of Para's is rendered any more — sign-in, verification and the
-// on-ramp handoff are all ours — so its modal stylesheet (112 KiB raw) has no
-// job here. Its return would mean a Para-branded screen came back with it.
-if (
-  compiledStyles.includes('--para-color-') ||
-  compiledStyles.includes('.para\\:')
-) {
+if (compiledStyles.includes('--para-color-') || compiledStyles.includes('.para\\:')) {
   fail('Para modal styles are back in the build — is a Para-rendered screen back too?')
 } else {
   process.stdout.write('PASS no Para modal styles in the build\n')
 }
-const styleSize = styles.reduce((sum, path) => sum + gzipSize(path), 0)
-const styleMarker = styleSize <= budgets.styles ? 'PASS' : 'FAIL'
+const styleSize = styles.reduce((sum, path) => sum + gzipSync(readFileSync(path)).byteLength, 0)
 process.stdout.write(
-  `${styleMarker} all styles     ${formatKiB(styleSize)} / ${formatKiB(
-    budgets.styles,
-  )}\n`,
+  `${styleSize <= budgets.styles ? 'PASS' : 'FAIL'} all styles     ${formatKiB(styleSize)} / ${formatKiB(budgets.styles)}\n`,
 )
 if (styleSize > budgets.styles) fail('compiled CSS exceeds its budget')
+
+for (const message of failures) process.stderr.write(`Client budget failed: ${message}\n`)
+if (failures.length) process.exitCode = 1
