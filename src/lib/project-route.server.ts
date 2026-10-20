@@ -47,7 +47,7 @@ const resolveProjectRouteUncached =
       };
     }
 
-    const requestedHandle = projectHandleFromRoute(decodedSegment);
+    const requestedHandle = await projectHandleFromRoute(decodedSegment);
     if (!requestedHandle) return null;
     const target = await lookupProjectHandleTarget(requestedHandle.handle);
     if (!target) return null;
@@ -122,7 +122,7 @@ class UnverifiedProjectAlias extends Error {}
 /** Hard expiry: failed verification never serves a stale or cached negative answer. */
 export async function resolveProjectRoute(segment: string, force = false) {
   const decoded = decodeProjectRouteSegment(segment)
-  const requested = decoded && projectHandleFromRoute(decoded)
+  const requested = decoded ? await projectHandleFromRoute(decoded) : null
   if (!requested) return resolveProjectRouteUncached(segment)
   const queryKey = ['verifiedProjectAlias', requested.handle] as const
   if (force) {

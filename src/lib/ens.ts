@@ -1,18 +1,12 @@
 import { isAddress, type Address } from 'viem'
-import { normalize } from 'viem/ens'
-import {
-  normalizeProjectHandle,
-  parseProjectHandleRecord,
-  readDirectEnsProjectRecord,
-  readBoundedProjectHandle,
-  type NormalizedProjectHandle,
-} from '@/lib/project-handles'
+import type { NormalizedProjectHandle } from '@/lib/project-handles'
 
 /**
  * ENS resolution with a synchronous cache. Inputs are validated/encoded
  * synchronously (splitOk, toRecipient), so lookups fill a module cache the
  * sync `resolvedAddress` reads — an ENS name is "valid" only once resolved.
- * The mainnet client loads with the first lookup (ens-client.ts).
+ * The mainnet client, ENSIP-15 normalization and the handle readers load with
+ * the first lookup (ens-client.ts), not with every page.
  */
 
 const IS_DETERMINISTIC_BROWSER =
@@ -48,7 +42,10 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   if (cached !== undefined) return cached
   let address: Address | null = null
   try {
-    const { ensClient } = await import('@/lib/ens-client')
+    const [{ ensClient }, { normalize }] = await Promise.all([
+      import('@/lib/ens-client'),
+      import('viem/ens'),
+    ])
     address = await ensClient.getEnsAddress({ name: normalize(key) })
   } catch {
     address = null
@@ -81,17 +78,18 @@ export async function lookupEnsName(address: string): Promise<string | null> {
 export async function lookupProjectHandleTarget(
   input: string,
 ): Promise<ProjectHandleTarget | null> {
-  const normalized = normalizeProjectHandle(input)
+  const handles = await import('@/lib/project-handles')
+  const normalized = handles.normalizeProjectHandle(input)
   if (!normalized) return null
 
   let target: ProjectHandleTarget | null = null
   try {
     const { ensClient } = await import('@/lib/ens-client')
-    const { textRecord } = await readDirectEnsProjectRecord(
+    const { textRecord } = await handles.readDirectEnsProjectRecord(
       ensClient,
       normalized.ensName,
     )
-    const parsed = parseProjectHandleRecord(textRecord)
+    const parsed = handles.parseProjectHandleRecord(textRecord)
     if (parsed) target = { ...normalized, ...parsed }
   } catch {
     target = null
@@ -113,7 +111,10 @@ export async function lookupVerifiedProjectHandle({
   setter: Address
 }): Promise<string | null> {
   try {
-    const { ensClient } = await import('@/lib/ens-client')
+    const [{ ensClient }, { readBoundedProjectHandle }] = await Promise.all([
+      import('@/lib/ens-client'),
+      import('@/lib/project-handles'),
+    ])
     return await readBoundedProjectHandle(ensClient, {
       chainId,
       projectId,

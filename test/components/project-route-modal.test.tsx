@@ -2,11 +2,14 @@
 import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { expect, it, vi } from 'vitest'
+import { beforeAll, expect, it, vi } from 'vitest'
 import { ProjectRouteBoundary, ProjectRouteProvider } from '@/providers/ProjectRouteContext'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { topLayerDialogs } from '../dialog-shim'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
+
+beforeAll(async () => { await projectHandleFromRoute('@warm') })
 vi.mock('next/navigation', () => ({ useRouter: () => router }))
 const router = { refresh: vi.fn() }
 

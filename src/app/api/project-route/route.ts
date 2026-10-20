@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   const segment = url.searchParams.get('segment') ?? ''
   const decoded = decodeProjectRouteSegment(segment)
   const headers = { 'Cache-Control': 'no-store' }
-  if (!decoded || !projectHandleFromRoute(decoded)) {
+  if (!decoded || !(await projectHandleFromRoute(decoded))) {
     return Response.json({ error: 'Invalid project alias' }, { status: 400, headers })
   }
   try {

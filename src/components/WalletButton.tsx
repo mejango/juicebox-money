@@ -24,7 +24,8 @@ import { useWallet } from '@/hooks/useWallet'
 import { preloadParaHost } from '@/providers/preload-para'
 import { formatTokenAmount } from '@/lib/format'
 import { parseUrn } from '@/lib/urn'
-import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
+import { projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
+import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import { useViewAs } from '@/lib/viewAs'
 import { useResolvedProjectRoute } from '@/providers/ProjectRouteContext'
 import {
@@ -247,7 +248,7 @@ export function WalletButton() {
   const { chainId: connectedChainId } = useAccount()
   const routeSegment = projectRouteSegmentFromPathname(pathname) ?? ''
   const parsedRouteProject = parseUrn(routeSegment)
-  const routeHandle = projectHandleFromRoute(routeSegment)?.handle ?? null
+  const routeHandle = useProjectHandleFromRoute(routeSegment)?.handle ?? null
   const resolvedRouteProject = useResolvedProjectRoute()
   const routeProject =
     parsedRouteProject ??

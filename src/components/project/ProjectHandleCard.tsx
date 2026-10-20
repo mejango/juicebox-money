@@ -977,7 +977,7 @@ export function ProjectHandleCard({
                   href={`/@${encodeURIComponent(current.verifiedHandle)}`}
                   onClick={event => {
                     event.preventDefault()
-                    navigateToProjectHandle(
+                    void navigateToProjectHandle(
                       `/@${encodeURIComponent(current.verifiedHandle!)}`,
                     )
                   }}

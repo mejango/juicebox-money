@@ -31,6 +31,7 @@ vi.mock('@/lib/ens', async importOriginal => {
 })
 
 import { SearchBox } from '@/components/SearchBox'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
 import { toUrn } from '@/lib/urn'
 
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -58,6 +59,13 @@ async function render() {
 async function type(renderer: TestRenderer.ReactTestRenderer, value: string) {
   await act(async () => {
     renderer.root.findByType('input').props.onChange({ target: { value } })
+  })
+}
+
+/** Handle parsing loads ENSIP-15 on the first `@` query; wait for it. */
+async function loadHandles() {
+  await act(async () => {
+    await projectHandleFromRoute('@loaded')
   })
 }
 
@@ -194,6 +202,7 @@ describe('SearchBox account results', () => {
   it('routes an explicit @handle without treating it as account ENS', async () => {
     const renderer = await render()
     await type(renderer, '@Design.Juicebox')
+    await loadHandles()
 
     expect(renderedText(renderer.root)).toContain(
       'Go to project @design.juicebox',
@@ -213,10 +222,12 @@ describe('SearchBox account results', () => {
       '/@design.juicebox'
     const renderer = await render()
     await type(renderer, '@design.juicebox')
+    await loadHandles()
 
     await act(async () => {
       renderer.root.findByType('input').props.onKeyDown({ key: 'Enter' })
     })
+    await loadHandles()
 
     expect(mocks.replaceState).toHaveBeenCalledWith(
       null,

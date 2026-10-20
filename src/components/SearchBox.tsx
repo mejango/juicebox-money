@@ -10,6 +10,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
 import { navigateToProjectHandle, projectHandleFromRoute } from '@/lib/project-handle-route'
+import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import {
   rememberProjectNavigation,
   type ProjectNavigationHint,
@@ -76,7 +77,9 @@ export function SearchBox({
   const searchGenerationRef = useRef(0)
 
   const urn = parseUrn(query.trim())
-  const projectHandle = projectHandleFromRoute(query.trim())
+  const projectHandle = useProjectHandleFromRoute(query.trim())
+  // An `@` query whose normalizer is still loading is neither a search nor an ENS name.
+  const handlePending = projectHandle === undefined
   const handlePath = projectHandle
     ? `/@${encodeURIComponent(projectHandle.handle)}`
     : null
@@ -124,7 +127,7 @@ export function SearchBox({
     abortRef.current?.abort()
     abortRef.current = null
     const text = query.trim()
-    if (urn || handlePath || (text.length < 2 && !/^\d+$/.test(text))) {
+    if (urn || handlePath || handlePending || (text.length < 2 && !/^\d+$/.test(text))) {
       setResults([])
       setSearchUnavailable(false)
       return
@@ -163,12 +166,17 @@ export function SearchBox({
       controller?.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handlePath, query])
+  }, [handlePath, handlePending, query])
 
   // Account queries: a literal address matches immediately; a plausible ENS
   // name debounce-resolves, showing a pending row while it's in flight.
   useEffect(() => {
     const text = query.trim()
+    if (handlePending) {
+      setAccount(null)
+      setEnsPending(false)
+      return
+    }
     if (handlePath) {
       setAccount(null)
       setEnsPending(false)
@@ -202,7 +210,7 @@ export function SearchBox({
       stale = true
       clearTimeout(t)
     }
-  }, [handlePath, query])
+  }, [handlePath, handlePending, query])
 
   // Close on outside pointer.
   useOutsideClose(boxRef, () => {
@@ -235,7 +243,7 @@ export function SearchBox({
     setResults([])
     setAccount(null)
     setEnsPending(false)
-    navigateToProjectHandle(path)
+    void navigateToProjectHandle(path)
   }
 
   // The route takes an ENS name as-is and resolves it server-side.
@@ -243,9 +251,13 @@ export function SearchBox({
     ? `/account/${account.ensName ?? account.address}`
     : null
 
-  const submit = () => {
+  const submit = async () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (handlePath) goHandle(handlePath)
+    else if (handlePending) {
+      const handle = await projectHandleFromRoute(query.trim())
+      if (handle) goHandle(`/@${encodeURIComponent(handle.handle)}`)
+    }
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
@@ -269,7 +281,7 @@ export function SearchBox({
           setOpen(true)
         }
         onKeyDown={e => {
-          if (e.key === 'Enter') submit()
+          if (e.key === 'Enter') void submit()
           if (e.key === 'Escape') {
             setOpen(false)
             setMobileOpen(false)

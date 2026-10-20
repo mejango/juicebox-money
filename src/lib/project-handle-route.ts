@@ -1,4 +1,27 @@
-import { normalizeProjectHandle, type NormalizedProjectHandle } from '@/lib/project-handles'
+import type { NormalizedProjectHandle } from '@/lib/project-handles'
+
+type ProjectHandles = typeof import('@/lib/project-handles')
+let projectHandles: ProjectHandles | undefined
+let loadingProjectHandles: Promise<ProjectHandles> | undefined
+
+/**
+ * Handle routes normalize with ENSIP-15, whose tables (~26 KiB) load with the
+ * handle module on the first `@` segment instead of with every page.
+ */
+function loadProjectHandles(): Promise<ProjectHandles> {
+  loadingProjectHandles ??= import('@/lib/project-handles').then(
+    module => (projectHandles = module),
+    error => {
+      loadingProjectHandles = undefined
+      throw error
+    },
+  )
+  return loadingProjectHandles
+}
+
+function isHandleSegment(segment: string): boolean {
+  return segment.trim().startsWith('@')
+}
 
 /** Next may expose a dynamic path segment in either encoded or decoded form. */
 export function decodeProjectRouteSegment(segment: string): string | null {
@@ -26,12 +49,22 @@ export function projectRouteSegmentFromPathname(
 }
 
 /** Parse only the explicit `/@handle` route syntax. */
-export function projectHandleFromRoute(
+export async function projectHandleFromRoute(
   segment: string,
-): NormalizedProjectHandle | null {
-  return segment.trim().startsWith('@')
-    ? normalizeProjectHandle(segment)
-    : null
+): Promise<NormalizedProjectHandle | null> {
+  if (!isHandleSegment(segment)) return null
+  return (await loadProjectHandles()).normalizeProjectHandle(segment)
+}
+
+/**
+ * projectHandleFromRoute's answer without waiting: `undefined` for a handle
+ * segment until the normalizer has loaded.
+ */
+export function peekProjectHandleFromRoute(
+  segment: string,
+): NormalizedProjectHandle | null | undefined {
+  if (!isHandleSegment(segment)) return null
+  return projectHandles?.normalizeProjectHandle(segment)
 }
 
 /**
@@ -40,18 +73,18 @@ export function projectHandleFromRoute(
  * in-document fragment change, so explicitly reload that case to force the
  * server to resolve ENS again.
  */
-export function navigateToProjectHandle(path: string): void {
+export async function navigateToProjectHandle(path: string): Promise<void> {
   const targetPathname = path.split(/[?#]/u, 1)[0] || '/'
   const currentSegment = projectRouteSegmentFromPathname(
     window.location.pathname,
   )
   const targetSegment = projectRouteSegmentFromPathname(targetPathname)
-  const currentHandle = currentSegment
-    ? projectHandleFromRoute(currentSegment)?.handle
-    : null
-  const targetHandle = targetSegment
-    ? projectHandleFromRoute(targetSegment)?.handle
-    : null
+  const [current, target] = await Promise.all([
+    currentSegment ? projectHandleFromRoute(currentSegment) : null,
+    targetSegment ? projectHandleFromRoute(targetSegment) : null,
+  ])
+  const currentHandle = current?.handle
+  const targetHandle = target?.handle
 
   if (currentHandle && targetHandle === currentHandle) {
     window.history.replaceState(window.history.state, '', path)

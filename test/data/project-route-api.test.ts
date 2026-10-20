@@ -23,13 +23,14 @@ describe('public alias verification endpoint', () => {
     expect(response.status).toBe(503)
     expect(JSON.stringify(await response.json())).not.toContain('private RPC URL')
   })
-  it('accounts for server age and request transit without requiring synchronized clocks', () => {
+  it('accounts for server age and request transit without requiring synchronized clocks', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(50_000)
     const wire = { chainId: 8453, projectId: '7', handle: 'design.juicebox', authority, isRevnet: true, checkedAt: 1_000_000, serverNow: 1_001_000 }
-    const local = readProjectRouteSnapshot(wire, wire.handle, 49_000)
+    const local = await readProjectRouteSnapshot(wire, wire.handle, 49_000)
     expect(local.checkedAt).toBe(48_000)
-    expect(() => readProjectRouteSnapshot(wire, wire.handle, 45_000)).toThrow('expired')
-    expect(() => readProjectRouteSnapshot({ ...wire, projectId: '9007199254740992' }, wire.handle, 49_000)).toThrow()
+    await expect(readProjectRouteSnapshot(wire, wire.handle, 45_000)).rejects.toThrow('expired')
+    await expect(readProjectRouteSnapshot({ ...wire, projectId: '9007199254740992' }, wire.handle, 49_000)).rejects.toThrow()
+    await expect(readProjectRouteSnapshot({ ...wire, handle: 'design..juicebox' }, 'design..juicebox', 49_000)).rejects.toThrow()
   })
 })
