@@ -40,6 +40,7 @@ vi.mock('@/lib/ens', async importOriginal => {
 })
 
 import { SearchBox } from '@/components/SearchBox'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
 import { toUrn } from '@/lib/urn'
 
 it('a submit waiting on the handle normalizer never overrides a newer one or another navigation', async () => {
@@ -71,8 +72,14 @@ it('a submit waiting on the handle normalizer never overrides a newer one or ano
 
   await act(async () => {
     gate.open()
-    await new Promise(done => setTimeout(done, 20))
+    // Both waiting submits share this load; let them settle inside the test.
+    await projectHandleFromRoute('@settled')
+    await new Promise(done => setTimeout(done, 0))
   })
   expect(mocks.assign).not.toHaveBeenCalled()
   expect(mocks.reload).not.toHaveBeenCalled()
+  await act(async () => {
+    renderer.unmount()
+    other.unmount()
+  })
 })
