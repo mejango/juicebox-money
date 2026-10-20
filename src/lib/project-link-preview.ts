@@ -4,7 +4,7 @@ import {
   resolveProjectDeployments,
   type BsProject,
 } from '@/lib/bendystraw'
-import { formatTokenAmount } from '@/lib/format'
+import { formatTokenAmount, formatUsd18 } from '@/lib/format'
 import { knownTokenSymbol } from '@/lib/token-symbol'
 import { getProjectPageData, getProjectSiblings, getProjectMetadata } from '@/lib/project-server-data'
 
@@ -41,25 +41,40 @@ export function projectPreviewSlogan(...values: Array<string | null | undefined>
 /**
  * Format indexed balances without adding unlike tokens together. A project
  * can hold ETH and USDC at once, so each token kind is kept as its own
- * visible bucket, read from the per-token rows. A deployment without them
- * falls back to its single accounting-token balance.
+ * visible bucket, read from the per-token rows. A held token with no known
+ * symbol is shown in USD. A deployment with no rows falls back to its
+ * accounting-token balance, unless it accepts several tokens, whose raw
+ * balance adds unlike units.
  */
 export function formatProjectPreviewBalance(
   deployments: readonly Pick<
     BsProject,
-    'balance' | 'chainId' | 'decimals' | 'tokenSymbol' | 'token' | 'projectTokenBalances'
+    | 'balance'
+    | 'chainId'
+    | 'decimals'
+    | 'tokenSymbol'
+    | 'token'
+    | 'accountingTokenCount'
+    | 'projectTokenBalances'
   >[],
 ): string {
   const buckets = new Map<string, BalanceBucket>()
+  let unnamedUsd = 0n
   for (const deployment of deployments) {
-    for (const row of deployment.projectTokenBalances?.items ?? [deployment]) {
+    const rows = deployment.projectTokenBalances?.items
+    const fallback = (deployment.accountingTokenCount ?? 1) > 1 ? [] : [deployment]
+    for (const row of rows?.length ? rows : fallback) {
       const symbol = (
         row.tokenSymbol ||
         (row.token ? knownTokenSymbol(row.token, { chainId: deployment.chainId }) : null)
       )?.trim()
       const decimals = row.decimals
-      if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) continue
       try {
+        if (!symbol && 'balanceUsd' in row) {
+          unnamedUsd += BigInt(row.balanceUsd || '0')
+          continue
+        }
+        if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) continue
         const key = `${symbol.toUpperCase()}:${decimals}`
         const current = buckets.get(key)
         buckets.set(key, {
@@ -78,10 +93,11 @@ export function formatProjectPreviewBalance(
   )
   // A token the project accepts but does not hold adds only noise.
   const held = sorted.filter(bucket => bucket.amount > 0n)
-  const formatted = (held.length ? held : sorted.slice(0, 1)).map(
+  const formatted = (held.length || unnamedUsd > 0n ? held : sorted.slice(0, 1)).map(
     bucket =>
       `${formatTokenAmount(bucket.amount, bucket.decimals, 4)} ${bucket.symbol}`,
   )
+  if (unnamedUsd > 0n) formatted.push(formatUsd18(unnamedUsd))
   if (!formatted.length) return 'Unavailable'
   if (formatted.length <= 2) return formatted.join(' + ')
   return `${formatted.slice(0, 2).join(' + ')} + ${formatted.length - 2} more`

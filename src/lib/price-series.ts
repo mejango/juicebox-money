@@ -178,9 +178,8 @@ export function axisRate(
 }
 
 /**
- * One moment's cash-out floor: the net display price in the balance's unit,
- * that price on the chart axis, and the balance it was priced from. Null when
- * the moment has no floor. Throws on an unparseable row.
+ * One moment's net cash-out floor on the chart axis. Null when the moment has
+ * no floor. Throws on an unparseable row.
  *
  * The raw `balance` adds unlike tokens when the group accepts several, so the
  * floor is priced from `balanceUsd` and converted to the axis from USD: as is
@@ -195,7 +194,7 @@ export function floorAtMoment(
     perPointRates,
     historyRate,
   }: { tax: number; decimals: number; perPointRates: boolean; historyRate: number },
-): { balance: bigint; price: number; value: number } | null {
+): number | null {
   const pointRate = usdRateOf(moment.accountingTokenUsdRate)
   const balanceUsd = BigInt(moment.balanceUsd || '0')
   const inUsd = balanceUsd > 0n && (perPointRates || pointRate !== undefined)
@@ -210,12 +209,11 @@ export function floorAtMoment(
     tax,
   )
   if (!price) return null
-  const value = !inUsd
+  return !inUsd
     ? price * axisRate(perPointRates, pointRate, historyRate)
     : perPointRates
       ? price
       : (price / pointRate!) * historyRate
-  return { balance, price, value }
 }
 
 export function ammSeriesFrom({

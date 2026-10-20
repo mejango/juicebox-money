@@ -124,7 +124,7 @@ const activityEventFields = `
   payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol }
   cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from token decimals tokenSymbol }
+  addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
   sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from token decimals tokenSymbol }
   sendReservedTokensToSplitsEvent { tokenCount from }

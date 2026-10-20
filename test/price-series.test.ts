@@ -71,15 +71,15 @@ describe('floorAtMoment', () => {
   const options = { tax: 0, decimals: 18, historyRate: 1 }
 
   it('prices from the USD balance on a USD axis', () => {
-    expect(floorAtMoment(moment, { ...options, perPointRates: true })?.value).toBeCloseTo(2.925)
+    expect(floorAtMoment(moment, { ...options, perPointRates: true })).toBeCloseTo(2.925)
   })
 
   it('converts the USD floor to the accounting token on a token axis', () => {
-    expect(floorAtMoment(moment, { ...options, perPointRates: false })?.value).toBeCloseTo(0.0014625, 8)
+    expect(floorAtMoment(moment, { ...options, perPointRates: false })).toBeCloseTo(0.0014625, 8)
   })
 
   it('keeps the raw balance for a moment the indexer could not value', () => {
     const unvalued = { ...moment, balance: String(E18), balanceUsd: '0' }
-    expect(floorAtMoment(unvalued, { ...options, perPointRates: false })?.value).toBeCloseTo(0.000975, 8)
+    expect(floorAtMoment(unvalued, { ...options, perPointRates: false })).toBeCloseTo(0.000975, 8)
   })
 })

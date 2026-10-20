@@ -331,6 +331,7 @@ export type BsActivityEvent = {
   } | null
   addToBalanceEvent?: {
     amount: string
+    amountUsd: string | null
     from: string
     memo: string | null
   } & EventToken | null
@@ -469,7 +470,7 @@ const ACTIVITY_EVENT_FIELDS = `
     cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol
   }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from token decimals tokenSymbol }
+  addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent {
     beneficiary beneficiaryTokenCount caller from
   }

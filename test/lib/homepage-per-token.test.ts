@@ -86,7 +86,7 @@ describe('homepage per-token data', () => {
 
   it('sums USD volume and every addition into the passed-through total', async () => {
     const reserves = await getHomepageReserves()
-    expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([2_000, 2_006])
+    expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([2_000, 2_005, 2_006, 2_007])
     expect(reserves.passedThroughUsd).toBe(2_007)
   })
 

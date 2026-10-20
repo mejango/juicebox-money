@@ -425,17 +425,19 @@ export function RevnetPriceCard({
         tax = ruleset.metadata.cashOutTaxRate
       }
       try {
-        const floor = floorAtMoment(moment, { tax, decimals, perPointRates, historyRate })
-        if (!floor) return []
+        const value = floorAtMoment(moment, { tax, decimals, perPointRates, historyRate })
+        if (!value) return []
+        // The raw balance moves only with funds, one token per event, so it
+        // says which way money flowed; the USD balance also moves with rates.
         const observation: CashOutObservation = {
-          balance: floor.balance,
+          balance: BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
           cashOutTax: tax,
-          price: floor.price,
+          price: value,
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation
-        return [{ timestamp, value: floor.value, reason }]
+        return [{ timestamp, value, reason }]
       } catch {
         return []
       }

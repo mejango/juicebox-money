@@ -1011,7 +1011,8 @@ export function activityParts(
       pay?.amountUsd ??
       cashOut?.reclaimAmountUsd ??
       event.sendPayoutsEvent?.amountPaidOutUsd ??
-      event.sendPayoutToSplitEvent?.amountUsd,
+      event.sendPayoutToSplitEvent?.amountUsd ??
+      event.addToBalanceEvent?.amountUsd,
     amountRaw:
       pay?.amount ??
       cashOut?.reclaimAmount ??
@@ -1067,9 +1068,7 @@ function Row({
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
   const actorNode = <ActorLink href={actorLink} actor={actor} />
-  const amountToken = accountingToken
-    ? activityAmountToken(amountRaw, amountAsset, accountingToken, event.chainId)
-    : null
+  const amountToken = activityAmountToken(amountRaw, amountAsset, accountingToken, event.chainId)
   // No amount and no flow tag = nothing for the title slot; the actor takes
   // its place (bare, no "to/from/by") instead of leaving a blank line.
   const hasTitle =

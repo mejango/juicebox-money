@@ -61,6 +61,35 @@ describe('project link preview balance', () => {
     expect(formatProjectPreviewBalance([deployment('0', 18, 'ETH', rows)])).toBe('2 USDC')
   })
 
+  it('falls back to the accounting-token balance when a project has no per-token rows yet', () => {
+    expect(formatProjectPreviewBalance([deployment('0', 18, 'ETH', [])])).toBe('0 ETH')
+  })
+
+  it('never falls back to the mixed raw balance of a project that accepts several tokens', () => {
+    expect(
+      formatProjectPreviewBalance([
+        { ...deployment('100000005000000', 6, 'USDC', []), accountingTokenCount: 2 },
+        deployment('1000000', 6, 'USDC'),
+      ]),
+    ).toBe('1 USDC')
+  })
+
+  it('shows a held token with no known symbol in USD', () => {
+    expect(
+      formatProjectPreviewBalance([
+        {
+          ...deployment('0', 18, 'ETH'),
+          projectTokenBalances: {
+            items: [
+              { token: ETH, tokenSymbol: 'ETH', decimals: 18, balance: '2000000000000000000', balanceUsd: '0' },
+              { token: '0x00000000000000000000000000000000000000aa', tokenSymbol: null, decimals: 18, balance: '1', balanceUsd: '12500000000000000000' },
+            ],
+          },
+        },
+      ]),
+    ).toBe('2 ETH + $12.50')
+  })
+
   it('does not turn malformed or unknown data into a zero balance', () => {
     expect(
       formatProjectPreviewBalance([

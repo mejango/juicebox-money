@@ -47,3 +47,21 @@ describe('activity amounts use each event’s own token', () => {
     expect(label([pay('a', ETH, 18, '1'), pay('b', '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', 6, '2')])).toBeNull()
   })
 })
+
+describe('activity amounts on a project that accepts several tokens', () => {
+  it('still labels an event in its own token with no shared accounting token', () => {
+    const parts = combinedActivityParts([pay('a', ETH, 18, '1', 'ETH')], 'tokens')
+    expect(activityAmountToken(parts.amountRaw, parts.amountAsset, null, 1)).toEqual({ raw: '1', symbol: 'ETH', decimals: 18 })
+  })
+
+  it('falls back to the addition’s USD value when its token is unresolved', () => {
+    const event: BsActivityEvent = {
+      ...pay('a', null, null),
+      payEvent: null,
+      addToBalanceEvent: { amount: '5', amountUsd: '5000000000000000000', from: '0xpayer', memo: null, token: null, decimals: null, tokenSymbol: null },
+    }
+    const parts = combinedActivityParts([event], 'tokens')
+    expect(activityAmountToken(parts.amountRaw, parts.amountAsset, null, 1)).toBeNull()
+    expect(parts.amountUsd).toBe('5000000000000000000')
+  })
+})

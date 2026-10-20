@@ -120,33 +120,32 @@ const cachedHomepageReserves = unstable_cache(
 
     // `volumeUsd` counts payments only. Funds added straight to a terminal are
     // money that passed through too, and without them a treasury can report
-    // holding more than it ever received. Replayed in order so the curve
-    // reaches the headline.
-    const inflows = addToBalances
-      .map(event => ({ timestamp: event.timestamp, usd: usd18(event.amountUsd) }))
-      .sort((a, b) => a.timestamp - b.timestamp)
+    // holding more than it ever received. Both replay in one timeline, so
+    // the curve ends on the headline.
+    const volumeEvents = [
+      ...volumeMoments.map(moment => ({
+        timestamp: moment.timestamp,
+        groupId: moment.suckerGroupId as string | null,
+        usd: usd18(moment.volumeUsd),
+      })),
+      ...addToBalances.map(event => ({
+        timestamp: event.timestamp,
+        groupId: null,
+        usd: usd18(event.amountUsd),
+      })),
+    ].sort((a, b) => a.timestamp - b.timestamp)
     const groupVolume = new Map<string, number>()
     let added = 0
-    let inflowIndex = 0
     const rawVolumePoints: ReservePoint[] = []
-    for (const moment of volumeMoments) {
-      groupVolume.set(moment.suckerGroupId, usd18(moment.volumeUsd))
-      while (
-        inflowIndex < inflows.length &&
-        inflows[inflowIndex].timestamp <= moment.timestamp
-      ) {
-        added += inflows[inflowIndex].usd
-        inflowIndex += 1
-      }
+    for (const event of volumeEvents) {
+      if (event.groupId === null) added += event.usd
+      else groupVolume.set(event.groupId, event.usd)
       rawVolumePoints.push({
-        timestamp: moment.timestamp,
+        timestamp: event.timestamp,
         valueUsd: [...groupVolume.values()].reduce((sum, value) => sum + value, added),
       })
     }
-    const passedThroughUsd = [...groupVolume.values()].reduce(
-      (sum, value) => sum + value,
-      inflows.reduce((sum, inflow) => sum + inflow.usd, 0),
-    )
+    const passedThroughUsd = rawVolumePoints.at(-1)?.valueUsd ?? 0
 
     return {
       totalUsd,
