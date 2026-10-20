@@ -933,6 +933,30 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
+  it('ignores a settlement that lands after the flow was reset', async () => {
+    let settledYet = false
+    const storage = localStorage as unknown as { setItem: (key: string, value: string) => void }
+    const setItem = storage.setItem
+    storage.setItem = (key, value) => {
+      if (key.startsWith('nana-sdk:reviewed-write:') && value.includes('"result"')) settledYet = true
+      setItem(key, value)
+    }
+    const hook = await renderHook()
+    await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
+    // The settlement's callback waits on its receipt lookup until after the reset.
+    let lookup: ((receipt: unknown) => void) | undefined
+    const answer = (mocks.publicClient as unknown as { getTransactionReceipt: ReturnType<typeof vi.fn> }).getTransactionReceipt
+    const earlier = answer.getMockImplementation()!
+    answer.mockImplementation(async (args: { hash: Hex }) => settledYet ? new Promise(resolve => { lookup = resolve }) : earlier(args))
+    mocks.receipt = { data: mined(HASH, 'reverted'), isError: false }
+    await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
+    await vi.waitFor(() => expect(lookup).toBeTypeOf('function'))
+    await act(async () => { hook.ref.current!.reset() })
+    await act(async () => { lookup!(mined(HASH, 'reverted')) })
+    expect(hook.ref.current).toMatchObject({ phase: 'idle', error: null })
+    await act(async () => hook.renderer.unmount())
+  })
+
   it('sends a retry as soon as a canonical receipt says the write reverted', async () => {
     vi.useFakeTimers()
     try {

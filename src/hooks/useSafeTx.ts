@@ -182,6 +182,9 @@ export function useSafeTx(chainId: number) {
   const [sent, setSent] = useState<{ chainId: number; hash: Hex; safe: boolean } | null>(null)
   /** The hold's authenticated success, with its receipt. */
   const [result, setResult] = useState<{ hash: Hex; receipt: TransactionReceipt | null } | null>(null)
+  // What the flow waits on as of its last render, for the hold's settlement callback.
+  const waiting = useRef({ phase, sent })
+  waiting.current = { phase, sent }
   const inFlight = useRef(false)
   /** Another window sent this write while its review was open, or the user took the exit: the next send reviews it again. */
   const reviewAgain = useRef(false)
@@ -204,6 +207,10 @@ export function useSafeTx(chainId: number) {
     client: publicClient as WriteHoldClient | undefined,
     onSettled: (settled, receipt) => {
       if (!('hash' in settled)) return
+      // Only the write this flow waits on: never one a reset or a newer send left behind.
+      const now = waiting.current
+      if (now.phase !== 'pending') return
+      if (now.sent && !now.sent.safe && now.sent.hash.toLowerCase() !== settled.hash.toLowerCase()) return
       if (settled.result === 'success') {
         setResult({ hash: settled.hash, receipt })
         setPhase('success')
