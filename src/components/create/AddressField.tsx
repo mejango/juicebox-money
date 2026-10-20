@@ -99,7 +99,7 @@ export function AddressField({
     let stale = false
     const t = setTimeout(async () => {
       if (isAddress(v)) {
-        const name = await lookupEnsName(v)
+        const name = await lookupEnsName(v).catch(() => null)
         if (!stale && name) setNote({ kind: 'ok', text: `→ ${name}` })
       } else if (looksLikeEns(v)) {
         const address = await lookupEnsAddress(v)

@@ -55,16 +55,16 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   return address
 }
 
-/** Async: an address's primary ENS name, cached. */
+/**
+ * Async: an address's primary ENS name, cached. A failed chunk download
+ * throws, so a query layer (useEnsName) retries it instead of keeping "no name".
+ */
 export async function lookupEnsName(address: string): Promise<string | null> {
   if (IS_DETERMINISTIC_BROWSER) return null
   const key = address.trim().toLowerCase()
   const cached = nameCache.get(key)
   if (cached !== undefined) return cached
-  // As in lookupEnsAddress, a failed chunk download is not cached.
-  const loaded = await import('@/lib/ens-client').catch(() => null)
-  if (!loaded) return null
-  const { ensClient } = loaded
+  const { ensClient } = await import('@/lib/ens-client')
   let name: string | null = null
   try {
     name = await ensClient.getEnsName({ address: address.trim() as Address })
