@@ -1,3 +1,31 @@
+# Pay minimum: SDK 3.3.0 quote everywhere, failure reason, adjustable minimum (2026-10-20)
+
+Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum.
+Branch feat/pay-minimum-failure-reason from origin/main 450d245. Parallel: revnet-money gets the same behavior.
+
+- [x] 1. Bump @bananapus/nana-sdk-core 3.1.0 -> 3.3.0 (Node 26, npx npm@12). jbm has no nana-sdk-react.
+- [x] 2. Minimum: the pay card already sends prepareUserPay's minReturnedTokens and metadata (no app-side math); 3.3.0 changes it in the SDK only. Verify no other pay path computes one.
+- [x] 3. useSafeTx gains `onFailure(error)` for a send that fails before the wallet (simulation, estimate, wallet error); PayPanel decodes it with decodePayFailure and shows its message in the dialog error. An onchain revert re-simulates the reviewed call at the receipt block and decodes that.
+- [x] 4. Shortfall reasons the payer's minimum controls (TERMINAL_UNDER_MIN, BUYBACK_SLIPPAGE_EXCEEDED; not the router's own quote or the hook's TWAP floor) offer one slippage field, prefilled from received/minimum (the cash-out's Allowed decrease control, extracted), and "Review again": prepareUserPay re-runs with that slippageBps and the normal review shows the new "You get at least" (the one sent). Bounded 0.1% to 50%, tied to the amount/token it was set for.
+- [x] 5. Tests: failure message, override reaching prepareUserPay and calldata, default flow unchanged. Gates: lint, ts, unit, source/transaction checks, build:browser, budget, browser tests, next build. Playwright screenshot of the failure state.
+- [ ] 6. PR #138 open; Codex two passes done; final pass after the 3.4.0 bump. No merge.
+
+## Plan refinement
+- **Objective:** Pay card sends SDK 3.3.0's quote-based minimum on every path; a failed pay shows decodePayFailure's one-line reason; a minimum shortfall lets the payer loosen the minimum and review again; the happy path is unchanged.
+- **System fit:** Outcome (most tokens, understood failure) -> capability (SDK prepareUserPay + decodePayFailure) -> evidence (simulation error or reverted receipt, re-simulated) -> prepared action (prepareUserPay with slippageBps) -> authority (existing review + useSafeTx hold) -> verified result (receipt) -> learning (lesson if any). Owners: SDK owns the minimum and the reason text; jbm owns the slippage field and retry wiring. Holds, Safe and approval flows are unaffected.
+- **Reuse and simplicity:** Reuse prepareUserPay's slippageBps (no app minimum math), decodePayFailure messages, TxConfirmDialog children/error, submitWhenFresh re-review. New: one onFailure option in useSafeTx and a tiny suggested-slippage helper (candidate for the SDK so revnet shares it).
+- **Evidence and unknowns:** SDK source at juice-sdk-v4 origin/main f1b8d18 (pay.ts, executionErrors.ts); published 3.3.0 d.ts re-read after install. Unknown: whether a revert re-simulated at the receipt block still reverts (if not, the generic line stays).
+- **Verification:** Unit tests in test/components/reviewed-account-pay.test.tsx (message shown, slippage reaches prepareUserPay and pay calldata matches the reviewed minimum, default bps unchanged), full npm gates in the documented order, next build, Playwright screenshot.
+- **Resource budget:** One worktree, one SDK bump, edits in PayPanel + useSafeTx + one lib helper; replan if 3.3.0's API differs from source or budgets move by more than the new code.
+
+## Review
+- Gates: npm run check through budget (deps, knip, audit:prod, container, lint, ts, source, protocol, schema, transaction, 244 files / 3161 unit tests, build:browser); /[urn] budget 499 -> 502 KiB (500.7, decode table + retry UI); 85/85 browser tests; next build --webpack.
+- Rendered: the failure review at desktop and phone width (temporary proof route, not committed).
+- Codex pass 1 and 2 fixes: tolerance bound to the reviewed payment and account, one review only, dropped on close or input change; account-switch failures say so; every Review again quotes afresh; nothing offered at the 49.5% limit.
+- Cross-client rulings: a payment that would return no tokens says so with no looser minimum; amounts read only as bigints; router conversion and TWAP floor offer no retry; a mined revert says "The payment reverted." and only reviews again (no receipt-block replay), and a held retry shows the hold's line, not a cancel.
+- SDK 3.4.1 (3.4.0 never published): pay-minimum.ts deleted for the SDK's payRetrySlippageBps / PAY_DEFAULT_SLIPPAGE_BPS / PAY_MAX_SLIPPAGE_BPS and decodePayFailure's zero-fill line; the hold now releases a canonical revert, so Review again sends at once (the dialog's hold-line override is gone). Two existing tests followed the SDK: a canonical revert's retry sends at once, and revert text alone no longer names a revert. /[urn] at 501.8 of 502 KiB.
+- Settlement race (Sticky 5132b4e port): tried and reverted. The hold's onSettled carries no record identity (a Safe settlement carries its execution hash, not the proposal's), so app-side guards either drop valid settlements (current Safe execution, recovery while signing) or miss stale ones (Codex pass 4 reproduced both). useSafeTx keeps main's behavior; the fix belongs in the SDK's useHeldSend.
+
 # SDK 2.41.1 migration: held writes and saved attempts through the SDK (2026-10-15)
 
 Brief: scratchpad ALIGN/migration-brief.md (+ corrections from jango in the task). Rules frozen in ALIGN/recovery-rule.md.

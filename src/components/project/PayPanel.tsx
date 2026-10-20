@@ -24,6 +24,10 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   buildPayTx,
+  decodePayFailure,
+  PAY_DEFAULT_SLIPPAGE_BPS,
+  PAY_MAX_SLIPPAGE_BPS,
+  payRetrySlippageBps,
   effectiveTierPrice,
   getProjectNftInventory,
   prepareUserPay,
@@ -88,6 +92,7 @@ import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_
 import { NftCartLine } from "@/components/project/NftCartLine";
 import { shopCartTotal } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
+import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField";
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
@@ -139,6 +144,10 @@ type ReviewedPayment = {
   token: Address;
   cartKey: string;
   metadata: Hex | undefined;
+  /** What a tolerance the payer loosens after this payment fails is bound to. */
+  payment: string;
+  /** The tolerance prepareUserPay floored this payment's minimum by: what a retry loosens from. */
+  slippageBps: bigint;
 };
 
 const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
@@ -321,6 +330,12 @@ export function PayPanel({
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
   >([]);
+  /** A tolerance the payer loosened after a shortfall: for the next review of the payment it was set on only. */
+  const [payerSlippage, setPayerSlippage] = useState<{ bps: number; payment: string } | null>(null);
+  /** The tolerance offered after a shortfall, until the payer reviews again with it. */
+  const [retrySlippageBps, setRetrySlippageBps] = useState<number | null>(null);
+  /** The payment reverted onchain: it is only reviewed again, quoted afresh. */
+  const [reviewAfterRevert, setReviewAfterRevert] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400);
     return () => clearTimeout(t);
@@ -894,6 +909,15 @@ export function PayPanel({
   // supplied this token's route, including a directly attached gateway.
   const terminalAddress = context?.terminal;
 
+  // The tolerance prepareUserPay floors its quote by: the SDK default, or the
+  // one the payer loosened after this same payment fell short.
+  const paymentInputs = `${address ?? ""}:${chainId}:${projectId}:${terminalAddress}:${context?.token}:${amountRaw}:${tierIds.join(",")}`;
+  const slippageBps = payerSlippage?.payment === paymentInputs ? payerSlippage.bps : undefined;
+  // Another payment drops it, so coming back to this one starts from the default again.
+  useEffect(() => {
+    if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null);
+  }, [payerSlippage, paymentInputs]);
+
   // One read prepares the payment: the metadata to send (shop items plus the
   // buyback hook's pool-or-mint choice), the preview, and the minimum.
   const {
@@ -915,6 +939,7 @@ export function PayPanel({
       address ?? null,
       tiers?.metadataIdTarget ?? null,
       tierIds.join(","),
+      slippageBps ?? null,
     ],
     enabled:
       !!publicClient &&
@@ -936,6 +961,7 @@ export function PayPanel({
         amount: amountRaw,
         beneficiary: address ?? zeroAddress,
         tiers,
+        ...(slippageBps !== undefined ? { slippageBps: BigInt(slippageBps) } : {}),
       }),
   });
   const preview = prepared?.preview;
@@ -1253,7 +1279,8 @@ export function PayPanel({
     setSequenceActions(actions);
     setSequenceSummary({
       amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
-      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined,
+      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined, payment: paymentInputs,
+      slippageBps: slippageBps !== undefined ? BigInt(slippageBps) : PAY_DEFAULT_SLIPPAGE_BPS,
     });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
@@ -1291,6 +1318,11 @@ export function PayPanel({
     ) return;
     setSequenceStarted(true);
     setSequenceError(null);
+    setRetrySlippageBps(null);
+    setReviewAfterRevert(false);
+    /** Why the payment's simulation failed, when it says. */
+    let failure: unknown;
+    let minedRevert = false;
     // Each send refuses another account on its own; checking before each step
     // also says so here, where a refused send would read as a cancelled one.
     const stillReviewed = () =>
@@ -1360,6 +1392,7 @@ export function PayPanel({
         intent: paymentAction.intent,
         legacy: paymentAction.legacy,
         assertWriteState: () => writeState.current(reviewed),
+        onFailure: error => { failure = error },
       });
       if (!paymentHash) {
         writeState.current(reviewed);
@@ -1385,7 +1418,12 @@ export function PayPanel({
         );
         return;
       }
-      if (paymentReceipt.status !== "success") throw new Error("Payment reverted onchain.");
+      if (paymentReceipt.status !== "success") {
+        // A receipt carries no reason, and the block's end state is not what it reverted on: a pay is
+        // reviewed again, quoted and simulated afresh, and only that simulation's failure gives a reason.
+        if (mode === "pay") minedRevert = true;
+        throw new Error(mode === "pay" ? "The payment reverted." : "Payment reverted onchain.");
+      }
       setSequenceCompletedKinds(current =>
         current.includes("payment") ? current : [...current, "payment"],
       );
@@ -1393,10 +1431,40 @@ export function PayPanel({
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
       setSequenceStatus(null);
-      setSequenceError(reason instanceof Error ? reason.message : "The payment could not be completed.");
+      // A payment that changed during review, or whose account did, says so; otherwise the revert's own reason, when known.
+      let changed: string | null = reason instanceof Error && reason.message === PAYMENT_CHANGED ? PAYMENT_CHANGED : null;
+      try {
+        stillReviewed();
+      } catch (switched) {
+        changed = switched instanceof Error ? switched.message : PAYMENT_CHANGED;
+      }
+      const decoded = changed ? null : decodePayFailure(failure);
+      setSequenceError(changed ?? decoded?.message ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
+      // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
+      const retry = mode === "pay" ? payRetrySlippageBps(decoded, reviewed.slippageBps) : null;
+      setRetrySlippageBps(retry === null ? null : Number(retry));
+      setReviewAfterRevert(minedRevert && !changed);
     } finally {
       setSequenceStarted(false);
     }
+  };
+
+  /** Prepare the payment again, with the tolerance the payer chose when given, and review it from the start. */
+  const reviewAgain = (bps: number | null) => {
+    if (!sequenceSummary) return;
+    if (bps !== null) setPayerSlippage({ bps, payment: sequenceSummary.payment });
+    // Every review again quotes afresh, even at a tolerance quoted moments ago.
+    void queryClient.invalidateQueries({ queryKey: ["prepareUserPay"] });
+    tx.reset();
+    setRetrySlippageBps(null);
+    setReviewAfterRevert(false);
+    setSequenceOpen(false);
+    setSequenceActions([]);
+    setSequenceActionIndex(0);
+    setSequenceCompletedKinds([]);
+    setSequenceStatus(null);
+    setSequenceError(null);
+    setSubmitWhenFresh(true);
   };
 
   const reset = () => {
@@ -1413,6 +1481,9 @@ export function PayPanel({
     setSequenceSafeStage(null);
     setSequenceStatus(null);
     setSequenceError(null);
+    setRetrySlippageBps(null);
+    setReviewAfterRevert(false);
+    setPayerSlippage(null);
     setAmount("");
     setDebouncedAmount("");
     setMemo("");
@@ -2022,8 +2093,8 @@ export function PayPanel({
           error={sequenceError ?? sequenceSafeHeld}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
-          action={mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
-          onConfirm={() => void runPaymentSequence()}
+          action={retrySlippageBps !== null || reviewAfterRevert ? "Review again" : mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
+          onConfirm={() => retrySlippageBps !== null || reviewAfterRevert ? reviewAgain(retrySlippageBps) : void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             // An unproven or lost Safe stage ends with its line: Done dismisses it,
@@ -2035,8 +2106,15 @@ export function PayPanel({
             setSequenceCompletedKinds([]);
             setSequenceStatus(null);
             setSequenceError(null);
+            setRetrySlippageBps(null);
+            setReviewAfterRevert(false);
+            setPayerSlippage(null);
           }}
-        />
+        >
+          {retrySlippageBps !== null ? (
+            <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
+          ) : null}
+        </TxConfirmDialog>
       ) : null}
     </div>
   );

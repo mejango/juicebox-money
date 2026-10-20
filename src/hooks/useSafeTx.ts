@@ -87,6 +87,8 @@ export type TxSendOptions = {
   onBeforeWriteAborted?: () => unknown | Promise<unknown>
   /** Called only for a typed, explicit wallet rejection of the write itself. */
   onWriteRejected?: () => unknown | Promise<unknown>
+  /** The error behind a send that failed before reaching the chain (simulation, estimate, wallet), for a flow to decode. */
+  onFailure?: (error: unknown) => void
   /**
    * For a write whose calldata regenerates on retry (a deadline, a Permit2
    * expiration or signature, a fresh quote): its intent key, from the SDK's
@@ -433,6 +435,7 @@ export function useSafeTx(chainId: number) {
           setPhase('idle')
           return null
         }
+        options.onFailure?.(e)
         setError(friendlyTxError(e))
         setPhase('error')
         return null

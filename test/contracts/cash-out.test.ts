@@ -8,6 +8,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import {
   decodeFunctionData,
+  encodeAbiParameters,
   encodeFunctionData,
   formatUnits,
   type Address,
@@ -348,8 +349,11 @@ describe('cash-out accounting context reads', () => {
 describe('cash-out transaction request', () => {
   it('explains the buyback hook slippage error instead of exposing its selector', () => {
     expect(
+      // Read from revert data: text alone never names a revert (SDK 3.4).
       cashOutExecutionErrorMessage(
-        new Error('cashOutTokensOf reverted with signature 0xe2d708a9'),
+        Object.assign(new Error('Execution reverted.'), {
+          data: `0xe2d708a9${encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [1n, 2n]).slice(2)}`,
+        }),
       ),
     ).toMatch(/pool moved below your protected minimum/i)
   })

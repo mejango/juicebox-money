@@ -933,12 +933,12 @@ describe('useSafeTx', () => {
     await act(async () => reopened.renderer.unmount())
   })
 
-  it('holds a retry after a reverted receipt until a finalized block includes it, then sends it', async () => {
+  it('sends a retry as soon as a canonical receipt says the write reverted', async () => {
     vi.useFakeTimers()
     try {
       const BLOCK = `0x${'55'.repeat(32)}` as Hex
       const reverted = { status: 'reverted' as const, transactionHash: HASH, blockHash: BLOCK, blockNumber: 5n, from: ALICE, to: BOB, transactionIndex: 0, logs: [] }
-      let finalized = 4n
+      const finalized = 4n
       mocks.publicClient = {
         ...mocks.publicClient,
         getChainId: vi.fn(async () => 10),
@@ -954,15 +954,10 @@ describe('useSafeTx', () => {
       await act(async () => { hook.renderer.update(createElement(Harness, { ref: hook.ref })) })
       expect(hook.ref.current).toMatchObject({ phase: 'error' })
 
-      // Not final yet: a reorg could bring it back, so the retry shows it again instead.
+      // Its block is canonical, though not final (finalized is 4): SDK 3.4.1's hold lets the revert go at once.
+      expect(finalized).toBeLessThan(5n)
       mocks.receipt = { data: undefined, isError: false }
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      await act(async () => hook.ref.current!.reset())
-      await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
-      expect(mocks.writeContract).toHaveBeenCalledOnce()
-
-      finalized = 6n
-      await act(async () => { await vi.advanceTimersByTimeAsync(16_000) })
       await act(async () => hook.ref.current!.reset())
       await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
       expect(mocks.writeContract).toHaveBeenCalledTimes(2)
@@ -1154,7 +1149,7 @@ describe('useSafeTx', () => {
 
   it.each([
     ['success', 'success', null],
-    ['reverted', 'error', /reverted onchain/i],
+    ['reverted', 'error', /failed onchain/i],
   ] as const)(
     'treats a %s receipt as a terminal state',
     async (status, phase, error) => {

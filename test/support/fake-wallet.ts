@@ -3,7 +3,7 @@ import { encodeFunctionData, TransactionNotFoundError, type Abi, type Address, t
 import { vi } from 'vitest'
 
 type Receipt = {
-  status: 'success'
+  status: 'success' | 'reverted'
   blockNumber: bigint
   transactionHash: Hex
   blockHash: Hex
@@ -107,10 +107,10 @@ function createFakeWallet() {
       account = next
       notify()
     },
-    /** The chain reports `hash` as confirmed. */
-    confirm(hash: Hex, blockNumber = 10n) {
+    /** The chain reports `hash` as confirmed, or as mined and reverted. */
+    confirm(hash: Hex, blockNumber = 10n, status: Receipt['status'] = 'success') {
       const key = hash.toLowerCase()
-      const receipt: Receipt = { status: 'success', blockNumber, transactionHash: hash, blockHash: MINED_BLOCK,
+      const receipt: Receipt = { status, blockNumber, transactionHash: hash, blockHash: MINED_BLOCK,
         transactionIndex: 0, from: account ?? ('0x0000000000000000000000000000000000000000' as Address), to: sent.get(key)?.to ?? null, logs: [] }
       receipts.set(key, receipt)
       for (const resolve of awaiting.get(key) ?? []) resolve(receipt)
