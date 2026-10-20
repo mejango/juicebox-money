@@ -27,17 +27,17 @@ import { vendorWallets } from './lib/vendor-wallets.mjs'
 const KIB = 1024
 const account = `0x${'1'.repeat(40)}`
 const routes = [
-  { route: '/', path: '/', kib: 407 },
-  { route: '/learn', path: '/learn', kib: 407 },
-  { route: '/build', path: '/build', kib: 409 },
-  { route: '/build/first-payment', path: '/build/first-payment', kib: 407 },
-  { route: '/audit', path: '/audit', kib: 411 },
-  { route: '/create', path: '/create', kib: 479 },
-  { route: '/[urn]', path: '/eth:1', kib: 634 },
-  { route: '/account/[address]', path: `/account/${account}`, kib: 477 },
+  { route: '/', path: '/', kib: 340 },
+  { route: '/learn', path: '/learn', kib: 223 },
+  { route: '/build', path: '/build', kib: 225 },
+  { route: '/build/first-payment', path: '/build/first-payment', kib: 223 },
+  { route: '/audit', path: '/audit', kib: 228 },
+  { route: '/create', path: '/create', kib: 394 },
+  { route: '/[urn]', path: '/eth:1', kib: 498 },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 404 },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
-  { route: '/_not-found', path: '/account/not-an-account', kib: 477, text: 'This juicebox is empty' },
+  { route: '/_not-found', path: '/account/not-an-account', kib: 223, text: 'This juicebox is empty' },
   // Hands deeper legacy paths to old.juicebox.money; there is no page to load.
   { route: '/[urn]/[...rest]', path: '/v3/45', status: 307 },
 ]
@@ -47,8 +47,8 @@ const budgets = {
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK; the route ceilings and the lazy-load
   // assertions below are what protect first paint. History: git log -p.
-  allScripts: 2650 * KIB,
-  largestChunk: 450 * KIB,
+  allScripts: 2606 * KIB,
+  largestChunk: 395 * KIB,
   styles: 20 * KIB,
 }
 
