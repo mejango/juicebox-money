@@ -429,11 +429,13 @@ export function RevnetPriceCard({
         if (!value) return []
         // The raw balance moves only with funds, one token per event, so it
         // says which way money flowed; the USD balance also moves with rates.
+        const balanceUsd = BigInt(moment.balanceUsd || '0')
         const observation: CashOutObservation = {
           balance: BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
           cashOutTax: tax,
           price: value,
+          balanceUsd: balanceUsd > 0n ? balanceUsd : undefined,
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation

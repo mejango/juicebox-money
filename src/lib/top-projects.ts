@@ -17,6 +17,8 @@ export type BalanceGroup = {
   id: string
   /** Every token's balance at its latest USD rate. 18-dec. */
   balanceUsd: string
+  /** Payment volume, each payment valued in USD at its own time. 18-dec. */
+  volumeUsd: string
   projects: { items: BsProject[] }
 }
 
@@ -40,7 +42,7 @@ const cachedBalanceGroups = unstable_cache(
           ) {
             totalCount
             items {
-              id balanceUsd
+              id balanceUsd volumeUsd
               projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
                 items {
                   projectId chainId version name logoUri projectTagline volume volumeUsd balance
@@ -66,7 +68,7 @@ const cachedBalanceGroups = unstable_cache(
       })),
     )
   },
-  ['juicebox-home-balance-groups-v4'],
+  ['juicebox-home-balance-groups-v5'],
   { revalidate: 600 },
 )
 

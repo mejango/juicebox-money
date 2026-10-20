@@ -105,6 +105,7 @@ function completeProjectRow(
     owner: null,
     metadataUri: null,
     accountingTokenCount: 1,
+    balanceUsd: '0',
     projectTokenBalances: { items: [] },
     ...overrides,
   }

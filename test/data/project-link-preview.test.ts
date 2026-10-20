@@ -65,13 +65,13 @@ describe('project link preview balance', () => {
     expect(formatProjectPreviewBalance([deployment('0', 18, 'ETH', [])])).toBe('0 ETH')
   })
 
-  it('never falls back to the mixed raw balance of a project that accepts several tokens', () => {
+  it('values a multi-token project without per-token rows in USD, never its mixed raw balance', () => {
     expect(
       formatProjectPreviewBalance([
-        { ...deployment('100000005000000', 6, 'USDC', []), accountingTokenCount: 2 },
+        { ...deployment('100000005000000', 6, 'USDC', []), accountingTokenCount: 2, balanceUsd: '5200000000000000000' },
         deployment('1000000', 6, 'USDC'),
       ]),
-    ).toBe('1 USDC')
+    ).toBe('1 USDC + $5.20')
   })
 
   it('shows a held token with no known symbol in USD', () => {

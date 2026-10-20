@@ -143,6 +143,8 @@ export type BsProject = {
   metadataUri: string | null
   /** Accounting contexts the project accepts. Above 1, the raw `balance` and `volume` add unlike tokens. */
   accountingTokenCount?: number | null
+  /** Every token's balance at its latest USD rate. 18-dec. */
+  balanceUsd?: string | null
   /** The terminal balance per token, each in its own decimals. */
   projectTokenBalances?: { items: BsTokenBalance[] } | null
 }
@@ -163,7 +165,7 @@ export type BsSearchProject = BsProject & {
 const PROJECT_FIELDS = `
   projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
-  decimals currency isRevnet owner metadataUri accountingTokenCount
+  decimals currency isRevnet owner metadataUri accountingTokenCount balanceUsd
   projectTokenBalances { items { token tokenSymbol decimals balance balanceUsd } }
 `
 

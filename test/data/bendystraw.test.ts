@@ -221,6 +221,7 @@ describe('Bendystraw pagination and trust boundaries', () => {
       owner: null,
       metadataUri: null,
       accountingTokenCount: 1,
+      balanceUsd: '0',
       projectTokenBalances: { items: [] },
     }
     const fetchMock = vi

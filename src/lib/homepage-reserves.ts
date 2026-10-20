@@ -8,6 +8,7 @@ import {
   type BsAddToBalance,
 } from './bendystraw'
 import { truncateAddress } from './format'
+import { getHomepageBalanceGroups } from './top-projects'
 import { knownTokenSymbol } from './token-symbol'
 
 export type ReservePoint = {
@@ -51,9 +52,10 @@ const usd18 = (raw: string | null | undefined) =>
 
 const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
-    const [balances, tokenMoments, volumeMoments, addToBalances] =
+    const [balances, groups, tokenMoments, volumeMoments, addToBalances] =
       await Promise.all([
         getProjectTokenBalances(),
+        getHomepageBalanceGroups(),
         // A missing history leaves the headline standing.
         getProjectTokenBalanceMoments().catch(() => []),
         getGroupVolumeMoments().catch(() => []),
@@ -121,7 +123,8 @@ const cachedHomepageReserves = unstable_cache(
     // `volumeUsd` counts payments only. Funds added straight to a terminal are
     // money that passed through too, and without them a treasury can report
     // holding more than it ever received. Both replay in one timeline, so
-    // the curve ends on the headline.
+    // the curve ends on the headline, which stands on the groups' current
+    // totals even when the history cannot be read.
     const volumeEvents = [
       ...volumeMoments.map(moment => ({
         timestamp: moment.timestamp,
@@ -145,7 +148,10 @@ const cachedHomepageReserves = unstable_cache(
         valueUsd: [...groupVolume.values()].reduce((sum, value) => sum + value, added),
       })
     }
-    const passedThroughUsd = rawVolumePoints.at(-1)?.valueUsd ?? 0
+    const passedThroughUsd = groups.reduce(
+      (sum, group) => sum + usd18(group.volumeUsd),
+      addToBalances.reduce((sum, event) => sum + usd18(event.amountUsd), 0),
+    )
 
     return {
       totalUsd,

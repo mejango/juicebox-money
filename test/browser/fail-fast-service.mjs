@@ -116,7 +116,7 @@ if (
 const projectFields = `
   projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
-  decimals currency isRevnet owner metadataUri accountingTokenCount
+  decimals currency isRevnet owner metadataUri accountingTokenCount balanceUsd
   projectTokenBalances { items { token tokenSymbol decimals balance balanceUsd } }
 `
 const activityEventFields = `
@@ -173,6 +173,7 @@ const project = {
   // intentional IPFS gateway request made by the production server.
   metadataUri: null,
   accountingTokenCount: 1,
+  balanceUsd: '0',
   projectTokenBalances: {
     items: [
       { token: USDC.toLowerCase(), tokenSymbol: 'USDC', decimals: 6, balance: '0', balanceUsd: '0' },
@@ -771,7 +772,7 @@ const graphqlFixtures = [
       ) {
         totalCount
         items {
-          id balanceUsd
+          id balanceUsd volumeUsd
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
               projectId chainId version name logoUri projectTagline volume volumeUsd balance

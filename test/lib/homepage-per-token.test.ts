@@ -17,8 +17,8 @@ function project(projectId: number) {
 // eth:12 accepts ETH and USDC: its raw balance adds 0.0001 ETH (1e14 wei) and
 // 5 USDC (5e6) as if they were one unit. Only the per-token data is exact.
 const groups = [
-  { id: 'g7', balanceUsd: String(2_000n * E18), projects: { items: [project(7)] } },
-  { id: 'g12', balanceUsd: String(5_200_000_000_000_000_000n), projects: { items: [project(12)] } },
+  { id: 'g7', balanceUsd: String(2_000n * E18), volumeUsd: String(2_000n * E18), projects: { items: [project(7)] } },
+  { id: 'g12', balanceUsd: String(5_200_000_000_000_000_000n), volumeUsd: String(5n * E18), projects: { items: [project(12)] } },
 ]
 const balances = [
   { chainId: 1, projectId: 7, token: ETH, tokenSymbol: 'ETH', decimals: 18, balance: String(E18), balanceUsd: String(2_000n * E18) },
@@ -42,6 +42,8 @@ const addToBalances = [
   { suckerGroupId: 'g12', timestamp: 9, amount: '1', amountUsd: String(E18) },
 ]
 
+let volumeHistoryFails = false
+
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (items: unknown) => items }))
 vi.mock('@/lib/bendystraw', async importOriginal => ({
@@ -49,7 +51,10 @@ vi.mock('@/lib/bendystraw', async importOriginal => ({
   bendystraw: async () => ({ suckerGroups: { items: groups, totalCount: groups.length } }),
   getProjectTokenBalances: async () => balances,
   getProjectTokenBalanceMoments: async () => tokenMoments,
-  getGroupVolumeMoments: async () => volumeMoments,
+  getGroupVolumeMoments: async () => {
+    if (volumeHistoryFails) throw new Error('indexer down')
+    return volumeMoments
+  },
   getAddToBalanceInflows: async () => addToBalances,
 }))
 
@@ -88,6 +93,17 @@ describe('homepage per-token data', () => {
     const reserves = await getHomepageReserves()
     expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([2_000, 2_005, 2_006, 2_007])
     expect(reserves.passedThroughUsd).toBe(2_007)
+  })
+
+  it('keeps the passed-through headline when the volume history fails', async () => {
+    volumeHistoryFails = true
+    try {
+      const reserves = await getHomepageReserves()
+      expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([1, 2])
+      expect(reserves.passedThroughUsd).toBe(2_007)
+    } finally {
+      volumeHistoryFails = false
+    }
   })
 
   it('ranks Top by the group USD balance', async () => {

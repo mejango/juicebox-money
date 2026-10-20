@@ -3,6 +3,8 @@ export type CashOutObservation = {
   tokenSupply: bigint
   cashOutTax: number
   price: number
+  /** The backing in USD at the moment's rates, when the price is read from it. */
+  balanceUsd?: bigint
 }
 
 export function explainCashOutChange(
@@ -42,6 +44,9 @@ export function explainCashOutChange(
     if (supplyRose) causes.push('token supply increased')
     if (supplyFell) causes.push('tokens were burned')
   }
+  if (valuationChanged(previous, current)) {
+    causes.push('token prices moved the USD value of the backing')
+  }
   if (current.cashOutTax !== previous.cashOutTax) {
     causes.push(
       `the cash-out tax changed from ${formatTax(previous.cashOutTax)} to ${formatTax(current.cashOutTax)}`,
@@ -67,6 +72,15 @@ function compareBackingPerToken(
   const left = current.balance * previous.tokenSupply
   const right = previous.balance * current.tokenSupply
   return left > right ? 1 : left < right ? -1 : 0
+}
+
+/** The USD value per raw unit of backing moved: a rate change, not only a flow. */
+function valuationChanged(
+  previous: CashOutObservation,
+  current: CashOutObservation,
+): boolean {
+  if (previous.balanceUsd === undefined || current.balanceUsd === undefined) return false
+  return current.balanceUsd * previous.balance !== previous.balanceUsd * current.balance
 }
 
 function formatTax(value: number): string {
