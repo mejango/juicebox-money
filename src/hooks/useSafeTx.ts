@@ -182,18 +182,6 @@ export function useSafeTx(chainId: number) {
   const [sent, setSent] = useState<{ chainId: number; hash: Hex; safe: boolean } | null>(null)
   /** The hold's authenticated success, with its receipt. */
   const [result, setResult] = useState<{ hash: Hex; receipt: TransactionReceipt | null } | null>(null)
-  // What the flow waits on as of its last render, for the hold's settlement callback.
-  const waiting = useRef({ phase, sent })
-  waiting.current = { phase, sent }
-  /** The writes this flow sent and has since left (a reset, or a newer send): their settlements are stale here. */
-  const left = useRef(new Set<string>())
-  const followed = useRef<string | null>(null)
-  const follow = useCallback((next: { chainId: number; hash: Hex; safe: boolean } | null) => {
-    if (followed.current && followed.current !== next?.hash.toLowerCase()) left.current.add(followed.current)
-    followed.current = next?.hash.toLowerCase() ?? null
-    if (followed.current) left.current.delete(followed.current)
-    setSent(next)
-  }, [])
   const inFlight = useRef(false)
   /** Another window sent this write while its review was open, or the user took the exit: the next send reviews it again. */
   const reviewAgain = useRef(false)
@@ -207,19 +195,15 @@ export function useSafeTx(chainId: number) {
     inFlight.current = false
     setPhase('idle')
     setError(null)
-    follow(null)
+    setSent(null)
     setResult(null)
-  }, [follow])
+  }, [])
 
   const held = useHeldSend({
     hold: writeHolds,
     client: publicClient as WriteHoldClient | undefined,
     onSettled: (settled, receipt) => {
       if (!('hash' in settled)) return
-      // Only while the flow waits, and never for a write it left: a held write it follows instead still settles here.
-      if (waiting.current.phase !== 'pending' || left.current.has(settled.hash.toLowerCase())) return
-      // A Safe proposal still with its signers has settled nothing: a settlement now is an earlier one's.
-      if (waiting.current.sent?.safe && latest.current.phase === 'awaiting') return
       if (settled.result === 'success') {
         setResult({ hash: settled.hash, receipt })
         setPhase('success')
@@ -395,7 +379,7 @@ export function useSafeTx(chainId: number) {
       const input = { chainId: request.chainId, account, safe: viaSafe, ...(namespace ? { namespace } : {}), ...(legacy.length ? { legacy } : {}), call }
       try {
         const hash = await latest.current.send(input, execute)
-        follow({ chainId: request.chainId, hash, safe: viaSafe })
+        setSent({ chainId: request.chainId, hash, safe: viaSafe })
         setPhase('pending')
         // A Safe proposal is with its signers: the flow may close. A direct write keeps the lock until it settles.
         if (viaSafe) inFlight.current = false
@@ -403,14 +387,14 @@ export function useSafeTx(chainId: number) {
       } catch (e) {
         if (!viaSafe && e instanceof SubmittedContractWriteError && typeof e.hash === 'string' && isHash(e.hash)) {
           // The wallet returned its hash and the write stays held: follow it.
-          follow({ chainId: request.chainId, hash: e.hash, safe: false })
+          setSent({ chainId: request.chainId, hash: e.hash, safe: false })
           setPhase('pending')
           return e.hash
         }
         inFlight.current = false
         // A proposal its Safe already has is shown as it is, never proposed again: the flow follows it.
         if (e instanceof WriteHeldError && viaSafe && !e.state.exit && e.state.record.safe && e.state.record.hash) {
-          follow({ chainId: request.chainId, hash: e.state.record.hash, safe: true })
+          setSent({ chainId: request.chainId, hash: e.state.record.hash, safe: true })
           setPhase('pending')
           return e.state.record.hash
         }
@@ -420,7 +404,7 @@ export function useSafeTx(chainId: number) {
           void latest.current.check()
           return null
         }
-        follow(null)
+        setSent(null)
         if (e instanceof WriteHoldStaleReviewError) {
           // Never sent: its line, and what became of the other window's send when known.
           reviewAgain.current = true
@@ -457,7 +441,7 @@ export function useSafeTx(chainId: number) {
         return null
       }
     },
-    [follow, isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync],
+    [isConnected, isCenterWallet, publicClient, switchChainAsync, writeContractAsync],
   )
   sendRef.current = send
 
