@@ -1,9 +1,6 @@
-import { JB_CHAINS } from '@bananapus/nana-sdk-core'
-import { createPublicClient, isAddress, type Address } from 'viem'
+import { isAddress, type Address } from 'viem'
 import { normalize } from 'viem/ens'
-import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import {
-  PROJECT_HANDLES_CHAIN_ID,
   normalizeProjectHandle,
   parseProjectHandleRecord,
   readDirectEnsProjectRecord,
@@ -15,16 +12,11 @@ import {
  * ENS resolution with a synchronous cache. Inputs are validated/encoded
  * synchronously (splitOk, toRecipient), so lookups fill a module cache the
  * sync `resolvedAddress` reads — an ENS name is "valid" only once resolved.
- * ENS lives on mainnet regardless of which chains a project launches to.
+ * The mainnet client loads with the first lookup (ens-client.ts).
  */
 
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
-
-const ensClient = createPublicClient({
-  chain: JB_CHAINS[PROJECT_HANDLES_CHAIN_ID].chain,
-  transport: jbCenterRpcTransport(PROJECT_HANDLES_CHAIN_ID),
-})
 
 const addressCache = new Map<string, Address | null>()
 const nameCache = new Map<string, string | null>()
@@ -56,6 +48,7 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   if (cached !== undefined) return cached
   let address: Address | null = null
   try {
+    const { ensClient } = await import('@/lib/ens-client')
     address = await ensClient.getEnsAddress({ name: normalize(key) })
   } catch {
     address = null
@@ -72,6 +65,7 @@ export async function lookupEnsName(address: string): Promise<string | null> {
   if (cached !== undefined) return cached
   let name: string | null = null
   try {
+    const { ensClient } = await import('@/lib/ens-client')
     name = await ensClient.getEnsName({ address: address.trim() as Address })
   } catch {
     name = null
@@ -92,6 +86,7 @@ export async function lookupProjectHandleTarget(
 
   let target: ProjectHandleTarget | null = null
   try {
+    const { ensClient } = await import('@/lib/ens-client')
     const { textRecord } = await readDirectEnsProjectRecord(
       ensClient,
       normalized.ensName,
@@ -118,6 +113,7 @@ export async function lookupVerifiedProjectHandle({
   setter: Address
 }): Promise<string | null> {
   try {
+    const { ensClient } = await import('@/lib/ens-client')
     return await readBoundedProjectHandle(ensClient, {
       chainId,
       projectId,
