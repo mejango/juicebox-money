@@ -493,8 +493,10 @@ function HeroColumn() {
         <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
           {JUICEBOX_ONE_LINER}
         </p>
+        {/* /create is the heaviest route (~70 KiB); fetch it on click, not on view. */}
         <Link
           href="/create"
+          prefetch={false}
           className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm xl:mt-4"
         >
           Start a project
