@@ -27,6 +27,8 @@ export function RichContent({
     let live = true
     void import('@/lib/rich-content-sanitize').then(({ sanitizeRichContent }) => {
       if (live) setSanitized({ source: html, html: sanitizeRichContent(html) })
+    }, () => {
+      // The sanitizer's chunk failed: the escaped plain-text paragraphs stay.
     })
     return () => {
       live = false
