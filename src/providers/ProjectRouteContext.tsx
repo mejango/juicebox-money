@@ -116,18 +116,26 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
   const verify = useCallback(async (commit?: () => void, force = false) => {
     if (replacingDocument.current) return
     // Sync when the answer is known, so a non-handle route commits in this task.
-    const known = currentHandle()
-    let handle: string | null
-    try {
-      handle = known === undefined ? await loadCurrentHandle() : known
-    } catch {
-      // The normalizer's chunk failed. Webpack requests a failed chunk again
-      // on the next import(), so Try again can recover without a reload.
-      if (replacingDocument.current) return
-      pendingCommit.current = undefined
-      setError('Project link could not be verified. Try again.')
-      setState('error')
-      return
+    let handle = currentHandle()
+    if (handle === undefined) {
+      // A later verify (another route, or this one again) supersedes this one
+      // while the normalizer loads.
+      const loading = ++generation.current
+      const pathname = window.location.pathname
+      const superseded = () => replacingDocument.current || loading !== generation.current ||
+        window.location.pathname !== pathname
+      try {
+        handle = await loadCurrentHandle()
+      } catch {
+        // The normalizer's chunk failed. Webpack requests a failed chunk again
+        // on the next import(), so Try again can recover without a reload.
+        if (superseded()) return
+        pendingCommit.current = undefined
+        setError('Project link could not be verified. Try again.')
+        setState('error')
+        return
+      }
+      if (superseded()) return
     }
     if (replacingDocument.current) return
     if (!handle) {
