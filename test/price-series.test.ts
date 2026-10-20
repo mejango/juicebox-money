@@ -68,7 +68,7 @@ describe('floorAtMoment', () => {
     tokenSupply: String(1_000n * E18),
     accountingTokenUsdRate: String(2_000n * E18),
   }
-  const options = { tax: 0, decimals: 18, historyRate: 1 }
+  const options = { tax: 0, decimals: 18, historyRate: 1, severalTokens: true }
 
   it('prices from the USD balance on a USD axis', () => {
     expect(floorAtMoment(moment, { ...options, perPointRates: true })).toBeCloseTo(2.925)
@@ -76,6 +76,14 @@ describe('floorAtMoment', () => {
 
   it('converts the USD floor to the accounting token on a token axis', () => {
     expect(floorAtMoment(moment, { ...options, perPointRates: false })).toBeCloseTo(0.0014625, 8)
+  })
+
+  it('keeps the exact raw balance when the group accepts one token', () => {
+    // 2 ETH across two chains whose indexed rates differ: the USD sum over the
+    // latest rate would misstate the ETH floor, the raw balance cannot.
+    const single = { ...moment, balance: String(2n * E18), balanceUsd: String(5_000n * E18) }
+    expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: false })).toBeCloseTo(0.00195, 8)
+    expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: true })).toBeCloseTo(3.9, 8)
   })
 
   it('keeps the raw balance for a moment the indexer could not value', () => {

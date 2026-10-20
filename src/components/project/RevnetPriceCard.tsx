@@ -414,6 +414,8 @@ export function RevnetPriceCard({
     const taxSchedule = [...all].sort(
       (a, b) => a.ruleset.start - b.ruleset.start,
     )
+    // Several accounting tokens make the raw balance add unlike units.
+    const severalTokens = data.contexts.length > 1
     let previous: CashOutObservation | undefined
     return [...history.moments]
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
@@ -425,19 +427,27 @@ export function RevnetPriceCard({
         tax = ruleset.metadata.cashOutTaxRate
       }
       try {
-        const value = floorAtMoment(moment, { tax, decimals, perPointRates, historyRate })
+        const value = floorAtMoment(moment, {
+          tax,
+          decimals,
+          perPointRates,
+          historyRate,
+          severalTokens,
+        })
         if (!value) return []
         // With one accounting token the raw balance moves only with funds, so
-        // it says which way money flowed, and the USD balance tells rate moves
-        // apart. With several, only the USD balance is in one unit.
+        // it says which way money flowed, and on a USD axis the USD balance
+        // tells rate moves apart. With several, only the USD balance is in
+        // one unit.
         const balanceUsd = BigInt(moment.balanceUsd || '0')
-        const mixedBacking = data.contexts.length > 1 && balanceUsd > 0n
+        const mixedBacking = severalTokens && balanceUsd > 0n
         const observation: CashOutObservation = {
           balance: mixedBacking ? balanceUsd : BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
           cashOutTax: tax,
           price: value,
-          balanceUsd: !mixedBacking && balanceUsd > 0n ? balanceUsd : undefined,
+          balanceUsd:
+            !mixedBacking && perPointRates && balanceUsd > 0n ? balanceUsd : undefined,
           mixedBacking,
         }
         const reason = explainCashOutChange(previous, observation)
