@@ -1,4 +1,3 @@
-import Image from 'next/image'
 import logoFull from '@/assets/brand/logo-full.svg'
 import { AuditPromptLink } from '@/components/AuditPromptLink'
 
@@ -9,11 +8,17 @@ export function SiteFooter() {
     <footer className="border-t border-slate-700 bg-slate-900 px-4 py-9 text-slate-100 sm:px-6">
       <div className="mx-auto max-w-6xl">
         <div className="max-w-3xl">
-          <Image
-            src={logoFull}
+          {/* next/image serves SVGs as-is, and as a client module the layout and
+              the home page share it would carry the home page's chunks onto
+              every route (see app/page-client.tsx). */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={logoFull.src}
             alt="Juicebox"
             width={144}
             height={33}
+            loading="lazy"
+            decoding="async"
             className="h-8 w-auto brightness-0 invert"
           />
 

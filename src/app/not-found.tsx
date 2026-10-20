@@ -1,5 +1,4 @@
-import Image from 'next/image'
-import Link from 'next/link'
+import { NotFoundImage as Image } from './not-found-client'
 import emptyIllustration from '@/assets/illustrations/empty.png'
 
 export default function NotFound() {
@@ -14,9 +13,12 @@ export default function NotFound() {
           We couldn&apos;t find that page. It may have moved, or the project
           address might be misspelled.
         </p>
-        <Link href="/" className="btn-primary mt-8 min-h-[48px] px-7 text-sm">
+        {/* A full load home: next/link is a client module the home page renders
+            too, so it would load the home page's chunks with every 404. */}
+        {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
+        <a href="/" className="btn-primary mt-8 min-h-[48px] px-7 text-sm">
           Back to home
-        </Link>
+        </a>
       </div>
       <Image
         src={emptyIllustration}
