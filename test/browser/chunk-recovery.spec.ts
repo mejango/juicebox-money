@@ -69,10 +69,9 @@ test('a handle typed while its normalizer chunk failed still opens on Enter', as
   await search.fill('@browser-fixture')
   await expect.poll(failures).toBe(1)
   // A failed download keeps the handle intent: no free-text search, and
-  // Enter asks for the chunk again.
+  // Enter opens the alias, which the server normalizes.
   await search.press('Enter')
   await expect(page).toHaveURL(/\/@browser-fixture$/u)
   await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
   expect(searches).toEqual([])
-  expect(failures()).toBeGreaterThanOrEqual(2)
 })

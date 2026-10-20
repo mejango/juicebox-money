@@ -72,22 +72,14 @@ export function peekProjectHandleFromRoute(
  * Navigate through the document for a mutable alias. Browsers treat an anchor
  * to the current pathname (for example `/@foo` from `/@foo#operator`) as an
  * in-document fragment change, so explicitly reload that case to force the
- * server to resolve ENS again.
+ * server to resolve ENS again. Only the same decoded segment is a fragment
+ * change, so this needs no normalizer and never waits.
  */
-export async function navigateToProjectHandle(path: string): Promise<void> {
+export function navigateToProjectHandle(path: string): void {
   const targetPathname = path.split(/[?#]/u, 1)[0] || '/'
-  const currentSegment = projectRouteSegmentFromPathname(
-    window.location.pathname,
-  )
-  const targetSegment = projectRouteSegmentFromPathname(targetPathname)
-  const [current, target] = await Promise.all([
-    currentSegment ? projectHandleFromRoute(currentSegment) : null,
-    targetSegment ? projectHandleFromRoute(targetSegment) : null,
-  ])
-  const currentHandle = current?.handle
-  const targetHandle = target?.handle
-
-  if (currentHandle && targetHandle === currentHandle) {
+  const current = projectRouteSegmentFromPathname(window.location.pathname)
+  const target = projectRouteSegmentFromPathname(targetPathname)
+  if (current && isHandleSegment(current) && target === current) {
     window.history.replaceState(window.history.state, '', path)
     window.location.reload()
     return

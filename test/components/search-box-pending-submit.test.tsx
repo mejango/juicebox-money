@@ -24,7 +24,7 @@ vi.mock('@/hooks/useOutsideClose', () => ({
 vi.mock('@/hooks/useEnsName', () => ({
   useEnsName: () => ({ data: null }),
 }))
-// Hold the lazy ENSIP-15 normalizer so a newer submit can land first.
+// Hold the lazy ENSIP-15 normalizer while a handle is submitted.
 const gate = vi.hoisted(() => {
   let open!: () => void
   const opened = new Promise<void>(done => { open = done })
@@ -41,13 +41,11 @@ vi.mock('@/lib/ens', async importOriginal => {
 
 import { SearchBox } from '@/components/SearchBox'
 import { projectHandleFromRoute } from '@/lib/project-handle-route'
-import { toUrn } from '@/lib/urn'
 
-it('a submit waiting on the handle normalizer never overrides a newer one or another navigation', async () => {
+it('a handle submitted while its normalizer loads navigates at once, and only once', async () => {
   vi.stubGlobal('fetch', mocks.fetch)
-  const location = { assign: mocks.assign, pathname: '/', search: '', reload: mocks.reload }
   vi.stubGlobal('window', {
-    location,
+    location: { assign: mocks.assign, pathname: '/', search: '', reload: mocks.reload },
     history: { state: null, replaceState: mocks.replaceState },
   })
   let renderer!: TestRenderer.ReactTestRenderer
@@ -57,29 +55,15 @@ it('a submit waiting on the handle normalizer never overrides a newer one or ano
   const input = () => renderer.root.findByType('input')
   await act(async () => input().props.onChange({ target: { value: '@old.juicebox' } }))
   await act(async () => input().props.onKeyDown({ key: 'Enter' }))
-  await act(async () => input().props.onChange({ target: { value: 'base:9' } }))
-  await act(async () => input().props.onKeyDown({ key: 'Enter' }))
-  expect(mocks.push).toHaveBeenCalledWith(`/${toUrn(8453, 9)}`)
-
-  // A second box submits a handle, then a header link navigates elsewhere.
-  let other!: TestRenderer.ReactTestRenderer
-  await act(async () => {
-    other = TestRenderer.create(createElement(SearchBox, { expanded: true }))
-  })
-  await act(async () => other.root.findByType('input').props.onChange({ target: { value: '@other.juicebox' } }))
-  await act(async () => other.root.findByType('input').props.onKeyDown({ key: 'Enter' }))
-  location.pathname = '/build'
+  // The server normalizes the handle; nothing waits to navigate later.
+  expect(mocks.assign).toHaveBeenCalledExactlyOnceWith('/@old.juicebox')
 
   await act(async () => {
     gate.open()
-    // Both waiting submits share this load; let them settle inside the test.
     await projectHandleFromRoute('@settled')
     await new Promise(done => setTimeout(done, 0))
   })
-  expect(mocks.assign).not.toHaveBeenCalled()
-  expect(mocks.reload).not.toHaveBeenCalled()
-  await act(async () => {
-    renderer.unmount()
-    other.unmount()
-  })
+  expect(mocks.assign).toHaveBeenCalledOnce()
+  expect(mocks.push).not.toHaveBeenCalled()
+  await act(async () => renderer.unmount())
 })

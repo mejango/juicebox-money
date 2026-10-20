@@ -9,7 +9,7 @@ import { truncateAddress } from '@/lib/format'
 import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
-import { navigateToProjectHandle, projectHandleFromRoute } from '@/lib/project-handle-route'
+import { navigateToProjectHandle } from '@/lib/project-handle-route'
 import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import {
   rememberProjectNavigation,
@@ -75,10 +75,6 @@ export function SearchBox({
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const searchGenerationRef = useRef(0)
-  // Bumped by every submit, navigation, edit and unmount, so a submit that
-  // waited on the handle normalizer never overrides a newer one.
-  const submissionRef = useRef(0)
-  useEffect(() => () => { submissionRef.current += 1 }, [])
 
   const urn = parseUrn(query.trim())
   const projectHandle = useProjectHandleFromRoute(query.trim())
@@ -224,7 +220,6 @@ export function SearchBox({
 
   const go = (path: string, projectHint?: ProjectNavigationHint) => {
     searchGenerationRef.current += 1
-    submissionRef.current += 1
     abortRef.current?.abort()
     if (projectHint) rememberProjectNavigation(path, projectHint)
     setOpen(false)
@@ -241,7 +236,6 @@ export function SearchBox({
   // retain a tuple resolved before the ENS record was rebound.
   const goHandle = (path: string) => {
     searchGenerationRef.current += 1
-    submissionRef.current += 1
     abortRef.current?.abort()
     setOpen(false)
     setMobileOpen(false)
@@ -249,7 +243,7 @@ export function SearchBox({
     setResults([])
     setAccount(null)
     setEnsPending(false)
-    void navigateToProjectHandle(path)
+    navigateToProjectHandle(path)
   }
 
   // The route takes an ENS name as-is and resolves it server-side.
@@ -257,19 +251,12 @@ export function SearchBox({
     ? `/account/${account.ensName ?? account.address}`
     : null
 
-  const submit = async () => {
+  const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (handlePath) goHandle(handlePath)
-    else if (handlePending) {
-      const submission = ++submissionRef.current
-      const here = () => `${window.location.pathname}${window.location.search}`
-      const from = here()
-      const handle = await projectHandleFromRoute(query.trim()).catch(() => null)
-      // Navigating anywhere else meanwhile (a header link) also wins.
-      if (handle && submission === submissionRef.current && here() === from) {
-        goHandle(`/@${encodeURIComponent(handle.handle)}`)
-      }
-    }
+    // The normalizer has not loaded (or failed to): navigate now and let the
+    // server normalize, so a submit never waits and later overrides anything.
+    else if (handlePending) goHandle(`/@${encodeURIComponent(query.trim().slice(1))}`)
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
@@ -287,16 +274,13 @@ export function SearchBox({
         type="text"
         autoFocus={autoFocus}
         value={query}
-        onChange={e => {
-          submissionRef.current += 1
-          setQuery(e.target.value)
-        }}
+        onChange={e => setQuery(e.target.value)}
         onFocus={() =>
           (results.length > 0 || account || ensPending || searchUnavailable) &&
           setOpen(true)
         }
         onKeyDown={e => {
-          if (e.key === 'Enter') void submit()
+          if (e.key === 'Enter') submit()
           if (e.key === 'Escape') {
             setOpen(false)
             setMobileOpen(false)
