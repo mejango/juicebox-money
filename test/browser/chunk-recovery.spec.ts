@@ -57,3 +57,22 @@ test('a handle route whose normalizer chunk failed once still verifies', async (
   await expect(page.getByText('Checking the project link…')).toHaveCount(0)
   expect(failures()).toBe(2)
 })
+
+test('a handle typed while its normalizer chunk failed still opens on Enter', async ({ page }) => {
+  const failures = await failOnce(page, lazyChunk('lib/project-handle-route.ts -> @/lib/project-handles'))
+  const searches: string[] = []
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/search') searches.push(request.url())
+  })
+  await page.goto('/learn')
+  const search = page.getByRole('textbox', { name: 'Search projects' })
+  await search.fill('@browser-fixture')
+  await expect.poll(failures).toBe(1)
+  // A failed download keeps the handle intent: no free-text search, and
+  // Enter asks for the chunk again.
+  await search.press('Enter')
+  await expect(page).toHaveURL(/\/@browser-fixture$/u)
+  await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
+  expect(searches).toEqual([])
+  expect(failures()).toBeGreaterThanOrEqual(2)
+})

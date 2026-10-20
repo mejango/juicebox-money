@@ -9,7 +9,8 @@ import {
 
 /**
  * A route segment's `/@handle`, re-rendering once ENSIP-15 normalization has
- * loaded. `undefined` means a handle segment whose answer is still loading;
+ * loaded. `undefined` means a handle segment whose answer is still loading
+ * (or whose normalizer failed to download);
  * once loaded, later segments answer on the first render.
  */
 export function useProjectHandleFromRoute(
@@ -24,9 +25,11 @@ export function useProjectHandleFromRoute(
   useEffect(() => {
     if (peeked !== undefined) return
     let live = true
+    // A failed download stays pending (undefined), not "no handle": callers
+    // keep the handle intent and their next parse requests the chunk again.
     projectHandleFromRoute(segment).then(
       handle => { if (live) setLoaded({ segment, handle }) },
-      () => { if (live) setLoaded({ segment, handle: null }) },
+      () => {},
     )
     return () => { live = false }
   }, [peeked, segment])
