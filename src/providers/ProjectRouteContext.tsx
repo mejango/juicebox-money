@@ -119,7 +119,9 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
     let handle = currentHandle()
     if (handle === undefined) {
       // A later verify (another route, or this one again) supersedes this one
-      // while the normalizer loads.
+      // while the normalizer loads. The navigation waits in pendingCommit, so
+      // a later verify of this route (focus, hash) still commits it.
+      if (commit) pendingCommit.current = commit
       const loading = ++generation.current
       const pathname = window.location.pathname
       const superseded = () => replacingDocument.current || loading !== generation.current ||
