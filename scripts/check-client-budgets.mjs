@@ -21,23 +21,30 @@ import { vendorWallets } from './lib/vendor-wallets.mjs'
 // ceiling read 168.7 KiB against a real ~639). This check starts the
 // deterministic browser build against the fail-fast fixture, fetches every
 // shipped page route and gzips what its HTML references. Each ceiling is the
-// route's measured size rounded up; lower it when a change shrinks the route.
+// route's measured size rounded up, plus 1 KiB so a one-line fix does not
+// need a budget change; lower it when a change shrinks the route.
 //
 // Run after `npm run build:browser`. Every shipped page route must be listed.
 const KIB = 1024
 const account = `0x${'1'.repeat(40)}`
+// Pages stream, so a 404 or a failed server render still answers 200 and
+// would be measured in the route's place. `text` is what the page itself
+// renders; a notFound() carries Next's HTTP fallback digest, and a section
+// whose server render threw is handed to the client with `$RX(`.
+const NOT_FOUND_DIGEST = 'NEXT_HTTP_ERROR_FALLBACK;404'
+const RENDER_ERROR = '$RX('
 const routes = [
-  { route: '/', path: '/', kib: 340 },
-  { route: '/learn', path: '/learn', kib: 223 },
-  { route: '/build', path: '/build', kib: 225 },
-  { route: '/build/first-payment', path: '/build/first-payment', kib: 223 },
-  { route: '/audit', path: '/audit', kib: 228 },
-  { route: '/create', path: '/create', kib: 394 },
-  { route: '/[urn]', path: '/eth:1', kib: 498 },
-  { route: '/account/[address]', path: `/account/${account}`, kib: 404 },
+  { route: '/', path: '/', kib: 341, text: 'Fund your' },
+  { route: '/learn', path: '/learn', kib: 224, text: 'Learn Juicebox' },
+  { route: '/build', path: '/build', kib: 226, text: 'Build on Juicebox' },
+  { route: '/build/first-payment', path: '/build/first-payment', kib: 224, text: 'Your first Juicebox payment.' },
+  { route: '/audit', path: '/audit', kib: 229, text: 'Verify Juicebox.' },
+  { route: '/create', path: '/create', kib: 395, text: 'Start a project' },
+  { route: '/[urn]', path: '/eth:1', kib: 499, text: 'Browser Fixture Project' },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 405, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
-  { route: '/_not-found', path: '/account/not-an-account', kib: 223, text: 'This juicebox is empty' },
+  { route: '/_not-found', path: '/account/not-an-account', kib: 224, text: 'This juicebox is empty', notFound: true },
   // Hands deeper legacy paths to old.juicebox.money; there is no page to load.
   { route: '/[urn]/[...rest]', path: '/v3/45', status: 307 },
 ]
@@ -153,6 +160,14 @@ try {
     }
     if (entry.text && !html.includes(entry.text)) {
       fail(`${entry.path} did not render "${entry.text}"`)
+      continue
+    }
+    if (html.includes(NOT_FOUND_DIGEST) !== !!entry.notFound) {
+      fail(`${entry.path} ${entry.notFound ? 'did not render' : 'rendered'} the 404 page`)
+      continue
+    }
+    if (html.includes(RENDER_ERROR)) {
+      fail(`${entry.path} streamed a server render error`)
       continue
     }
     if (entry.kib === undefined) continue
