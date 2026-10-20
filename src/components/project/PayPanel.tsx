@@ -1166,8 +1166,9 @@ export function PayPanel({
   const cartKey = tierIds.join(",");
 
   // The last check before the wallet: the same guards, the payment's preparation
-  // still fresh, and the form still saying what was reviewed. Read live, since a
-  // review or simulation can outlast a refresh or an edit.
+  // settled and unchanged, and the form still saying what was reviewed. Read live,
+  // since a review or simulation can outlast a refresh or an edit. Age alone never
+  // blocks: an older minimum still protects the payer, at worst by reverting.
   const writeState = useRef<(reviewed: ReviewedPayment) => void>(() => {});
   writeState.current = (reviewed) => {
     const unchanged =
@@ -1183,7 +1184,6 @@ export function PayPanel({
         !previewError &&
         !previewLoading &&
         !previewIsPrevious &&
-        !previewIsStale &&
         prepared.metadata === reviewed.metadata &&
         prepared.minReturnedTokens === reviewed.minReturned);
     const identityReady = mode !== "pay" || (!nativeMarket && identity.isSuccess);

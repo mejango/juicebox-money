@@ -536,6 +536,30 @@ describe('a reviewed payment whose form changes before the wallet', () => {
       return () => finish()
     }, () => wallet.client.simulateContract.mock.calls.length === 1],
   ]
+  it('still sends a preparation older than 30 seconds that nothing changed', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    await reviewPayment('1')
+    const release = waits[0][1]()
+    await click('Confirm & Pay')
+    await waitUntil(waits[0][2])
+    vi.setSystemTime(Date.now() + 5 * 60_000)
+    await renderPanel()
+    await act(async () => release())
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
+    expect(dialogError()).toBe('')
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+    vi.useRealTimers()
+  })
+
+  it('says a wallet cancel with nothing changed is a cancel', async () => {
+    await reviewPayment('1')
+    wallet.requestReview.mockImplementationOnce(async () => false)
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError())
+    expect(dialogError()).toBe('Payment was cancelled.')
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
   for (const [wait, hold, held] of waits) {
     for (const [name, change] of changes) {
       it(`sends nothing when ${name} during ${wait}`, async () => {
