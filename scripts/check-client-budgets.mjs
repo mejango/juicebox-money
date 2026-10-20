@@ -9,6 +9,7 @@ import {
   fixturePort,
 } from './lib/browser-environment.mjs'
 import { referencedChunks } from './lib/referenced-chunks.mjs'
+import { vendorWallets } from './lib/vendor-wallets.mjs'
 
 // First-load JavaScript per route is what a visitor downloads before the page is
 // interactive: every non-`nomodule` script the server-rendered HTML references,
@@ -200,17 +201,14 @@ process.stdout.write(
 if (largest.size > budgets.largestChunk) fail(`largest client chunk exceeds budget (${largest.asset})`)
 
 // Code that must stay off every route's first load. Markers are strings only
-// that code can contain — never a connector id or display name, which our own
-// source carries. Wagmi's `reconnect()` calls `getProvider()` on every
-// configured connector, so a vendor wallet SDK becomes eager the moment its
-// `shouldRestore` gate is dropped.
+// that code can contain, never a display name our own source carries.
+// test/browser/startup-downloads.spec.ts covers vendor wallet SDKs a page
+// downloads after it loads, which its HTML can't show.
 const lazyCode = [
   ['transaction review dialog', ['Raw transaction payload'], true],
   ['deployment diagnostic dialog', ['Read-only checks of the selected project'], true],
   ['Para wallet runtime', ['mpcWorker-bundle', 'api.beta.getpara', 'api.getpara'], true],
-  ['WalletConnect SDK', ['walletconnect.org', 'wc@2:', '@reown/appkit'], false],
-  ['Coinbase Wallet SDK', ['CoinbaseWalletSDK', 'keys.coinbase.com', 'walletlink'], false],
-  ['Safe SDK', ['safe-apps-provider', 'SafeAppProvider'], false],
+  ...vendorWallets.map(([label, markers]) => [label, markers, false]),
 ]
 for (const [label, markers, required] of lazyCode) {
   const files = chunksWith(markers)
