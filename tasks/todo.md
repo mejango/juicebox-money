@@ -8,7 +8,7 @@ Branch feat/pay-minimum-failure-reason from origin/main 450d245. Parallel: revne
 - [x] 3. useSafeTx gains `onFailure(error)` for a send that fails before the wallet (simulation, estimate, wallet error); PayPanel decodes it with decodePayFailure and shows its message in the dialog error. An onchain revert re-simulates the reviewed call at the receipt block and decodes that.
 - [x] 4. Shortfall reasons the payer's minimum controls (TERMINAL_UNDER_MIN, BUYBACK_SLIPPAGE_EXCEEDED; not the router's own quote or the hook's TWAP floor) offer one slippage field, prefilled from received/minimum (the cash-out's Allowed decrease control, extracted), and "Review again": prepareUserPay re-runs with that slippageBps and the normal review shows the new "You get at least" (the one sent). Bounded 0.1% to 50%, tied to the amount/token it was set for.
 - [x] 5. Tests: failure message, override reaching prepareUserPay and calldata, default flow unchanged. Gates: lint, ts, unit, source/transaction checks, build:browser, budget, browser tests, next build. Playwright screenshot of the failure state.
-- [ ] 6. PR, Codex two passes, no merge.
+- [ ] 6. PR #138 open; Codex two passes done; final pass after the 3.4.0 bump. No merge.
 
 ## Plan refinement
 - **Objective:** Pay card sends SDK 3.3.0's quote-based minimum on every path; a failed pay shows decodePayFailure's one-line reason; a minimum shortfall lets the payer loosen the minimum and review again; the happy path is unchanged.
@@ -21,6 +21,9 @@ Branch feat/pay-minimum-failure-reason from origin/main 450d245. Parallel: revne
 ## Review
 - Gates: npm run check through budget (deps, knip, audit:prod, container, lint, ts, source, protocol, schema, transaction, 244 files / 3161 unit tests, build:browser); /[urn] budget 499 -> 502 KiB (500.7, decode table + retry UI); 85/85 browser tests; next build --webpack.
 - Rendered: the failure review at desktop and phone width (temporary proof route, not committed).
+- Codex pass 1 and 2 fixes: tolerance bound to the reviewed payment and account, one review only, dropped on close or input change; account-switch failures say so; every Review again quotes afresh; nothing offered at the 49.5% limit.
+- Cross-client rulings: a payment that would return no tokens says so with no looser minimum; amounts read only as bigints; router conversion and TWAP floor offer no retry; a mined revert says "The payment reverted." and only reviews again (no receipt-block replay), and a held retry shows the hold's line, not a cancel.
+- Pending: SDK 3.4.0 bump (pay-minimum.ts moves into the SDK, delete the local file), then the final Codex pass.
 
 # SDK 2.41.1 migration: held writes and saved attempts through the SDK (2026-10-15)
 

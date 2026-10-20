@@ -1204,18 +1204,27 @@ describe('a payment that falls short of its minimum', () => {
     expect(request.args[4]).toBe(PREPARED.minReturnedTokens)
   })
 
-  it('reads why an onchain revert failed from its block, and offers the same retry', async () => {
+  it('says an onchain revert reverted, and reviews it again from a fresh quote and simulation', async () => {
     await reviewPayment()
     await click('Confirm & Pay')
     await waitUntil(() => wallet.awaits(sentHash(1)))
-    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0x6b2bb382', 98n, 100n))
+    const simulations = wallet.client.simulateContract.mock.calls.length
     await act(async () => wallet.confirm(sentHash(1), 12n, 'reverted'))
-    await waitUntil(() => dialogError() === UNDER_MIN_LINE)
+    await waitUntil(() => dialogError() === 'The payment reverted.')
 
-    expect(dialogError()).toBe(UNDER_MIN_LINE)
-    const replay = wallet.client.simulateContract.mock.calls.at(-1)![0] as { functionName: string; blockNumber: bigint }
-    expect(replay).toMatchObject({ functionName: 'pay', blockNumber: 12n })
-    expect(button('Review again')).toBeDefined()
+    expect(dialogError()).toBe('The payment reverted.')
+    // No replay at the receipt's block: its end state is not what the payment reverted on.
+    expect(wallet.client.simulateContract.mock.calls.length).toBe(simulations)
+    expect(allowedDecrease()).toBeNull()
+    await click('Review again')
+    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+    expect(dialogError()).toBe('')
+    // Sending it again waits for the write hold: the reverted attempt is held until final, and the review says so.
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError() && dialogError() !== 'The payment reverted.')
+    expect(dialogError()).not.toBe('Payment was cancelled.')
+    expect(dialogError()).toContain('Confirming your transaction')
+    expect(wallet.writeContract).toHaveBeenCalledTimes(1)
   })
 
   it('shows a reason that a lower minimum cannot fix without the retry', async () => {
