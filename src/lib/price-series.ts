@@ -1,4 +1,5 @@
-import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import type { BsPriceMoment, BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { cashOutPriceFromTotals, netCashOutDisplayValue } from '@/lib/cashOut'
 import type { BsPoolLiquidityEvent } from '@/lib/lp-positions-queries'
 import {
   getAmountsForLiquidity,
@@ -160,10 +161,49 @@ export function visibleSeries(
  * backfilled, and for a null the indexer wrote because no feed bridged the pair — both mean
  * "no rate here", which the caller answers with the live one.
  */
-export function usdRateOf(raw: string | null | undefined): number | undefined {
+function usdRateOf(raw: string | null | undefined): number | undefined {
   if (raw === null || raw === undefined) return undefined
   const rate = Number(raw) / 1e18
   return Number.isFinite(rate) && rate > 0 ? rate : undefined
+}
+
+/** The rate to convert one historical point with: its own if the indexer recorded one and the
+ *  axis is the unit that rate measures, otherwise the live feed. */
+export function axisRate(
+  perPointRates: boolean,
+  pointRate: number | undefined,
+  live: number,
+): number {
+  return (perPointRates ? pointRate : undefined) ?? live
+}
+
+/**
+ * One moment's cash-out floor: the net display price in the balance's unit,
+ * that price on the chart axis, and the balance it was priced from. Null when
+ * the moment has no floor. Throws on an unparseable row.
+ */
+export function floorAtMoment(
+  moment: BsPriceMoment,
+  {
+    tax,
+    decimals,
+    perPointRates,
+    historyRate,
+  }: { tax: number; decimals: number; perPointRates: boolean; historyRate: number },
+): { balance: bigint; price: number; value: number } | null {
+  const balance = BigInt(moment.balance)
+  const price = netCashOutDisplayValue(
+    cashOutPriceFromTotals({
+      balance,
+      tokenSupply: BigInt(moment.tokenSupply),
+      cashOutTaxRate: tax,
+      balanceDecimals: decimals,
+    }),
+    tax,
+  )
+  if (!price) return null
+  const value = price * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
+  return { balance, price, value }
 }
 
 export function ammSeriesFrom({

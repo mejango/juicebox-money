@@ -60,8 +60,9 @@ import {
 import { fetchIndexedPoolLiquidityEvents } from '@/lib/lp-positions-queries'
 import {
   ammSeriesFrom,
+  axisRate,
+  floorAtMoment,
   poolReservesSeriesFrom,
-  usdRateOf,
   type PricePoint,
 } from '@/lib/price-series'
 import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
@@ -77,16 +78,6 @@ const PRICE_REFRESH_MS = 15_000
  * Overview is a server component), then reads the live omnichain cash-out
  * floor and Uniswap V4 AMM price as current reference points.
  */
-/** The rate to convert one historical point with: its own if the indexer recorded one and the
- *  axis is the unit that rate measures, otherwise the live feed. */
-function axisRate(
-  perPointRates: boolean,
-  pointRate: number | undefined,
-  live: number,
-): number {
-  return (perPointRates ? pointRate : undefined) ?? live
-}
-
 export function RevnetPriceCard({
   chainId,
   projectId,
@@ -434,26 +425,17 @@ export function RevnetPriceCard({
         tax = ruleset.metadata.cashOutTaxRate
       }
       try {
-        const value = netCashOutDisplayValue(
-          cashOutPriceFromTotals({
-            balance: BigInt(moment.balance),
-            tokenSupply: BigInt(moment.tokenSupply),
-            cashOutTaxRate: tax,
-            balanceDecimals: decimals,
-          }),
-          tax,
-        )
-        if (!value) return []
-        const onAxis = value * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
+        const floor = floorAtMoment(moment, { tax, decimals, perPointRates, historyRate })
+        if (!floor) return []
         const observation: CashOutObservation = {
-          balance: BigInt(moment.balance),
+          balance: floor.balance,
           tokenSupply: BigInt(moment.tokenSupply),
           cashOutTax: tax,
-          price: value,
+          price: floor.price,
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation
-        return [{ timestamp, value: onAxis, reason }]
+        return [{ timestamp, value: floor.value, reason }]
       } catch {
         return []
       }
