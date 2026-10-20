@@ -42,28 +42,36 @@ vi.mock('@/lib/ens', async importOriginal => {
 import { SearchBox } from '@/components/SearchBox'
 import { projectHandleFromRoute } from '@/lib/project-handle-route'
 
-it('a handle submitted while its normalizer loads navigates at once, and only once', async () => {
+it('a handle submitted while its normalizer loads opens once it loads, unless edited first or invalid', async () => {
   vi.stubGlobal('fetch', mocks.fetch)
+  mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ projects: [] }) })
   vi.stubGlobal('window', {
     location: { assign: mocks.assign, pathname: '/', search: '', reload: mocks.reload },
     history: { state: null, replaceState: mocks.replaceState },
   })
-  let renderer!: TestRenderer.ReactTestRenderer
-  await act(async () => {
-    renderer = TestRenderer.create(createElement(SearchBox, { expanded: true }))
-  })
-  const input = () => renderer.root.findByType('input')
-  await act(async () => input().props.onChange({ target: { value: '@old.juicebox' } }))
-  await act(async () => input().props.onKeyDown({ key: 'Enter' }))
-  // The server normalizes the handle; nothing waits to navigate later.
-  expect(mocks.assign).toHaveBeenCalledExactlyOnceWith('/@old.juicebox')
+  const boxes: TestRenderer.ReactTestRenderer[] = []
+  const submit = async (value: string, edit?: string) => {
+    let box!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      box = TestRenderer.create(createElement(SearchBox, { expanded: true }))
+    })
+    boxes.push(box)
+    const input = () => box.root.findByType('input')
+    await act(async () => input().props.onChange({ target: { value } }))
+    await act(async () => input().props.onKeyDown({ key: 'Enter' }))
+    if (edit) await act(async () => input().props.onChange({ target: { value: edit } }))
+  }
+  await submit('@old.juicebox', '@old.juicebo')
+  await submit('@not a handle')
+  await submit('@Design.Juicebox')
+  expect(mocks.assign).not.toHaveBeenCalled()
 
   await act(async () => {
     gate.open()
     await projectHandleFromRoute('@settled')
     await new Promise(done => setTimeout(done, 0))
   })
-  expect(mocks.assign).toHaveBeenCalledOnce()
+  expect(mocks.assign).toHaveBeenCalledExactlyOnceWith('/@design.juicebox')
   expect(mocks.push).not.toHaveBeenCalled()
-  await act(async () => renderer.unmount())
+  await act(async () => { for (const box of boxes) box.unmount() })
 })

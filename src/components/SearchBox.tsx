@@ -9,7 +9,7 @@ import { truncateAddress } from '@/lib/format'
 import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
-import { navigateToProjectHandle } from '@/lib/project-handle-route'
+import { navigateToProjectHandle, projectHandleFromRoute } from '@/lib/project-handle-route'
 import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import {
   rememberProjectNavigation,
@@ -75,6 +75,11 @@ export function SearchBox({
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const searchGenerationRef = useRef(0)
+  // Enter on an `@` query whose normalizer is still loading: submit once it
+  // has, unless the query was edited or the box lost focus first (a header
+  // link, another submit), so a late answer never overrides a newer choice.
+  const pendingSubmitRef = useRef<string | null>(null)
+  const [, setNormalizerTick] = useState(0)
 
   const urn = parseUrn(query.trim())
   const projectHandle = useProjectHandleFromRoute(query.trim())
@@ -254,9 +259,14 @@ export function SearchBox({
   const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (handlePath) goHandle(handlePath)
-    // The normalizer has not loaded (or failed to): navigate now and let the
-    // server normalize, so a submit never waits and later overrides anything.
-    else if (handlePending) goHandle(`/@${encodeURIComponent(query.trim().slice(1))}`)
+    else if (handlePending) {
+      pendingSubmitRef.current = query
+      // After a failed download this asks for the chunk again.
+      void projectHandleFromRoute(query.trim()).then(
+        () => setNormalizerTick(tick => tick + 1),
+        () => { pendingSubmitRef.current = null },
+      )
+    }
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
@@ -266,6 +276,15 @@ export function SearchBox({
       })
   }
 
+  useEffect(() => {
+    const pending = pendingSubmitRef.current
+    if (pending === null || handlePending) return
+    pendingSubmitRef.current = null
+    const focused = typeof document === 'undefined' || document.activeElement === inputRef.current
+    // An invalid `@` query falls back to ordinary search on the next Enter.
+    if (pending === query && handlePath && focused) goHandle(handlePath)
+  }, [handlePath, handlePending, query])
+
   const input = (
     <div className="relative w-full">
       <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-smoke-500" />
@@ -274,7 +293,11 @@ export function SearchBox({
         type="text"
         autoFocus={autoFocus}
         value={query}
-        onChange={e => setQuery(e.target.value)}
+        onChange={e => {
+          pendingSubmitRef.current = null
+          setQuery(e.target.value)
+        }}
+        onBlur={() => { pendingSubmitRef.current = null }}
         onFocus={() =>
           (results.length > 0 || account || ensPending || searchUnavailable) &&
           setOpen(true)
