@@ -116,18 +116,19 @@ if (
 const projectFields = `
   projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
-  decimals currency isRevnet owner metadataUri
+  decimals currency isRevnet owner metadataUri accountingTokenCount
+  projectTokenBalances { items { token tokenSymbol decimals balance balanceUsd } }
 `
 const activityEventFields = `
   id chainId projectId timestamp from txHash
-  payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals }
-  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals }
+  payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol }
+  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from token decimals }
+  addToBalanceEvent { amount memo from token decimals tokenSymbol }
   mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
-  sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from token decimals }
+  sendPayoutsEvent { amount amountPaidOut amountPaidOutUsd caller from token decimals tokenSymbol }
   sendReservedTokensToSplitsEvent { tokenCount from }
-  sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from token decimals }
+  sendPayoutToSplitEvent { amount amountUsd beneficiary splitProjectId from token decimals tokenSymbol }
   sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
@@ -171,6 +172,12 @@ const project = {
   // Keep this fixture wholly local: project metadata would otherwise be an
   // intentional IPFS gateway request made by the production server.
   metadataUri: null,
+  accountingTokenCount: 1,
+  projectTokenBalances: {
+    items: [
+      { token: USDC.toLowerCase(), tokenSymbol: 'USDC', decimals: 6, balance: '0', balanceUsd: '0' },
+    ],
+  },
 }
 
 const participants = {
@@ -533,6 +540,7 @@ const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
   id: `browser-fixture-group-${projectId}`,
   version: 6,
   volume: '1000000000',
+  volumeUsd: '1000000000000000000000',
   trendingScore: String(1_000_000 - projectId),
   paymentsCount: 3,
   projects: {
@@ -544,10 +552,7 @@ const trendingSampleGroups = [2, 3, 4, 5, 6, 7].map(projectId => ({
         logoUri: null,
         metadataUri: null,
         projectTagline: 'Deterministic V6 trending card.',
-        tokenSymbol: 'USDC',
-        decimals: 6,
         suckerGroupId: `browser-fixture-group-${projectId}`,
-        volume: '1000000000',
         paymentsCount: 3,
       },
     ],
@@ -558,7 +563,7 @@ const graphqlFixtures = [
   {
     name: 'pendingPaymentProjectNames',
     query: `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
-      projects(where: $where, orderBy: "volume", orderDirection: "desc", limit: $limit) {
+      projects(where: $where, orderBy: "volumeUsd", orderDirection: "desc", limit: $limit) {
         items { ${projectFields} }
       }
     }`,
@@ -759,14 +764,14 @@ const graphqlFixtures = [
     query: `query($limit: Int!, $offset: Int!) {
       suckerGroups(
         where: { version: 6 }
-        orderBy: "balance"
+        orderBy: "balanceUsd"
         orderDirection: "desc"
         limit: $limit
         offset: $offset
       ) {
         totalCount
         items {
-          id balance volume
+          id balanceUsd
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
               projectId chainId version name logoUri projectTagline volume volumeUsd balance
@@ -796,6 +801,55 @@ const graphqlFixtures = [
     }`,
     variables: { limit: 1000, offset: 0 },
     data: { addToBalanceEvents: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageTokenBalances',
+    query: `query($limit: Int!, $offset: Int!) {
+      projectTokenBalances(
+        where: { version: 6 }
+        limit: $limit
+        offset: $offset
+      ) {
+        items { chainId projectId token tokenSymbol decimals balance balanceUsd }
+        totalCount
+      }
+    }`,
+    variables: { limit: 1000, offset: 0 },
+    data: { projectTokenBalances: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageTokenBalanceMoments',
+    query: `query($limit: Int!, $offset: Int!) {
+      projectTokenBalanceMoments(
+        where: { version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { chainId projectId token decimals balance timestamp tokenUsdRate }
+        totalCount
+      }
+    }`,
+    variables: { limit: 1000, offset: 0 },
+    data: { projectTokenBalanceMoments: { items: [], totalCount: 0 } },
+  },
+  {
+    name: 'homepageGroupVolumeMoments',
+    query: `query($limit: Int!, $offset: Int!) {
+      suckerGroupMoments(
+        where: { version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { suckerGroupId timestamp volumeUsd }
+        totalCount
+      }
+    }`,
+    variables: { limit: 1000, offset: 0 },
+    data: { suckerGroupMoments: { items: [], totalCount: 0 } },
   },
   {
     name: 'newProjects',
@@ -839,11 +893,11 @@ const graphqlFixtures = [
         limit: $limit
       ) {
         items {
-          id version volume trendingScore paymentsCount
+          id version volume volumeUsd trendingScore paymentsCount
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
-              projectId chainId name logoUri metadataUri projectTagline tokenSymbol
-              decimals suckerGroupId volume paymentsCount
+              projectId chainId name logoUri metadataUri projectTagline
+              suckerGroupId paymentsCount
             }
           }
         }
@@ -857,6 +911,7 @@ const graphqlFixtures = [
             id: 'browser-fixture-group',
             version: 6,
             volume: '1250000000',
+            volumeUsd: '1250000000000000000000',
             trendingScore: '1000000',
             paymentsCount: 7,
             projects: {
@@ -868,10 +923,7 @@ const graphqlFixtures = [
                   logoUri: null,
                   metadataUri: null,
                   projectTagline: 'Deterministic V6 trending card.',
-                  tokenSymbol: 'USDC',
-                  decimals: 6,
                   suckerGroupId: 'browser-fixture-group',
-                  volume: '1250000000',
                   paymentsCount: 7,
                 },
               ],
@@ -939,6 +991,7 @@ const graphqlFixtures = [
               newlyIssuedTokenCount: '5000000000000000000',
               token: USDC.toLowerCase(),
               decimals: 6,
+              tokenSymbol: 'USDC',
             },
             cashOutTokensEvent: null,
             projectCreateEvent: null,

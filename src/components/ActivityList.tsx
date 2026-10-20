@@ -638,7 +638,11 @@ export function combinedActivityParts(
             entry.payEvent!.token?.toLowerCase() === pays[0].payEvent!.token?.toLowerCase() &&
             entry.payEvent!.decimals === pays[0].payEvent!.decimals,
         )
-        ? { token: pays[0].payEvent!.token, decimals: pays[0].payEvent!.decimals }
+        ? {
+            token: pays[0].payEvent!.token,
+            decimals: pays[0].payEvent!.decimals,
+            tokenSymbol: pays[0].payEvent!.tokenSymbol,
+          }
         : { token: null, decimals: null }
       : amountPart?.amountAsset,
     // A distribution is done "by" its caller; its receipts' inbound flow is
@@ -1016,16 +1020,20 @@ export function activityParts(
       event.sendPayoutToSplitEvent?.amount ??
       swap?.terminalTokenAmount,
     amountAsset: terminalEvent
-      ? { token: terminalEvent.token, decimals: terminalEvent.decimals }
+      ? {
+          token: terminalEvent.token,
+          decimals: terminalEvent.decimals,
+          tokenSymbol: terminalEvent.tokenSymbol,
+        }
       : undefined,
   }
 }
 
 /**
- * How to label a row's raw amount: in the event's own token when it names a
- * known one, in `fallback` when the event has no token field (swaps, or a
- * query that does not select it), and not at all (USD instead) when the token
- * is unknown or unresolved.
+ * How to label a row's raw amount: in the event's own token, by the symbol
+ * the indexer read or a known one, in `fallback` when the event has no token
+ * field (swaps, or a query that does not select it), and not at all (USD
+ * instead) when the token is unknown or unresolved.
  */
 export function activityAmountToken(
   raw: string | null | undefined,
@@ -1034,8 +1042,9 @@ export function activityAmountToken(
   chainId: number,
 ): ActivityAmountToken | null {
   if (!asset || asset.token === undefined) return fallback ? { raw, ...fallback } : null
-  const symbol = asset.token ? knownTokenSymbol(asset.token, { chainId }) : null
-  // ponytail: other ERC-20s fall back to USD, add a symbol read if they show up.
+  const symbol = asset.token
+    ? asset.tokenSymbol?.replace(/^\$+/, '') || knownTokenSymbol(asset.token, { chainId })
+    : null
   return symbol && asset.decimals != null ? { raw, symbol, decimals: asset.decimals } : null
 }
 

@@ -5,7 +5,7 @@ import type { BsActivityEvent } from '@/lib/bendystraw'
 const ETH = '0x000000000000000000000000000000000000eeee'
 const USDC = { symbol: 'USDC', decimals: 6 }
 
-function pay(id: string, token: string | null, decimals: number | null, amount = '100000000000000'): BsActivityEvent {
+function pay(id: string, token: string | null, decimals: number | null, amount = '100000000000000', tokenSymbol: string | null = null): BsActivityEvent {
   return {
     id,
     chainId: 1,
@@ -13,7 +13,7 @@ function pay(id: string, token: string | null, decimals: number | null, amount =
     timestamp: 1,
     from: '0xpayer',
     txHash: '0xtx',
-    payEvent: { amount, amountUsd: '0', beneficiary: '0xpayer', memo: null, newlyIssuedTokenCount: '0', token, decimals },
+    payEvent: { amount, amountUsd: '0', beneficiary: '0xpayer', memo: null, newlyIssuedTokenCount: '0', token, decimals, tokenSymbol },
     cashOutTokensEvent: null,
   }
 }
@@ -32,6 +32,14 @@ describe('activity amounts use each event’s own token', () => {
   it('drops to USD for an unresolved or unknown token, never the project’s', () => {
     expect(label([pay('a', null, null)])).toBeNull()
     expect(label([pay('a', '0x00000000000000000000000000000000000000aa', 18)])).toBeNull()
+    expect(label([pay('a', null, null, '1', 'DAI')])).toBeNull()
+  })
+
+  it('labels any token with the symbol the indexer read', () => {
+    const DAI = '0x6b175474e89094c44da98b954eedeac495271d0f'
+    expect(label([pay('a', DAI, 18, '1', 'DAI')])).toEqual({ raw: '1', symbol: 'DAI', decimals: 18 })
+    expect(label([pay('a', DAI, 18, '1', '$DAI')])).toEqual({ raw: '1', symbol: 'DAI', decimals: 18 })
+    expect(label([pay('a', DAI, 18, '1', 'DAI'), pay('b', DAI, 18, '2', 'DAI')])).toEqual({ raw: '3', symbol: 'DAI', decimals: 18 })
   })
 
   it('sums a fan-out only when every pay shares a token', () => {

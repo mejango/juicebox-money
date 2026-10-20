@@ -34,7 +34,7 @@ import { ProjectLink } from '@/components/ProjectLink'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 import { TopProjectRows } from '@/components/TopProjectRows'
 import { SecuredReserves } from '@/components/SecuredReserves'
-import { formatTokenAmount, timeAgo } from '@/lib/format'
+import { formatUsd18, timeAgo } from '@/lib/format'
 import { getNewProjects, type NewProject } from '@/lib/new-projects'
 import { getHomepageReserves } from '@/lib/homepage-reserves'
 import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
@@ -391,7 +391,7 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
                 <span className="block">
                   Volume:{' '}
                   <span className="tabular-nums text-smoke-700">
-                    {formatRecentVolume(card)}
+                    {formatUsd18(card.volumeUsd, { compact: true })}
                   </span>
                 </span>
               </span>
@@ -452,11 +452,6 @@ function NewProjectRows({ projects }: { projects: NewProject[] }) {
 function formatLaunched(createdAt: number): string {
   const ago = timeAgo(createdAt)
   return ago === 'now' ? 'just now' : `${ago} ago`
-}
-
-function formatRecentVolume(card: TrendingCard): string {
-  if (card.decimals === null || card.symbol === null) return '—'
-  return `${formatTokenAmount(card.volume, card.decimals)} ${card.symbol.replace(/^\$+/, '')}`
 }
 
 function EmptyProjects() {

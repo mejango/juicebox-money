@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bucketPoolReserves, smoothPriceSeries } from '@/lib/price-series'
+import { bucketPoolReserves, smoothPriceSeries, floorAtMoment } from '@/lib/price-series'
 
 describe('smoothPriceSeries', () => {
   it('attenuates a short-lived spike and preserves exact endpoints', () => {
@@ -51,5 +51,35 @@ describe('bucketPoolReserves', () => {
       4,
     )
     expect(buckets.at(-1)).toEqual({ ...latest, timestamp: 87.5 })
+  })
+})
+
+describe('floorAtMoment', () => {
+  const E18 = 10n ** 18n
+  // A group holding 1 ETH ($2,000) and 1,000 USDC: the raw balance adds them
+  // as 1e18 + 1e9, the USD balance is $3,000. 1,000 tokens, no tax, net of
+  // the 2.5% protocol fee.
+  const moment = {
+    timestamp: 1,
+    balance: String(E18 + 1_000_000_000n),
+    volume: '0',
+    volumeUsd: '0',
+    balanceUsd: String(3_000n * E18),
+    tokenSupply: String(1_000n * E18),
+    accountingTokenUsdRate: String(2_000n * E18),
+  }
+  const options = { tax: 0, decimals: 18, historyRate: 1 }
+
+  it('prices from the USD balance on a USD axis', () => {
+    expect(floorAtMoment(moment, { ...options, perPointRates: true })?.value).toBeCloseTo(2.925)
+  })
+
+  it('converts the USD floor to the accounting token on a token axis', () => {
+    expect(floorAtMoment(moment, { ...options, perPointRates: false })?.value).toBeCloseTo(0.0014625, 8)
+  })
+
+  it('keeps the raw balance for a moment the indexer could not value', () => {
+    const unvalued = { ...moment, balance: String(E18), balanceUsd: '0' }
+    expect(floorAtMoment(unvalued, { ...options, perPointRates: false })?.value).toBeCloseTo(0.000975, 8)
   })
 })

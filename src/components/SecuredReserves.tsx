@@ -1,14 +1,11 @@
 'use client'
 
 import { useState } from 'react'
+import { formatAmount } from '@/lib/format'
 import type { HomepageReserves } from '@/lib/homepage-reserves'
 import { chainName } from '@/lib/urn'
 import { ChainIcon } from './ChainIcon'
 import { SecuredReserveChart } from './SecuredReserveChart'
-
-function amount(value: number, maximumFractionDigits: number) {
-  return value.toLocaleString('en-US', { maximumFractionDigits })
-}
 
 function usd(value: number) {
   return value.toLocaleString('en-US', {
@@ -75,45 +72,27 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
               role="tooltip"
               className="pointer-events-none absolute left-1/2 top-full -translate-x-1/2 md:left-0 md:translate-x-0 z-20 mt-2 hidden w-64 rounded border border-smoke-200 bg-white px-3 py-2 text-left text-xs font-normal leading-relaxed text-smoke-700 shadow-lg group-hover:block group-focus-within:block"
             >
-              {data.chains.map((chain, index) => {
-                const hasReserves =
-                  chain.eth > 0 ||
-                  chain.usdc > 0 ||
-                  chain.otherAssets.length > 0
-                return (
-                  <span
-                    key={chain.chainId}
-                    className={`block py-1.5 ${
-                      index ? 'border-t border-smoke-100' : ''
-                    }`}
-                  >
-                    <span className="block font-medium text-ink">
-                      {chainName(chain.chainId)}
-                    </span>
-                    {hasReserves ? (
-                      <>
-                        {chain.eth > 0 ? (
-                          <span className="block tabular-nums">
-                            ETH: {amount(chain.eth, 3)}
-                          </span>
-                        ) : null}
-                        {chain.usdc > 0 ? (
-                          <span className="block tabular-nums">
-                            USDC: {amount(chain.usdc, 2)}
-                          </span>
-                        ) : null}
-                        {chain.otherAssets.length ? (
-                          <span className="block">
-                            Other: {chain.otherAssets.join(', ')}
-                          </span>
-                        ) : null}
-                      </>
-                    ) : (
-                      <span className="block text-smoke-500">No reserves</span>
-                    )}
+              {data.chains.map((chain, index) => (
+                <span
+                  key={chain.chainId}
+                  className={`block py-1.5 ${
+                    index ? 'border-t border-smoke-100' : ''
+                  }`}
+                >
+                  <span className="block font-medium text-ink">
+                    {chainName(chain.chainId)}
                   </span>
-                )
-              })}
+                  {chain.tokens.length ? (
+                    chain.tokens.map((token, tokenIndex) => (
+                      <span key={tokenIndex} className="block tabular-nums">
+                        {token.symbol}: {formatAmount(token.amount)}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="block text-smoke-500">No reserves</span>
+                  )}
+                </span>
+              ))}
             </span>
           </span>
         ) : (

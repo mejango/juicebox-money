@@ -181,6 +181,11 @@ export function axisRate(
  * One moment's cash-out floor: the net display price in the balance's unit,
  * that price on the chart axis, and the balance it was priced from. Null when
  * the moment has no floor. Throws on an unparseable row.
+ *
+ * The raw `balance` adds unlike tokens when the group accepts several, so the
+ * floor is priced from `balanceUsd` and converted to the axis from USD: as is
+ * on a USD axis, otherwise through the moment's USD rate for one accounting
+ * token. A moment the indexer could not value keeps the raw balance.
  */
 export function floorAtMoment(
   moment: BsPriceMoment,
@@ -191,18 +196,25 @@ export function floorAtMoment(
     historyRate,
   }: { tax: number; decimals: number; perPointRates: boolean; historyRate: number },
 ): { balance: bigint; price: number; value: number } | null {
-  const balance = BigInt(moment.balance)
+  const pointRate = usdRateOf(moment.accountingTokenUsdRate)
+  const balanceUsd = BigInt(moment.balanceUsd || '0')
+  const inUsd = balanceUsd > 0n && (perPointRates || pointRate !== undefined)
+  const balance = inUsd ? balanceUsd : BigInt(moment.balance)
   const price = netCashOutDisplayValue(
     cashOutPriceFromTotals({
       balance,
       tokenSupply: BigInt(moment.tokenSupply),
       cashOutTaxRate: tax,
-      balanceDecimals: decimals,
+      balanceDecimals: inUsd ? 18 : decimals,
     }),
     tax,
   )
   if (!price) return null
-  const value = price * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
+  const value = !inUsd
+    ? price * axisRate(perPointRates, pointRate, historyRate)
+    : perPointRates
+      ? price
+      : (price / pointRate!) * historyRate
   return { balance, price, value }
 }
 

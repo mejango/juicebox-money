@@ -5,6 +5,7 @@ import {
   type BsProject,
 } from '@/lib/bendystraw'
 import { formatTokenAmount } from '@/lib/format'
+import { knownTokenSymbol } from '@/lib/token-symbol'
 import { getProjectPageData, getProjectSiblings, getProjectMetadata } from '@/lib/project-server-data'
 
 type ProjectLinkPreview = {
@@ -38,37 +39,49 @@ export function projectPreviewSlogan(...values: Array<string | null | undefined>
 }
 
 /**
- * Format indexed balances without adding unlike accounting tokens together.
- * One sucker group can legitimately hold ETH and USDC, so each token kind is
- * kept as its own visible bucket.
+ * Format indexed balances without adding unlike tokens together. A project
+ * can hold ETH and USDC at once, so each token kind is kept as its own
+ * visible bucket, read from the per-token rows. A deployment without them
+ * falls back to its single accounting-token balance.
  */
 export function formatProjectPreviewBalance(
-  deployments: readonly Pick<BsProject, 'balance' | 'decimals' | 'tokenSymbol'>[],
+  deployments: readonly Pick<
+    BsProject,
+    'balance' | 'chainId' | 'decimals' | 'tokenSymbol' | 'token' | 'projectTokenBalances'
+  >[],
 ): string {
   const buckets = new Map<string, BalanceBucket>()
   for (const deployment of deployments) {
-    const symbol = deployment.tokenSymbol?.trim()
-    const decimals = deployment.decimals
-    if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) continue
-    try {
-      const key = `${symbol.toUpperCase()}:${decimals}`
-      const current = buckets.get(key)
-      buckets.set(key, {
-        symbol,
-        decimals,
-        amount: (current?.amount ?? 0n) + BigInt(deployment.balance || '0'),
-      })
-    } catch {
-      // Omit a malformed indexed balance rather than inventing a zero.
+    for (const row of deployment.projectTokenBalances?.items ?? [deployment]) {
+      const symbol = (
+        row.tokenSymbol ||
+        (row.token ? knownTokenSymbol(row.token, { chainId: deployment.chainId }) : null)
+      )?.trim()
+      const decimals = row.decimals
+      if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) continue
+      try {
+        const key = `${symbol.toUpperCase()}:${decimals}`
+        const current = buckets.get(key)
+        buckets.set(key, {
+          symbol,
+          decimals,
+          amount: (current?.amount ?? 0n) + BigInt(row.balance || '0'),
+        })
+      } catch {
+        // Omit a malformed indexed balance rather than inventing a zero.
+      }
     }
   }
 
-  const formatted = [...buckets.values()]
-    .sort((left, right) => left.symbol.localeCompare(right.symbol))
-    .map(
-      bucket =>
-        `${formatTokenAmount(bucket.amount, bucket.decimals, 4)} ${bucket.symbol}`,
-    )
+  const sorted = [...buckets.values()].sort((left, right) =>
+    left.symbol.localeCompare(right.symbol),
+  )
+  // A token the project accepts but does not hold adds only noise.
+  const held = sorted.filter(bucket => bucket.amount > 0n)
+  const formatted = (held.length ? held : sorted.slice(0, 1)).map(
+    bucket =>
+      `${formatTokenAmount(bucket.amount, bucket.decimals, 4)} ${bucket.symbol}`,
+  )
   if (!formatted.length) return 'Unavailable'
   if (formatted.length <= 2) return formatted.join(' + ')
   return `${formatted.slice(0, 2).join(' + ')} + ${formatted.length - 2} more`

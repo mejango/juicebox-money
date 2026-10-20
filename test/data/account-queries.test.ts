@@ -104,6 +104,8 @@ function completeProjectRow(
     isRevnet: null,
     owner: null,
     metadataUri: null,
+    accountingTokenCount: 1,
+    projectTokenBalances: { items: [] },
     ...overrides,
   }
 }

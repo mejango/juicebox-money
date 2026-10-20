@@ -141,6 +141,19 @@ export type BsProject = {
   isRevnet: boolean | null
   owner: string | null
   metadataUri: string | null
+  /** Accounting contexts the project accepts. Above 1, the raw `balance` and `volume` add unlike tokens. */
+  accountingTokenCount?: number | null
+  /** The terminal balance per token, each in its own decimals. */
+  projectTokenBalances?: { items: BsTokenBalance[] } | null
+}
+
+type BsTokenBalance = {
+  token: string
+  tokenSymbol: string | null
+  decimals: number
+  balance: string
+  /** `balance` at the token's latest indexed USD rate. 18-dec. */
+  balanceUsd: string
 }
 
 export type BsSearchProject = BsProject & {
@@ -150,13 +163,14 @@ export type BsSearchProject = BsProject & {
 const PROJECT_FIELDS = `
   projectId chainId version name logoUri projectTagline volume volumeUsd balance
   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
-  decimals currency isRevnet owner metadataUri
+  decimals currency isRevnet owner metadataUri accountingTokenCount
+  projectTokenBalances { items { token tokenSymbol decimals balance balanceUsd } }
 `
 
 const PROJECTS_BY_FILTER_QUERY = `query ProjectsByFilter($where: projectFilter!, $limit: Int!) {
   projects(
     where: $where
-    orderBy: "volume"
+    orderBy: "volumeUsd"
     orderDirection: "desc"
     limit: $limit
   ) { items { ${PROJECT_FIELDS} } }
@@ -285,7 +299,12 @@ export async function searchProjects(
 }
 
 /** The token a terminal event moved. Null when the indexer could not tell (valued at 0 USD). */
-export type EventToken = { token?: string | null; decimals?: number | null }
+export type EventToken = {
+  token?: string | null
+  decimals?: number | null
+  /** Null when the indexer could not read the token's symbol. */
+  tokenSymbol?: string | null
+}
 
 export type BsActivityEvent = {
   id: string
@@ -444,22 +463,22 @@ export type BsActivityEvent = {
 const ACTIVITY_EVENT_FIELDS = `
   id chainId projectId timestamp from txHash
   payEvent {
-    amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals
+    amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol
   }
   cashOutTokensEvent {
-    cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals
+    cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol
   }
   projectCreateEvent { from }
-  addToBalanceEvent { amount memo from token decimals }
+  addToBalanceEvent { amount memo from token decimals tokenSymbol }
   mintTokensEvent {
     beneficiary beneficiaryTokenCount caller from
   }
   sendPayoutsEvent {
-    amount amountPaidOut amountPaidOutUsd caller from token decimals
+    amount amountPaidOut amountPaidOutUsd caller from token decimals tokenSymbol
   }
   sendReservedTokensToSplitsEvent { tokenCount from }
   sendPayoutToSplitEvent {
-    amount amountUsd beneficiary splitProjectId from token decimals
+    amount amountUsd beneficiary splitProjectId from token decimals tokenSymbol
   }
   sendReservedTokensToSplitEvent {
     tokenCount beneficiary splitProjectId hook from
@@ -1278,7 +1297,8 @@ export function projectGroupPaymentsCount(
  * null when the chains account in different tokens (or the kind is unknown).
  * Kind means symbol + decimals: canonical stablecoin deployments differ by
  * address per chain but denominate amounts identically, so addresses do not
- * disqualify a group.
+ * disqualify a group. A deployment that accepts more than one token has no
+ * single kind.
  */
 export function suckerGroupAccountingToken(
   deployments: readonly BsProject[],
@@ -1287,6 +1307,7 @@ export function suckerGroupAccountingToken(
   if (!first?.tokenSymbol || first.decimals == null) return null
   return deployments.every(
     row =>
+      (row.accountingTokenCount ?? 1) <= 1 &&
       row.tokenSymbol === first.tokenSymbol &&
       row.decimals === first.decimals,
   )
@@ -1301,8 +1322,8 @@ export type BsPriceMoment = {
   /** Cumulative payment volume valued in USD at each payment's own time —
    *  correct even across accounting-context switches. 18-dec fixed point. */
   volumeUsd: string
-  /** Flow-accrued USD balance: every inflow adds and every outflow subtracts
-   *  its own at-the-block USD value — context-switch safe. 18-dec. */
+  /** Every token's balance at this moment, each valued at its latest
+   *  indexed USD rate, summed. 18-dec. */
   balanceUsd: string
   tokenSupply: string
   /** 18-dec USD per one whole accounting token, as of THIS moment's block.
@@ -1362,18 +1383,54 @@ export async function getSuckerGroupMoments(
   return page.items
 }
 
-export type BsProjectMoment = { timestamp: number; balance: string }
+export type BsTokenBalanceRow = BsTokenBalance & { chainId: number; projectId: number }
 
-/** One project's balance over time — the per-chain slice of a group's moments. */
-export async function getProjectMoments(project: {
-  projectId: number
+/** Every V6 project's terminal balance per token, as it stands. */
+export async function getProjectTokenBalances(): Promise<BsTokenBalanceRow[]> {
+  const page = await getPagedItems<BsTokenBalanceRow>(
+    TOKEN_BALANCES_QUERY,
+    'projectTokenBalances',
+    {},
+    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+  )
+  return page.items
+}
+
+export type BsTokenBalanceMoment = {
   chainId: number
-  version: number
-}): Promise<BsProjectMoment[]> {
-  const page = await getPagedItems<BsProjectMoment>(
-    PROJECT_MOMENTS_QUERY,
-    'projectMoments',
-    project,
+  projectId: number
+  token: string
+  decimals: number
+  balance: string
+  timestamp: number
+  /** 18-dec USD per one whole token at this moment's block. Null when unvalued. */
+  tokenUsdRate: string | null
+}
+
+/** Every V6 project's per-token balance changes, oldest first. */
+export async function getProjectTokenBalanceMoments(): Promise<BsTokenBalanceMoment[]> {
+  const page = await getPagedItems<BsTokenBalanceMoment>(
+    TOKEN_BALANCE_MOMENTS_QUERY,
+    'projectTokenBalanceMoments',
+    {},
+    { max: Number.POSITIVE_INFINITY, policy: 'stable' },
+  )
+  return page.items
+}
+
+export type BsGroupVolumeMoment = {
+  suckerGroupId: string
+  timestamp: number
+  /** Cumulative payment volume, each payment valued in USD at its own time. 18-dec. */
+  volumeUsd: string
+}
+
+/** Every V6 sucker group's volume changes, oldest first. */
+export async function getGroupVolumeMoments(): Promise<BsGroupVolumeMoment[]> {
+  const page = await getPagedItems<BsGroupVolumeMoment>(
+    GROUP_VOLUME_MOMENTS_QUERY,
+    'suckerGroupMoments',
+    {},
     { max: Number.POSITIVE_INFINITY, policy: 'stable' },
   )
   return page.items
@@ -1502,15 +1559,39 @@ const GROUP_ADD_TO_BALANCE_QUERY = `query($suckerGroupId: String!, $limit: Int!,
   }
 }`
 
-const PROJECT_MOMENTS_QUERY = `query($projectId: Int!, $chainId: Int!, $version: Int!, $limit: Int!, $offset: Int!) {
-  projectMoments(
-    where: { projectId: $projectId, chainId: $chainId, version: $version }
+const TOKEN_BALANCES_QUERY = `query($limit: Int!, $offset: Int!) {
+  projectTokenBalances(
+    where: { version: 6 }
+    limit: $limit
+    offset: $offset
+  ) {
+    items { chainId projectId token tokenSymbol decimals balance balanceUsd }
+    totalCount
+  }
+}`
+
+const TOKEN_BALANCE_MOMENTS_QUERY = `query($limit: Int!, $offset: Int!) {
+  projectTokenBalanceMoments(
+    where: { version: 6 }
     orderBy: "timestamp"
     orderDirection: "asc"
     limit: $limit
     offset: $offset
   ) {
-    items { timestamp balance }
+    items { chainId projectId token decimals balance timestamp tokenUsdRate }
+    totalCount
+  }
+}`
+
+const GROUP_VOLUME_MOMENTS_QUERY = `query($limit: Int!, $offset: Int!) {
+  suckerGroupMoments(
+    where: { version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { suckerGroupId timestamp volumeUsd }
     totalCount
   }
 }`
@@ -1648,7 +1729,7 @@ export async function getRevnetPriceHistory(
     row =>
       BigInt(row.tokenSupply) === 0n
         ? 0
-        : Number(row.balance) / Number(row.tokenSupply),
+        : Number(row.balanceUsd) / Number(row.tokenSupply),
   )
   const swaps = downsampleTimeSeries(
     market.swaps.items,
@@ -1970,7 +2051,7 @@ export async function getProjectsOwnedBy(
     `query($owners: [String!]!, $limit: Int!, $offset: Int!) {
       projects(
         where: { owner_in: $owners, version: 6 }
-        orderBy: "volume"
+        orderBy: "volumeUsd"
         orderDirection: "desc"
         limit: $limit
         offset: $offset
