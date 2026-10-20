@@ -1169,13 +1169,16 @@ describe('a payment that falls short of its minimum', () => {
     await click('Confirm & Pay')
     await waitUntil(() => !!allowedDecrease())
     const input = allowedDecrease()!
-    for (const typed of ['80', '3']) {
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, typed)
-        input.dispatchEvent(new Event('input', { bubbles: true }))
-      })
-    }
-    // 80% is refused; 3% is kept.
+    const type = (typed: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, typed)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    // 80%, and 49.999% (which rounds to the 50% limit), are refused; 3% is kept.
+    await type('80')
+    expect(allowedDecrease()?.value).toBe('11')
+    await type('49.999')
+    expect(allowedDecrease()?.value).toBe('11')
+    await type('3')
     expect(allowedDecrease()?.value).toBe('3')
     await click('Review again')
     await waitUntil(() => button('Confirm & Pay', false) !== undefined)
