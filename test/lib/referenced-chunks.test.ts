@@ -26,6 +26,13 @@ describe('referencedChunks', () => {
     expect(referencedChunks(html)).toEqual(['static/chunks/main.js'])
   })
 
+  it('still counts a nomodule file that something else loads', () => {
+    const html =
+      '<script src="/_next/static/chunks/shared.js?dpl=z" noModule=""></script>' +
+      '<link rel="preload" as="script" href="/_next/static/chunks/shared.js?dpl=z"/>'
+    expect(referencedChunks(html)).toEqual(['static/chunks/shared.js'])
+  })
+
   it('decodes encoded route segments in chunk paths', () => {
     const html = '<script src="/_next/static/chunks/app/%5Burn%5D/page-9.js?dpl=z"></script>'
     expect(referencedChunks(html)).toEqual(['static/chunks/app/[urn]/page-9.js'])

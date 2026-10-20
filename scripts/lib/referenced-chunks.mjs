@@ -18,20 +18,17 @@ function chunkPath(url) {
  * `nomodule` scripts (polyfills), which modern browsers skip.
  */
 export function referencedChunks(html) {
-  const unescaped = html.replace(/\\"/gu, '"').replace(/\\u002F|\\\//gu, '/')
-  const skipped = new Set(
-    [...unescaped.matchAll(/<script\b[^>]*>/giu)]
-      .map(([tag]) => tag)
-      .filter(tag => /\bnomodule\b/iu.test(tag))
-      .map(tag => tag.match(/\bsrc="([^"]+)"/iu)?.[1])
-      .filter(Boolean)
-      .map(chunkPath),
-  )
+  // Drop the nomodule tags themselves, not the file: a chunk a nomodule tag
+  // names still counts when anything else references it.
+  const unescaped = html
+    .replace(/\\"/gu, '"')
+    .replace(/\\u002F|\\\//gu, '/')
+    .replace(/<script\b[^>]*\bnomodule\b[^>]*>/giu, '')
   return [
     ...new Set(
-      [...unescaped.matchAll(/(?:\/_next\/)?static\/chunks\/[^"'\s<>\\]+?\.js(?:[?#][^"'\s<>\\]*)?/gu)]
-        .map(([reference]) => chunkPath(reference))
-        .filter(path => !skipped.has(path)),
+      [...unescaped.matchAll(/(?:\/_next\/)?static\/chunks\/[^"'\s<>\\]+?\.js(?:[?#][^"'\s<>\\]*)?/gu)].map(
+        ([reference]) => chunkPath(reference),
+      ),
     ),
   ]
 }
