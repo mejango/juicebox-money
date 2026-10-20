@@ -12,6 +12,7 @@ function loadProjectHandles(): Promise<ProjectHandles> {
   loadingProjectHandles ??= import('@/lib/project-handles').then(
     module => (projectHandles = module),
     error => {
+      // Webpack forgets a failed chunk, so the next call requests it again.
       loadingProjectHandles = undefined
       throw error
     },
