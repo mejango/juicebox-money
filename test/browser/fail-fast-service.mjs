@@ -8,7 +8,7 @@ import {
   USDC_ADDRESSES,
   USD_CURRENCY_ID,
   jbBuybackHookRegistryAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
@@ -46,7 +46,7 @@ const PROJECT_ID = 1
 const USDC = USDC_ADDRESSES[CHAIN_ID]
 const OWNER = '0x1111111111111111111111111111111111111111'
 const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11'
-const addressOf = contract => jbContractAddress['6'][contract]?.[CHAIN_ID]
+const addressOf = contract => jbV6ContractAddress[contract]?.[CHAIN_ID]
 const CONTROLLER = addressOf(JBCoreContracts.JBController)
 const DIRECTORY = addressOf(JBCoreContracts.JBDirectory)
 const MULTI_TERMINAL = addressOf(JBCoreContracts.JBMultiTerminal)
@@ -479,7 +479,7 @@ const contractFixtures = [
   ...[1, 10, 8453, 42161, 11155111, 11155420, 84532, 421614].map(
     chainId => ({
       name: 'JBProjects.creationFee',
-      address: jbContractAddress['6'][JBCoreContracts.JBProjects]?.[chainId],
+      address: jbV6ContractAddress[JBCoreContracts.JBProjects]?.[chainId],
       abi: jbProjectsAbi,
       functionName: 'creationFee',
       args: [],

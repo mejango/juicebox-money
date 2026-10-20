@@ -13,7 +13,7 @@
  */
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbDirectoryAbi,
   jbProjectsAbi,
   jbTokensAbi,
@@ -99,8 +99,8 @@ async function main() {
     chain: sepolia,
     transport: http('https://ethereum-sepolia-rpc.publicnode.com'),
   })
-  const projects = jbContractAddress['6'][JBCoreContracts.JBProjects][CHAIN_ID]
-  const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][CHAIN_ID]
+  const projects = jbV6ContractAddress[JBCoreContracts.JBProjects][CHAIN_ID]
+  const directory = jbV6ContractAddress[JBCoreContracts.JBDirectory][CHAIN_ID]
 
   const controllerOf = (id: bigint) =>
     client.readContract({
@@ -145,10 +145,10 @@ async function main() {
     transport: http('https://base-sepolia-rpc.publicnode.com'),
   })
   const baseProjects =
-    jbContractAddress['6'][JBCoreContracts.JBProjects][BASE_CHAIN_ID]
-  const baseTokens = jbContractAddress['6'][JBCoreContracts.JBTokens][BASE_CHAIN_ID]
+    jbV6ContractAddress[JBCoreContracts.JBProjects][BASE_CHAIN_ID]
+  const baseTokens = jbV6ContractAddress[JBCoreContracts.JBTokens][BASE_CHAIN_ID]
   const baseDirectory =
-    jbContractAddress['6'][JBCoreContracts.JBDirectory][BASE_CHAIN_ID]
+    jbV6ContractAddress[JBCoreContracts.JBDirectory][BASE_CHAIN_ID]
   const count = await baseClient.readContract({
     address: baseProjects,
     abi: jbProjectsAbi,

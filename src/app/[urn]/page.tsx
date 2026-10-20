@@ -1,6 +1,6 @@
 import {
   RevnetCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
@@ -218,7 +218,7 @@ async function DegradedProjectShell({
 }) {
   const metadata = await fetchProjectMetadata(project.metadataUri);
   const name = metadata?.name ?? `Project ${project.projectId}`;
-  const canonicalRevOwner = jbContractAddress["6"][
+  const canonicalRevOwner = jbV6ContractAddress[
     RevnetCoreContracts.REVOwner
   ]?.[route.chainId] as Address | undefined;
   const projectOwner = project.owner as Address | null;

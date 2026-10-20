@@ -1,6 +1,6 @@
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbPricesAbi,
   JB_CHAINS,
   USD_CURRENCY_ID,
@@ -33,7 +33,7 @@ export async function readEthUsdPrice(): Promise<number> {
   const errors: string[] = []
   for (const chainId of FEED_CHAIN_IDS) {
     const chain = JB_CHAINS[chainId as JBChainId]?.chain
-    const prices = jbContractAddress['6'][JBCoreContracts.JBPrices]?.[chainId]
+    const prices = jbV6ContractAddress[JBCoreContracts.JBPrices]?.[chainId]
     if (!chain || !prices) continue
     try {
       const client = createPublicClient({

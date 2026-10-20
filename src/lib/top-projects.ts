@@ -3,7 +3,7 @@ import {
   JB_CHAINS,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbMultiTerminalAbi,
   jbTerminalStoreAbi,
   type JBChainId,
@@ -172,7 +172,7 @@ export const getHomepageIndexedTrust = unstable_cache(
       deployments,
       (chainId, { projectId }) => {
         const address =
-          jbContractAddress['6'][JBCoreContracts.JBMultiTerminal]?.[chainId]
+          jbV6ContractAddress[JBCoreContracts.JBMultiTerminal]?.[chainId]
         return address
           ? {
               address,
@@ -221,9 +221,9 @@ export const getHomepageIndexedTrust = unstable_cache(
       balanceReads,
       (chainId, { projectId, arg }) => {
         const store =
-          jbContractAddress['6'][JBCoreContracts.JBTerminalStore]?.[chainId]
+          jbV6ContractAddress[JBCoreContracts.JBTerminalStore]?.[chainId]
         const terminal =
-          jbContractAddress['6'][JBCoreContracts.JBMultiTerminal]?.[chainId]
+          jbV6ContractAddress[JBCoreContracts.JBMultiTerminal]?.[chainId]
         return store && terminal
           ? {
               address: store,

@@ -7,7 +7,7 @@ import {
   JBCoreContracts,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbSplitsAbi,
   SPLITS_TOTAL_PERCENT,
   type JBChainId,
@@ -1877,7 +1877,7 @@ function TierSaleRouting({
 }) {
   const splits = useReadContract({
     chainId,
-    address: jbContractAddress['6'][JBCoreContracts.JBSplits][chainId] as Address,
+    address: jbV6ContractAddress[JBCoreContracts.JBSplits][chainId] as Address,
     abi: jbSplitsAbi,
     functionName: 'splitsOf',
     args: [BigInt(projectId), 0n, BigInt(hook) | (BigInt(tier.id) << 160n)],

@@ -5,7 +5,7 @@ import {
   NATIVE_TOKEN,
   USDC_ADDRESSES,
   jb721TiersHookAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbMultiTerminalAbi,
   jbPermissionsAbi,
@@ -47,7 +47,7 @@ function functionOf(abi: Abi, name: string): AbiFunction {
 
 describe('canonical v6 deployment surface', () => {
   it('matches the independently pinned deploy-all fixture on every app chain', () => {
-    const sdk = jbContractAddress['6'] as unknown as Record<
+    const sdk = jbV6ContractAddress as unknown as Record<
       string,
       Partial<Record<JBChainId, string>>
     >

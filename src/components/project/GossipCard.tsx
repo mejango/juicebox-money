@@ -6,7 +6,7 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 import {
   JBCoreContracts,
   JBSuckerContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbSuckerRegistryAbi,
@@ -280,13 +280,13 @@ async function readLiveChain(
   projectId: number,
   queryClient: Pick<QueryClient, 'fetchQuery'>,
 ): Promise<LiveChain> {
-  const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
+  const directory = jbV6ContractAddress[JBCoreContracts.JBDirectory][
     chainId as JBChainId
   ] as Address | undefined
-  const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+  const terminal = jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
     chainId as JBChainId
   ] as Address | undefined
-  const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
+  const store = jbV6ContractAddress[JBCoreContracts.JBTerminalStore][
     chainId as JBChainId
   ] as Address | undefined
   if (!directory || !terminal || !store) {
@@ -447,7 +447,7 @@ export function GossipCard({
           const client = getPublicClient(config, {
             chainId: cid as JBChainId,
           }) as PublicClient | undefined
-          const registry = jbContractAddress['6'][
+          const registry = jbV6ContractAddress[
             JBSuckerContracts.JBSuckerRegistry
           ][cid as JBChainId] as Address | undefined
 

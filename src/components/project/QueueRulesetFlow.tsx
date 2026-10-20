@@ -5,7 +5,7 @@ import {
   SPLITS_TOTAL_PERCENT,
   USDC_ADDRESSES,
   NATIVE_TOKEN,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbFundAccessLimitsAbi,
@@ -348,7 +348,7 @@ export function QueueRulesetFlow({
 
   const { data: owner } = useReadContract({
     abi: jbProjectsAbi,
-    address: jbContractAddress["6"][JBCoreContracts.JBProjects][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
     functionName: "ownerOf",
     args: [BigInt(projectId)],
     chainId,
@@ -404,14 +404,14 @@ export function QueueRulesetFlow({
 
   const { data: controller } = useReadContract({
     abi: jbDirectoryAbi,
-    address: jbContractAddress["6"][JBCoreContracts.JBDirectory][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId],
     functionName: "controllerOf",
     args: [BigInt(projectId)],
     chainId,
     query: { enabled: canEdit, staleTime: 60_000 },
   });
 
-  const canonicalController = jbContractAddress["6"][
+  const canonicalController = jbV6ContractAddress[
     JBCoreContracts.JBController
   ][chainId] as Address | undefined;
   const knownController =

@@ -1,6 +1,6 @@
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbPricesAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -56,7 +56,7 @@ export async function basePerAccountingToken(
   },
 ): Promise<number | null> {
   if (baseCurrency === accountingCurrency) return 1
-  const prices = jbContractAddress['6'][JBCoreContracts.JBPrices]?.[chainId]
+  const prices = jbV6ContractAddress[JBCoreContracts.JBPrices]?.[chainId]
   if (!prices) return null
   try {
     const price = (await client.readContract({

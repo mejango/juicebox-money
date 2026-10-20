@@ -6,7 +6,7 @@ import { getAccount } from '@wagmi/core'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -885,7 +885,7 @@ function captureRelayrWallet(account: Address, chainId: JBChainId): () => void {
 /** A relayed call must preserve the real sender through the canonical forwarder. */
 export async function relayrTargetSupportsForwarder(call: RelayrCall): Promise<boolean> {
   if (!relayrSupportsChain(call.chainId)) return false
-  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId]
+  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId]
   if (!forwarder) return false
   try {
     const data = await simulateStateChangingTransaction(publicClient(call.chainId), {
@@ -932,7 +932,7 @@ async function signForwardedRequest(
   expectedNonce?: bigint,
   context?: { description: string; calls: readonly TransactionReviewCall[] },
 ): Promise<{ entry: RelayrEntry; nonce: bigint }> {
-  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][
+  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
   ] as Address | undefined
   if (!forwarder) throw new Error(`No ERC-2771 forwarder on chain ${call.chainId}.`)

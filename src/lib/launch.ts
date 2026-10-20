@@ -4,7 +4,7 @@ import {
   NATIVE_TOKEN,
   USDC_ADDRESSES,
   jb721TiersHookProjectDeployerAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   parseSuckerDeployerConfig,
   type JBChainId,
   type JBSuckerBridge,
@@ -140,7 +140,7 @@ export type StoreItem = {
  * to be withheld per chain. Optimism Sepolia (11155420) is absent from the table
  * because deploy-all has no `JBUniswapV4LPSplitHook.json` there.
  */
-const LP_SPLIT_HOOK_ADDRESSES = jbContractAddress['6'][
+const LP_SPLIT_HOOK_ADDRESSES = jbV6ContractAddress[
   JBUniswapV4LPSplitHookContracts.JBUniswapV4LPSplitHook
 ] as Partial<Record<JBChainId, Address>>
 

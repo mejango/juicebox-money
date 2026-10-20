@@ -1,4 +1,4 @@
-import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, jbMultiTerminalAbi, jbTokensAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbV6ContractAddress, jbControllerAbi, jbMultiTerminalAbi, jbTokensAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionResult, zeroAddress, type Abi, type Address, type TransactionReceipt } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -43,8 +43,8 @@ beforeEach(() => {
     reads.set(chain, vi.fn(async ({ functionName, args }: { functionName: string; args: readonly unknown[] }) => {
       const value = state.get(chain)!
       if (functionName === 'ownerOf') return value.owner
-      if (functionName === 'controllerOf') return jbContractAddress['6'][JBCoreContracts.JBController][chain]
-      if (functionName === 'terminalsOf') return value.registered ? [jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chain]] : []
+      if (functionName === 'controllerOf') return jbV6ContractAddress[JBCoreContracts.JBController][chain]
+      if (functionName === 'terminalsOf') return value.registered ? [jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][chain]] : []
       if (functionName === 'balanceOf') return value.balance
       if (functionName === 'pendingReservedTokenBalanceOf') { expect(args[0]).toBe(BigInt(project.projectId)); return value.pending }
       if (functionName === 'payoutLimitsOf') { expect(args[0]).toBe(BigInt(project.projectId)); expect(args[1]).toBe(BigInt(value.id)); return [{ amount: value.limit, currency: 2 }] }
@@ -135,7 +135,7 @@ describe('selected destination distributions', () => {
       const review = await reviewReserved(project, ACCOUNT)
       expect(review.current.ruleset.id).toBe(state.get(project.chainId)!.id)
       const call = distributionCall(review)
-      expect(call.target).toBe(jbContractAddress['6'][JBCoreContracts.JBController][project.chainId])
+      expect(call.target).toBe(jbV6ContractAddress[JBCoreContracts.JBController][project.chainId])
       expect(decodeFunctionData({ abi: jbControllerAbi, data: call.data }).args).toEqual([BigInt(project.projectId)])
       expect(reads.get(project.chainId)).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'splitsOf', args: [BigInt(project.projectId), BigInt(review.current.ruleset.id), RESERVED_TOKEN_SPLIT_GROUP_ID] }))
     }
@@ -197,7 +197,7 @@ describe('selected destination distributions', () => {
     expect(() => verifyDistributionCompletion(review, receipt([total]))).toThrow('the receipt sends to 0 splits, not the reviewed 1')
     const failed = eventLog(jbControllerAbi, 'ReservedDistributionReverted', review.controller, { projectId: 303n, split: review.splits[0], tokenCount: review.pending / 2n, reason: '0x', caller: ACCOUNT })
     expect(() => verifyDistributionCompletion(review, receipt([split, total, failed]))).toThrow('a recipient failed (ReservedDistributionReverted)')
-    const burned = eventLog(jbTokensAbi, 'Burn', jbContractAddress['6'][JBCoreContracts.JBTokens][8453], { holder: review.controller, projectId: 303n, count: 1n, creditBalance: 0n, tokenBalance: 0n, caller: review.controller })
+    const burned = eventLog(jbTokensAbi, 'Burn', jbV6ContractAddress[JBCoreContracts.JBTokens][8453], { holder: review.controller, projectId: 303n, count: 1n, creditBalance: 0n, tokenBalance: 0n, caller: review.controller })
     expect(() => verifyDistributionCompletion(review, receipt([burned, split, total]))).toThrow('a hook did not take its share')
   })
 

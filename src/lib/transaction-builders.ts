@@ -6,7 +6,7 @@ import {
   jbBuybackHookRegistryAbi,
   jb721TiersHookAbi,
   jbControllerAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbMultiTerminalAbi,
   jbProjectsAbi,
   jbRouterTerminalRegistryAbi,
@@ -435,7 +435,7 @@ export function buildProjectOwnershipAuthorityCall({
   return buildAuthorityCall({
     chainId,
     authority,
-    target: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
+    target: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
     abi: jbProjectsAbi,
     functionName: 'transferFrom',
     args: [authority, destination, projectId],
@@ -461,7 +461,7 @@ export function buildRevnetOperatorAuthorityCall({
   return buildAuthorityCall({
     chainId,
     authority,
-    target: jbContractAddress['6'][RevnetCoreContracts.REVOwner][chainId],
+    target: jbV6ContractAddress[RevnetCoreContracts.REVOwner][chainId],
     abi: revOwnerAbi,
     functionName: 'setOperatorOf',
     args: [revnetId, operator],

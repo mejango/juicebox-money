@@ -13,7 +13,7 @@ import {
 import {
   JBCoreContracts,
   SPLITS_TOTAL_PERCENT,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
@@ -444,13 +444,13 @@ function YourChainRow({
     retry: 1,
     queryFn: async (reader): Promise<Position> => {
       const client = publicClient!
-      const tokensAddress = jbContractAddress['6'][JBCoreContracts.JBTokens][
+      const tokensAddress = jbV6ContractAddress[JBCoreContracts.JBTokens][
         chainId
       ] as Address | undefined
-      const terminal = jbContractAddress['6'][
+      const terminal = jbV6ContractAddress[
         JBCoreContracts.JBMultiTerminal
       ][chainId] as Address | undefined
-      const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
+      const store = jbV6ContractAddress[JBCoreContracts.JBTerminalStore][
         chainId
       ] as Address | undefined
       if (!tokensAddress || !terminal || !store) {
@@ -1143,7 +1143,7 @@ function ReservedCard({
   const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
-  const splitsAddress = jbContractAddress['6'][JBCoreContracts.JBSplits][
+  const splitsAddress = jbV6ContractAddress[JBCoreContracts.JBSplits][
     chainId
   ] as Address
 
@@ -1361,7 +1361,7 @@ function ChainSplitsBlock({
 }) {
   const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
-  const directoryAddress = jbContractAddress['6'][JBCoreContracts.JBDirectory][
+  const directoryAddress = jbV6ContractAddress[JBCoreContracts.JBDirectory][
     chainId
   ] as Address
 
@@ -1398,7 +1398,7 @@ function ChainSplitsBlock({
         throw new Error('This stage does not exist on this chain.')
       }
       return (await publicClient!.readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBSplits][
+        address: jbV6ContractAddress[JBCoreContracts.JBSplits][
           chainId
         ] as Address,
         abi: jbSplitsAbi,

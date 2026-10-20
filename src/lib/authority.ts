@@ -13,7 +13,7 @@ import {
 } from 'viem'
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbProjectsAbi,
   revOwnerAbi,
   RevnetCoreContracts,
@@ -169,14 +169,14 @@ export async function readAuthorityOf(
     })
     try {
       const owner = (await client.readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBProjects][
+        address: jbV6ContractAddress[JBCoreContracts.JBProjects][
           deployment.chainId
         ],
         abi: jbProjectsAbi,
         functionName: 'ownerOf',
         args: [BigInt(deployment.projectId)],
       })) as Address
-      const canonicalRevOwner = jbContractAddress['6'][
+      const canonicalRevOwner = jbV6ContractAddress[
         RevnetCoreContracts.REVOwner
       ][deployment.chainId] as Address | undefined
       if (
@@ -204,7 +204,7 @@ export async function readAuthorityOf(
   }
   return (await client
     .readContract({
-      address: jbContractAddress['6'][JBCoreContracts.JBProjects][
+      address: jbV6ContractAddress[JBCoreContracts.JBProjects][
         deployment.chainId
       ],
       abi: jbProjectsAbi,

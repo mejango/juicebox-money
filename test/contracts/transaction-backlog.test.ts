@@ -3,7 +3,7 @@ import {
   NATIVE_TOKEN,
   RevnetCoreContracts,
   jbControllerAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
   type JBChainId,
@@ -144,7 +144,7 @@ describe('remaining local transaction builders', () => {
     expect(ownership).toMatchObject({
       chainId: CHAIN_ID,
       authority: AUTHORITY,
-      target: jbContractAddress['6'][JBCoreContracts.JBProjects][CHAIN_ID],
+      target: jbV6ContractAddress[JBCoreContracts.JBProjects][CHAIN_ID],
       functionName: 'transferFrom',
       args: [AUTHORITY, BOB, 43n],
       contractName: 'JBProjects',
@@ -161,7 +161,7 @@ describe('remaining local transaction builders', () => {
       chainId: CHAIN_ID,
       authority: AUTHORITY,
       target:
-        jbContractAddress['6'][RevnetCoreContracts.REVOwner][CHAIN_ID],
+        jbV6ContractAddress[RevnetCoreContracts.REVOwner][CHAIN_ID],
       functionName: 'setOperatorOf',
       args: [44n, BOB],
       contractName: 'REVOwner',
@@ -176,10 +176,10 @@ describe('remaining local transaction builders', () => {
   })
 
   it('wallet-action:change-owner-operator-powers round-trips every active ruleset-gated owner power, including minting', () => {
-    const directory = jbContractAddress['6'][JBCoreContracts.JBDirectory][
+    const directory = jbV6ContractAddress[JBCoreContracts.JBDirectory][
       CHAIN_ID
     ] as Address
-    const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+    const terminal = jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
       CHAIN_ID
     ] as Address
     const fixtures: Record<
@@ -691,7 +691,7 @@ describe('remaining canonical SDK transaction builders', () => {
 
     expect(request).toMatchObject({
       chainId: CHAIN_ID,
-      address: jbContractAddress['6'][JBCoreContracts.JBController][CHAIN_ID],
+      address: jbV6ContractAddress[JBCoreContracts.JBController][CHAIN_ID],
       functionName: 'claimTokensFor',
       args: [ALICE, 51n, 8n * 10n ** 18n, BOB],
     })
@@ -748,7 +748,7 @@ describe('remaining canonical SDK transaction builders', () => {
     expect(request).toMatchObject({
       chainId: CHAIN_ID,
       address:
-        jbContractAddress['6'][RevnetCoreContracts.REVOwner][CHAIN_ID],
+        jbV6ContractAddress[RevnetCoreContracts.REVOwner][CHAIN_ID],
       functionName: 'autoIssueFor',
       args: [53n, 4n, ALICE],
     })

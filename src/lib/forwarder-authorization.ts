@@ -1,6 +1,6 @@
 'use client'
 
-import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { relayrForwardRequest, relayrSignedRequests, type RelayrEntry, type RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import { isAddressEqual, type Address } from 'viem'
 import { loadLaunchSession } from '@/lib/launch-session'
@@ -11,7 +11,7 @@ type Pending = { scope: string; session: RelayrPendingSession | null }
 /** Only forwarded authorizations consume this nonce; raw payer and Safe calls do not. */
 function authorizes(entry: RelayrEntry, account: Address, chains: Set<number>): boolean {
   if (!chains.has(entry.chain)) return false
-  const forwarder = jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][entry.chain as JBChainId]
+  const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][entry.chain as JBChainId]
   if (!forwarder || !isAddressEqual(entry.target, forwarder)) return false
   const request = relayrForwardRequest(entry)
   // A saved call to this forwarder that is not a readable execute cannot prove its nonce is free.

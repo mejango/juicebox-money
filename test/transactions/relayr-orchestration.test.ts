@@ -1,6 +1,6 @@
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { ContractFunctionExecutionError, HttpRequestError, encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
-import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbV6ContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -161,7 +161,7 @@ const payment = paymentFor()
 function signedEntry(chain: JBChainId = 1): RelayrEntry {
   return {
     chain,
-    target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain],
+    target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][chain],
     data: encodeFunctionData({
       abi: erc2771ForwarderAbi,
       functionName: 'execute',

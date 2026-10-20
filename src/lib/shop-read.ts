@@ -2,7 +2,7 @@ import {
   JBOmnichainDeployerContracts,
   bytes32ToCidV0,
   jb721TiersHookStoreAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbOmnichainDeployerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -164,7 +164,7 @@ export async function readShop(
   let cashOutEnabled = false
   if (!isRevnet && current) {
     const dataHook = current.metadata.dataHook
-    const omni = jbContractAddress['6'][
+    const omni = jbV6ContractAddress[
       JBOmnichainDeployerContracts.JBOmnichainDeployer
     ]?.[chainId] as Address | undefined
     if (

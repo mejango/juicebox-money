@@ -14,7 +14,7 @@ import {
   requestBendystraw,
   resolveBendystrawNetwork,
   selectBendystrawEndpoint,
-  jbContractAddress,
+  jbV6ContractAddress,
   type BendystrawCachePolicy,
   type BendystrawFilter,
   type BendystrawNetwork,
@@ -693,7 +693,7 @@ export async function getRevnetOperatorCandidates(
 ): Promise<string[]> {
   {
     const account = (
-      jbContractAddress['6'][RevnetCoreContracts.REVOwner] as Partial<
+      jbV6ContractAddress[RevnetCoreContracts.REVOwner] as Partial<
         Record<number, string>
       >
     )[chainId]

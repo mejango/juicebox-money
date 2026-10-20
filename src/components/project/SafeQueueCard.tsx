@@ -10,7 +10,7 @@ import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
   RevnetCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbProjectsAbi,
   revOwnerAbi,
   type JBChainId,
@@ -242,12 +242,12 @@ async function assertSafeControlsProjectTuple(
   safe: Address,
 ): Promise<JBChainId> {
   const projects = (
-    jbContractAddress["6"][JBCoreContracts.JBProjects] as Partial<
+    jbV6ContractAddress[JBCoreContracts.JBProjects] as Partial<
       Record<JBChainId, Address>
     >
   )[chainId as JBChainId];
   const revOwner = (
-    jbContractAddress["6"][RevnetCoreContracts.REVOwner] as Partial<
+    jbV6ContractAddress[RevnetCoreContracts.REVOwner] as Partial<
       Record<JBChainId, Address>
     >
   )[chainId as JBChainId];
@@ -674,7 +674,7 @@ export async function assertSafeProjectAuthority(
   safe: Address,
 ): Promise<void> {
   const client = clientFor(chain.chainId);
-  const projects = jbContractAddress["6"][JBCoreContracts.JBProjects][
+  const projects = jbV6ContractAddress[JBCoreContracts.JBProjects][
     chain.chainId
   ] as Address;
   const owner = await client.readContract({
@@ -689,7 +689,7 @@ export async function assertSafeProjectAuthority(
     }
     return;
   }
-  const revOwner = jbContractAddress["6"][RevnetCoreContracts.REVOwner][
+  const revOwner = jbV6ContractAddress[RevnetCoreContracts.REVOwner][
     chain.chainId
   ] as Address;
   if (!isAddressEqual(owner, revOwner)) {

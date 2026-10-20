@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
-import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { CREATE_BATCH_ABI, MULTICALL3, SAFE_FACTORY, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { describeSafeInitializer, functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
 import type { LaunchPlan } from '@/lib/launch'
@@ -167,7 +167,7 @@ beforeEach(() => {
   m.projectId.mockImplementation((_receipt, chainId) => chainId + 100)
   m.forward.mockImplementation(async (call, account, nonce) => {
     expect(nonce).toBe(0n)
-    return { chain: call.chainId, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
+    return { chain: call.chainId, target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
         args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + 3600,
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }
@@ -240,7 +240,7 @@ describe('relayed launch execution and recovery', () => {
     const [deployment, forwarded] = batch.args[0]
     expect(batch.args[0]).toHaveLength(2)
     expect(deployment).toMatchObject({ target: SAFE_FACTORY, allowFailure: true, value: 0n })
-    expect(forwarded).toMatchObject({ target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1],
+    expect(forwarded).toMatchObject({ target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][1],
       allowFailure: false, value: 17n })
     const launch = decodeFunctionData({ abi: erc2771ForwarderAbi, data: forwarded.callData })
     expect(launch.functionName).toBe('execute')
@@ -346,7 +346,7 @@ describe('relayed launch execution and recovery', () => {
     const value = multisigSession()
     const client = clients.get(1)!
     client.getTransaction.mockImplementation(async ({ hash }) => ({ hash,
-      to: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1], input: entries[0].data,
+      to: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][1], input: entries[0].data,
       value: 17n, chainId: 1, blockHash: BLOCK, blockNumber: 123n }))
     await expect(run(value)).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses[1].phase).toBe('uncertain')
@@ -493,7 +493,7 @@ describe('relayed launch execution and recovery', () => {
 
   it('does not authorize a launch over another project action’s published forwarder nonce', async () => {
     m.pending.mockReturnValue({ account: ACCOUNT, chainIds: [1], publishedEntries: [{ chain: 1,
-      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][1], value: '0',
+      target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][1], value: '0',
       data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: ACCOUNT, to: TARGET,
         data: '0x1234', value: 0n, gas: 100_000n, deadline: NOW + 3600, signature: '0x1234' }] }) }] })
     await expect(run()).rejects.toThrow('Another published action')
@@ -532,7 +532,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay.mock.calls[0][0].payment.chain).toBe(84532)
     for (const chain of TESTNETS) {
       expect(loadLaunchSession()?.statuses[chain]).toMatchObject({ phase: 'done', projectId: chain + 100 })
-      expect(entries.find(entry => entry.chain === chain)?.target).toBe(jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain as JBChainId])
+      expect(entries.find(entry => entry.chain === chain)?.target).toBe(jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][chain as JBChainId])
     }
   })
 
@@ -797,7 +797,7 @@ describe('relayed launch execution and recovery', () => {
     // The launch signed at the nonce `saved`, and the wallet sent a payment without returning its hash.
     for (const client of clients.values()) client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? saved : true)
     m.forward.mockImplementation(async (call, account) => ({ chain: call.chainId,
-      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
+      target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
       data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: account, to: call.target,
         value: call.value, gas: call.gas, deadline: NOW + 3600, data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }))
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
@@ -912,7 +912,7 @@ describe('relayed launch execution and recovery', () => {
   it('holds a published launch whose finalized nonce fell below a saved one, rather than letting it be cancelled', async () => {
     for (const client of clients.values()) client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 1n : true)
     m.forward.mockImplementation(async (call, account) => ({ chain: call.chainId,
-      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
+      target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId], value: call.value.toString(),
       data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: account, to: call.target,
         value: call.value, gas: call.gas, deadline: NOW + 3600, data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }))
     m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))

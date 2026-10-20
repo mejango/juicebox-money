@@ -5,7 +5,7 @@ import {
   RevnetCoreContracts,
   jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
@@ -151,7 +151,7 @@ function addressBook(
   chainId: JBChainId,
 ): Address | null {
   const deployments = (
-    jbContractAddress['6'] as unknown as Record<
+    jbV6ContractAddress as unknown as Record<
       string,
       Partial<Record<JBChainId, Address>> | undefined
     >

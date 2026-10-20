@@ -7,7 +7,7 @@ import {
   USDC_ADDRESSES,
   jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -139,7 +139,7 @@ function contractAddress(
   contract: JBBuybackHookContracts | JBRouterTerminalContracts,
   chainId: JBChainId,
 ): Address | null {
-  const deployments = jbContractAddress['6'][contract] as unknown as
+  const deployments = jbV6ContractAddress[contract] as unknown as
     | Partial<Record<JBChainId, Address>>
     | undefined
   return deployments?.[chainId] ?? null

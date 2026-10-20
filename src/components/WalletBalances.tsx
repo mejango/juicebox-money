@@ -4,7 +4,7 @@ import {
   JB_CHAINS,
   JBCoreContracts,
   USDC_ADDRESSES,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -75,7 +75,7 @@ function ProjectWalletBalances({
     queryFn: async () => {
       const rows = await Promise.all(
         (deployments.data ?? []).map(async project => {
-          const tokens = jbContractAddress['6'][JBCoreContracts.JBTokens][
+          const tokens = jbV6ContractAddress[JBCoreContracts.JBTokens][
             project.chainId
           ] as Address | undefined
           if (!tokens) throw new Error(`Unsupported chain ${project.chainId}`)

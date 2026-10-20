@@ -3,7 +3,7 @@
 import { legacyBurnKey, legacyBurnKeys } from '@/lib/legacy-intents'
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbDirectoryAbi,
   jbTokensAbi,
   type JBChainId,
@@ -50,7 +50,7 @@ export function BurnTokensFlow({
   }, [amount])
   const { data: balance, refetch } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'totalBalanceOf',
     args: [address ?? zeroAddress, BigInt(projectId)],
     chainId,
@@ -58,7 +58,7 @@ export function BurnTokensFlow({
   })
   const { data: controller, refetch: refetchController } = useReadContract({
     abi: jbDirectoryAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId],
     functionName: 'controllerOf',
     args: [BigInt(projectId)],
     chainId,

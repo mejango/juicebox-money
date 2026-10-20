@@ -1,7 +1,7 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbPermissionsAbi,
@@ -42,7 +42,7 @@ export type OnChainProjectShell = {
   metadataUriResolved: boolean
 }
 
-const V6_ADDRESSES = jbContractAddress['6'] as Record<
+const V6_ADDRESSES = jbV6ContractAddress as Record<
   string,
   Record<number, Address | undefined>
 >

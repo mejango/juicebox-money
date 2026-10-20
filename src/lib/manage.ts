@@ -1,6 +1,6 @@
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -37,7 +37,7 @@ export function isKnownController(
   controller: Address | undefined,
 ): boolean {
   if (!controller) return false
-  const canonical = jbContractAddress['6'][JBCoreContracts.JBController][
+  const canonical = jbV6ContractAddress[JBCoreContracts.JBController][
     chainId
   ] as Address | undefined
   return !!canonical && controller.toLowerCase() === canonical.toLowerCase()
@@ -65,7 +65,7 @@ export function buildSetUriTx({
 }): V6SetUriTxRequest {
   const address =
     controller ??
-    (jbContractAddress['6'][JBCoreContracts.JBController][chainId] as
+    (jbV6ContractAddress[JBCoreContracts.JBController][chainId] as
       | Address
       | undefined)
   if (!address) {

@@ -1,7 +1,7 @@
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
-  jbContractAddress,
+  jbV6ContractAddress,
 } from '@bananapus/nana-sdk-core'
 import { buildAccountingContext } from '@bananapus/nana-sdk-core/v6'
 import type { Address } from 'viem'
@@ -297,7 +297,7 @@ export function initialFieldValue(
   if (field.initial === 'ADDR_TERMINAL') {
     return (
       ((
-        jbContractAddress['6'][JBCoreContracts.JBMultiTerminal] as Record<
+        jbV6ContractAddress[JBCoreContracts.JBMultiTerminal] as Record<
           number,
           Address | undefined
         >

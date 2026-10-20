@@ -2,7 +2,7 @@
 
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbMultiTerminalAbi,
@@ -62,7 +62,7 @@ async function readPowerState(
     readAuthorityOf(client, deployment),
     client
       .readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
+        address: jbV6ContractAddress[JBCoreContracts.JBDirectory][
           deployment.chainId
         ],
         abi: jbDirectoryAbi,
@@ -74,7 +74,7 @@ async function readPowerState(
     // one. Read here rather than in the form: a failure must NOT prefill an empty list.
     client
       .readContract({
-        address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
+        address: jbV6ContractAddress[JBCoreContracts.JBDirectory][
           deployment.chainId
         ],
         abi: jbDirectoryAbi,
@@ -437,10 +437,10 @@ export function PowerActionForm({
           power.target === 'controller'
             ? row.controller
             : power.target === 'directory'
-              ? (jbContractAddress['6'][JBCoreContracts.JBDirectory][
+              ? (jbV6ContractAddress[JBCoreContracts.JBDirectory][
                   row.chainId
                 ] as Address)
-              : (jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+              : (jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
                   row.chainId
                 ] as Address)
         const abi =

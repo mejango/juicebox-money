@@ -2,7 +2,7 @@
 
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -38,7 +38,7 @@ export function TokenPanel({
 }) {
   const { data: tokenAddress, isLoading } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'tokenOf',
     args: [BigInt(projectId)],
     chainId,
@@ -54,7 +54,7 @@ export function TokenPanel({
   })
   const { data: totalSupply, isLoading: supplyLoading, isSuccess: supplyKnown } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'totalSupplyOf',
     args: [BigInt(projectId)],
     chainId,

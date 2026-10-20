@@ -6,7 +6,7 @@ import {
   jbBuybackHookRegistryAbi,
   jbRouterTerminalRegistryAbi,
   jbBuybackHookAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import {
@@ -72,7 +72,7 @@ export const SELECTOR_LABELS = new Map<string, string>(
 function contractName(chainId: JBChainId, address: Address): string | null {
   const rolloutName = rolloutContractName(chainId, address);
   if (rolloutName) return rolloutName;
-  const contracts = jbContractAddress["6"] as unknown as Record<
+  const contracts = jbV6ContractAddress as unknown as Record<
     string,
     Partial<Record<JBChainId, Address>>
   >;

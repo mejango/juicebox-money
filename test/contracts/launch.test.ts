@@ -1,7 +1,7 @@
 import {
   NATIVE_TOKEN,
   USDC_ADDRESSES,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
@@ -393,7 +393,7 @@ describe('project launch encoding', () => {
     const data = encode(request)
     const decoded = decodeFunctionData({ abi: request.abi, data })
 
-    expect(request.address).toBe(jbContractAddress['6'].JBOmnichainDeployer[1])
+    expect(request.address).toBe(jbV6ContractAddress.JBOmnichainDeployer[1])
     expect(data.slice(0, 10)).toBe('0x2d993173')
     expect(decoded.functionName).toBe('launchProjectFor')
     expect(decoded.args).toHaveLength(7)
@@ -411,7 +411,7 @@ describe('project launch encoding', () => {
     const request = requestFor(plan({ chains: [1, 10], linkChains: false }))
 
     expect(request.address).toBe(
-      jbContractAddress['6'].JB721TiersHookProjectDeployer[1],
+      jbV6ContractAddress.JB721TiersHookProjectDeployer[1],
     )
     expect(request.args).toHaveLength(5)
     expect(() => encode(request)).not.toThrow()
@@ -421,14 +421,14 @@ describe('project launch encoding', () => {
     expect(
       projectConfig(requestFor(plan({ allowAnyToken: false })))
         .terminalConfigurations.map(terminal => terminal.terminal),
-    ).toEqual([jbContractAddress['6'].JBMultiTerminal[1]])
+    ).toEqual([jbV6ContractAddress.JBMultiTerminal[1]])
 
     expect(
       projectConfig(requestFor(plan({ allowAnyToken: true })))
         .terminalConfigurations.map(terminal => terminal.terminal),
     ).toEqual([
-      jbContractAddress['6'].JBMultiTerminal[1],
-      jbContractAddress['6'].JBRouterTerminalRegistry[1],
+      jbV6ContractAddress.JBMultiTerminal[1],
+      jbV6ContractAddress.JBRouterTerminalRegistry[1],
     ])
   })
 

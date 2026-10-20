@@ -4,7 +4,7 @@ import { legacyBridgeSendKey, legacyMoveKeys } from '@/lib/legacy-intents'
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbMultiTerminalAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -362,7 +362,7 @@ function MoveFlow({
         | PublicClient
         | undefined
       if (!client) throw new Error(`Unsupported chain ${from}.`)
-      const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+      const terminal = jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
         from
       ] as Address | undefined
       if (!terminal) throw new Error('No terminal on the source chain.')

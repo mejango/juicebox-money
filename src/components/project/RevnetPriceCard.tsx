@@ -15,7 +15,7 @@ import {
   JBCoreContracts,
   NATIVE_TOKEN,
   USD_CURRENCY_ID,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   JB_CHAINS,
   jbDirectoryAbi,
@@ -151,10 +151,10 @@ export function RevnetPriceCard({
               }) as PublicClient | undefined
               if (!client) throw new Error(`Unsupported chain ${rawChainId}`)
 
-              const directory = jbContractAddress['6'][
+              const directory = jbV6ContractAddress[
                 JBCoreContracts.JBDirectory
               ][rowChainId] as Address | undefined
-              const store = jbContractAddress['6'][
+              const store = jbV6ContractAddress[
                 JBCoreContracts.JBTerminalStore
               ][rowChainId] as Address | undefined
               if (!directory || !store) {

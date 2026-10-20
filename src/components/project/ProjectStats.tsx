@@ -5,7 +5,7 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 import {
   JBCoreContracts,
   USD_CURRENCY_ID,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbPricesAbi,
   jbTerminalStoreAbi,
   type JBChainId,
@@ -71,13 +71,13 @@ async function readChainTreasury(
   const client = getPublicClient(config, { chainId }) as
     | PublicClient
     | undefined
-  const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+  const terminal = jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
     chainId
   ] as Address | undefined
-  const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
+  const store = jbV6ContractAddress[JBCoreContracts.JBTerminalStore][
     chainId
   ] as Address | undefined
-  const prices = jbContractAddress['6'][JBCoreContracts.JBPrices][chainId] as
+  const prices = jbV6ContractAddress[JBCoreContracts.JBPrices][chainId] as
     | Address
     | undefined
 

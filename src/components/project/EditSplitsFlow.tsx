@@ -4,7 +4,7 @@ import {
   JBCoreContracts,
   RevnetCoreContracts,
   SPLITS_TOTAL_PERCENT,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbDirectoryAbi,
   jbProjectsAbi,
   jbSplitsAbi,
@@ -271,7 +271,7 @@ export async function readSplitDestination({ chainId, projectId, groupId, accoun
   chainId: JBChainId; projectId: number; groupId: bigint; account: Address; rulesetId?: bigint; signal?: AbortSignal
 }): Promise<SplitSnapshot> {
   const client = clientFor(chainId)
-  const addresses = jbContractAddress['6']
+  const addresses = jbV6ContractAddress
   const [owner, controller, current] = await Promise.all([
     client.readContract({ address: addresses[JBCoreContracts.JBProjects][chainId], abi: jbProjectsAbi, functionName: 'ownerOf', args: [BigInt(projectId)] }),
     client.readContract({ address: addresses[JBCoreContracts.JBDirectory][chainId], abi: jbDirectoryAbi, functionName: 'controllerOf', args: [BigInt(projectId)] }),
@@ -538,7 +538,7 @@ export function EditSplitsFlow({
 
   const { data: owner } = useReadContract({
     abi: jbProjectsAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
     functionName: 'ownerOf',
     args: [BigInt(projectId)],
     chainId,
@@ -617,7 +617,7 @@ export function EditSplitsFlow({
 
   const { data: controller } = useReadContract({
     abi: jbDirectoryAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId],
     functionName: 'controllerOf',
     args: [BigInt(projectId)],
     chainId,
@@ -716,7 +716,7 @@ function EditSplitsModal({
   }, [chainId, projectId, chains])
   const projectChains = projectScope.chains
 
-  const splitsAddr = jbContractAddress['6'][JBCoreContracts.JBSplits][
+  const splitsAddr = jbV6ContractAddress[JBCoreContracts.JBSplits][
     chainId
   ] as Address
   const isReserved = groupId === RESERVED_TOKEN_SPLIT_GROUP_ID

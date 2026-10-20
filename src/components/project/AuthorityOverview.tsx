@@ -3,7 +3,7 @@
 import {
   JB_CHAINS,
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbPermissionsAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
@@ -1172,7 +1172,7 @@ export function PermissionEditor({
         const scopeProjectId = grant?.wildcard ? 0n : BigInt(deployment.projectId);
         const bitmap = (await clientFor(deployment.chainId).readContract({
           address:
-            jbContractAddress["6"][JBCoreContracts.JBPermissions][
+            jbV6ContractAddress[JBCoreContracts.JBPermissions][
               deployment.chainId
             ],
           abi: jbPermissionsAbi,

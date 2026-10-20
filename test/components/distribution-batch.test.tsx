@@ -1,4 +1,4 @@
-import { JBCoreContracts, USDC_ADDRESSES, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, USDC_ADDRESSES, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { QueryClient } from '@tanstack/react-query'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { zeroAddress, type Address } from 'viem'
@@ -30,13 +30,13 @@ const renderers: ReactTestRenderer[] = []
 let queryClient: QueryClient
 function reserved(chain: JBChainId): ReservedDistribution {
   return { kind: 'reserved', chainId: chain, projectId: chain === 1 ? 17 : 303, owner: ACCOUNT, authority: ACCOUNT,
-    controller: jbContractAddress['6'][JBCoreContracts.JBController][chain], symbol: chain === 1 ? 'AAA' : 'BBB',
+    controller: jbV6ContractAddress[JBCoreContracts.JBController][chain], symbol: chain === 1 ? 'AAA' : 'BBB',
     current: { ruleset: { id: chain === 1 ? 51 : 79 }, metadata: {} } as ReservedDistribution['current'],
     pending: BigInt(chain === 1 ? 100 : 200) * 10n ** 18n,
     splits: [{ percent: 500_000_000, projectId: 0n, beneficiary: OTHER, lockedUntil: 0, hook: zeroAddress, preferAddToBalance: false }] }
 }
 function payout(chain: JBChainId): PayoutDistribution {
-  return { ...reserved(chain), kind: 'payouts', terminal: jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][chain], symbol: 'USDC',
+  return { ...reserved(chain), kind: 'payouts', terminal: jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][chain], symbol: 'USDC',
     context: { token: USDC_ADDRESSES[chain], decimals: 6, currency: 2, symbol: 'USDC', balance: 50_000_000n, limits: [{ amount: 100_000_000n, currency: 2, used: 0n, remaining: 100_000_000n }] },
     amount: 12_000_000n, currency: 2, quote: 12_000_000n, min: 12_000_000n, hookFeeless: {} }
 }

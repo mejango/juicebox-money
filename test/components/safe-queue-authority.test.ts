@@ -1,5 +1,5 @@
 import {
-  jbContractAddress,
+  jbV6ContractAddress,
   RevnetCoreContracts,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -148,7 +148,7 @@ describe('Safe queue project authority', () => {
   })
 
   it('requires canonical REVOwner custody and a live operator grant', async () => {
-    const revOwner = jbContractAddress['6'][RevnetCoreContracts.REVOwner][
+    const revOwner = jbV6ContractAddress[RevnetCoreContracts.REVOwner][
       CHAIN_ID
     ] as Address
     mocks.readContract
