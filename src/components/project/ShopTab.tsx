@@ -94,7 +94,10 @@ import { StickyRecipient } from '@/components/project/StickyRecipient'
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
 
-const DefifaOwnedNfts = dynamic(() => import('./DefifaOwnedNfts').then(module => module.DefifaOwnedNfts))
+// The loading line is the chunk's own boundary (see LazyProjectTabs).
+const DefifaOwnedNfts = dynamic(() => import('./DefifaOwnedNfts').then(module => module.DefifaOwnedNfts), {
+  loading: () => <p role="status" className="text-sm text-smoke-600">Loading your NFTs…</p>,
+})
 
 const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['preventOverspending', 'Require exact payment'],

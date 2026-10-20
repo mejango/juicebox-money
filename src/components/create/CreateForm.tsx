@@ -160,8 +160,11 @@ const AuthoritySafeEditor = dynamic(
   () => import("./AuthoritySafeEditor").then(module => module.AuthoritySafeEditor),
   { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading Safe editor…</p> },
 );
+// Mounts only when open: client-side, with its own empty boundary so a first
+// open never falls through to the route skeleton.
 const TxConfirmDialog = dynamic(
   () => import("@/components/ui/TxConfirmDialog").then(module => module.TxConfirmDialog),
+  { ssr: false },
 );
 const IssuanceLadder = dynamic(
   () => import("@/components/project/IssuanceLadder").then(module => module.IssuanceLadder),

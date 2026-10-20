@@ -92,7 +92,11 @@ import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 
-const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout))
+// The loading line is the chunk's own boundary; without it a first load falls
+// through to the route skeleton.
+const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout), {
+  loading: () => <p role="status" className="text-sm text-smoke-600">Loading checkout…</p>,
+})
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
