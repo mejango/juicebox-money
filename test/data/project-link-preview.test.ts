@@ -90,6 +90,15 @@ describe('project link preview balance', () => {
     ).toBe('2 ETH + $12.50')
   })
 
+  it('values a deployment without rows or a usable symbol in USD', () => {
+    expect(
+      formatProjectPreviewBalance([
+        { ...deployment('5', 18, ''), balanceUsd: '12500000000000000000' },
+        deployment('1000000', 6, 'USDC'),
+      ]),
+    ).toBe('1 USDC + $12.50')
+  })
+
   it('does not turn malformed or unknown data into a zero balance', () => {
     expect(
       formatProjectPreviewBalance([

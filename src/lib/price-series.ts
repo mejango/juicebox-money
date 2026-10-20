@@ -181,11 +181,11 @@ export function axisRate(
  * One moment's net cash-out floor on the chart axis. Null when the moment has
  * no floor. Throws on an unparseable row.
  *
- * With one accounting token the raw balance is exact. With several it adds
- * unlike units, so the floor is priced from `balanceUsd` and converted to the
- * axis from USD: as is on a USD axis, otherwise through the moment's USD rate
- * for one accounting token (an approximation where chains carry different
- * rates). A moment the indexer could not value keeps the raw balance.
+ * A USD axis prices from `balanceUsd`. A native axis keeps the exact raw
+ * balance when the group accepts one token; with several the raw balance adds
+ * unlike units, so it converts `balanceUsd` through the moment's USD rate for
+ * one accounting token (an approximation where chains carry different rates).
+ * A moment the indexer could not value keeps the raw balance.
  */
 export function floorAtMoment(
   moment: BsPriceMoment,
@@ -206,7 +206,7 @@ export function floorAtMoment(
   const pointRate = usdRateOf(moment.accountingTokenUsdRate)
   const balanceUsd = BigInt(moment.balanceUsd || '0')
   const inUsd =
-    severalTokens && balanceUsd > 0n && (perPointRates || pointRate !== undefined)
+    balanceUsd > 0n && (perPointRates || (severalTokens && pointRate !== undefined))
   const balance = inUsd ? balanceUsd : BigInt(moment.balance)
   const price = netCashOutDisplayValue(
     cashOutPriceFromTotals({

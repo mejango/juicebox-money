@@ -26,8 +26,8 @@ describe('project metadata section extraction', () => {
   it('preserves current metadata, safe description/links and required disclosure in each owning section', async () => {
     renderToStaticMarkup(await ProjectTreasury({ ...base, metadata }))
     expect(capture.treasury).toHaveBeenLastCalledWith(expect.objectContaining({ projectName: 'Current name', payDisclosure: metadata.payDisclosure }))
-    renderToStaticMarkup(await ProjectOverview({ ...base, metadata, authority: null, authorities: [], suckerGroupId: null }))
-    expect(capture.overview).toHaveBeenLastCalledWith(expect.objectContaining({ description: metadata.description, descriptionFallback: ['One & two', 'Three'], socialLinks: [['Website', 'https://example.com/'], ['X', 'https://x.com/juicebox'], ['Discord', null], ['Telegram', null], ['WhatsApp', null], ['Instagram', null]] }))
+    renderToStaticMarkup(await ProjectOverview({ ...base, metadata, authority: null, authorities: [], suckerGroupId: null, severalTokens: true }))
+    expect(capture.overview).toHaveBeenLastCalledWith(expect.objectContaining({ severalTokens: true, description: metadata.description, descriptionFallback: ['One & two', 'Three'], socialLinks: [['Website', 'https://example.com/'], ['X', 'https://x.com/juicebox'], ['Discord', null], ['Telegram', null], ['WhatsApp', null], ['Instagram', null]] }))
     renderToStaticMarkup(await ProjectExtras({ ...base, metadata, authorities: [] }))
     expect(capture.extras).toHaveBeenLastCalledWith(expect.objectContaining({ profile: expect.objectContaining({ name: metadata.name, tagline: metadata.projectTagline, payNotice: metadata.payDisclosure }) }))
     renderToStaticMarkup(await ProjectBackOffice({ ...base, metadata, deployments: [], owner: null, operator: null }))

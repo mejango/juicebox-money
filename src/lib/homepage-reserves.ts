@@ -54,15 +54,15 @@ const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
     const [balances, groups, tokenMoments, volumeMoments, addToBalances] =
       await Promise.all([
-        getProjectTokenBalances(),
+        // A missing breakdown or history leaves the headlines standing.
+        getProjectTokenBalances().catch(() => []),
         getHomepageBalanceGroups(),
-        // A missing history leaves the headline standing.
         getProjectTokenBalanceMoments().catch(() => []),
         getGroupVolumeMoments().catch(() => []),
         getAddToBalanceInflows().catch(() => [] as BsAddToBalance[]),
       ])
 
-    let totalUsd = 0
+    let rowsUsd = 0
     const perChain = new Map(
       RESERVE_CHAIN_IDS.map(chainId => [
         chainId as number,
@@ -71,7 +71,7 @@ const cachedHomepageReserves = unstable_cache(
     )
     for (const row of balances) {
       const usd = usd18(row.balanceUsd)
-      totalUsd += usd
+      rowsUsd += usd
       const tokens = perChain.get(row.chainId)
       if (!tokens || BigInt(row.balance) === 0n) continue
       const key = row.token.toLowerCase()
@@ -87,6 +87,10 @@ const cachedHomepageReserves = unstable_cache(
       line.usd += usd
       tokens.set(key, line)
     }
+    // The groups carry the same total; they stand in when no rows arrived.
+    const totalUsd = balances.length
+      ? rowsUsd
+      : groups.reduce((sum, group) => sum + usd18(group.balanceUsd), 0)
 
     // Each project-token pair holds at its latest balance, valued at the rate
     // recorded with it, so the curve lands on today's per-token balanceUsd.

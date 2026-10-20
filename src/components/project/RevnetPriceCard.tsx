@@ -83,11 +83,14 @@ export function RevnetPriceCard({
   projectId,
   chains,
   suckerGroupId,
+  severalTokens,
 }: {
   chainId: JBChainId
   projectId: number
   chains: [number, number][]
   suckerGroupId: string | null
+  /** The group accepts more than one token kind, per the indexed deployments. */
+  severalTokens: boolean
 }) {
   const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
@@ -414,8 +417,6 @@ export function RevnetPriceCard({
     const taxSchedule = [...all].sort(
       (a, b) => a.ruleset.start - b.ruleset.start,
     )
-    // Several accounting tokens make the raw balance add unlike units.
-    const severalTokens = data.contexts.length > 1
     let previous: CashOutObservation | undefined
     return [...history.moments]
       .sort((a, b) => Number(a.timestamp) - Number(b.timestamp))
@@ -457,7 +458,7 @@ export function RevnetPriceCard({
         return []
       }
       })
-  }, [all, data, history?.moments, historyRate, perPointRates])
+  }, [all, data, history?.moments, historyRate, perPointRates, severalTokens])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()

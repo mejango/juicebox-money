@@ -508,6 +508,7 @@ async function ProjectPageContents({ urn, result: pending }: {
                   authorities={authorities}
                   chains={chainPairs}
                   suckerGroupId={project.suckerGroupId}
+                  severalTokens={!accountingToken}
                 />
                 </Suspense>
               ),

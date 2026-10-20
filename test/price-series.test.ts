@@ -78,12 +78,12 @@ describe('floorAtMoment', () => {
     expect(floorAtMoment(moment, { ...options, perPointRates: false })).toBeCloseTo(0.0014625, 8)
   })
 
-  it('keeps the exact raw balance when the group accepts one token', () => {
-    // 2 ETH across two chains whose indexed rates differ: the USD sum over the
-    // latest rate would misstate the ETH floor, the raw balance cannot.
+  it('keeps the exact raw balance on a native axis when the group accepts one token', () => {
+    // 2 ETH across two chains whose indexed rates differ ($2,000 and $3,000):
+    // dividing the $5,000 by one rate would misstate the ETH floor.
     const single = { ...moment, balance: String(2n * E18), balanceUsd: String(5_000n * E18) }
     expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: false })).toBeCloseTo(0.00195, 8)
-    expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: true })).toBeCloseTo(3.9, 8)
+    expect(floorAtMoment(single, { ...options, severalTokens: false, perPointRates: true })).toBeCloseTo(4.875, 8)
   })
 
   it('keeps the raw balance for a moment the indexer could not value', () => {

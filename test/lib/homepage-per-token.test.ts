@@ -43,13 +43,17 @@ const addToBalances = [
 ]
 
 let volumeHistoryFails = false
+let balancesFail = false
 
 vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (items: unknown) => items }))
 vi.mock('@/lib/bendystraw', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/bendystraw')>()),
   bendystraw: async () => ({ suckerGroups: { items: groups, totalCount: groups.length } }),
-  getProjectTokenBalances: async () => balances,
+  getProjectTokenBalances: async () => {
+    if (balancesFail) throw new Error('indexer down')
+    return balances
+  },
   getProjectTokenBalanceMoments: async () => tokenMoments,
   getGroupVolumeMoments: async () => {
     if (volumeHistoryFails) throw new Error('indexer down')
@@ -103,6 +107,18 @@ describe('homepage per-token data', () => {
       expect(reserves.passedThroughUsd).toBe(2_007)
     } finally {
       volumeHistoryFails = false
+    }
+  })
+
+  it('keeps both headlines when the per-token balances fail', async () => {
+    balancesFail = true
+    try {
+      const reserves = await getHomepageReserves()
+      expect(reserves.totalUsd).toBeCloseTo(2_005.2)
+      expect(reserves.passedThroughUsd).toBe(2_007)
+      expect(reserves.chains.every(chain => chain.tokens.length === 0)).toBe(true)
+    } finally {
+      balancesFail = false
     }
   })
 

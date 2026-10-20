@@ -41,8 +41,8 @@ export function projectPreviewSlogan(...values: Array<string | null | undefined>
 /**
  * Format indexed balances without adding unlike tokens together. A project
  * can hold ETH and USDC at once, so each token kind is kept as its own
- * visible bucket, read from the per-token rows. A held token with no known
- * symbol is shown in USD. A deployment with no rows falls back to its
+ * visible bucket, read from the per-token rows. A holding with no known
+ * symbol or decimals is shown in USD. A deployment with no rows falls back to its
  * accounting-token balance, or to its USD balance when it accepts several
  * tokens, whose raw balance adds unlike units.
  */
@@ -78,11 +78,10 @@ export function formatProjectPreviewBalance(
       )?.trim()
       const decimals = row.decimals
       try {
-        if (!symbol && row !== deployment) {
+        if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) {
           usdOnly += BigInt(row.balanceUsd || '0')
           continue
         }
-        if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) continue
         const key = `${symbol.toUpperCase()}:${decimals}`
         const current = buckets.get(key)
         buckets.set(key, {
