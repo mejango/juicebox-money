@@ -42,10 +42,11 @@ vi.mock('@/lib/ens', async importOriginal => {
 import { SearchBox } from '@/components/SearchBox'
 import { toUrn } from '@/lib/urn'
 
-it('a submit waiting on the handle normalizer never overrides a newer one', async () => {
+it('a submit waiting on the handle normalizer never overrides a newer one or another navigation', async () => {
   vi.stubGlobal('fetch', mocks.fetch)
+  const location = { assign: mocks.assign, pathname: '/', search: '', reload: mocks.reload }
   vi.stubGlobal('window', {
-    location: { assign: mocks.assign, pathname: '/', reload: mocks.reload },
+    location,
     history: { state: null, replaceState: mocks.replaceState },
   })
   let renderer!: TestRenderer.ReactTestRenderer
@@ -58,6 +59,15 @@ it('a submit waiting on the handle normalizer never overrides a newer one', asyn
   await act(async () => input().props.onChange({ target: { value: 'base:9' } }))
   await act(async () => input().props.onKeyDown({ key: 'Enter' }))
   expect(mocks.push).toHaveBeenCalledWith(`/${toUrn(8453, 9)}`)
+
+  // A second box submits a handle, then a header link navigates elsewhere.
+  let other!: TestRenderer.ReactTestRenderer
+  await act(async () => {
+    other = TestRenderer.create(createElement(SearchBox, { expanded: true }))
+  })
+  await act(async () => other.root.findByType('input').props.onChange({ target: { value: '@other.juicebox' } }))
+  await act(async () => other.root.findByType('input').props.onKeyDown({ key: 'Enter' }))
+  location.pathname = '/build'
 
   await act(async () => {
     gate.open()

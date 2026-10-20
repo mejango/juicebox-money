@@ -262,8 +262,13 @@ export function SearchBox({
     else if (handlePath) goHandle(handlePath)
     else if (handlePending) {
       const submission = ++submissionRef.current
+      const here = () => `${window.location.pathname}${window.location.search}`
+      const from = here()
       const handle = await projectHandleFromRoute(query.trim()).catch(() => null)
-      if (handle && submission === submissionRef.current) goHandle(`/@${encodeURIComponent(handle.handle)}`)
+      // Navigating anywhere else meanwhile (a header link) also wins.
+      if (handle && submission === submissionRef.current && here() === from) {
+        goHandle(`/@${encodeURIComponent(handle.handle)}`)
+      }
     }
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
