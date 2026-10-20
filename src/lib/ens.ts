@@ -40,12 +40,13 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   const key = name.trim().toLowerCase()
   const cached = addressCache.get(key)
   if (cached !== undefined) return cached
+  // A failed chunk download is not an answer: leave the name uncached so the
+  // next lookup requests the chunk again.
+  const loaded = await Promise.all([import('@/lib/ens-client'), import('viem/ens')]).catch(() => null)
+  if (!loaded) return null
+  const [{ ensClient }, { normalize }] = loaded
   let address: Address | null = null
   try {
-    const [{ ensClient }, { normalize }] = await Promise.all([
-      import('@/lib/ens-client'),
-      import('viem/ens'),
-    ])
     address = await ensClient.getEnsAddress({ name: normalize(key) })
   } catch {
     address = null
@@ -60,9 +61,12 @@ export async function lookupEnsName(address: string): Promise<string | null> {
   const key = address.trim().toLowerCase()
   const cached = nameCache.get(key)
   if (cached !== undefined) return cached
+  // As in lookupEnsAddress, a failed chunk download is not cached.
+  const loaded = await import('@/lib/ens-client').catch(() => null)
+  if (!loaded) return null
+  const { ensClient } = loaded
   let name: string | null = null
   try {
-    const { ensClient } = await import('@/lib/ens-client')
     name = await ensClient.getEnsName({ address: address.trim() as Address })
   } catch {
     name = null
