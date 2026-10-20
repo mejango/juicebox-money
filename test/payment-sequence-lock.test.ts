@@ -1,7 +1,7 @@
 // A receipt-wait timeout is not a failure. The waiter gives up after ~5 minutes with the
 // payment still pending; re-enabling retry there sends a SECOND `pay` while the first is in
 // flight — a real double payment, and one that bypasses useSafeTx's own re-submit guard.
-import { paymentSequenceLocked } from '@/lib/permit2-swap'
+import { paymentSequenceLocked } from '@/lib/payment-sequence-lock'
 import { describe, expect, it } from 'vitest'
 
 describe('paymentSequenceLocked', () => {

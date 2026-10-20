@@ -7,11 +7,6 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { decodeAbiParameters, type Address, type Hex } from 'viem'
 import type { TxRequest } from '@/hooks/useSafeTx'
-import {
-  buildDirectPaySwapTx,
-  restampDirectSwapDeadline,
-  type DirectPaySwapQuote,
-} from '@/lib/direct-pay-swap'
 import { buildCollectMarketFeesUnlockData } from '@/lib/market-liquidity'
 import {
   buildModifyLiquiditiesRequest,
@@ -112,29 +107,6 @@ export const STAMPED_SITES: readonly [site: string, build: (stamp: bigint, other
       ),
   ],
   ['the router authorization (CashOutFlow)', routerAuthorization],
-  ['the router authorization (PayPanel)', routerAuthorization],
-  [
-    'the direct swap payment (PayPanel)',
-    (stamp, other = 0n) =>
-      request(
-        // Built at review, restamped as it is sent.
-        restampDirectSwapDeadline(
-          buildDirectPaySwapTx({
-            chainId: STAMPED_CHAIN,
-            quote: {
-              poolKey,
-              zeroForOne: true,
-              minimumTokenCount: 10n ** 21n + other,
-              inputRoute: { kind: 'single-v4' },
-            } as unknown as DirectPaySwapQuote,
-            amount: 10n ** 18n,
-            recipient: SAFE,
-            deadline: 1n,
-          }),
-          stamp,
-        ),
-      ),
-  ],
   ['the position manager authorization (AddLiquidityFlow, EditPositionPanel, MarketEditPanel)', positionManagerAuthorization],
   ['the mint (AddLiquidityFlow)', (stamp, other = 0n) => liquidity(`0x0b${(other + 1n).toString(16).padStart(62, '0')}`, stamp)],
   ['the edit (EditPositionPanel)', (stamp, other = 0n) => liquidity(`0x0c${(other + 1n).toString(16).padStart(62, '0')}`, stamp)],

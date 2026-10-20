@@ -23,14 +23,11 @@ import {
 import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
-  build721PayMetadata,
-  buildPermit2ApproveTx,
   buildPayTx,
   effectiveTierPrice,
   getProjectNftInventory,
-  previewPay,
+  prepareUserPay,
   tokenCurrencyId,
-  uniswapV4Deployment,
 } from "@bananapus/nana-sdk-core/v6";
 import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
@@ -80,26 +77,11 @@ import { approvalIntent, payIntent } from "@bananapus/nana-sdk-core/review";
 import { legacyPayKeys } from "@/lib/legacy-intents";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/contract-write";
-import { isSafeConnection, SAFE_PROPOSAL_UNCONFIRMED, swapDeadline } from "@/lib/safe-connector";
+import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
-import { resolveMarket } from "@/components/project/MarketSection";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
-import {
-  addPermit2SignatureToSwap,
-  paymentSequenceLocked,
-  permit2SignatureNeedsOnchainFallback,
-  shouldUsePermit2Signature,
-  type Permit2SignatureAuthorization,
-} from "@/lib/permit2-swap";
-import { useReviewedPermit2Signature } from "@/hooks/useReviewedPermit2Signature";
-import {
-  buildDirectPaySwapTx,
-  directSwapRouteApplies,
-  quoteDirectPaySwap,
-  restampDirectSwapDeadline,
-  type DirectPaySwapQuote,
-} from "@/lib/direct-pay-swap";
+import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { useShop721 } from '@/hooks/useShop721'
 import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE } from "@/hooks/useShop721";
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from "@/components/project/CheckoutAmountRow";
@@ -133,24 +115,29 @@ type PayContext = {
   viaRouter: boolean;
 };
 
-type PaymentTransactionAction = {
-  kind: "token-approval" | "router-approval" | "payment";
+type PaymentSequenceAction = {
+  kind: "token-approval" | "payment";
   label: string;
   request: TxRequest;
-  swapInputRoute?: DirectPaySwapQuote["inputRoute"];
   /** The write hold key for an action whose calldata regenerates on retry (an expiration, a deadline, a quote). */
   intent?: string;
   /** The keys the last release built for this action (legacy-intents). */
   legacy?: string[];
 };
 
-type PaymentSignatureAction = {
-  kind: "router-signature";
-  label: string;
-  authorization: Permit2SignatureAuthorization;
+/** What a review froze: the wallet write is refused once the form says otherwise. */
+type ReviewedPayment = {
+  amountRaw: bigint;
+  minReturned: bigint;
+  account: Address;
+  mode: "pay" | "addbalance";
+  terminal: Address;
+  token: Address;
+  cartKey: string;
+  metadata: Hex | undefined;
 };
 
-type PaymentSequenceAction = PaymentTransactionAction | PaymentSignatureAction;
+const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
 
 type PaySurface = {
   contexts: PayContext[];
@@ -234,24 +221,6 @@ type ShopPayRoute = {
   unavailable?: boolean;
 };
 
-const permit2AllowanceAbi = [
-  {
-    type: "function",
-    name: "allowance",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner", type: "address" },
-      { name: "token", type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [
-      { name: "amount", type: "uint160" },
-      { name: "expiration", type: "uint48" },
-      { name: "nonce", type: "uint48" },
-    ],
-  },
-] as const;
-
 /**
  * The pay side of the treasury card (website/ pay-card parity, jbm shape):
  * mode select (Pay / Add to balance), the project's real accepted tokens
@@ -303,19 +272,12 @@ export function PayPanel({
   const nativeMarket = identity.data?.protocol === 'defifa';
   const tx = useSafeTx(chainId);
   const approveTx = useSafeTx(chainId);
-  const routerApproveTx = useSafeTx(chainId);
-  const { signPermit2Async } = useReviewedPermit2Signature();
   // Once an approval is confirmed, every dependent allowance read and final
   // simulation is anchored to that receipt block. Base providers are load
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
-  // backend that still sees an expired Permit2 allowance.
-  const approvalBlock = [approveTx.receipt, routerApproveTx.receipt].reduce<bigint | undefined>(
-    (latest, receipt) =>
-      receipt?.status === "success" && (latest === undefined || receipt.blockNumber > latest)
-        ? receipt.blockNumber
-        : latest,
-    undefined,
-  );
+  // backend that still sees the old allowance.
+  const approvalBlock =
+    approveTx.receipt?.status === "success" ? approveTx.receipt.blockNumber : undefined;
 
   const [mode, setMode] = useState<"pay" | "addbalance">("pay");
   const [amount, setAmount] = useState("");
@@ -335,14 +297,13 @@ export function PayPanel({
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null);
   const [memo, setMemo] = useState("");
-  const [showRouteComparison, setShowRouteComparison] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [sequenceStarted, setSequenceStarted] = useState(false);
   const [sequenceComplete, setSequenceComplete] = useState(false);
   const [sequenceStatus, setSequenceStatus] = useState<string | null>(null);
   const [sequenceError, setSequenceError] = useState<string | null>(null);
   const [sequenceSafeStage, setSequenceSafeStage] = useState<
-    "token-approval" | "router-approval" | "payment" | null
+    "token-approval" | "payment" | null
   >(null);
   const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
   /** A submitted payment whose receipt hasn't arrived. Retry stays blocked while set. */
@@ -351,11 +312,7 @@ export function PayPanel({
   // moving while the dialog is open (the amount is debounced), so the summary
   // has to be captured with the actions rather than read live. `account`
   // receives the tokens and owns the approvals: only it may send them.
-  const [sequenceSummary, setSequenceSummary] = useState<{
-    amountRaw: bigint;
-    minReturned: bigint;
-    account: Address;
-  } | null>(null);
+  const [sequenceSummary, setSequenceSummary] = useState<ReviewedPayment | null>(null);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
@@ -923,12 +880,9 @@ export function PayPanel({
       ),
     [cart],
   );
-  const metadata: Hex | undefined =
+  const tiers =
     shop && tierIds.length > 0 && shopMatchesToken
-      ? build721PayMetadata({
-          metadataIdTarget: shop.idTarget,
-          tierIdsToMint: tierIds,
-        })
+      ? { metadataIdTarget: shop.idTarget, tierIdsToMint: tierIds }
       : undefined;
 
   // ---- Terminal + preview ----
@@ -936,9 +890,10 @@ export function PayPanel({
   // supplied this token's route, including a directly attached gateway.
   const terminalAddress = context?.terminal;
 
-
+  // One read prepares the payment: the metadata to send (shop items plus the
+  // buyback hook's pool-or-mint choice), the preview, and the minimum.
   const {
-    data: preview,
+    data: prepared,
     isFetching: previewLoading,
     isError: previewError,
     isPlaceholderData: previewIsPrevious,
@@ -946,14 +901,16 @@ export function PayPanel({
     refetch: refetchPreview,
   } = useQuery({
     queryKey: [
-      "previewPay",
+      "prepareUserPay",
       chainId,
       projectId,
       context?.token,
       context?.viaRouter,
       terminalAddress,
       amountRaw.toString(),
-      metadata ?? "0x",
+      address ?? null,
+      tiers?.metadataIdTarget ?? null,
+      tierIds.join(","),
     ],
     enabled:
       !!publicClient &&
@@ -967,143 +924,30 @@ export function PayPanel({
     placeholderData: (previous) => previous,
     retry: false,
     queryFn: () =>
-      previewPay(publicClient!, {
+      prepareUserPay(publicClient!, {
         chainId,
         terminal: terminalAddress!,
         projectId: BigInt(projectId),
         token: context!.token,
         amount: amountRaw,
         beneficiary: address ?? zeroAddress,
-        metadata,
+        tiers,
       }),
   });
-
-  // Compare the terminal preview with a direct exact-input Uniswap V4 quote.
-  // The direct path bypasses reserved-token splits, so the SDK compares its
-  // slippage-protected minimum—not its optimistic quote—against what the
-  // terminal guarantees. Shop checkouts stay on the terminal because the
-  // direct pool cannot mint the selected NFTs.
-  const { data: market } = useQuery(projectDisplayQuery(queryClient, {
-    queryKey: ["payMarket", chainId, projectId],
-    enabled: !!publicClient && mode === "pay" && cartCount === 0,
-    staleTime: 30_000,
-    retry: false,
-    queryFn: (reader) =>
-      resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
-  }));
-  const {
-    data: directSwapQuote,
-    isFetching: directSwapQuoteLoading,
-    isError: directSwapQuoteError,
-    isPlaceholderData: directSwapQuoteIsPrevious,
-    isStale: directSwapQuoteIsStale,
-    refetch: refetchDirectSwapQuote,
-  } = useQuery({
-    queryKey: [
-      "directPaySwapQuote",
-      chainId,
-      projectId,
-      context?.token,
-      amountRaw.toString(),
-      market?.status === "pool" ? market.poolId : null,
-      // The quote is SCORED against this preview, so a changed preview has to
-      // requote — otherwise the route is picked using the previous amount's
-      // terminal numbers.
-      preview?.beneficiaryTokenCount.toString() ?? null,
-    ],
-    enabled:
-      !!publicClient &&
-      !!preview &&
-      // A placeholder preview belongs to the previous amount; scoring against
-      // it picks the route on stale terminal output.
-      !previewIsPrevious &&
-      market?.status === "pool" &&
-      !!context &&
-      amountRaw > 0n &&
-      mode === "pay" &&
-      cartCount === 0,
-    placeholderData: (previous) => previous,
-    retry: false,
-    queryFn: () => {
-      if (market?.status !== "pool") {
-        throw new Error("No direct swap pool is available.");
-      }
-      return quoteDirectPaySwap({
-        client: publicClient!,
-        chainId,
-        poolKey: market.key,
-        pairIsCurrency0: market.pairIsC0,
-        paymentToken: context!.token,
-        amount: amountRaw,
-        payPreview: preview!,
-        paySettlement: context?.viaRouter ? "swap" : "issuance",
-      });
-    },
-  });
-  // The ONLY quote allowed to route this payment. Anything the query is still
-  // serving that doesn't apply to what's on screen resolves to null here, so a
-  // stale quote can't reach the transaction builders further down.
-  const activeSwapQuote =
-    directSwapQuote &&
-    directSwapRouteApplies({
-      hasQuote: true,
-      quoteErrored: directSwapQuoteError,
-      quoteIsPrevious: directSwapQuoteIsPrevious,
-      mode,
-      cartCount,
-      amountRaw,
-    })
-      ? directSwapQuote
-      : null;
-  const directSwapRoute = !!activeSwapQuote;
-  const bestRoute = useMemo(
-    () =>
-      activeSwapQuote
-        ? {
-            kind: "direct-swap" as const,
-            settlement: "swap" as const,
-            beneficiaryTokenCount: activeSwapQuote.minimumTokenCount,
-            reservedTokenCount: 0n,
-          }
-        : preview
-          ? {
-              kind: "pay" as const,
-              settlement: context?.viaRouter
-                ? ("swap" as const)
-                : ("issuance" as const),
-              ...preview,
-            }
-          : null,
-    [activeSwapQuote, context?.viaRouter, preview],
-  );
+  const preview = prepared?.preview;
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
   const previewReady =
     mode === "addbalance" ||
-    (!!preview &&
-      !previewError &&
-      !previewLoading &&
-      !previewIsPrevious &&
-      !directSwapQuoteLoading);
-  // Floor the guaranteed minimum at 99% of the preview (website parity): a
-  // buyback-routed or USD-issuance pay legitimately drifts between preview
-  // and inclusion, and an exact min would make ordinary pays revert. A
-  // verified zero stays zero.
-  const minReturned = activeSwapQuote
-    ? activeSwapQuote.minimumTokenCount
-    : ((preview?.beneficiaryTokenCount ?? 0n) * 99n) / 100n;
+    (!!preview && !previewError && !previewLoading && !previewIsPrevious);
+  const minReturned = prepared?.minReturnedTokens ?? 0n;
 
   // ---- ERC-20 allowance ----
   // ERC-20 pays approve the attached entry that received the preview: the
   // multi terminal, registry, gateway, or direct router. Each accepts a direct
   // ERC-20 allowance, so approve(entry, amount) also preserves gateway custody.
-  const swapDeployment = directSwapRoute
-    ? uniswapV4Deployment(chainId)
-    : undefined;
-  const approvalSpender = directSwapRoute
-    ? swapDeployment?.permit2
-    : terminalAddress;
+  const approvalSpender = terminalAddress;
   const { data: allowance, refetch: refetchAllowance } = useQuery({
     queryKey: [
       "payAllowance",
@@ -1131,69 +975,6 @@ export function PayPanel({
       }),
   });
   const needsApproval = !isNative && (allowance ?? 0n) < amountRaw;
-  const {
-    data: permit2Allowance,
-    isFetched: permit2AllowanceFetched,
-    refetch: refetchPermit2Allowance,
-  } = useQuery(
-    {
-      queryKey: [
-        "payPermit2Allowance",
-        chainId,
-        context?.token,
-        swapDeployment?.universalRouter,
-        address,
-        approvalBlock?.toString(),
-      ],
-      enabled:
-        !!publicClient &&
-        directSwapRoute &&
-        !isNative &&
-        !!address &&
-        !!context &&
-        !!swapDeployment?.universalRouter,
-      staleTime: 15_000,
-      queryFn: () =>
-        publicClient!.readContract({
-          address: swapDeployment!.permit2,
-          abi: permit2AllowanceAbi,
-          functionName: "allowance",
-          args: [
-            address!,
-            context!.token,
-            swapDeployment!.universalRouter as Address,
-          ],
-          blockNumber: approvalBlock,
-        }),
-    },
-  );
-  const needsPermit2Approval =
-    directSwapRoute &&
-    !isNative &&
-    (!permit2Allowance ||
-      permit2Allowance[0] < amountRaw ||
-      Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800);
-  const {
-    data: connectedWalletBytecode,
-    isFetched: connectedWalletCodeFetched,
-    isError: connectedWalletCodeError,
-  } = useQuery({
-    queryKey: ["payWalletBytecode", chainId, address],
-    enabled: !!publicClient && !!address && directSwapRoute && !isNative,
-    staleTime: Number.POSITIVE_INFINITY,
-    queryFn: () => publicClient!.getBytecode({ address: address! }),
-  });
-  const canSignPermit2 = shouldUsePermit2Signature({
-    needsApproval: needsPermit2Approval,
-    walletLookupSettled:
-      connectedWalletCodeFetched || connectedWalletCodeError,
-    walletBytecode: connectedWalletBytecode,
-    isSafe: tx.isSafe,
-  });
-  const permit2WalletKindLoading =
-    needsPermit2Approval &&
-    !connectedWalletCodeFetched &&
-    !connectedWalletCodeError;
 
   // ---- Terminal-surface safety (website/ renderTerminalNotice parity) ----
   // Fail closed: the target terminal MUST be listed among the project's
@@ -1211,18 +992,11 @@ export function PayPanel({
   const addBalanceViaRouter = mode === "addbalance" && !!context?.viaRouter;
 
   useEffect(() => {
-    if (approveTx.phase === "success" || routerApproveTx.phase === "success") {
-      void refetchAllowance();
-      void refetchPermit2Allowance();
-    }
-  }, [approveTx.phase, refetchAllowance, refetchPermit2Allowance, routerApproveTx.phase]);
+    if (approveTx.phase === "success") void refetchAllowance();
+  }, [approveTx.phase, refetchAllowance]);
 
   const sequenceSafeTx =
-    sequenceSafeStage === "token-approval"
-      ? approveTx
-      : sequenceSafeStage === "router-approval"
-        ? routerApproveTx
-        : tx;
+    sequenceSafeStage === "token-approval" ? approveTx : tx;
   const sequenceSafePhase = sequenceSafeTx.phase;
   const sequenceSafeError = sequenceSafeTx.error;
   // A Safe stage with the Safe says where it is in place of the stage's own line:
@@ -1230,7 +1004,7 @@ export function PayPanel({
   const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
   // A stage the write hold holds (its follower couldn't prove it) shows the hold's line and exit.
   const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "unconfirmed" ? sequenceSafeTx.error : null;
-  const panelTxError = [approveTx, routerApproveTx, tx]
+  const panelTxError = [approveTx, tx]
     .map(item => (sequenceSafeHeld && item === sequenceSafeTx ? null : item.error))
     .find(Boolean) ?? null;
   // A stage another flow dismissed shows nothing any more.
@@ -1268,7 +1042,7 @@ export function PayPanel({
         setSequenceActionIndex(completedIndex + 1);
       }
       setSequenceStatus("Safe action confirmed. Refreshing approvals…");
-      void Promise.all([refetchAllowance(), refetchPermit2Allowance()])
+      void refetchAllowance()
         .then(() => {
           setSequenceSafeStage(null);
           setSequenceStatus("Safe action confirmed. Continue to the next payment action.");
@@ -1281,7 +1055,6 @@ export function PayPanel({
   }, [
     mode,
     refetchAllowance,
-    refetchPermit2Allowance,
     sequenceSafeError,
     sequenceSafePhase,
     sequenceSafeStage,
@@ -1297,22 +1070,18 @@ export function PayPanel({
     approveTx.phase === "signing" ||
     approveTx.phase === "pending" ||
     approveTx.phase === "unconfirmed" ||
-    routerApproveTx.phase === "simulating" ||
-    routerApproveTx.phase === "signing" ||
-    routerApproveTx.phase === "pending" ||
-    routerApproveTx.phase === "unconfirmed" ||
     sequenceStarted ||
     !!sequenceSafeStage;
 
   useEffect(() => {
     if (!sequenceOpen) return;
-    const activePhase = [tx.phase, routerApproveTx.phase, approveTx.phase].find(
+    const activePhase = [tx.phase, approveTx.phase].find(
       phase => phase === "simulating" || phase === "signing" || phase === "pending",
     );
     if (activePhase === "simulating") setSequenceStatus("Checking the reviewed wallet action…");
     else if (activePhase === "signing") setSequenceStatus("Confirm this action in your wallet.");
     else if (activePhase === "pending") setSequenceStatus("Submitted. Confirming onchain…");
-  }, [approveTx.phase, routerApproveTx.phase, sequenceOpen, tx.phase]);
+  }, [approveTx.phase, sequenceOpen, tx.phase]);
 
   const preparePaymentSequence = (): PaymentSequenceAction[] => {
     if (!address || !context || !terminalAddress) return [];
@@ -1324,7 +1093,7 @@ export function PayPanel({
     // The keys the last release built for this payment: an attempt it left unresolved still holds it.
     const paymentLegacy = legacyPayKeys({
       mode, chainId, projectId, hook: shop?.hook, amount: debouncedAmount, token: context.token,
-      cart, checkoutReady: !!metadata, beneficiary: address, memo: memo.trim(),
+      cart, checkoutReady: !!tiers, beneficiary: address, memo: memo.trim(),
     });
     if (needsApproval && approvalSpender) {
       actions.push({
@@ -1339,88 +1108,28 @@ export function PayPanel({
         intent: approvalIntent(paymentKey, { step: "token-approval", token: context.token, spender: approvalSpender }),
       });
     }
-    if (needsPermit2Approval && swapDeployment?.universalRouter) {
-      // The nonce MUST come from a resolved allowance read: defaulting to 0 signs a
-      // PermitSingle that `InvalidNonce`s for any wallet that has permitted this
-      // token/spender before. The action is gated on `permit2AllowanceFetched` below.
-      const nonce = Number(permit2Allowance?.[2] ?? 0);
-      const authorization: Permit2SignatureAuthorization = {
-        chainId,
-        token: context.token,
-        spender: swapDeployment.universalRouter,
-        amount: amountRaw,
-        // `expiration`/`sigDeadline` are STAMPED AT SIGNING, not here: the signature is
-        // produced only after the preceding approval confirms, so a slow approval used to
-        // yield a dead-on-arrival 30-minute window. `signPermit2Authorization` fills them.
-        expiration: 0,
-        nonce,
-        sigDeadline: 0n,
-      };
-      if (canSignPermit2) {
-        actions.push({
-          kind: "router-signature",
-          label: "Sign the swap authorization",
-          authorization,
-        });
-      } else {
-        const request = buildPermit2ApproveTx({
-          chainId,
-          token: context.token,
-          amount: amountRaw,
-          expiration: now + 30 * 24 * 60 * 60,
-        });
-        actions.push({
-          kind: "router-approval",
-          label: "Authorize the Uniswap swap router",
-          request: {
-            ...request,
-            args: request.args as unknown as readonly unknown[],
-            label: "Authorize Uniswap swap router",
-          },
-          intent: approvalIntent(paymentKey, { step: "router-approval", token: context.token, spender: swapDeployment.universalRouter }),
-        });
-      }
-    }
     let paymentRequest: TxRequest;
     if (mode === "pay") {
-      if (activeSwapQuote) {
-        const viaSafe = isSafeConnection(wagmiConfig);
-        const request = buildDirectPaySwapTx({
-          chainId,
-          quote: activeSwapQuote,
-          amount: amountRaw,
-          recipient: address,
-          deadline: swapDeadline(viaSafe),
-        });
-        paymentRequest = {
-          ...request,
-          args: request.args as unknown as readonly unknown[],
-          label: viaSafe
-            ? "Swap for project tokens (30-day deadline for Safe signature collection)"
-            : "Swap for project tokens",
-        };
-      } else {
-        const request = buildPayTx({
-          chainId,
-          terminal: terminalAddress,
-          projectId: BigInt(projectId),
-          token: context.token,
-          amount: amountRaw,
-          beneficiary: address,
-          minReturnedTokens: minReturned,
-          memo: memo.trim() || undefined,
-          metadata,
-        });
-        paymentRequest = {
-          chainId,
-          address: request.address,
-          abi: request.abi,
-          functionName: request.functionName,
-          args: request.args as unknown as readonly unknown[],
-          value: request.value,
-          label: "Pay project",
-        };
-      }
+      const request = buildPayTx({
+        chainId,
+        terminal: terminalAddress,
+        projectId: BigInt(projectId),
+        token: context.token,
+        amount: amountRaw,
+        beneficiary: address,
+        minReturnedTokens: minReturned,
+        memo: memo.trim() || undefined,
+        metadata: prepared?.metadata,
+      });
+      paymentRequest = {
+        chainId,
+        address: request.address,
+        abi: request.abi,
+        functionName: request.functionName,
+        args: request.args as unknown as readonly unknown[],
+        value: request.value,
+        label: "Pay project",
+      };
     } else {
       paymentRequest = buildAddToBalanceRequest({
         chainId,
@@ -1434,18 +1143,53 @@ export function PayPanel({
     actions.push({
       kind: "payment",
       label:
-        mode === "pay"
-          ? directSwapRoute
-            ? "Execute the swap"
-            : "Execute the payment"
-          : "Add to the project balance",
+        mode === "pay" ? "Execute the payment" : "Add to the project balance",
       request: paymentRequest,
-      swapInputRoute: activeSwapQuote?.inputRoute,
-      // Its deadline restamps, its minimum re-quotes and its route may change on retry: held by what the user chose.
+      // Its minimum re-quotes and its route may change on retry: held by what the user chose.
       intent: paymentKey,
       legacy: paymentLegacy,
     });
     return actions;
+  };
+
+  // One guard for the Pay button and for submit, which re-enters after a
+  // queued preparation: whatever changed meanwhile still blocks the review.
+  const formClosed =
+    notStarted ||
+    surfaceError ||
+    terminalBlocked ||
+    addBalanceViaRouter ||
+    (surface?.pausePay && mode === "pay");
+  const formBlocked = busy || formClosed;
+  const cartBlocked =
+    cartCount > 0 && (shopRoutesLoading || shopCreditsLoading || !shopMatchesToken);
+  const cartKey = tierIds.join(",");
+
+  // The last check before the wallet: the same guards, the payment's preparation
+  // settled and unchanged, and the form still saying what was reviewed. Read live,
+  // since a review or simulation can outlast a refresh or an edit. Age alone never
+  // blocks: an older minimum still protects the payer, at worst by reverting.
+  const writeState = useRef<(reviewed: ReviewedPayment) => void>(() => {});
+  writeState.current = (reviewed) => {
+    const unchanged =
+      reviewed.mode === mode &&
+      reviewed.terminal === terminalAddress &&
+      reviewed.token === context?.token &&
+      reviewed.amountRaw === amountRaw &&
+      amount === debouncedAmount &&
+      reviewed.cartKey === cartKey;
+    const preparedFresh =
+      mode !== "pay" ||
+      (!!prepared &&
+        !previewError &&
+        !previewLoading &&
+        !previewIsPrevious &&
+        prepared.metadata === reviewed.metadata &&
+        prepared.minReturnedTokens === reviewed.minReturned);
+    const identityReady = mode !== "pay" || (!nativeMarket && identity.isSuccess);
+    if (formClosed || cartBlocked || !identityReady || !unchanged || !preparedFresh) {
+      throw new Error(PAYMENT_CHANGED);
+    }
   };
 
   const submit = () => {
@@ -1459,38 +1203,33 @@ export function PayPanel({
       setBuyExplainerOpen(true);
       return;
     }
-    if (!address) return;
+    if (!address || formBlocked || cartBlocked) return;
+    // The amount sent is the one prepared, which trails the input by its
+    // debounce. Prepare what is typed now, then continue once that is ready.
+    if (amount !== debouncedAmount) {
+      setDebouncedAmount(amount);
+      setSubmitWhenFresh(true);
+      return;
+    }
     const creditOnlyCheckout =
       mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
       !context ||
       !terminalAddress ||
-      (amountRaw <= 0n && !creditOnlyCheckout) ||
-      busy ||
-      permit2WalletKindLoading ||
-      // The Permit2 nonce comes from this read; opening the sequence before it resolves
-      // would sign nonce 0 and fail simulation for any wallet with a prior permit.
-      (needsPermit2Approval && !permit2AllowanceFetched) ||
-      (cartCount > 0 && shopCreditsLoading)
+      (amountRaw <= 0n && !creditOnlyCheckout)
     ) {
       return;
     }
-    // Fail-closed guards: never send to an unlisted terminal, and never try to
-    // top up a balance with a router swap (no min-output bound).
-    if (terminalBlocked || addBalanceViaRouter) return;
     // A quote older than the query's staleTime is refetched first; the effect
     // below re-enters once the refreshed quote is in. A live quote is used as is.
-    const swapQuoteStale = !!activeSwapQuote && directSwapQuoteIsStale;
-    if (mode === "pay" && (previewIsStale || swapQuoteStale)) {
+    if (mode === "pay" && previewIsStale) {
       setSubmitWhenFresh(true);
       void refetchPreview();
-      if (swapQuoteStale) void refetchDirectSwapQuote();
       return;
     }
     let actions: PaymentSequenceAction[]
     try {
-      // `buildDirectPaySwapTx` throws on a zero amount, reachable from credit-only
-      // checkouts — an unhandled throw here surfaced as a dead click.
+      // An unhandled builder throw here surfaced as a dead click.
       actions = preparePaymentSequence();
     } catch (reason) {
       setSequenceError(
@@ -1508,7 +1247,10 @@ export function PayPanel({
     setSequenceStarted(false);
     setSequenceSafeStage(null);
     setSequenceActions(actions);
-    setSequenceSummary({ amountRaw, minReturned, account: address });
+    setSequenceSummary({
+      amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
+      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined,
+    });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
@@ -1521,16 +1263,18 @@ export function PayPanel({
       setSubmitWhenFresh(false);
       return;
     }
-    if (!previewReady || previewIsStale || (activeSwapQuote && directSwapQuoteIsStale)) return;
+    if (!previewReady || (mode === "pay" && previewIsStale)) return;
     setSubmitWhenFresh(false);
     submit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitWhenFresh, previewReady, previewIsStale, previewError, activeSwapQuote, directSwapQuoteIsStale]);
+  }, [submitWhenFresh, previewReady, previewIsStale, previewError, mode]);
 
   const runPaymentSequence = async () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
-    const account = sequenceSummary?.account;
+    const reviewed = sequenceSummary;
+    const account = reviewed?.account;
     if (
+      !reviewed ||
       !address ||
       !account ||
       !context ||
@@ -1573,9 +1317,13 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy },
+          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy, assertWriteState: () => writeState.current(reviewed) },
         );
-        if (!approvalHash) throw new Error("Token approval was cancelled.");
+        if (!approvalHash) {
+          // A write the final check refused says why, not that it was cancelled.
+          writeState.current(reviewed);
+          throw new Error("Token approval was cancelled.");
+        }
         if (approveTx.isSafe) {
           setSequenceSafeStage("token-approval");
           setSequenceStatus("Approval proposed to your Safe. Execute it there before continuing.");
@@ -1597,125 +1345,22 @@ export function PayPanel({
       if (paymentAction?.kind !== "payment") {
         throw new Error("The reviewed payment action is unavailable.");
       }
-      let paymentRequest = paymentAction.request;
-      let routerApproval = actionOf("router-approval");
-      const routerSignature = actionOf("router-signature");
-      if (routerSignature?.kind === "router-signature") {
-        await showAction("router-signature");
-        setSequenceStatus("Sign the gasless swap authorization in your wallet.");
-        try {
-          // Stamp the 30-minute window NOW, not when the sequence was built: this signature
-          // is produced only after the preceding approval confirms, so a slow approval used
-          // to hand the wallet an already-expired authorization.
-          const signedAt = Math.floor(Date.now() / 1000);
-          const authorization = {
-            ...routerSignature.authorization,
-            expiration: signedAt + 1_800,
-            sigDeadline: BigInt(signedAt + 1_800),
-          };
-          const signature = await signPermit2Async({
-            expectedAccount: account,
-            authorization,
-          });
-          paymentRequest = addPermit2SignatureToSwap(
-            paymentRequest,
-            authorization,
-            signature,
-          );
-          setSequenceActions(current =>
-            current.map(action =>
-              action.kind === "payment"
-                ? { ...action, request: paymentRequest }
-                : action,
-            ),
-          );
-          setSequenceCompletedKinds(current =>
-            current.includes("router-signature")
-              ? current
-              : [...current, "router-signature"],
-          );
-          setSequenceStatus("Swap authorization signed. Next: execute the swap.");
-        } catch (reason) {
-          if (!permit2SignatureNeedsOnchainFallback(reason)) throw reason;
-          const request = buildPermit2ApproveTx({
-            chainId,
-            token: routerSignature.authorization.token,
-            amount: routerSignature.authorization.amount,
-            expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-          });
-          routerApproval = {
-            kind: "router-approval",
-            label: "Authorize the Uniswap swap router",
-            request: {
-              ...request,
-              args: request.args as unknown as readonly unknown[],
-              label: "Authorize Uniswap swap router",
-            },
-            intent: approvalIntent(paymentAction.intent!, { step: "router-approval", token: routerSignature.authorization.token, spender: routerSignature.authorization.spender }),
-          };
-          setSequenceActions(current =>
-            current.map(action =>
-              action.kind === "router-signature" ? routerApproval! : action,
-            ),
-          );
-          setSequenceStatus(
-            "This wallet cannot sign Permit2 authorizations. Review the onchain fallback, then confirm again.",
-          );
-          await nextUiPaint();
-          return;
-        }
-      }
-      if (routerApproval?.kind === "router-approval") {
-        stillReviewed();
-        await showAction("router-approval");
-        setSequenceStatus("Review and authorize the Uniswap swap router.");
-        const approvalHash = await routerApproveTx.send(
-          routerApproval.request,
-          { reviewedAccount: account, simulationBlockNumber: latestApprovalBlock, intent: routerApproval.intent, legacy: routerApproval.legacy },
-        );
-        if (!approvalHash) throw new Error("Swap-router authorization was cancelled.");
-        if (routerApproveTx.isSafe) {
-          setSequenceSafeStage("router-approval");
-          setSequenceStatus("Router authorization proposed to your Safe. Execute it there before continuing.");
-          return;
-        }
-        setSequenceStatus("Confirming swap-router authorization onchain…");
-        const receipt = await waitForTrackedReceipt(publicClient, approvalHash);
-        if (receipt.status !== "success") {
-          throw new Error("Swap-router authorization reverted onchain.");
-        }
-        if (latestApprovalBlock === undefined || receipt.blockNumber > latestApprovalBlock) {
-          latestApprovalBlock = receipt.blockNumber;
-        }
-        routerApproveTx.reset();
-        await refetchPermit2Allowance();
-        setSequenceCompletedKinds(current =>
-          current.includes("router-approval")
-            ? current
-            : [...current, "router-approval"],
-        );
-      }
+      const paymentRequest = paymentAction.request;
 
       stillReviewed();
       await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
-      if (paymentAction.swapInputRoute) {
-        // Stamp the swap deadline NOW, not when the dialog was opened: the
-        // frozen 20-minute EOA window made a late confirm — and every retry
-        // of it — revert in simulation until the dialog was rebuilt. Only the
-        // deadline re-stamps; the reviewed amounts and minimums stay frozen.
-        paymentRequest = restampDirectSwapDeadline(
-          paymentRequest,
-          swapDeadline(isSafeConnection(wagmiConfig)),
-        );
-      }
       const paymentHash = await tx.send(paymentRequest, {
         reviewedAccount: account,
         simulationBlockNumber: latestApprovalBlock,
         intent: paymentAction.intent,
         legacy: paymentAction.legacy,
+        assertWriteState: () => writeState.current(reviewed),
       });
-      if (!paymentHash) throw new Error("Payment was cancelled.");
+      if (!paymentHash) {
+        writeState.current(reviewed);
+        throw new Error("Payment was cancelled.");
+      }
       if (tx.isSafe) {
         setSequenceSafeStage("payment");
         setSequenceStatus("Payment proposed to your Safe. Execute it there to finish.");
@@ -1743,12 +1388,6 @@ export function PayPanel({
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
-      // A Permit2 signature is only valid for ~30 minutes. Keeping `router-signature` in the
-      // completed set meant a retry reused the expired one and failed simulation forever,
-      // until the user closed and reopened the dialog. Drop it so a retry re-signs.
-      setSequenceCompletedKinds(current =>
-        current.filter(kind => kind !== "router-signature"),
-      );
       setSequenceStatus(null);
       setSequenceError(reason instanceof Error ? reason.message : "The payment could not be completed.");
     } finally {
@@ -1759,7 +1398,6 @@ export function PayPanel({
   const reset = () => {
     tx.reset();
     approveTx.reset();
-    routerApproveTx.reset();
     setSequenceOpen(false);
     setSequenceStarted(false);
     setSequenceComplete(false);
@@ -2041,19 +1679,8 @@ export function PayPanel({
             onFocus={isConnected ? undefined : preloadParaHost}
             onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
-              busy ||
-              permit2WalletKindLoading ||
-              (needsPermit2Approval && !permit2AllowanceFetched) ||
-              notStarted ||
-              surfaceError ||
-              terminalBlocked ||
-              addBalanceViaRouter ||
-              (isConnected &&
-                cartCount > 0 &&
-                (shopRoutesLoading ||
-                  shopCreditsLoading ||
-                  !shopMatchesToken)) ||
-              (surface?.pausePay && mode === "pay") ||
+              formBlocked ||
+              (isConnected && cartBlocked) ||
               // Paying in dollars is a purchase, not a send: it needs an
               // amount and nothing else. The checks below are about a token
               // this payer does not hold yet.
@@ -2151,10 +1778,10 @@ export function PayPanel({
       {mode === "pay" &&
         amountRaw > 0n &&
         !previewError &&
-        (previewLoading || (bestRoute && bestRoute.beneficiaryTokenCount > 0n)) ? (
+        (previewLoading || (preview && preview.beneficiaryTokenCount > 0n)) ? (
           <div className="mt-3">
             <p className="text-xs text-smoke-500">Estimated tokens</p>
-            {bestRoute && bestRoute.beneficiaryTokenCount > 0n ? (
+            {preview && preview.beneficiaryTokenCount > 0n ? (
               <p
                 aria-live="polite"
                 aria-busy={previewLoading}
@@ -2162,16 +1789,8 @@ export function PayPanel({
                   previewLoading ? "text-smoke-500" : "text-ink"
                 }`}
               >
-                {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)}{" "}
+                {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{" "}
                 {projectTokenLabel}
-                <button
-                  type="button"
-                  onClick={() => setShowRouteComparison(current => !current)}
-                  aria-expanded={showRouteComparison}
-                  className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-wide text-bluebs-700 hover:bg-bluebs-25"
-                >
-                  {bestRoute.settlement === "swap" ? "Buy tokens" : "Create tokens"}
-                </button>
               </p>
             ) : (
               <Skeleton
@@ -2180,31 +1799,6 @@ export function PayPanel({
                 aria-label="Calculating token return"
               />
             )}
-            {showRouteComparison && bestRoute?.settlement === "swap" ? (
-              directSwapRoute ? (
-                <div className="mt-2 grid grid-cols-2 gap-2 border-t border-smoke-200 pt-2 text-xs">
-                  <div>
-                    <p className="text-smoke-500">Buy existing tokens</p>
-                    <p className="font-medium text-ink">
-                      {formatTokenAmount(bestRoute.beneficiaryTokenCount, 18)} {projectTokenLabel}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-smoke-500">Create new tokens</p>
-                    <p className="font-medium text-ink">
-                      {formatTokenAmount(preview?.beneficiaryTokenCount ?? 0n, 18)} {projectTokenLabel}
-                    </p>
-                  </div>
-                  <p className="col-span-2 text-smoke-500">
-                    The route with the higher minimum is selected automatically.
-                  </p>
-                </div>
-              ) : (
-                <p className="mt-2 border-t border-smoke-200 pt-2 text-xs text-smoke-500">
-                  The project converts your payment using its chosen trade route.
-                </p>
-              )
-            ) : null}
           </div>
         ) : null}
       </div>
@@ -2286,9 +1880,9 @@ export function PayPanel({
             </div>
           ) : null}
 
-          {bestRoute && bestRoute.reservedTokenCount > 0n ? (
+          {preview && preview.reservedTokenCount > 0n ? (
             <p className="mt-1.5 text-xs text-smoke-500">
-              Other recipients get {formatTokenAmount(bestRoute.reservedTokenCount, 18)}{" "}
+              Other recipients get {formatTokenAmount(preview.reservedTokenCount, 18)}{" "}
               {projectTokenLabel}
             </p>
           ) : null}
@@ -2309,7 +1903,15 @@ export function PayPanel({
       {mode === "pay" && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
-          until the preview works.
+          until the preview works.{" "}
+          <button
+            type="button"
+            onClick={() => void refetchPreview()}
+            disabled={previewLoading}
+            className="font-medium underline underline-offset-2"
+          >
+            Try again
+          </button>
         </p>
       ) : null}
 
@@ -2383,7 +1985,6 @@ export function PayPanel({
                 : "Confirm add to balance"
           }
           rows={(() => {
-            const activeAction = sequenceActions[sequenceActionIndex] ?? null;
             const rows: TxConfirmRow[] = [
               {
                 label: "Send",
@@ -2397,16 +1998,6 @@ export function PayPanel({
                 label: "You get at least",
                 value: `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`,
                 strong: true,
-              });
-            }
-            if (
-              activeAction?.kind === "payment" &&
-              activeAction.swapInputRoute &&
-              activeAction.swapInputRoute.kind !== "single-v4"
-            ) {
-              rows.push({
-                label: "Route",
-                value: `${symbol} → ${activeAction.swapInputRoute.bridgeTokenSymbol} → ${projectTokenLabel}`,
               });
             }
             if (sequenceSummary) rows.push({ label: "Beneficiary", value: sequenceSummary.account, mono: true });
@@ -2424,7 +2015,7 @@ export function PayPanel({
             ).length,
           )}
           status={sequenceSafeNotice ?? sequenceStatus}
-          error={sequenceError ?? sequenceSafeHeld ?? routerApproveTx.error}
+          error={sequenceError ?? sequenceSafeHeld}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
           action={mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
