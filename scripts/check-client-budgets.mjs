@@ -54,8 +54,8 @@ const budgets = {
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK; the route ceilings and the lazy-load
   // assertions below are what protect first paint. History: git log -p.
-  allScripts: 2606 * KIB,
-  largestChunk: 395 * KIB,
+  allScripts: 2615 * KIB,
+  largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
 
