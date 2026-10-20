@@ -18,7 +18,7 @@ import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ProjectDataStatus } from "@/components/project/ProjectDataStatus";
 import { ProjectTabs } from "@/components/project/Tabs";
-import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
+import { ProjectHandleCard } from "@/components/project/ProjectHandleCardLazy";
 import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
 import { ProjectRouteBoundary } from "@/providers/ProjectRouteContext";
