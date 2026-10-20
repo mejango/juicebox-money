@@ -482,7 +482,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Accept payments',
     paragraphs: [
-      'A payment goes to the project’s terminal, which issues tokens under the current ruleset. When a buyback hook finds more tokens in the pool, it buys there instead and gives the payer every token it buys. prepareUserPay returns the metadata to send, the preview to show and the minimum to sign with. When the hook buys from the pool, the minimum is the pool quote less 1%. Otherwise it is what minting alone gives the payer, which can be well below the preview.',
+      'A payment goes to the project’s terminal, which issues tokens under the current ruleset. When a buyback hook finds more tokens in the pool, it buys there instead and gives the payer every token it buys. prepareUserPay returns the metadata to send, the preview to show and the minimum to sign with. With a usable pool quote, the minimum is that quote less 1%. Otherwise it is about what minting alone gives the payer less 1%, which can be far below the preview.',
       'For an ERC-20, approve only the request’s address for only the amount. Native payments carry the amount as value. A shop purchase is a payment with tier metadata: show every item and the token result in the review. addToBalanceOf adds funds without issuing tokens.',
     ],
     blocks: [
@@ -498,7 +498,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           '',
           'const tx = buildPayTx({',
           '  chainId, terminal, projectId, token, amount, beneficiary, metadata,',
-          '  minReturnedTokens, // pool quote less 1% when the hook buys; else what minting gives the payer',
+          '  minReturnedTokens, // usable pool quote less 1%; else about the mint amount less 1%',
           '  memo,',
           '});',
           '',

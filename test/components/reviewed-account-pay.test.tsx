@@ -434,6 +434,79 @@ describe('a payment prepareUserPay prepares', () => {
   })
 })
 
+const TERMINAL_2 = '0x6666666666666666666666666666666666666666' as Address
+const OTHER_METADATA = `0x${'cd'.repeat(32)}` as `0x${string}`
+const surfaceWith = (patch: Record<string, unknown>) => ({
+  data: { contexts: [contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [], ...patch },
+  isError: false,
+})
+async function confirmAndSend() {
+  await click('Pay')
+  await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
+  await click('Confirm & Pay')
+  await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
+  return (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: readonly unknown[] }])[0]
+}
+
+describe('a form that changes while its payment is prepared', () => {
+  const blockers: [string, () => void][] = [
+    ['payments pause', () => { m.queries.paySurface = surfaceWith({ pausePay: true }) }],
+    ['the accepted tokens become unreadable', () => { m.queries.paySurface = { ...surfaceWith({}), isError: true } }],
+  ]
+  for (const [name, block] of blockers) {
+    it(`opens no review once ${name} during a queued preparation`, async () => {
+      let release!: (value: unknown) => void
+      m.prepareUserPay = vi.fn(async (_client: unknown, args: { amount: bigint }) =>
+        args.amount === 10n ** 18n ? new Promise(resolve => { release = resolve }) : PREPARED) as never
+      await renderPanel()
+      await typeAmount('100')
+      await waitUntil(() => button('Pay', false)?.disabled === false)
+      await typeAmount('1')
+      await click('Pay')
+      await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1)
+      block()
+      await renderPanel()
+      await act(async () => release(PREPARED))
+      await settle()
+      expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+      expect(button('Pay').disabled).toBe(true)
+      expect(wallet.writeContract).not.toHaveBeenCalled()
+    })
+  }
+
+  it('prepares again for another terminal entry at the same amount, and pays that one', async () => {
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { terminal: Address }) =>
+      args.terminal === TERMINAL_2 ? { ...PREPARED, metadata: OTHER_METADATA, minReturnedTokens: 5n } : PREPARED) as never
+    await renderPanel()
+    await typeAmount('1')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    m.queries.paySurface = surfaceWith({ contexts: [{ ...contextFor('native'), terminal: TERMINAL_2 }], terminals: [TERMINAL, TERMINAL_2] })
+    await renderPanel()
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1 && button('Pay', false)?.disabled === false)
+    expect([preparedArgs(0).terminal, preparedArgs(1).terminal]).toEqual([TERMINAL, TERMINAL_2])
+    const request = await confirmAndSend()
+    expect(request.address).toBe(TERMINAL_2)
+    expect(request.args[4]).toBe(5n)
+    expect(request.args[6]).toBe(OTHER_METADATA)
+  })
+
+  it('blocks a cached preparation whose refresh fails, and pays the retried one', async () => {
+    await renderPanel()
+    await typeAmount('1')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    m.prepareUserPay = vi.fn(async () => { throw new Error('hookOf unreadable') })
+    await act(async () => { await prepareQueries.invalidateQueries().catch(() => {}) })
+    await waitUntil(() => host.textContent?.includes('Try again') ?? false)
+    expect(button('Pay').disabled).toBe(true)
+    m.prepareUserPay = vi.fn(async () => ({ ...PREPARED, metadata: OTHER_METADATA, minReturnedTokens: 5n }))
+    await click('Try again')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    const request = await confirmAndSend()
+    expect(request.args[4]).toBe(5n)
+    expect(request.args[6]).toBe(OTHER_METADATA)
+  })
+})
+
 describe('a payment whose receipt watch gives up', () => {
   it("shows the hold's line on the panel, and a second pay sends nothing until the payment settles", async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
@@ -490,6 +563,78 @@ describe('a payment the last release left unresolved', () => {
     await click('Confirm & Pay')
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || (host.textContent?.includes('I checked my wallet') ?? false))
     expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+})
+
+describe('a checkout whose items change at the same total', () => {
+  it('prepares again for the new items and pays with their metadata', async () => {
+    m.realCart = true
+    const tier = (id: number) => ({
+      id, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
+      cantBuyWithCredits: false, name: `Hat ${id}`, description: null, image: null,
+    })
+    m.queries.payShop = { data: { tiersComplete: true, hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(1), tier(2)] } }
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { tiers?: { tierIdsToMint: bigint[] } }) =>
+      args.tiers?.tierIdsToMint[0] === 2n ? { ...PREPARED, metadata: OTHER_METADATA } : PREPARED) as never
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    let cart!: ReturnType<typeof useShopCart>
+    function Probe() {
+      cart = useShopCart()
+      return null
+    }
+    await act(async () => root.render(
+      <ShopCartProvider>
+        <Probe />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+      </ShopCartProvider>,
+    ))
+    const tierCalls = () => vi.mocked(m.prepareUserPay).mock.calls
+      .map(call => (call as unknown[])[1] as { amount: bigint; tiers?: { tierIdsToMint: bigint[] } })
+      .filter(args => args.tiers && args.amount > 0n)
+      .map(args => args.tiers!.tierIdsToMint)
+    await act(async () => cart.setQuantity(1, 1))
+    await waitUntil(() => tierCalls().length > 0 && button('Pay', false)?.disabled === false)
+    await act(async () => { cart.setQuantity(1, 0); cart.setQuantity(2, 1) })
+    await waitUntil(() => tierCalls().some(ids => ids[0] === 2n) && button('Pay', false)?.disabled === false)
+    expect(tierCalls()[0]).toEqual([1n])
+    expect(tierCalls().at(-1)).toEqual([2n])
+    const request = await confirmAndSend()
+    expect(request.args[2]).toBe(10n ** 15n)
+    expect(request.args[6]).toBe(OTHER_METADATA)
+  })
+
+  it('prepares again when the shop id target changes for the same items', async () => {
+    m.realCart = true
+    const tier = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
+      cantBuyWithCredits: false, name: 'Hat', description: null, image: null }
+    const shopAt = (idTarget: Address) => ({ data: { tiersComplete: true, hook: USDC, idTarget, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] } })
+    m.queries.payShop = shopAt(USDC)
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { tiers?: { metadataIdTarget: Address } }) =>
+      args.tiers?.metadataIdTarget === TERMINAL_2 ? { ...PREPARED, metadata: OTHER_METADATA } : PREPARED) as never
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    let cart!: ReturnType<typeof useShopCart>
+    function Probe() {
+      cart = useShopCart()
+      return null
+    }
+    const render = () => act(async () => root.render(
+      <ShopCartProvider>
+        <Probe />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+      </ShopCartProvider>,
+    ))
+    await render()
+    await act(async () => cart.setQuantity(1, 1))
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    m.queries.payShop = shopAt(TERMINAL_2)
+    await render()
+    const targets = () => vi.mocked(m.prepareUserPay).mock.calls
+      .map(call => ((call as unknown[])[1] as { tiers?: { metadataIdTarget: Address } }).tiers?.metadataIdTarget)
+    await waitUntil(() => targets().includes(TERMINAL_2) && button('Pay', false)?.disabled === false)
+    const request = await confirmAndSend()
+    expect(request.args[6]).toBe(OTHER_METADATA)
   })
 })
 

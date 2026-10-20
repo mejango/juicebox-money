@@ -1142,6 +1142,18 @@ export function PayPanel({
     return actions;
   };
 
+  // One guard for the Pay button and for submit, which re-enters after a
+  // queued preparation: whatever changed meanwhile still blocks the review.
+  const formBlocked =
+    busy ||
+    notStarted ||
+    surfaceError ||
+    terminalBlocked ||
+    addBalanceViaRouter ||
+    (surface?.pausePay && mode === "pay");
+  const cartBlocked =
+    cartCount > 0 && (shopRoutesLoading || shopCreditsLoading || !shopMatchesToken);
+
   const submit = () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
     const action = payButtonAction({ isConnected, payWithDollars });
@@ -1153,7 +1165,7 @@ export function PayPanel({
       setBuyExplainerOpen(true);
       return;
     }
-    if (!address) return;
+    if (!address || formBlocked || cartBlocked) return;
     // The amount sent is the one prepared, which trails the input by its
     // debounce. Prepare what is typed now, then continue once that is ready.
     if (amount !== debouncedAmount) {
@@ -1166,15 +1178,10 @@ export function PayPanel({
     if (
       !context ||
       !terminalAddress ||
-      (amountRaw <= 0n && !creditOnlyCheckout) ||
-      busy ||
-      (cartCount > 0 && shopCreditsLoading)
+      (amountRaw <= 0n && !creditOnlyCheckout)
     ) {
       return;
     }
-    // Fail-closed guards: never send to an unlisted terminal, and never try to
-    // top up a balance with a router swap (no min-output bound).
-    if (terminalBlocked || addBalanceViaRouter) return;
     // A quote older than the query's staleTime is refetched first; the effect
     // below re-enters once the refreshed quote is in. A live quote is used as is.
     if (mode === "pay" && previewIsStale) {
@@ -1621,17 +1628,8 @@ export function PayPanel({
             onFocus={isConnected ? undefined : preloadParaHost}
             onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
-              busy ||
-              notStarted ||
-              surfaceError ||
-              terminalBlocked ||
-              addBalanceViaRouter ||
-              (isConnected &&
-                cartCount > 0 &&
-                (shopRoutesLoading ||
-                  shopCreditsLoading ||
-                  !shopMatchesToken)) ||
-              (surface?.pausePay && mode === "pay") ||
+              formBlocked ||
+              (isConnected && cartBlocked) ||
               // Paying in dollars is a purchase, not a send: it needs an
               // amount and nothing else. The checks below are about a token
               // this payer does not hold yet.
