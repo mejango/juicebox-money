@@ -49,7 +49,9 @@ const budgets = {
     // The app-wide held-write notice (its registry and lazy list loader in the
     // root layout, so every route can show an authority or batch hold with its
     // exit) measures home 442.9 KiB. Round this route up, with CI headroom.
-    '/page': 444 * KIB,
+    // Paying the terminal through SDK 3.0.0's prepareUserPay (buyback skipSplits)
+    // brings home from 443.4 to 444.7 KiB on the same toolchain; same headroom.
+    '/page': 446 * KIB,
     '/[urn]/page': 570 * KIB,
     // Rules/shop editors load when their step opens; drafts and validation
     // stay in the parent. Create measures ~481 KiB, within the original cap.
