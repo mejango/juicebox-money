@@ -13,7 +13,7 @@
 
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { encodeFunctionData, erc20Abi, zeroAddress, type Address } from 'viem'
+import { encodeAbiParameters, encodeFunctionData, erc20Abi, zeroAddress, type Address } from 'viem'
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFIFA_RECOVERY_QUERY_PREFIX, defifaWriteNamespace, readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
@@ -142,7 +142,7 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
 vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status, notice }: {
+  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status, notice, rows, children }: {
     open: boolean
     action: string
     onConfirm: () => void
@@ -151,11 +151,15 @@ vi.mock('@/components/ui/TxConfirmDialog', () => ({
     error?: ReactNode
     status?: ReactNode
     notice?: ReactNode
+    rows?: { label: ReactNode; value: ReactNode }[]
+    children?: ReactNode
   }) =>
     open ? (
       <section data-tx-confirm>
+        {rows?.map((row, index) => <p key={index} data-row={String(row.label)}>{row.value}</p>)}
         <p data-status>{status}</p>
         <p data-error>{error}</p>
+        {children}
         {notice}
         {!complete ? <button type="button" onClick={onClose}>Close review</button> : null}
         {complete ? (
@@ -1116,5 +1120,103 @@ describe('the normal path, click for click as main', () => {
       await click('Done')
     }
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
+  })
+})
+
+/** A revert as viem reports it: the terminal's or the hook's error with its arguments in `data`. */
+const shortfall = (selector: '0x6b2bb382' | '0xe2d708a9', received: bigint, minimum: bigint) =>
+  Object.assign(new Error('Execution reverted.'), {
+    shortMessage: 'Execution reverted.',
+    data: `${selector}${encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [received, minimum]).slice(2)}`,
+  })
+const UNDER_MIN_LINE = 'This payment would get fewer tokens than your minimum, so lower your minimum or try again.'
+const allowedDecrease = () => host.querySelector<HTMLInputElement>('[data-tx-confirm] input[type="number"]')
+
+describe('a payment that falls short of its minimum', () => {
+  it('says why, offers a looser minimum, and pays the minimum prepared and reviewed with it', async () => {
+    // 6.5% short of the minimum prepareUserPay set at its default 1%.
+    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0x6b2bb382', 935n, 1_000n))
+    const LOOSER = { ...PREPARED, minReturnedTokens: 6n * 10n ** 20n }
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { slippageBps?: bigint }) =>
+      args.slippageBps === undefined ? PREPARED : LOOSER) as never
+    await reviewPayment()
+    // The default preparation takes the SDK's own tolerance.
+    expect('slippageBps' in preparedArgs(0)).toBe(false)
+    await click('Confirm & Pay')
+    await waitUntil(() => dialogError() === UNDER_MIN_LINE)
+
+    expect(dialogError()).toBe(UNDER_MIN_LINE)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+    // 1% plus the 6.5% shortfall, rounded up to a half percent.
+    expect(allowedDecrease()?.value).toBe('7.5')
+    await click('Review again')
+    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+
+    const calls = vi.mocked(m.prepareUserPay).mock.calls
+    expect(preparedArgs(calls.length - 1).slippageBps).toBe(750n)
+    // The review shows the minimum it sends.
+    expect(host.querySelector('[data-row="You get at least"]')?.textContent).toBe('600 TKN')
+    expect(allowedDecrease()).toBeNull()
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
+    expect(request.args[4]).toBe(LOOSER.minReturnedTokens)
+  })
+
+  it('takes the allowed decrease the payer types, below half', async () => {
+    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0xe2d708a9', 90n, 100n))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => !!allowedDecrease())
+    const input = allowedDecrease()!
+    for (const typed of ['80', '3']) {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, typed)
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+    }
+    // 80% is refused; 3% is kept.
+    expect(allowedDecrease()?.value).toBe('3')
+    await click('Review again')
+    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+    const calls = vi.mocked(m.prepareUserPay).mock.calls
+    expect(preparedArgs(calls.length - 1).slippageBps).toBe(300n)
+  })
+
+  it('reads why an onchain revert failed from its block, and offers the same retry', async () => {
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.awaits(sentHash(1)))
+    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0x6b2bb382', 98n, 100n))
+    await act(async () => wallet.confirm(sentHash(1), 12n, 'reverted'))
+    await waitUntil(() => dialogError() === UNDER_MIN_LINE)
+
+    expect(dialogError()).toBe(UNDER_MIN_LINE)
+    const replay = wallet.client.simulateContract.mock.calls.at(-1)![0] as { functionName: string; blockNumber: bigint }
+    expect(replay).toMatchObject({ functionName: 'pay', blockNumber: 12n })
+    expect(button('Review again')).toBeDefined()
+  })
+
+  it('shows a reason that a lower minimum cannot fix without the retry', async () => {
+    // The hook's TWAP floor: waiting, not a lower minimum, is the fix.
+    wallet.client.simulateContract.mockRejectedValueOnce(Object.assign(new Error('Execution reverted.'), {
+      shortMessage: 'Execution reverted.',
+      data: `0xe490a239${encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [1n, 2n]).slice(2)}`,
+    }))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError())
+    expect(dialogError()).toBe("The token's price moved too fast to buy safely, so wait a few minutes and try again.")
+    expect(allowedDecrease()).toBeNull()
+    expect(button('Confirm & Pay')).toBeDefined()
+  })
+
+  it('keeps the old line for a failure it cannot read', async () => {
+    wallet.client.simulateContract.mockRejectedValueOnce(new Error('header not found'))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError())
+    expect(dialogError()).toBe('Payment was cancelled.')
+    expect(allowedDecrease()).toBeNull()
   })
 })
