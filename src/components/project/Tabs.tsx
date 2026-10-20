@@ -7,10 +7,7 @@ import {
   ProjectTabIcon,
 } from '@/components/project/ProjectTabIcon'
 import { requestProjectTabNavigation } from '@/providers/ProjectRouteContext'
-import {
-  projectHandleFromRoute,
-  projectRouteSegmentFromPathname,
-} from '@/lib/project-handles'
+import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 
 export type TabDef = {
   /** Exact label shown on the tab button. */

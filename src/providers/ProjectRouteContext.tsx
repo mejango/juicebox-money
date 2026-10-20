@@ -8,7 +8,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { ProjectRouteBlockedContext } from '@/providers/ProjectRouteBlockedContext'
-import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handles'
+import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 import {
   projectRouteIdentity, projectRouteIsFresh, projectRouteQueryKey,
   readProjectRouteSnapshot, type ProjectRouteSnapshot,

@@ -26,21 +26,23 @@ import {
   canonicalHandleOf,
   canonicalProjectHandle,
   continueProjectHandleSetup,
-  decodeProjectRouteSegment,
   directEnsTextReadRequest,
   ensTextResolverAbi,
   jbProjectHandlesAbi,
   normalizeProjectHandle,
   parseProjectHandleRecord,
-  projectHandleFromRoute,
   projectHandleMatches,
   projectHandleRecord,
   projectHandleSetupPhase,
-  projectRouteSegmentFromPathname,
   readDirectEnsProjectRecord,
   readBoundedProjectHandle,
   verifyProjectHandleAuthorityWithFallback,
 } from '@/lib/project-handles'
+import {
+  decodeProjectRouteSegment,
+  projectHandleFromRoute,
+  projectRouteSegmentFromPathname,
+} from '@/lib/project-handle-route'
 
 const PROJECTS = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address

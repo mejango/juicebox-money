@@ -1,4 +1,4 @@
-import { projectHandleFromRoute, decodeProjectRouteSegment } from '@/lib/project-handles'
+import { projectHandleFromRoute, decodeProjectRouteSegment } from '@/lib/project-handle-route'
 import { projectRouteSnapshot, resolveProjectRoute } from '@/lib/project-route.server'
 
 export const dynamic = 'force-dynamic'

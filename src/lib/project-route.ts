@@ -1,5 +1,5 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { projectHandleFromRoute } from '@/lib/project-handles'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
 
 /** Browsing freshness only; this snapshot never authorizes a transaction. */
 export const PROJECT_ROUTE_STALE_MS = 5_000

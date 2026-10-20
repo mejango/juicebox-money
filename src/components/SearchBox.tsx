@@ -9,10 +9,7 @@ import { truncateAddress } from '@/lib/format'
 import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
-import {
-  navigateToProjectHandle,
-  projectHandleFromRoute,
-} from '@/lib/project-handles'
+import { navigateToProjectHandle, projectHandleFromRoute } from '@/lib/project-handle-route'
 import {
   rememberProjectNavigation,
   type ProjectNavigationHint,

@@ -24,10 +24,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { preloadParaHost } from '@/providers/preload-para'
 import { formatTokenAmount } from '@/lib/format'
 import { parseUrn } from '@/lib/urn'
-import {
-  projectHandleFromRoute,
-  projectRouteSegmentFromPathname,
-} from '@/lib/project-handles'
+import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 import { useViewAs } from '@/lib/viewAs'
 import { useResolvedProjectRoute } from '@/providers/ProjectRouteContext'
 import {
