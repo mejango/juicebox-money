@@ -945,7 +945,7 @@ describe('useSafeTx', () => {
     await act(async () => { await hook.ref.current!.send(request, reviewedByAlice) })
     // The settlement's callback waits on its receipt lookup until after the reset.
     let lookup: ((receipt: unknown) => void) | undefined
-    const answer = (mocks.publicClient as unknown as { getTransactionReceipt: ReturnType<typeof vi.fn> }).getTransactionReceipt
+    const answer = (mocks.publicClient as unknown as { getTransactionReceipt: ReturnType<typeof vi.fn<(args: { hash: Hex }) => Promise<unknown>>> }).getTransactionReceipt
     const earlier = answer.getMockImplementation()!
     answer.mockImplementation(async (args: { hash: Hex }) => settledYet ? new Promise(resolve => { lookup = resolve }) : earlier(args))
     mocks.receipt = { data: mined(HASH, 'reverted'), isError: false }
