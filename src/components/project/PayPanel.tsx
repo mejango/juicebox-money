@@ -142,6 +142,8 @@ type ReviewedPayment = {
   token: Address;
   cartKey: string;
   metadata: Hex | undefined;
+  /** What a tolerance the payer loosens after this payment fails is bound to. */
+  payment: string;
 };
 
 const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
@@ -324,7 +326,7 @@ export function PayPanel({
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
   >([]);
-  /** A tolerance the payer loosened after a shortfall, for the payment it was set on. */
+  /** A tolerance the payer loosened after a shortfall: for the next review of the payment it was set on only. */
   const [payerSlippage, setPayerSlippage] = useState<{ bps: number; payment: string } | null>(null);
   /** The tolerance offered after a shortfall, until the payer reviews again with it. */
   const [retrySlippageBps, setRetrySlippageBps] = useState<number | null>(null);
@@ -905,6 +907,10 @@ export function PayPanel({
   // one the payer loosened after this same payment fell short.
   const paymentInputs = `${chainId}:${projectId}:${terminalAddress}:${context?.token}:${amountRaw}:${tierIds.join(",")}`;
   const slippageBps = payerSlippage?.payment === paymentInputs ? payerSlippage.bps : undefined;
+  // Another payment drops it, so coming back to this one starts from the default again.
+  useEffect(() => {
+    if (payerSlippage && payerSlippage.payment !== paymentInputs) setPayerSlippage(null);
+  }, [payerSlippage, paymentInputs]);
 
   // One read prepares the payment: the metadata to send (shop items plus the
   // buyback hook's pool-or-mint choice), the preview, and the minimum.
@@ -1267,7 +1273,7 @@ export function PayPanel({
     setSequenceActions(actions);
     setSequenceSummary({
       amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
-      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined,
+      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined, payment: paymentInputs,
     });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
@@ -1421,9 +1427,15 @@ export function PayPanel({
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
       setSequenceStatus(null);
-      // A payment that changed during review says so; otherwise the revert's own reason, when known.
-      const decoded = reason instanceof Error && reason.message === PAYMENT_CHANGED ? null : decodePayFailure(failure);
-      setSequenceError(decoded?.message ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
+      // A payment that changed during review, or whose account did, says so; otherwise the revert's own reason, when known.
+      let changed: string | null = reason instanceof Error && reason.message === PAYMENT_CHANGED ? PAYMENT_CHANGED : null;
+      try {
+        stillReviewed();
+      } catch (switched) {
+        changed = switched instanceof Error ? switched.message : PAYMENT_CHANGED;
+      }
+      const decoded = changed ? null : decodePayFailure(failure);
+      setSequenceError(changed ?? decoded?.message ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
       if (mode === "pay") setRetrySlippageBps(payRetrySlippageBps(decoded, slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS));
     } finally {
       setSequenceStarted(false);
@@ -1432,7 +1444,8 @@ export function PayPanel({
 
   /** Prepare the payment again with the tolerance the payer chose, and review it from the start. */
   const reviewWithSlippage = (bps: number) => {
-    setPayerSlippage({ bps, payment: paymentInputs });
+    if (!sequenceSummary) return;
+    setPayerSlippage({ bps, payment: sequenceSummary.payment });
     tx.reset();
     setRetrySlippageBps(null);
     setSequenceOpen(false);
@@ -2083,6 +2096,7 @@ export function PayPanel({
             setSequenceStatus(null);
             setSequenceError(null);
             setRetrySlippageBps(null);
+            setPayerSlippage(null);
           }}
         >
           {retrySlippageBps !== null ? (

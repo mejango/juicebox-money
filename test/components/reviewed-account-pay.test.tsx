@@ -1183,6 +1183,27 @@ describe('a payment that falls short of its minimum', () => {
     expect(preparedArgs(calls.length - 1).slippageBps).toBe(300n)
   })
 
+  it('uses a loosened tolerance for one review only', async () => {
+    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0x6b2bb382', 935n, 1_000n))
+    const LOOSER = { ...PREPARED, minReturnedTokens: 6n * 10n ** 20n }
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { slippageBps?: bigint }) =>
+      args.slippageBps === undefined ? PREPARED : LOOSER) as never
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => !!allowedDecrease())
+    await click('Review again')
+    await waitUntil(() => host.querySelector('[data-row="You get at least"]')?.textContent === '600 TKN')
+    await click('Close review')
+    await click('Pay')
+    await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
+    // Closed without paying: the next review is the default one again.
+    expect(host.querySelector('[data-row="You get at least"]')?.textContent).toBe('700 TKN')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
+    expect(request.args[4]).toBe(PREPARED.minReturnedTokens)
+  })
+
   it('reads why an onchain revert failed from its block, and offers the same retry', async () => {
     await reviewPayment()
     await click('Confirm & Pay')
