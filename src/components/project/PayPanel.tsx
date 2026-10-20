@@ -125,6 +125,20 @@ type PaymentSequenceAction = {
   legacy?: string[];
 };
 
+/** What a review froze: the wallet write is refused once the form says otherwise. */
+type ReviewedPayment = {
+  amountRaw: bigint;
+  minReturned: bigint;
+  account: Address;
+  mode: "pay" | "addbalance";
+  terminal: Address;
+  token: Address;
+  cartKey: string;
+  metadata: Hex | undefined;
+};
+
+const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
+
 type PaySurface = {
   contexts: PayContext[];
   rulesetStart: number;
@@ -298,11 +312,7 @@ export function PayPanel({
   // moving while the dialog is open (the amount is debounced), so the summary
   // has to be captured with the actions rather than read live. `account`
   // receives the tokens and owns the approvals: only it may send them.
-  const [sequenceSummary, setSequenceSummary] = useState<{
-    amountRaw: bigint;
-    minReturned: bigint;
-    account: Address;
-  } | null>(null);
+  const [sequenceSummary, setSequenceSummary] = useState<ReviewedPayment | null>(null);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
@@ -1144,15 +1154,43 @@ export function PayPanel({
 
   // One guard for the Pay button and for submit, which re-enters after a
   // queued preparation: whatever changed meanwhile still blocks the review.
-  const formBlocked =
-    busy ||
+  const formClosed =
     notStarted ||
     surfaceError ||
     terminalBlocked ||
     addBalanceViaRouter ||
     (surface?.pausePay && mode === "pay");
+  const formBlocked = busy || formClosed;
   const cartBlocked =
     cartCount > 0 && (shopRoutesLoading || shopCreditsLoading || !shopMatchesToken);
+  const cartKey = tierIds.join(",");
+
+  // The last check before the wallet: the same guards, the payment's preparation
+  // still fresh, and the form still saying what was reviewed. Read live, since a
+  // review or simulation can outlast a refresh or an edit.
+  const writeState = useRef<(reviewed: ReviewedPayment) => void>(() => {});
+  writeState.current = (reviewed) => {
+    const unchanged =
+      reviewed.mode === mode &&
+      reviewed.terminal === terminalAddress &&
+      reviewed.token === context?.token &&
+      reviewed.amountRaw === amountRaw &&
+      amount === debouncedAmount &&
+      reviewed.cartKey === cartKey;
+    const preparedFresh =
+      mode !== "pay" ||
+      (!!prepared &&
+        !previewError &&
+        !previewLoading &&
+        !previewIsPrevious &&
+        !previewIsStale &&
+        prepared.metadata === reviewed.metadata &&
+        prepared.minReturnedTokens === reviewed.minReturned);
+    const identityReady = mode !== "pay" || (!nativeMarket && identity.isSuccess);
+    if (formClosed || cartBlocked || !identityReady || !unchanged || !preparedFresh) {
+      throw new Error(PAYMENT_CHANGED);
+    }
+  };
 
   const submit = () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
@@ -1209,7 +1247,10 @@ export function PayPanel({
     setSequenceStarted(false);
     setSequenceSafeStage(null);
     setSequenceActions(actions);
-    setSequenceSummary({ amountRaw, minReturned, account: address });
+    setSequenceSummary({
+      amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
+      cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined,
+    });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceOpen(true);
@@ -1230,8 +1271,10 @@ export function PayPanel({
 
   const runPaymentSequence = async () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
-    const account = sequenceSummary?.account;
+    const reviewed = sequenceSummary;
+    const account = reviewed?.account;
     if (
+      !reviewed ||
       !address ||
       !account ||
       !context ||
@@ -1274,9 +1317,13 @@ export function PayPanel({
         setSequenceStatus(`Review and approve ${symbol} access.`);
         const approvalHash = await approveTx.send(
           tokenApproval.request,
-          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy },
+          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy, assertWriteState: () => writeState.current(reviewed) },
         );
-        if (!approvalHash) throw new Error("Token approval was cancelled.");
+        if (!approvalHash) {
+          // A write the final check refused says why, not that it was cancelled.
+          writeState.current(reviewed);
+          throw new Error("Token approval was cancelled.");
+        }
         if (approveTx.isSafe) {
           setSequenceSafeStage("token-approval");
           setSequenceStatus("Approval proposed to your Safe. Execute it there before continuing.");
@@ -1308,8 +1355,12 @@ export function PayPanel({
         simulationBlockNumber: latestApprovalBlock,
         intent: paymentAction.intent,
         legacy: paymentAction.legacy,
+        assertWriteState: () => writeState.current(reviewed),
       });
-      if (!paymentHash) throw new Error("Payment was cancelled.");
+      if (!paymentHash) {
+        writeState.current(reviewed);
+        throw new Error("Payment was cancelled.");
+      }
       if (tx.isSafe) {
         setSequenceSafeStage("payment");
         setSequenceStatus("Payment proposed to your Safe. Execute it there to finish.");

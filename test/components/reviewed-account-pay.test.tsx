@@ -507,6 +507,53 @@ describe('a form that changes while its payment is prepared', () => {
   })
 })
 
+describe('a reviewed payment whose form changes before the wallet', () => {
+  const PAYMENT_CHANGED = 'This payment changed during review. Close it and pay again to review the new one.'
+  const changes: [string, () => Promise<void>][] = [
+    ['its preparation fails to refresh', async () => {
+      m.prepareUserPay = vi.fn(async () => { throw new Error('hookOf unreadable') })
+      await act(async () => { await prepareQueries.invalidateQueries().catch(() => {}) })
+      await waitUntil(() => host.textContent?.includes('Try again') ?? false)
+    }],
+    ['its terminal entry changes', async () => {
+      m.queries.paySurface = surfaceWith({ contexts: [{ ...contextFor('native'), terminal: TERMINAL_2 }], terminals: [TERMINAL, TERMINAL_2] })
+      await renderPanel()
+      await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.some(call => ((call as unknown[])[1] as { terminal: Address }).terminal === TERMINAL_2))
+    }],
+    ['its amount is edited', async () => {
+      await typeAmount('2')
+    }],
+  ]
+  const waits: [string, () => () => void, () => boolean][] = [
+    ['review', () => {
+      let answer!: (value: boolean) => void
+      wallet.requestReview.mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve }))
+      return () => answer(true)
+    }, () => wallet.requestReview.mock.calls.length === 1],
+    ['simulation', () => {
+      let finish!: () => void
+      wallet.client.simulateContract.mockImplementationOnce(request => new Promise(resolve => { finish = () => resolve({ request }) }))
+      return () => finish()
+    }, () => wallet.client.simulateContract.mock.calls.length === 1],
+  ]
+  for (const [wait, hold, held] of waits) {
+    for (const [name, change] of changes) {
+      it(`sends nothing when ${name} during ${wait}`, async () => {
+        await reviewPayment('1')
+        const release = hold()
+        await click('Confirm & Pay')
+        await waitUntil(held)
+        expect(held()).toBe(true)
+        await change()
+        await act(async () => release())
+        await waitUntil(() => !!dialogError() || wallet.writeContract.mock.calls.length > 0)
+        expect(wallet.writeContract).not.toHaveBeenCalled()
+        expect(dialogError()).toBe(PAYMENT_CHANGED)
+      })
+    }
+  }
+})
+
 describe('a payment whose receipt watch gives up', () => {
   it("shows the hold's line on the panel, and a second pay sends nothing until the payment settles", async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
