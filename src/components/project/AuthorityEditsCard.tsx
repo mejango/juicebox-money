@@ -4,7 +4,7 @@ import { refreshProjectDisplay } from '@/app/actions/project-display'
 
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbProjectsAbi,
@@ -103,7 +103,7 @@ async function readEditState(
 
   const controller = (await client
     .readContract({
-      address: jbContractAddress['6'][JBCoreContracts.JBDirectory][
+      address: jbV6ContractAddress[JBCoreContracts.JBDirectory][
         deployment.chainId
       ],
       abi: jbDirectoryAbi,
@@ -504,10 +504,10 @@ async function withMetadataReviewLocks<T>(
 async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: boolean, account: Address) {
   const client = clientFor(deployment.chainId)
   const [owner, controller] = await Promise.all([
-    client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBProjects][deployment.chainId],
+    client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBProjects][deployment.chainId],
       abi: jbProjectsAbi, functionName: 'ownerOf', args: [BigInt(deployment.projectId)] }),
     client.readContract({
-      address: jbContractAddress['6'][JBCoreContracts.JBDirectory][deployment.chainId],
+      address: jbV6ContractAddress[JBCoreContracts.JBDirectory][deployment.chainId],
       abi: jbDirectoryAbi, functionName: 'controllerOf', args: [BigInt(deployment.projectId)],
     }),
   ])

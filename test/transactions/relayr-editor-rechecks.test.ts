@@ -1,4 +1,4 @@
-import { erc2771ForwarderAbi, jbContractAddress, JBCoreContracts, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, jbV6ContractAddress, JBCoreContracts, jbSplitsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { createPublicClient, decodeFunctionData, encodeFunctionData, encodeFunctionResult, parseEther, toFunctionSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { base } from 'viem/chains'
@@ -128,7 +128,7 @@ function saveUnpaidSession(calls: AuthorityCall[]): string {
     account: ALICE, createdAt: (DEADLINE - 47 * 3_600) * 1_000, paymentOptions: [],
     publishedEntries: calls.map(call => ({
       chain: call.chainId,
-      target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][call.chainId],
+      target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId],
       data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{
         from: ALICE, to: call.target, value: call.value ?? 0n, gas: 500_000n, deadline: DEADLINE, data: call.data,
         signature: `0x${'11'.repeat(65)}`,

@@ -1,4 +1,4 @@
-import { erc2771ForwarderAbi, JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { erc2771ForwarderAbi, JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { encodeFunctionData, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import type { RelayrEntry, RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
@@ -16,7 +16,7 @@ let names: string[]
 let requestsDead: Mock<(requests: readonly RelayrSignedRequest[]) => Promise<boolean>>
 
 function entry(chain: JBChainId = 1, from = ALICE): RelayrEntry {
-  return { chain, target: jbContractAddress['6'][JBCoreContracts.ERC2771Forwarder][chain], value: '0',
+  return { chain, target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][chain], value: '0',
     data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
       args: [{ from, to: BOB, data: '0x1234', value: 0n, gas: 100_000n, deadline: 4_000_000_000, signature: '0x1234' }] }) }
 }

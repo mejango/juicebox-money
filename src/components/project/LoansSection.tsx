@@ -8,7 +8,7 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 import {
   JB_CHAINS,
   NATIVE_TOKEN,
-  jbContractAddress,
+  jbV6ContractAddress,
   revLoansAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -45,7 +45,7 @@ import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 export function revLoansAddress(chainId: JBChainId): Address {
-  return jbContractAddress['6']['REVLoans'][chainId] as Address
+  return jbV6ContractAddress['REVLoans'][chainId] as Address
 }
 
 /** The loan's source-token symbol/decimals, looked up from the revnet's own

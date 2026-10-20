@@ -26,21 +26,23 @@ import {
   canonicalHandleOf,
   canonicalProjectHandle,
   continueProjectHandleSetup,
-  decodeProjectRouteSegment,
   directEnsTextReadRequest,
   ensTextResolverAbi,
   jbProjectHandlesAbi,
   normalizeProjectHandle,
   parseProjectHandleRecord,
-  projectHandleFromRoute,
   projectHandleMatches,
   projectHandleRecord,
   projectHandleSetupPhase,
-  projectRouteSegmentFromPathname,
   readDirectEnsProjectRecord,
   readBoundedProjectHandle,
   verifyProjectHandleAuthorityWithFallback,
 } from '@/lib/project-handles'
+import {
+  decodeProjectRouteSegment,
+  projectHandleFromRoute,
+  projectRouteSegmentFromPathname,
+} from '@/lib/project-handle-route'
 
 const PROJECTS = '0x1111111111111111111111111111111111111111' as Address
 const OWNER = '0x2222222222222222222222222222222222222222' as Address
@@ -61,20 +63,20 @@ describe('project handle normalization and routing', () => {
     })
   })
 
-  it('normalizes the URL/ENS forms and reverses labels for the contract', () => {
+  it('normalizes the URL/ENS forms and reverses labels for the contract', async () => {
     expect(normalizeProjectHandle('@Design.Juicebox.eth')).toEqual({
       handle: 'design.juicebox',
       ensName: 'design.juicebox.eth',
       parts: ['juicebox', 'design'],
     })
-    expect(projectHandleFromRoute('@design.juicebox')).toEqual({
+    expect(await projectHandleFromRoute('@design.juicebox')).toEqual({
       handle: 'design.juicebox',
       ensName: 'design.juicebox.eth',
       parts: ['juicebox', 'design'],
     })
-    expect(projectHandleFromRoute('design.juicebox')).toBeNull()
+    expect(await projectHandleFromRoute('design.juicebox')).toBeNull()
     expect(
-      projectHandleFromRoute(decodeProjectRouteSegment('%40design.juicebox')!),
+      await projectHandleFromRoute(decodeProjectRouteSegment('%40design.juicebox')!),
     ).toEqual({
       handle: 'design.juicebox',
       ensName: 'design.juicebox.eth',
@@ -86,7 +88,7 @@ describe('project handle normalization and routing', () => {
     expect(decodeProjectRouteSegment('%E0%A4%A')).toBeNull()
   })
 
-  it('decodes client pathnames once, including Unicode, and rejects double encoding', () => {
+  it('decodes client pathnames once, including Unicode, and rejects double encoding', async () => {
     expect(projectRouteSegmentFromPathname('/@design.juicebox')).toBe(
       '@design.juicebox',
     )
@@ -94,7 +96,7 @@ describe('project handle normalization and routing', () => {
       '/%40caf%C3%A9.juicebox',
     )
     expect(unicode).toBe('@café.juicebox')
-    expect(projectHandleFromRoute(unicode!)?.handle).toBe('café.juicebox')
+    expect((await projectHandleFromRoute(unicode!))?.handle).toBe('café.juicebox')
     expect(
       projectRouteSegmentFromPathname('/%2540design.juicebox'),
     ).toBeNull()

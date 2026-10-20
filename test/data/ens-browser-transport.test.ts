@@ -31,10 +31,12 @@ describe('ENS project alias transport', () => {
   it('uses Center for production ENS and authoritative alias readers', async () => {
     vi.stubEnv('NEXT_PUBLIC_DETERMINISTIC_BROWSER', 'false')
     const { lookupProjectHandleTarget, lookupVerifiedProjectHandle } = await import('@/lib/ens')
+    // The mainnet client loads with the first lookup, not with the module.
+    expect(mocks.create).not.toHaveBeenCalled()
+    expect(await lookupProjectHandleTarget('@browser-fixture')).toMatchObject({ chainId: 1, projectId: 1, handle: 'browser-fixture' })
     expect(mocks.http).not.toHaveBeenCalled()
     expect(mocks.fixtureTransport).toHaveBeenCalledWith(1)
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ transport: 'local fixture transport' }))
-    expect(await lookupProjectHandleTarget('@browser-fixture')).toMatchObject({ chainId: 1, projectId: 1, handle: 'browser-fixture' })
     expect(await lookupVerifiedProjectHandle({ chainId: 1, projectId: 1, setter: authority })).toBe('browser-fixture')
   })
 
@@ -69,10 +71,10 @@ describe('ENS project alias transport', () => {
   it('uses the existing local mainnet RPC fixture for real alias reads while skipping wallet names', async () => {
     vi.stubEnv('NEXT_PUBLIC_DETERMINISTIC_BROWSER', 'true')
     const { lookupProjectHandleTarget, lookupVerifiedProjectHandle, lookupEnsAddress, lookupEnsName } = await import('@/lib/ens')
+    expect(await lookupProjectHandleTarget('@browser-fixture')).toMatchObject({ chainId: 1, projectId: 1 })
     expect(mocks.fixtureTransport).toHaveBeenCalledWith(1)
     expect(mocks.http).not.toHaveBeenCalled()
     expect(mocks.create).toHaveBeenCalledWith(expect.objectContaining({ transport: 'local fixture transport' }))
-    expect(await lookupProjectHandleTarget('@browser-fixture')).toMatchObject({ chainId: 1, projectId: 1 })
     expect(mocks.direct).toHaveBeenCalledWith(expect.anything(), 'browser-fixture.eth')
     expect(await lookupVerifiedProjectHandle({ chainId: 1, projectId: 1, setter: authority })).toBe('browser-fixture')
     expect(await lookupEnsAddress('someone.eth')).toBeNull()

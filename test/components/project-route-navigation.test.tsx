@@ -1,12 +1,17 @@
 import { useLayoutEffect, useState } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   ProjectRouteBoundary, ProjectRouteProvider, useProjectReviewScope, invalidateProjectRoute, type ProjectReviewScope,
 } from '@/providers/ProjectRouteContext'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import type { ProjectRouteSnapshot } from '@/lib/project-route'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
+
+// The steady state: ENSIP-15 normalization has loaded (the shell loads it on
+// the first handle route). project-route-cold-handle.test.tsx covers the load.
+beforeAll(async () => { await projectHandleFromRoute('@warm') })
 
 const mocks = vi.hoisted(() => ({ router: { refresh: vi.fn() } }))
 vi.mock('next/navigation', () => ({ useRouter: () => mocks.router }))

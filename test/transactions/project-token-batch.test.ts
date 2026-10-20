@@ -1,6 +1,6 @@
 import { decodeFunctionData, getAddress, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { JBCoreContracts, RevnetCoreContracts, jbContractAddress, jbControllerAbi, revOwnerAbi } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, RevnetCoreContracts, jbV6ContractAddress, jbControllerAbi, revOwnerAbi } from '@bananapus/nana-sdk-core'
 
 const mocks = vi.hoisted(() => ({
   clients: new Map<number, { readContract: ReturnType<typeof vi.fn>; getBlock: ReturnType<typeof vi.fn> }>(),
@@ -20,8 +20,8 @@ const BENEFICIARY = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as Address
 const OTHER = '0xcccccccccccccccccccccccccccccccccccccccc' as Address
 const TOKEN_ONE = '0x1000000000000000000000000000000000000001' as Address
 const TOKEN_TWO = '0x2000000000000000000000000000000000000002' as Address
-const controller = (chain: 1 | 10) => jbContractAddress['6'][JBCoreContracts.JBController][chain]
-const owner = (chain: 1 | 10) => jbContractAddress['6'][RevnetCoreContracts.REVOwner][chain]
+const controller = (chain: 1 | 10) => jbV6ContractAddress[JBCoreContracts.JBController][chain]
+const owner = (chain: 1 | 10) => jbV6ContractAddress[RevnetCoreContracts.REVOwner][chain]
 const chains = [[1, 42], [10, 84]] as const
 
 beforeEach(() => {

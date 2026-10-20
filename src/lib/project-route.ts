@@ -1,5 +1,5 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { projectHandleFromRoute } from '@/lib/project-handles'
+import { projectHandleFromRoute } from '@/lib/project-handle-route'
 
 /** Browsing freshness only; this snapshot never authorizes a transaction. */
 export const PROJECT_ROUTE_STALE_MS = 5_000
@@ -31,11 +31,11 @@ function localProjectRouteSnapshot(route: ProjectRouteSnapshot, requestStartedAt
   return { ...route, checkedAt: requestStartedAt - Math.max(0, route.serverNow - route.checkedAt), serverNow: requestStartedAt }
 }
 
-export function readProjectRouteSnapshot(value: unknown, handle: string, requestStartedAt: number): ProjectRouteSnapshot {
+export async function readProjectRouteSnapshot(value: unknown, handle: string, requestStartedAt: number): Promise<ProjectRouteSnapshot> {
   if (!value || typeof value !== 'object') throw new Error('Project link could not be verified.')
   const row = value as ProjectRouteSnapshot
   if (
-    row.handle !== handle || !projectHandleFromRoute(`@${row.handle}`) ||
+    row.handle !== handle || !(await projectHandleFromRoute(`@${row.handle}`)) ||
     !Number.isSafeInteger(row.chainId) || row.chainId <= 0 ||
     typeof row.projectId !== 'string' || !/^[1-9]\d*$/.test(row.projectId) ||
     BigInt(row.projectId) > BigInt(Number.MAX_SAFE_INTEGER) ||

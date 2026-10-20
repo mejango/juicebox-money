@@ -34,20 +34,11 @@ const agrandir = localFont({
   fallback: ['-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
 })
 
-// Display — PP Agrandir Wide (big statements only).
+// Display — PP Agrandir Wide Bold (big statements only). Every display line is
+// bold; each face listed here is preloaded on every page, so only that one is.
 const agrandirWide = localFont({
-  src: [
-    {
-      path: '../../public/fonts/PPAgrandir-WideMedium.woff2',
-      weight: '500',
-      style: 'normal',
-    },
-    {
-      path: '../../public/fonts/PPAgrandir-WideBold.woff2',
-      weight: '700',
-      style: 'normal',
-    },
-  ],
+  src: '../../public/fonts/PPAgrandir-WideBold.woff2',
+  weight: '700',
   variable: '--font-agrandir-wide',
   display: 'swap',
   fallback: ['-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],

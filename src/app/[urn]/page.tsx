@@ -1,6 +1,6 @@
 import {
   RevnetCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import type { Metadata } from "next";
@@ -12,13 +12,13 @@ import { isAddressEqual, type Address } from "viem";
 import { ActionRowsSkeleton, ActivityRows, OverviewTabSkeleton, ProjectHeaderSkeleton, ProjectPayPanelSkeleton, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
 import { ProjectHeader, ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice } from "@/app/[urn]/ProjectMetadataSections";
 import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
-import { PendingPayments } from "@/components/project/PendingPayments";
+import { PendingPaymentsGate } from "@/components/project/PendingPaymentsGate";
 import { ChainIcon } from "@/components/ChainIcon";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ProjectDataStatus } from "@/components/project/ProjectDataStatus";
 import { ProjectTabs } from "@/components/project/Tabs";
-import { ProjectHandleCard } from "@/components/project/ProjectHandleCard";
+import { ProjectHandleCard } from "@/components/project/ProjectHandleCardLazy";
 import { SafeBatchProvider } from "@/components/project/SafeBatchProvider";
 import { ShopCartProvider } from "@/components/project/ShopCartProvider";
 import { ProjectRouteBoundary } from "@/providers/ProjectRouteContext";
@@ -218,7 +218,7 @@ async function DegradedProjectShell({
 }) {
   const metadata = await fetchProjectMetadata(project.metadataUri);
   const name = metadata?.name ?? `Project ${project.projectId}`;
-  const canonicalRevOwner = jbContractAddress["6"][
+  const canonicalRevOwner = jbV6ContractAddress[
     RevnetCoreContracts.REVOwner
   ]?.[route.chainId] as Address | undefined;
   const projectOwner = project.owner as Address | null;
@@ -482,7 +482,7 @@ async function ProjectPageContents({ urn, result: pending }: {
           }
           activity={
             <section className="min-[801px]:mt-8">
-              <PendingPayments key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
+              <PendingPaymentsGate key={`${urn.chainId}:${project.projectId}:${chainPairs.join(';')}`} chainId={urn.chainId} projectId={project.projectId} chains={chainPairs} />
               <Suspense fallback={<div role="status" aria-label="Loading activity"><ActivityRows /></div>}>
               <ProjectActivity
                 chainId={urn.chainId}

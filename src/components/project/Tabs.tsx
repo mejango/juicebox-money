@@ -7,10 +7,7 @@ import {
   ProjectTabIcon,
 } from '@/components/project/ProjectTabIcon'
 import { requestProjectTabNavigation } from '@/providers/ProjectRouteContext'
-import {
-  projectHandleFromRoute,
-  projectRouteSegmentFromPathname,
-} from '@/lib/project-handles'
+import { peekProjectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 
 export type TabDef = {
   /** Exact label shown on the tab button. */
@@ -55,7 +52,9 @@ export function replaceProjectTabHash(hash: string): void {
     window.dispatchEvent(new Event('hashchange'))
   }
   const segment = projectRouteSegmentFromPathname(window.location.pathname)
-  if (segment && projectHandleFromRoute(segment)) requestProjectTabNavigation(commit)
+  // A handle whose normalizer is still loading (undefined) goes through
+  // verification too; the provider waits for it.
+  if (segment && peekProjectHandleFromRoute(segment) !== null) requestProjectTabNavigation(commit)
   else commit()
 }
 

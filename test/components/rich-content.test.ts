@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { describe, expect, it } from 'vitest'
-import { sanitizeRichContent } from '@/components/RichContent'
+import { sanitizeRichContent } from '@/lib/rich-content-sanitize'
 
 describe('sanitizeRichContent', () => {
   it('keeps the small formatting allowlist and hardens external links', () => {

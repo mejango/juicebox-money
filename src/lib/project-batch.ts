@@ -1,6 +1,7 @@
 'use client'
 
 import { getAccount } from '@wagmi/core'
+import { PROJECT_BATCH_PREFIX } from '@/lib/project-batch-keys'
 import { isAddress, isAddressEqual, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
@@ -71,7 +72,7 @@ export type ProjectBatch = {
   abandoned?: boolean
 }
 
-const PREFIX = 'jb-project-batch:v1:'
+const PREFIX = PROJECT_BATCH_PREFIX
 const encode = (value: unknown) => JSON.stringify(value, (_key, item) =>
   typeof item === 'bigint' ? { $projectBatchBigInt: item.toString() } : item)
 const decode = <T,>(value: string): T => JSON.parse(value, (_key, item) =>

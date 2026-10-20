@@ -1,7 +1,7 @@
 'use client'
 
 import { getAccount } from '@wagmi/core'
-import { JBCoreContracts, jbContractAddress, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, jbV6ContractAddress, jbProjectsAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctionData, isAddress, isAddressEqual, zeroAddress, type Address, type Hex } from 'viem'
 import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
@@ -331,10 +331,10 @@ async function preflight(call: PayerDeploymentCall, from: Address): Promise<void
   assertCall(call)
   const client = publicClient(call.chainId)
   const directory = await client.readContract({ address: JB_PROJECT_PAYER_DEPLOYER, abi: FACTORY_READ_ABI, functionName: 'DIRECTORY' })
-  if (!isAddressEqual(directory, jbContractAddress['6'][JBCoreContracts.JBDirectory][call.chainId])) {
+  if (!isAddressEqual(directory, jbV6ContractAddress[JBCoreContracts.JBDirectory][call.chainId])) {
     throw new Error('The payer factory does not use this chain’s canonical Juicebox directory.')
   }
-  await client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBProjects][call.chainId], abi: jbProjectsAbi, functionName: 'ownerOf', args: [BigInt(call.projectId)] })
+  await client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBProjects][call.chainId], abi: jbProjectsAbi, functionName: 'ownerOf', args: [BigInt(call.projectId)] })
   const result = await simulateStateChangingTransaction(client, { from, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, gas: DEPLOY_GAS })
   const predicted = decodeFunctionResult({ abi: jbProjectPayerDeployerAbi, functionName: 'deployProjectPayer', data: result })
   if (!isAddress(predicted) || isAddressEqual(predicted, zeroAddress)) throw new Error('The payer deployment simulation did not return a new address.')
@@ -375,7 +375,7 @@ export async function verifyPayerDeployment(call: PayerDeploymentCall, hash: Hex
       const { args } = decodeEventLog({ abi: jbProjectPayerDeployerAbi, eventName: 'DeployProjectPayer', data: log.data, topics: log.topics, strict: true })
       return args.defaultProjectId === BigInt(call.projectId) && isAddressEqual(args.defaultBeneficiary, call.beneficiary) &&
         args.defaultMemo === call.memo && args.defaultMetadata === '0x' && args.defaultAddToBalance === call.addToBalance &&
-        isAddressEqual(args.owner, call.owner) && isAddressEqual(args.directory, jbContractAddress['6'][JBCoreContracts.JBDirectory][call.chainId]) &&
+        isAddressEqual(args.owner, call.owner) && isAddressEqual(args.directory, jbV6ContractAddress[JBCoreContracts.JBDirectory][call.chainId]) &&
         isAddressEqual(args.caller, safe ? account! : transaction.from) && !isAddressEqual(args.projectPayer, zeroAddress)
         ? [args.projectPayer] : []
     } catch { return [] }

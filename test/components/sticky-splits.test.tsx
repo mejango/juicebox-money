@@ -1,4 +1,4 @@
-import { jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { stickyDistributorAddress, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -34,7 +34,7 @@ const CHAIN = 84532 as JBChainId
 const OTHER_CHAIN = 11155111 as JBChainId
 const TOKEN = '0x5ca1ab1e00000000000000000000000000005ca1' as Address
 const DISTRIBUTOR = stickyDistributorAddress(CHAIN)
-const STICKY_HOOK = jbContractAddress['6'].StickyHook[CHAIN] as Address
+const STICKY_HOOK = jbV6ContractAddress.StickyHook[CHAIN] as Address
 
 function stickyRow(patch: Partial<DraftSplit> = {}): DraftSplit {
   return {

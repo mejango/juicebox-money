@@ -8,7 +8,11 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { ProjectRouteBlockedContext } from '@/providers/ProjectRouteBlockedContext'
-import { projectHandleFromRoute, projectRouteSegmentFromPathname } from '@/lib/project-handles'
+import {
+  peekProjectHandleFromRoute,
+  projectHandleFromRoute,
+  projectRouteSegmentFromPathname,
+} from '@/lib/project-handle-route'
 import {
   projectRouteIdentity, projectRouteIsFresh, projectRouteQueryKey,
   readProjectRouteSnapshot, type ProjectRouteSnapshot,
@@ -44,9 +48,17 @@ export function invalidateProjectRoute() {
   if (typeof window !== 'undefined') window.dispatchEvent?.(new Event(INVALIDATE))
 }
 
-function currentHandle() {
+/** The current route's handle: null off handle routes, undefined until ENSIP-15 has loaded. */
+function currentHandle(): string | null | undefined {
   const segment = projectRouteSegmentFromPathname(window.location.pathname)
-  return segment ? projectHandleFromRoute(segment)?.handle ?? null : null
+  if (!segment) return null
+  const parsed = peekProjectHandleFromRoute(segment)
+  return parsed === undefined ? undefined : parsed?.handle ?? null
+}
+
+async function loadCurrentHandle(): Promise<string | null> {
+  const segment = projectRouteSegmentFromPathname(window.location.pathname)
+  return segment ? (await projectHandleFromRoute(segment))?.handle ?? null : null
 }
 
 /** Owns the alias lease above the router cache; only interactions cause revalidation. */
@@ -92,10 +104,10 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
         }
         const first = await read(force || !!invalidated)
         // A server lease can expire in transit. Retry once instead of extending its age.
-        try { return readProjectRouteSnapshot(first.value, handle, first.requestStartedAt) }
+        try { return await readProjectRouteSnapshot(first.value, handle, first.requestStartedAt) }
         catch {
           const fresh = await read(true)
-          return readProjectRouteSnapshot(fresh.value, handle, fresh.requestStartedAt)
+          return await readProjectRouteSnapshot(fresh.value, handle, fresh.requestStartedAt)
         }
       },
     })
@@ -103,7 +115,31 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
 
   const verify = useCallback(async (commit?: () => void, force = false) => {
     if (replacingDocument.current) return
-    const handle = currentHandle()
+    // Sync when the answer is known, so a non-handle route commits in this task.
+    let handle = currentHandle()
+    if (handle === undefined) {
+      // A later verify (another route, or this one again) supersedes this one
+      // while the normalizer loads. The navigation waits in pendingCommit, so
+      // a later verify of this route (focus, hash) still commits it.
+      if (commit) pendingCommit.current = commit
+      const loading = ++generation.current
+      const pathname = window.location.pathname
+      const superseded = () => replacingDocument.current || loading !== generation.current ||
+        window.location.pathname !== pathname
+      try {
+        handle = await loadCurrentHandle()
+      } catch {
+        // The normalizer's chunk failed. Webpack requests a failed chunk again
+        // on the next import(), so Try again can recover without a reload.
+        if (superseded()) return
+        pendingCommit.current = undefined
+        setError('Project link could not be verified. Try again.')
+        setState('error')
+        return
+      }
+      if (superseded()) return
+    }
+    if (replacingDocument.current) return
     if (!handle) {
       generation.current++
       pendingCommit.current = undefined
@@ -203,14 +239,14 @@ export function ProjectRouteProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const navigate = (event: Event) => { void verify((event as CustomEvent<() => void>).detail) }
-    const revalidate = () => { if (currentHandle()) void verify() }
+    const revalidate = () => { if (currentHandle() !== null) void verify() }
     const focused = () => {
       if (typeof document === 'undefined' || !document.querySelector('dialog[open]')) revalidate()
     }
     const restored = (event: PageTransitionEvent) => { if (event.persisted) revalidate() }
     const invalidate = () => {
       queryClient.removeQueries({ queryKey: ['projectRoute'] })
-      if (currentHandle()) void verify(undefined, true)
+      if (currentHandle() !== null) void verify(undefined, true)
     }
     window.addEventListener(NAVIGATE, navigate)
     window.addEventListener(INVALIDATE, invalidate)

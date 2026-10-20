@@ -1,7 +1,7 @@
 'use client'
 
 import {
-  JBCoreContracts, RevnetCoreContracts, jbContractAddress, jbControllerAbi,
+  JBCoreContracts, RevnetCoreContracts, jbV6ContractAddress, jbControllerAbi,
   jbDirectoryAbi, jbProjectsAbi, revOwnerAbi, type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { buildAutoIssueTx, buildClaimTokensTx, getAmountToAutoIssue, getCreditBalance, getTokenAddress } from '@bananapus/nana-sdk-core/v6'
@@ -41,7 +41,7 @@ function sameAddress(a: Address | null, b: Address | null): boolean {
 async function readTokenContext(chainId: JBChainId, projectId: number): Promise<TokenContext> {
   const client = clientFor(chainId)
   const [controller, token] = await Promise.all([
-    client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId],
+    client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId],
       abi: jbDirectoryAbi, functionName: 'controllerOf', args: [BigInt(projectId)] }),
     getTokenAddress(client, { chainId, projectId: BigInt(projectId) }),
   ])
@@ -92,10 +92,10 @@ export async function reverifyClaimCall(call: ProjectBatchCall): Promise<void> {
 
 async function readAutoIssueContext(chainId: JBChainId, projectId: number, stageId: string, beneficiary: Address): Promise<AutoIssueContext> {
   const client = clientFor(chainId)
-  const owner = jbContractAddress['6'][RevnetCoreContracts.REVOwner][chainId]
+  const owner = jbV6ContractAddress[RevnetCoreContracts.REVOwner][chainId]
   const [token, projectOwner, issuanceController, amount, block] = await Promise.all([
     readTokenContext(chainId, projectId),
-    client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId], abi: jbProjectsAbi,
+    client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId], abi: jbProjectsAbi,
       functionName: 'ownerOf', args: [BigInt(projectId)] }),
     client.readContract({ address: owner, abi: revOwnerAbi, functionName: 'CONTROLLER' }),
     getAmountToAutoIssue(client, { chainId, revnetId: BigInt(projectId), stageId: BigInt(stageId), beneficiary }),

@@ -2,7 +2,7 @@
 
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -20,7 +20,7 @@ export function useProjectTokenUnit(
 ): string {
   const { data: tokenAddress } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'tokenOf',
     args: [BigInt(projectId)],
     chainId,

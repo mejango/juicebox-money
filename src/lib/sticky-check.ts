@@ -1,4 +1,4 @@
-import { jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { getTokenAddress, validateStickyGroupId } from '@bananapus/nana-sdk-core/v6'
 import {
   BaseError,
@@ -63,7 +63,7 @@ export async function checkStickyToken(
   token: Address,
 ): Promise<StickyTokenCheck> {
   const where = chainName(chainId)
-  const hook = (jbContractAddress['6'].StickyHook as Partial<Record<number, Address>>)[chainId]
+  const hook = (jbV6ContractAddress.StickyHook as Partial<Record<number, Address>>)[chainId]
   if (!hook) return { ok: false, reason: `Sticky is not deployed on ${where}.` }
   let projectId: bigint
   try {

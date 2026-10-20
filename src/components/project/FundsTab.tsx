@@ -17,7 +17,7 @@ import {
   NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
   USD_CURRENCY_ID,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbFundAccessLimitsAbi,
   jbPricesAbi,
   jbProjectsAbi,
@@ -164,19 +164,19 @@ async function readChainFunds(
   const client = getPublicClient(config, { chainId }) as
     | PublicClient
     | undefined
-  const terminal = jbContractAddress['6'][JBCoreContracts.JBMultiTerminal][
+  const terminal = jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][
     chainId
   ] as Address | undefined
-  const store = jbContractAddress['6'][JBCoreContracts.JBTerminalStore][
+  const store = jbV6ContractAddress[JBCoreContracts.JBTerminalStore][
     chainId
   ] as Address | undefined
-  const limitsAddress = jbContractAddress['6'][
+  const limitsAddress = jbV6ContractAddress[
     JBCoreContracts.JBFundAccessLimits
   ][chainId] as Address | undefined
-  const splitsAddress = jbContractAddress['6'][JBCoreContracts.JBSplits][
+  const splitsAddress = jbV6ContractAddress[JBCoreContracts.JBSplits][
     chainId
   ] as Address | undefined
-  const pricesAddress = jbContractAddress['6'][JBCoreContracts.JBPrices][
+  const pricesAddress = jbV6ContractAddress[JBCoreContracts.JBPrices][
     chainId
   ] as Address | undefined
 
@@ -454,7 +454,7 @@ export function FundsTab({
 
   const { data: owner } = useReadContract({
     abi: jbProjectsAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBProjects][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
     functionName: 'ownerOf',
     args: [BigInt(projectId)],
     chainId,

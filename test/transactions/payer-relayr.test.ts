@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, keccak256, stringToHex, zeroAddress, type Address, type Hex } from 'viem'
-import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
 import { RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_ADDRESS, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError, relayrPaymentChains, relayrPaymentDetails, relayrSignedRequests, sentRelayrPayment, type RelayrEntry, type RelayrPaymentDetails, type RelayrQuote } from '@bananapus/nana-sdk-core/review/relayr'
 
@@ -92,7 +92,7 @@ let review: PayerDeploymentSession
 let projectId = 100
 let storage: { getItem: ReturnType<typeof vi.fn>; setItem: ReturnType<typeof vi.fn>; removeItem: ReturnType<typeof vi.fn> }
 const hashFor = (chain: number) => `0x${chain.toString(16).padStart(64, '0')}` as Hex
-const directoryFor = (chain: number) => jbContractAddress['6'][JBCoreContracts.JBDirectory][chain as JBChainId]
+const directoryFor = (chain: number) => jbV6ContractAddress[JBCoreContracts.JBDirectory][chain as JBChainId]
 
 function makeReview(chains = [1, 10]) {
   return buildPayerDeploymentReview({

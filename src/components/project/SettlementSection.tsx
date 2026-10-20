@@ -6,7 +6,7 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 import {
   JBCoreContracts,
   JBSuckerContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbSuckerRegistryAbi,
@@ -94,7 +94,7 @@ export async function findToRemoteValue(
   account: Address,
 ): Promise<bigint | null> {
   if (infra === 'unknown') return null
-  const registry = jbContractAddress['6'][JBSuckerContracts.JBSuckerRegistry][
+  const registry = jbV6ContractAddress[JBSuckerContracts.JBSuckerRegistry][
     chainId
   ] as Address | undefined
   if (!registry) return null

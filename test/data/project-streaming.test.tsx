@@ -35,9 +35,9 @@ vi.mock('@/hooks/useProjectNftProtocol', () => ({ useProjectNftProtocol: () => (
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: () => null }))
 vi.mock('@/components/TreasuryCard', () => ({ TreasuryCard: ({ payDisclosure }: { payDisclosure?: string }) => <p>Payment panel {payDisclosure}</p> }))
 vi.mock('@/components/project/ProjectStats', () => ({ ProjectStats: () => null }))
-vi.mock('@/components/project/ProjectHandleCard', () => ({ ProjectHandleCard: () => null }))
+vi.mock('@/components/project/ProjectHandleCardLazy', () => ({ ProjectHandleCard: () => null }))
 vi.mock('@/components/project/ProjectDataStatus', () => ({ ProjectDataStatus: () => <p>Some project details are unavailable</p> }))
-vi.mock('@/components/project/PendingPayments', () => ({ PendingPayments: () => null }))
+vi.mock('@/components/project/PendingPaymentsGate', () => ({ PendingPaymentsGate: () => null }))
 vi.mock('@/components/project/OverviewTab', () => ({ OverviewTab: () => <p>Overview ready</p> }))
 vi.mock('@/components/project/LazyProjectTabs', () => ({
   BackOfficeTab: () => <p>Metadata editor ready</p>, ExtrasTab: () => null, FundsTab: () => null, OwnersTab: () => <p>Owners ready</p>,

@@ -27,13 +27,13 @@ import {
   buildSetProjectHandleCall,
   continueProjectHandleSetup,
   normalizeProjectHandle,
-  navigateToProjectHandle,
   projectHandleRecord,
   projectHandleSetupPhase,
   readBoundedProjectHandle,
   readBoundedProjectHandleParts,
   readDirectEnsProjectRecord,
 } from '@/lib/project-handles'
+import { navigateToProjectHandle } from '@/lib/project-handle-route'
 import { chainName } from '@/lib/urn'
 import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
 import { revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'

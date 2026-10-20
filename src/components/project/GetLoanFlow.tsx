@@ -5,7 +5,7 @@ import { borrowIntent } from '@bananapus/nana-sdk-core/review'
 
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -135,7 +135,7 @@ export function GetLoanFlow({
   // The holder's token balance, to cap the collateral input.
   const { data: balance } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId] as Address,
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId] as Address,
     functionName: 'totalBalanceOf',
     args: address ? [address, BigInt(projectId)] : undefined,
     chainId,

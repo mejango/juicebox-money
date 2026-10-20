@@ -5,7 +5,8 @@ import { getRevnetOperatorCandidates } from '@/lib/bendystraw'
 import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { lookupProjectHandleTarget, lookupVerifiedProjectHandle } from '@/lib/ens'
 import { projectAuthorityMatchesMainnet, readLiveProjectAuthorityContext, revnetOperatorFromPermissionHistory } from '@/lib/project-fallback'
-import { decodeProjectRouteSegment, projectHandleFromRoute, verifyProjectHandleAuthorityWithFallback } from '@/lib/project-handles'
+import { verifyProjectHandleAuthorityWithFallback } from '@/lib/project-handles'
+import { decodeProjectRouteSegment, projectHandleFromRoute } from '@/lib/project-handle-route'
 import { getProjectPageData as getPageDataCached } from '@/lib/project-server-data'
 import { parseUrn } from '@/lib/urn'
 import { QueryClient } from '@tanstack/query-core'
@@ -46,7 +47,7 @@ const resolveProjectRouteUncached =
       };
     }
 
-    const requestedHandle = projectHandleFromRoute(decodedSegment);
+    const requestedHandle = await projectHandleFromRoute(decodedSegment);
     if (!requestedHandle) return null;
     const target = await lookupProjectHandleTarget(requestedHandle.handle);
     if (!target) return null;
@@ -121,7 +122,7 @@ class UnverifiedProjectAlias extends Error {}
 /** Hard expiry: failed verification never serves a stale or cached negative answer. */
 export async function resolveProjectRoute(segment: string, force = false) {
   const decoded = decodeProjectRouteSegment(segment)
-  const requested = decoded && projectHandleFromRoute(decoded)
+  const requested = decoded ? await projectHandleFromRoute(decoded) : null
   if (!requested) return resolveProjectRouteUncached(segment)
   const queryKey = ['verifiedProjectAlias', requested.handle] as const
   if (force) {

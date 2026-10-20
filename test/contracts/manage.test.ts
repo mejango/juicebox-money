@@ -1,6 +1,6 @@
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
 } from '@bananapus/nana-sdk-core'
 import { decodeFunctionData, encodeFunctionData, type Address } from 'viem'
@@ -15,7 +15,7 @@ const OTHER = '0x1111111111111111111111111111111111111111' as Address
 const SALT = `0x${'ab'.repeat(32)}` as const
 
 describe('owner-management requests', () => {
-  const controller = jbContractAddress['6'][JBCoreContracts.JBController][1] as Address
+  const controller = jbV6ContractAddress[JBCoreContracts.JBController][1] as Address
 
   it('only treats the canonical controller as a supported write target', () => {
     expect(isKnownController(1, controller)).toBe(true)

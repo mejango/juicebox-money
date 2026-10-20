@@ -4,7 +4,7 @@ import { projectDisplayQuery } from '@/lib/project-display-queries'
 import {
   JB_CHAINS,
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbTokensAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -140,7 +140,7 @@ export function CashOutPanel({
   // The holder's full project-token balance: ERC-20 + internal credits.
   const { data: balance, refetch: refetchBalance } = useReadContract({
     abi: jbTokensAbi,
-    address: jbContractAddress['6'][JBCoreContracts.JBTokens][chainId],
+    address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'totalBalanceOf',
     args: [address ?? zeroAddress, BigInt(projectId)],
     chainId,

@@ -9,10 +9,8 @@ import { truncateAddress } from '@/lib/format'
 import { ChainIcon } from '@/components/ChainIcon'
 import { identityGradient } from '@/lib/identityGradient'
 import { parseUrn, toUrn, chainName } from '@/lib/urn'
-import {
-  navigateToProjectHandle,
-  projectHandleFromRoute,
-} from '@/lib/project-handles'
+import { navigateToProjectHandle, projectHandleFromRoute } from '@/lib/project-handle-route'
+import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import {
   rememberProjectNavigation,
   type ProjectNavigationHint,
@@ -77,9 +75,16 @@ export function SearchBox({
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const searchGenerationRef = useRef(0)
+  // Enter on an `@` query whose normalizer is still loading: submit once it
+  // has, unless the query was edited or the box lost focus first (a header
+  // link, another submit), so a late answer never overrides a newer choice.
+  const pendingSubmitRef = useRef<string | null>(null)
+  const [, setNormalizerTick] = useState(0)
 
   const urn = parseUrn(query.trim())
-  const projectHandle = projectHandleFromRoute(query.trim())
+  const projectHandle = useProjectHandleFromRoute(query.trim())
+  // An `@` query whose normalizer is still loading is neither a search nor an ENS name.
+  const handlePending = projectHandle === undefined
   const handlePath = projectHandle
     ? `/@${encodeURIComponent(projectHandle.handle)}`
     : null
@@ -127,7 +132,7 @@ export function SearchBox({
     abortRef.current?.abort()
     abortRef.current = null
     const text = query.trim()
-    if (urn || handlePath || (text.length < 2 && !/^\d+$/.test(text))) {
+    if (urn || handlePath || handlePending || (text.length < 2 && !/^\d+$/.test(text))) {
       setResults([])
       setSearchUnavailable(false)
       return
@@ -166,12 +171,17 @@ export function SearchBox({
       controller?.abort()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [handlePath, query])
+  }, [handlePath, handlePending, query])
 
   // Account queries: a literal address matches immediately; a plausible ENS
   // name debounce-resolves, showing a pending row while it's in flight.
   useEffect(() => {
     const text = query.trim()
+    if (handlePending) {
+      setAccount(null)
+      setEnsPending(false)
+      return
+    }
     if (handlePath) {
       setAccount(null)
       setEnsPending(false)
@@ -205,7 +215,7 @@ export function SearchBox({
       stale = true
       clearTimeout(t)
     }
-  }, [handlePath, query])
+  }, [handlePath, handlePending, query])
 
   // Close on outside pointer.
   useOutsideClose(boxRef, () => {
@@ -249,6 +259,14 @@ export function SearchBox({
   const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
     else if (handlePath) goHandle(handlePath)
+    else if (handlePending) {
+      pendingSubmitRef.current = query
+      // After a failed download this asks for the chunk again.
+      void projectHandleFromRoute(query.trim()).then(
+        () => setNormalizerTick(tick => tick + 1),
+        () => { pendingSubmitRef.current = null },
+      )
+    }
     else if (accountPath) go(accountPath)
     else if (results.length > 0)
       go(`/${toUrn(results[0].chainId, results[0].projectId)}`, {
@@ -258,6 +276,15 @@ export function SearchBox({
       })
   }
 
+  useEffect(() => {
+    const pending = pendingSubmitRef.current
+    if (pending === null || handlePending) return
+    pendingSubmitRef.current = null
+    const focused = typeof document === 'undefined' || document.activeElement === inputRef.current
+    // An invalid `@` query falls back to ordinary search on the next Enter.
+    if (pending === query && handlePath && focused) goHandle(handlePath)
+  }, [handlePath, handlePending, query])
+
   const input = (
     <div className="relative w-full">
       <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-smoke-500" />
@@ -266,7 +293,11 @@ export function SearchBox({
         type="text"
         autoFocus={autoFocus}
         value={query}
-        onChange={e => setQuery(e.target.value)}
+        onChange={e => {
+          pendingSubmitRef.current = null
+          setQuery(e.target.value)
+        }}
+        onBlur={() => { pendingSubmitRef.current = null }}
         onFocus={() =>
           (results.length > 0 || account || ensPending || searchUnavailable) &&
           setOpen(true)

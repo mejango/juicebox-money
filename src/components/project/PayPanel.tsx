@@ -14,7 +14,7 @@ import {
   JBCoreContracts,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
-  jbContractAddress,
+  jbV6ContractAddress,
   jb721TiersHookAbi,
   jbDirectoryAbi,
   jbPricesAbi,
@@ -92,7 +92,11 @@ import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 
-const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout))
+// The loading line is the chunk's own boundary; without it a first load falls
+// through to the route skeleton.
+const DefifaCheckout = dynamic(() => import('./DefifaCheckout').then(module => module.DefifaCheckout), {
+  loading: () => <p role="status" className="text-sm text-smoke-600">Loading checkout…</p>,
+})
 
 function payChainName(chainId: JBChainId): string {
   const compactNames: Partial<Record<JBChainId, string>> = {
@@ -341,9 +345,9 @@ export function PayPanel({
       const pid = BigInt(projectId);
       const args = { chainId, projectId: pid };
       const directory =
-        jbContractAddress["6"][JBCoreContracts.JBDirectory][chainId];
+        jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId];
       const multiTerminal =
-        jbContractAddress["6"][JBCoreContracts.JBMultiTerminal][chainId];
+        jbV6ContractAddress[JBCoreContracts.JBMultiTerminal][chainId];
       const [contexts, ruleset, terminalsRaw] = await Promise.all([
         reader.fetchQuery(accountingContextsQuery(client, args)),
         reader.fetchQuery(currentRulesetQuery(client, args)),
@@ -659,7 +663,7 @@ export function PayPanel({
     staleTime: 60_000,
     retry: 1,
     queryFn: async (): Promise<Record<string, ShopPayRoute>> => {
-      const prices = jbContractAddress["6"][JBCoreContracts.JBPrices][chainId];
+      const prices = jbV6ContractAddress[JBCoreContracts.JBPrices][chainId];
       const entries = await Promise.all(
         contexts.map(async (payContext) => {
           const key = payTokenKey(payContext);

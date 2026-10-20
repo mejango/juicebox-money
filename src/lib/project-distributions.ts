@@ -1,4 +1,4 @@
-import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, jbDirectoryAbi, jbFundAccessLimitsAbi, jbMultiTerminalAbi, jbProjectsAbi, jbSplitsAbi, jbTerminalStoreAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbV6ContractAddress, jbControllerAbi, jbDirectoryAbi, jbFundAccessLimitsAbi, jbMultiTerminalAbi, jbProjectsAbi, jbSplitsAbi, jbTerminalStoreAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { JBPermissionIdsV6, RESERVED_TOKEN_SPLIT_GROUP_ID, getAccountingContexts, getCurrentRuleset, getTokenAddress, hasPermissions, payoutSplitGroupId, verifyPayoutReceipt, verifyReservedDistributionReceipt, type JBAccountingContext } from '@bananapus/nana-sdk-core/v6'
 import { decodeFunctionResult, encodeFunctionData, isAddressEqual, zeroAddress, type Address, type TransactionReceipt } from 'viem'
 import { clientFor, type AuthorityCall } from '@/lib/authority'
@@ -43,7 +43,7 @@ export function matchingPayoutToken(homeToken: Address, homeChain: JBChainId, de
 }
 
 async function readProject(project: DistributionProject) {
-  const client = clientFor(project.chainId), addresses = jbContractAddress['6'], pid = BigInt(project.projectId)
+  const client = clientFor(project.chainId), addresses = jbV6ContractAddress, pid = BigInt(project.projectId)
   const [owner, controller, current] = await Promise.all([
     client.readContract({ address: addresses[JBCoreContracts.JBProjects][project.chainId], abi: jbProjectsAbi, functionName: 'ownerOf', args: [pid] }),
     client.readContract({ address: addresses[JBCoreContracts.JBDirectory][project.chainId], abi: jbDirectoryAbi, functionName: 'controllerOf', args: [pid] }),
@@ -55,7 +55,7 @@ async function readProject(project: DistributionProject) {
 
 export async function readPayoutOptions(project: DistributionProject): Promise<PayoutOptions> {
   const { client, current } = await readProject(project)
-  const addresses = jbContractAddress['6'], terminal = addresses[JBCoreContracts.JBMultiTerminal][project.chainId], pid = BigInt(project.projectId)
+  const addresses = jbV6ContractAddress, terminal = addresses[JBCoreContracts.JBMultiTerminal][project.chainId], pid = BigInt(project.projectId)
   const terminals = await client.readContract({ address: addresses[JBCoreContracts.JBDirectory][project.chainId], abi: jbDirectoryAbi, functionName: 'terminalsOf', args: [pid] })
   if (!terminals.some(item => isAddressEqual(item, terminal))) throw new Error(`${chainName(project.chainId)} does not use the supported payout terminal.`)
   const contexts = await getAccountingContexts(client, { chainId: project.chainId, projectId: pid })
@@ -100,7 +100,7 @@ export async function reviewPayout(project: DistributionProject, token: Address,
   const limit = context.limits.find(item => item.currency === currency)
   if (amount <= 0n || !limit || amount > limit.remaining) throw new Error(`${chainName(project.chainId)}: enter an amount within the remaining payout limit.`)
   const authority = await payoutAuthority(project, owner, current.metadata.ownerMustSendPayouts, account)
-  const splits = await client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBSplits][project.chainId], abi: jbSplitsAbi, functionName: 'splitsOf', args: [BigInt(project.projectId), BigInt(current.ruleset.id), payoutSplitGroupId(token)] })
+  const splits = await client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBSplits][project.chainId], abi: jbSplitsAbi, functionName: 'splitsOf', args: [BigInt(project.projectId), BigInt(current.ruleset.id), payoutSplitGroupId(token)] })
   const hooks = [...new Set(splits.filter(split => !isAddressEqual(split.hook, zeroAddress)).map(split => split.hook.toLowerCase() as Address))]
   const hookFeeless: Record<string, boolean> = {}
   if (hooks.length) {
@@ -117,7 +117,7 @@ export async function reviewReserved(project: DistributionProject, account: Addr
   const { owner, controller, current, client } = await readProject(project)
   const [pending, splits, token] = await Promise.all([
     client.readContract({ address: controller, abi: jbControllerAbi, functionName: 'pendingReservedTokenBalanceOf', args: [BigInt(project.projectId)] }),
-    client.readContract({ address: jbContractAddress['6'][JBCoreContracts.JBSplits][project.chainId], abi: jbSplitsAbi, functionName: 'splitsOf', args: [BigInt(project.projectId), BigInt(current.ruleset.id), RESERVED_TOKEN_SPLIT_GROUP_ID] }),
+    client.readContract({ address: jbV6ContractAddress[JBCoreContracts.JBSplits][project.chainId], abi: jbSplitsAbi, functionName: 'splitsOf', args: [BigInt(project.projectId), BigInt(current.ruleset.id), RESERVED_TOKEN_SPLIT_GROUP_ID] }),
     getTokenAddress(client, { chainId: project.chainId, projectId: BigInt(project.projectId) }),
   ])
   if (pending <= 0n) throw new Error(`${chainName(project.chainId)} has no pending reserved tokens.`)
@@ -188,7 +188,7 @@ export function verifyDistributionCompletion(snapshot: Distribution, receipt: Tr
       return verifyReservedDistributionReceipt(receipt, {
         ...reviewed,
         controller: snapshot.controller,
-        tokens: jbContractAddress['6'][JBCoreContracts.JBTokens][snapshot.chainId],
+        tokens: jbV6ContractAddress[JBCoreContracts.JBTokens][snapshot.chainId],
         tokenCount: snapshot.pending,
         splits: snapshot.splits,
       }).tokenCount

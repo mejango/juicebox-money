@@ -1,7 +1,7 @@
 import {
   JBCoreContracts,
   NATIVE_TOKEN,
-  jbContractAddress,
+  jbV6ContractAddress,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
 import {
@@ -533,7 +533,7 @@ describe("local transaction builders", () => {
     expect(call).toMatchObject({
       chainId: CHAIN_ID,
       authority: AUTHORITY,
-      target: jbContractAddress["6"][JBCoreContracts.JBPermissions][CHAIN_ID],
+      target: jbV6ContractAddress[JBCoreContracts.JBPermissions][CHAIN_ID],
       functionName: "setPermissionsFor",
       contractName: "JBPermissions",
       gas: 222_000n,
@@ -666,7 +666,7 @@ describe("SDK transaction builders used by wallet flows", () => {
     });
     const data = encode(request);
 
-    expect(request.address).toBe(jbContractAddress["6"].REVLoans[CHAIN_ID]);
+    expect(request.address).toBe(jbV6ContractAddress.REVLoans[CHAIN_ID]);
     expect(request.args).toEqual([
       32n,
       TOKEN,
@@ -695,7 +695,7 @@ describe("SDK transaction builders used by wallet flows", () => {
     });
     const data = encode(request);
 
-    expect(request.address).toBe(jbContractAddress["6"].REVLoans[CHAIN_ID]);
+    expect(request.address).toBe(jbV6ContractAddress.REVLoans[CHAIN_ID]);
     expect(request.args).toEqual([
       33n,
       101_000n,
@@ -722,7 +722,7 @@ describe("SDK transaction builders used by wallet flows", () => {
     const data = encode(request);
 
     expect(request.address).toBe(
-      jbContractAddress["6"][JBCoreContracts.JBPermissions][CHAIN_ID],
+      jbV6ContractAddress[JBCoreContracts.JBPermissions][CHAIN_ID],
     );
     expect(request.args).toEqual([
       ALICE,

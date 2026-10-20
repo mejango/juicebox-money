@@ -106,6 +106,9 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
 
     const browserErrors: string[] = []
     page.on('pageerror', error => browserErrors.push(error.message))
+    // The deterministic build has no wallet; the panel mounts for a connected
+    // wallet or a saved batch. A saved alias (whose journal is gone) opens it.
+    await page.addInitScript(() => localStorage.setItem('jb-project-batch:v1:alias:route-destination-payments:1:1', 'gone'))
     await page.goto('/eth:1', { waitUntil: 'domcontentloaded' })
     await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
     await expect.poll(() => blockReads).toBeGreaterThan(0)
@@ -158,3 +161,20 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
       : test.info().outputPath(screenshotName) })
   })
 }
+
+test('the pending-payments panel stays unloaded for a signed-out visitor with nothing saved', async ({ context, page }) => {
+  await context.route(/^https?:\/\//, async route => {
+    if (['127.0.0.1', 'localhost', '::1'].includes(new URL(route.request().url()).hostname)) await route.continue()
+    else await route.fulfill({ status: 503, body: 'External browser traffic is disabled' })
+  })
+  const operation = Object.entries(registry as Record<string, string>)
+    .find(([, query]) => query.startsWith('query PendingPayments('))![0]
+  const pendingReads: string[] = []
+  page.on('request', request => {
+    if (request.postData()?.includes(operation)) pendingReads.push(request.url())
+  })
+  await page.goto('/eth:1', { waitUntil: 'networkidle' })
+  await expect(page.getByRole('heading', { name: 'Browser Fixture Project', exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Payments needing processing', exact: true })).toHaveCount(0)
+  expect(pendingReads).toEqual([])
+})

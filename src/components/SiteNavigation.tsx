@@ -6,7 +6,7 @@ import { usePathname } from 'next/navigation'
 import { useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
 import logoIcon from '@/assets/brand/logo-icon.svg'
-import { projectRouteSegmentFromPathname } from '@/lib/project-handles'
+import { projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 import { MagnifierIcon, SearchBox } from './SearchBox'
 import { WalletButton } from './WalletButton'
 

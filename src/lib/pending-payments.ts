@@ -4,6 +4,7 @@ import { decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, isAd
 import { bendystraw } from '@/lib/bendystraw'
 import { clientFor } from '@/lib/authority'
 import { loadProjectBatches, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
+import { LEGACY_PENDING_PAYMENT_ACTION, PENDING_PAYMENT_ACTION } from '@/lib/project-batch-keys'
 import { rolloutChain, rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -19,7 +20,7 @@ export type ReviewedPayment = {
   failure: { errorHash: Hex; count: number; lastFailureAt: number; highestGasLimit: bigint }
   readyAt: bigint; ready: boolean; gas: bigint; decimals: number | null; symbol: string
 }
-export const PENDING_PAYMENT_ACTION = 'route-destination-payments'
+export { PENDING_PAYMENT_ACTION }
 
 const PENDING_PAYMENTS_QUERY = `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
   routerPendingCalls(
@@ -142,7 +143,7 @@ export function pendingPaymentCall(review: ReviewedPayment, account: Address): P
 
 /** Legacy journals keep source-scoped aliases, but belong on their committed destinations. */
 export function loadPendingPaymentBatch(destinations: readonly (readonly [number, number])[]): ProjectBatch | null {
-  const candidates = new Map([...loadProjectBatches('route-pending-payments'), ...loadProjectBatches(PENDING_PAYMENT_ACTION)]
+  const candidates = new Map([...loadProjectBatches(LEGACY_PENDING_PAYMENT_ACTION), ...loadProjectBatches(PENDING_PAYMENT_ACTION)]
     .map(batch => [batch.id, batch]))
   const batches = [...candidates.values()].filter(batch => batch.calls.some(call => {
     const hasUnfinished = batch.calls.some(item => !batch.completedIds.includes(item.id))

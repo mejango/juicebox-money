@@ -1,4 +1,4 @@
-import { JBCoreContracts, RevnetCoreContracts, jbContractAddress, jbControllerAbi } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, RevnetCoreContracts, jbV6ContractAddress, jbControllerAbi } from '@bananapus/nana-sdk-core'
 import { JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { createElement, type ComponentProps } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
@@ -159,12 +159,12 @@ function installLiveRows(rows: EditorRow[]) {
       const row = liveRows.get(`${chainId}:${request.args?.[0]}`)
       if (!row) throw new Error(`Unexpected project read on ${chainId}: ${request.args?.[0]}`)
       if (request.functionName === 'ownerOf') {
-        expect(request.address.toLowerCase()).toBe(jbContractAddress['6'][JBCoreContracts.JBProjects][chainId].toLowerCase())
+        expect(request.address.toLowerCase()).toBe(jbV6ContractAddress[JBCoreContracts.JBProjects][chainId].toLowerCase())
         expect(request.args).toEqual([BigInt(row.projectId)])
         return owners.get(`${chainId}:${row.projectId}`) ?? row.authority
       }
       if (request.functionName === 'controllerOf') {
-        expect(request.address.toLowerCase()).toBe(jbContractAddress['6'][JBCoreContracts.JBDirectory][chainId].toLowerCase())
+        expect(request.address.toLowerCase()).toBe(jbV6ContractAddress[JBCoreContracts.JBDirectory][chainId].toLowerCase())
         expect(request.args).toEqual([BigInt(row.projectId)])
         return row.controller
       }
@@ -822,7 +822,7 @@ describe('metadata editor permission scope and submission locks', () => {
 
   it.each([false, true])('accepts a delegate holding only SET_PROJECT_URI (revnet: %s)', async isRevnet => {
     const owner = isRevnet
-      ? jbContractAddress['6'][RevnetCoreContracts.REVOwner][1]
+      ? jbV6ContractAddress[RevnetCoreContracts.REVOwner][1]
       : OTHER
     owners.set('1:42', owner)
     const row = { ...ROWS[0], authority: null, indexedAuthority: null }
@@ -843,7 +843,7 @@ describe('metadata editor permission scope and submission locks', () => {
   })
 
   it('keeps a revnet destination selectable when only its indexed full operator is unknown', async () => {
-    owners.set('1:42', jbContractAddress['6'][RevnetCoreContracts.REVOwner][1])
+    owners.set('1:42', jbV6ContractAddress[RevnetCoreContracts.REVOwner][1])
     const row = {
       ...ROWS[0],
       authority: null,
@@ -896,7 +896,7 @@ describe('metadata editor permission scope and submission locks', () => {
 
   it.each([false, true])('keeps a Safe owner/operator as the execution authority (revnet: %s)', async isRevnet => {
     const owner = isRevnet
-      ? jbContractAddress['6'][RevnetCoreContracts.REVOwner][1]
+      ? jbV6ContractAddress[RevnetCoreContracts.REVOwner][1]
       : SAFE
     owners.set('1:42', owner)
     const row = { ...ROWS[0], authority: SAFE, indexedAuthority: SAFE }

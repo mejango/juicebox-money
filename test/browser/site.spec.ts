@@ -587,3 +587,33 @@ for (const viewport of viewports) {
     }
   })
 }
+
+test('the 404 page renders on its own chunks and links home', async ({ context, page }) => {
+  const pageErrors: string[] = []
+  page.on('pageerror', error => pageErrors.push(error.message))
+  const externalTraffic = await blockExternalTraffic(context)
+  const scripts: string[] = []
+  page.on('request', request => {
+    if (request.resourceType() === 'script') scripts.push(new URL(request.url()).pathname)
+  })
+  // The header's home link prefetches the home page (and its chunk) on purpose.
+  await page.route('**/*', route =>
+    route.request().headers()['next-router-prefetch'] ? route.abort() : route.fallback(),
+  )
+
+  await page.goto('/account/not-an-account', { waitUntil: 'networkidle' })
+  await expect(
+    page.getByRole('heading', { level: 1, name: /This juicebox is empty/i }),
+  ).toBeVisible()
+  await expect(page.getByRole('contentinfo').getByRole('img', { name: 'Juicebox' })).toBeVisible()
+  // The home page's own chunk rode onto every route through client modules the
+  // root layout shares with it (app/page-client.tsx).
+  expect(scripts.filter(path => /\/static\/chunks\/app\/page-/.test(path))).toEqual([])
+
+  await page.unroute('**/*')
+  await page.getByRole('link', { name: 'Back to home' }).click()
+  await expect(page).toHaveURL('/')
+  await expect(page.getByRole('heading', { level: 1, name: /Fund your thing/i })).toBeVisible()
+  expect(pageErrors).toEqual([])
+  expect(externalTraffic).toEqual({ http: [], webSockets: [] })
+})

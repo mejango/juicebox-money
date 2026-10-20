@@ -7,7 +7,7 @@ import {
   JBCoreContracts,
   jb721TiersHookAbi,
   jb721TiersHookStoreAbi,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbSplitsAbi,
   SPLITS_TOTAL_PERCENT,
   type JBChainId,
@@ -94,7 +94,10 @@ import { StickyRecipient } from '@/components/project/StickyRecipient'
  * omnichain rules. RPC failures surface as errors, never as "no shop".
  */
 
-const DefifaOwnedNfts = dynamic(() => import('./DefifaOwnedNfts').then(module => module.DefifaOwnedNfts))
+// The loading line is the chunk's own boundary (see LazyProjectTabs).
+const DefifaOwnedNfts = dynamic(() => import('./DefifaOwnedNfts').then(module => module.DefifaOwnedNfts), {
+  loading: () => <p role="status" className="text-sm text-smoke-600">Loading your NFTs…</p>,
+})
 
 const SHOP_CONFIG_ROWS: [keyof ShopConfigFlags, string][] = [
   ['preventOverspending', 'Require exact payment'],
@@ -1874,7 +1877,7 @@ function TierSaleRouting({
 }) {
   const splits = useReadContract({
     chainId,
-    address: jbContractAddress['6'][JBCoreContracts.JBSplits][chainId] as Address,
+    address: jbV6ContractAddress[JBCoreContracts.JBSplits][chainId] as Address,
     abi: jbSplitsAbi,
     functionName: 'splitsOf',
     args: [BigInt(projectId), 0n, BigInt(hook) | (BigInt(tier.id) << 160n)],

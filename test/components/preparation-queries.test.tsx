@@ -1,4 +1,4 @@
-import { JBCoreContracts, jbContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID } from '@bananapus/nana-sdk-core/v6'
 import { QueryClient, QueryClientProvider, type FetchQueryOptions } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
@@ -22,7 +22,7 @@ vi.mock('wagmi', async original => ({
   ...await original<typeof import('wagmi')>(),
   usePublicClient: ({ chainId }: { chainId: number }) => m.clients.get(chainId),
   useReadContract: ({ functionName, chainId }: { functionName: string; chainId: JBChainId }) => ({
-    data: functionName === 'ownerOf' ? m.address : jbContractAddress['6'][JBCoreContracts.JBController][chainId],
+    data: functionName === 'ownerOf' ? m.address : jbV6ContractAddress[JBCoreContracts.JBController][chainId],
   }),
 }))
 vi.mock('@/lib/authority', async original => ({
@@ -70,7 +70,7 @@ beforeEach(() => {
   m.read.mockImplementation(async (chainId: JBChainId, request: { functionName: string }) => {
     if (m.failedChains.has(chainId)) throw new Error('RPC unavailable')
     if (request.functionName === 'ownerOf') return m.address
-    if (request.functionName === 'controllerOf') return jbContractAddress['6'][JBCoreContracts.JBController][chainId]
+    if (request.functionName === 'controllerOf') return jbV6ContractAddress[JBCoreContracts.JBController][chainId]
     if (request.functionName === 'splitsOf') return []
     throw new Error(`Unexpected read: ${request.functionName}`)
   })

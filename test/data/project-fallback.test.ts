@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeErrorResult, encodeFunctionResult } from 'viem'
 import {
   JBCoreContracts,
-  jbContractAddress,
+  jbV6ContractAddress,
   jbControllerAbi,
   jbDirectoryAbi,
   jbProjectsAbi,
@@ -170,9 +170,9 @@ describe('project page data with on-chain fallback', () => {
 
 describe('on-chain project shell read', () => {
   const projectsAddress =
-    jbContractAddress['6'][JBCoreContracts.JBProjects][1].toLowerCase()
+    jbV6ContractAddress[JBCoreContracts.JBProjects][1].toLowerCase()
   const directoryAddress =
-    jbContractAddress['6'][JBCoreContracts.JBDirectory][1].toLowerCase()
+    jbV6ContractAddress[JBCoreContracts.JBDirectory][1].toLowerCase()
 
   function rpcResponse(id: unknown, payload: Record<string, unknown>): Response {
     return new Response(JSON.stringify({ jsonrpc: '2.0', id, ...payload }), {

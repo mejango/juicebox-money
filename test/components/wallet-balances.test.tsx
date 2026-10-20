@@ -61,6 +61,8 @@ async function menuRows() {
       node.type === 'button' && node.props['aria-expanded'] === false,
   )
   await act(async () => trigger.props.onClick())
+  // The menu's contents load with the menu.
+  await vi.waitFor(() => expect(renderer.root.findAllByType('dd').length).toBeGreaterThan(0))
   return rowValues(renderer)
 }
 

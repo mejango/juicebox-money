@@ -1,30 +1,16 @@
-import { JB_CHAINS } from '@bananapus/nana-sdk-core'
-import { createPublicClient, isAddress, type Address } from 'viem'
-import { normalize } from 'viem/ens'
-import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
-import {
-  PROJECT_HANDLES_CHAIN_ID,
-  normalizeProjectHandle,
-  parseProjectHandleRecord,
-  readDirectEnsProjectRecord,
-  readBoundedProjectHandle,
-  type NormalizedProjectHandle,
-} from '@/lib/project-handles'
+import { isAddress, type Address } from 'viem'
+import type { NormalizedProjectHandle } from '@/lib/project-handles'
 
 /**
  * ENS resolution with a synchronous cache. Inputs are validated/encoded
  * synchronously (splitOk, toRecipient), so lookups fill a module cache the
  * sync `resolvedAddress` reads — an ENS name is "valid" only once resolved.
- * ENS lives on mainnet regardless of which chains a project launches to.
+ * The mainnet client, ENSIP-15 normalization and the handle readers load with
+ * the first lookup (ens-client.ts), not with every page.
  */
 
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true'
-
-const ensClient = createPublicClient({
-  chain: JB_CHAINS[PROJECT_HANDLES_CHAIN_ID].chain,
-  transport: jbCenterRpcTransport(PROJECT_HANDLES_CHAIN_ID),
-})
 
 const addressCache = new Map<string, Address | null>()
 const nameCache = new Map<string, string | null>()
@@ -54,6 +40,11 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   const key = name.trim().toLowerCase()
   const cached = addressCache.get(key)
   if (cached !== undefined) return cached
+  // A failed chunk download is not an answer: leave the name uncached so the
+  // next lookup requests the chunk again.
+  const loaded = await Promise.all([import('@/lib/ens-client'), import('viem/ens')]).catch(() => null)
+  if (!loaded) return null
+  const [{ ensClient }, { normalize }] = loaded
   let address: Address | null = null
   try {
     address = await ensClient.getEnsAddress({ name: normalize(key) })
@@ -64,12 +55,16 @@ export async function lookupEnsAddress(name: string): Promise<Address | null> {
   return address
 }
 
-/** Async: an address's primary ENS name, cached. */
+/**
+ * Async: an address's primary ENS name, cached. A failed chunk download
+ * throws, so a query layer (useEnsName) retries it instead of keeping "no name".
+ */
 export async function lookupEnsName(address: string): Promise<string | null> {
   if (IS_DETERMINISTIC_BROWSER) return null
   const key = address.trim().toLowerCase()
   const cached = nameCache.get(key)
   if (cached !== undefined) return cached
+  const { ensClient } = await import('@/lib/ens-client')
   let name: string | null = null
   try {
     name = await ensClient.getEnsName({ address: address.trim() as Address })
@@ -87,16 +82,18 @@ export async function lookupEnsName(address: string): Promise<string | null> {
 export async function lookupProjectHandleTarget(
   input: string,
 ): Promise<ProjectHandleTarget | null> {
-  const normalized = normalizeProjectHandle(input)
+  const handles = await import('@/lib/project-handles')
+  const normalized = handles.normalizeProjectHandle(input)
   if (!normalized) return null
 
   let target: ProjectHandleTarget | null = null
   try {
-    const { textRecord } = await readDirectEnsProjectRecord(
+    const { ensClient } = await import('@/lib/ens-client')
+    const { textRecord } = await handles.readDirectEnsProjectRecord(
       ensClient,
       normalized.ensName,
     )
-    const parsed = parseProjectHandleRecord(textRecord)
+    const parsed = handles.parseProjectHandleRecord(textRecord)
     if (parsed) target = { ...normalized, ...parsed }
   } catch {
     target = null
@@ -118,6 +115,10 @@ export async function lookupVerifiedProjectHandle({
   setter: Address
 }): Promise<string | null> {
   try {
+    const [{ ensClient }, { readBoundedProjectHandle }] = await Promise.all([
+      import('@/lib/ens-client'),
+      import('@/lib/project-handles'),
+    ])
     return await readBoundedProjectHandle(ensClient, {
       chainId,
       projectId,

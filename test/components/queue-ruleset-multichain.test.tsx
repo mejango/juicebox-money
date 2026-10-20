@@ -1,4 +1,4 @@
-import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbContractAddress, jbControllerAbi, type JBChainId } from '@bananapus/nana-sdk-core'
+import { JBCoreContracts, NATIVE_TOKEN, USDC_ADDRESSES, jbV6ContractAddress, jbControllerAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
@@ -207,7 +207,7 @@ describe('multichain ruleset configuration', () => {
   })
   it('wallet-action:queue-rulesets-across-selected-mainnets encodes each reviewed controller and project ID with the frozen destination config', () => {
     const calls = reviewedQueueCalls(currentReview, 'current')
-    expect(calls.map(call => call.target)).toEqual([jbContractAddress['6'][JBCoreContracts.JBController][1], jbContractAddress['6'][JBCoreContracts.JBController][8453]])
+    expect(calls.map(call => call.target)).toEqual([jbV6ContractAddress[JBCoreContracts.JBController][1], jbV6ContractAddress[JBCoreContracts.JBController][8453]])
     calls.forEach((call, index) => {
       const decoded = decodeFunctionData({ abi: jbControllerAbi, data: call.data })
       expect(decoded.functionName).toBe('queueRulesetsOf')
