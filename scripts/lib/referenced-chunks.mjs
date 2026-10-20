@@ -12,23 +12,26 @@ function chunkPath(url) {
   return path
 }
 
+const FLIGHT = /<script>self\.__next_f\.push\((\[[\s\S]*?\])\)<\/script>/gu
+const CHUNK = /(?:\/_next\/)?static\/chunks\/[^"'\s<>\\]+?\.js(?:[?#][^"'\s<>\\]*)?/gu
+
 /**
  * The client chunks a page loads up front: every `static/chunks/*.js` its HTML
- * names, in script and preload tags or escaped inside the RSC payload, except
- * `nomodule` scripts (polyfills), which modern browsers skip.
+ * names in script and preload tags, and every one its RSC payload names. The
+ * payload streams in pieces that can split a filename, so they are decoded
+ * and joined before reading. `nomodule` tags (polyfills, which modern
+ * browsers skip) are dropped, not their files: a chunk a nomodule tag names
+ * still counts when anything else references it.
  */
 export function referencedChunks(html) {
-  // Drop the nomodule tags themselves, not the file: a chunk a nomodule tag
-  // names still counts when anything else references it.
-  const unescaped = html
-    .replace(/\\"/gu, '"')
-    .replace(/\\u002F|\\\//gu, '/')
-    .replace(/<script\b[^>]*\bnomodule\b[^>]*>/giu, '')
+  const flight = [...html.matchAll(FLIGHT)]
+    .map(([, record]) => {
+      const [kind, data] = JSON.parse(record)
+      return kind === 1 && typeof data === 'string' ? data : ''
+    })
+    .join('')
+  const markup = html.replace(FLIGHT, '').replace(/<script\b[^>]*\bnomodule\b[^>]*>/giu, '')
   return [
-    ...new Set(
-      [...unescaped.matchAll(/(?:\/_next\/)?static\/chunks\/[^"'\s<>\\]+?\.js(?:[?#][^"'\s<>\\]*)?/gu)].map(
-        ([reference]) => chunkPath(reference),
-      ),
-    ),
+    ...new Set([...`${markup}\n${flight}`.matchAll(CHUNK)].map(([reference]) => chunkPath(reference))),
   ]
 }

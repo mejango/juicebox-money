@@ -19,6 +19,13 @@ describe('referencedChunks', () => {
     expect(referencedChunks(html)).toEqual(['static/chunks/a.js', 'static/chunks/b.js'])
   })
 
+  it('reads a chunk name the RSC stream split across two records', () => {
+    const html =
+      '<script>self.__next_f.push([1,"1:I[\\"x\\",[\\"static/chunks/split-ab"])</script>' +
+      '<script>self.__next_f.push([1,"cd.js\\"]]\\n"])</script>'
+    expect(referencedChunks(html)).toEqual(['static/chunks/split-abcd.js'])
+  })
+
   it('skips nomodule polyfills', () => {
     const html =
       '<script src="/_next/static/chunks/polyfills.js?dpl=z" noModule=""></script>' +
