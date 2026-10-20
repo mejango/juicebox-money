@@ -23,7 +23,7 @@ Branch feat/pay-minimum-failure-reason from origin/main 450d245. Parallel: revne
 - Rendered: the failure review at desktop and phone width (temporary proof route, not committed).
 - Codex pass 1 and 2 fixes: tolerance bound to the reviewed payment and account, one review only, dropped on close or input change; account-switch failures say so; every Review again quotes afresh; nothing offered at the 49.5% limit.
 - Cross-client rulings: a payment that would return no tokens says so with no looser minimum; amounts read only as bigints; router conversion and TWAP floor offer no retry; a mined revert says "The payment reverted." and only reviews again (no receipt-block replay), and a held retry shows the hold's line, not a cancel.
-- Pending: SDK 3.4.0 bump (pay-minimum.ts moves into the SDK, delete the local file), then the final Codex pass.
+- SDK 3.4.1 (3.4.0 never published): pay-minimum.ts deleted for the SDK's payRetrySlippageBps / PAY_DEFAULT_SLIPPAGE_BPS / PAY_MAX_SLIPPAGE_BPS and decodePayFailure's zero-fill line; the hold now releases a canonical revert, so Review again sends at once (the dialog's hold-line override is gone). Two existing tests followed the SDK: a canonical revert's retry sends at once, and revert text alone no longer names a revert. /[urn] at 501.8 of 502 KiB.
 
 # SDK 2.41.1 migration: held writes and saved attempts through the SDK (2026-10-15)
 

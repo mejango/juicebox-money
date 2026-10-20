@@ -25,6 +25,9 @@ import {
   BASE_CURRENCY_USD,
   buildPayTx,
   decodePayFailure,
+  PAY_DEFAULT_SLIPPAGE_BPS,
+  PAY_MAX_SLIPPAGE_BPS,
+  payRetrySlippageBps,
   effectiveTierPrice,
   getProjectNftInventory,
   prepareUserPay,
@@ -90,7 +93,6 @@ import { NftCartLine } from "@/components/project/NftCartLine";
 import { shopCartTotal } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField";
-import { PAY_SLIPPAGE_LIMIT_PERCENT, payFailureMessage, payRetrySlippageBps, PAY_DEFAULT_SLIPPAGE_BPS } from "@/lib/pay-minimum";
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
@@ -144,6 +146,8 @@ type ReviewedPayment = {
   metadata: Hex | undefined;
   /** What a tolerance the payer loosens after this payment fails is bound to. */
   payment: string;
+  /** The tolerance prepareUserPay floored this payment's minimum by: what a retry loosens from. */
+  slippageBps: bigint;
 };
 
 const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
@@ -1276,6 +1280,7 @@ export function PayPanel({
     setSequenceSummary({
       amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
       cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined, payment: paymentInputs,
+      slippageBps: slippageBps !== undefined ? BigInt(slippageBps) : PAY_DEFAULT_SLIPPAGE_BPS,
     });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
@@ -1434,8 +1439,10 @@ export function PayPanel({
         changed = switched instanceof Error ? switched.message : PAYMENT_CHANGED;
       }
       const decoded = changed ? null : decodePayFailure(failure);
-      setSequenceError(changed ?? (decoded ? payFailureMessage(decoded) : null) ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
-      if (mode === "pay") setRetrySlippageBps(payRetrySlippageBps(decoded, slippageBps ?? PAY_DEFAULT_SLIPPAGE_BPS));
+      setSequenceError(changed ?? decoded?.message ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
+      // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
+      const retry = mode === "pay" ? payRetrySlippageBps(decoded, reviewed.slippageBps) : null;
+      setRetrySlippageBps(retry === null ? null : Number(retry));
       setReviewAfterRevert(minedRevert && !changed);
     } finally {
       setSequenceStarted(false);
@@ -2083,8 +2090,7 @@ export function PayPanel({
             ).length,
           )}
           status={sequenceSafeNotice ?? sequenceStatus}
-          // A payment the write hold keeps (its reverted attempt is not final yet) shows the hold's line, not a cancel.
-          error={(tx.phase === "unconfirmed" ? tx.error : null) ?? sequenceError ?? sequenceSafeHeld}
+          error={sequenceError ?? sequenceSafeHeld}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
           action={retrySlippageBps !== null || reviewAfterRevert ? "Review again" : mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
@@ -2106,7 +2112,7 @@ export function PayPanel({
           }}
         >
           {retrySlippageBps !== null ? (
-            <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} limitPercent={PAY_SLIPPAGE_LIMIT_PERCENT} />
+            <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}
         </TxConfirmDialog>
       ) : null}

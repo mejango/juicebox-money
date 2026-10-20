@@ -1222,12 +1222,12 @@ describe('a payment that falls short of its minimum', () => {
     await click('Review again')
     await waitUntil(() => button('Confirm & Pay', false) !== undefined)
     expect(dialogError()).toBe('')
-    // Sending it again waits for the write hold: the reverted attempt is held until final, and the review says so.
+    // The hold lets a canonical revert go: the fresh review sends at once, simulated at the latest block.
     await click('Confirm & Pay')
-    await waitUntil(() => !!dialogError() && dialogError() !== 'The payment reverted.')
-    expect(dialogError()).not.toBe('Payment was cancelled.')
-    expect(dialogError()).toContain('Confirming your transaction')
-    expect(wallet.writeContract).toHaveBeenCalledTimes(1)
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
+    const simulated = wallet.client.simulateContract.mock.calls.at(-1)![0] as { blockNumber?: bigint }
+    expect(simulated.blockNumber).toBeUndefined()
   })
 
   it('shows a reason that a lower minimum cannot fix without the retry', async () => {
@@ -1240,6 +1240,16 @@ describe('a payment that falls short of its minimum', () => {
     await click('Confirm & Pay')
     await waitUntil(() => !!dialogError())
     expect(dialogError()).toBe("The token's price moved too fast to buy safely, so wait a few minutes and try again.")
+    expect(allowedDecrease()).toBeNull()
+    expect(button('Confirm & Pay')).toBeDefined()
+  })
+
+  it('says a payment that would return no tokens, with no looser minimum to try', async () => {
+    wallet.client.simulateContract.mockRejectedValueOnce(shortfall('0x6b2bb382', 0n, 100n))
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError())
+    expect(dialogError()).toBe('This payment would return no tokens.')
     expect(allowedDecrease()).toBeNull()
     expect(button('Confirm & Pay')).toBeDefined()
   })
