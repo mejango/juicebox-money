@@ -29,14 +29,18 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const USDC = '0x4444444444444444444444444444444444444444' as Address
 const TERMINAL = '0x5555555555555555555555555555555555555555' as Address
 const CHANGED = 'The connected account changed. Review again.'
-const PREPARED = {
-  metadata: `0x${'ab'.repeat(32)}` as `0x${string}`,
-  preview: { beneficiaryTokenCount: 10n ** 21n, reservedTokenCount: 0n },
-  minReturnedTokens: 99n * 10n ** 19n,
-}
 
 const displayQueries = new QueryClient()
+/** The app's query defaults (Providers), for the real prepareUserPay query. */
+const prepareQueries = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } })
 
+const PREPARED_DEFAULT = vi.hoisted(() => ({
+  metadata: `0x${'ab'.repeat(32)}` as `0x${string}`,
+  preview: { beneficiaryTokenCount: 10n ** 21n, reservedTokenCount: 0n },
+  minReturnedTokens: 7n * 10n ** 20n,
+}))
+// Its minimum is deliberately not 99% of the preview: the panel sends what prepareUserPay returns.
+const PREPARED = PREPARED_DEFAULT
 const m = vi.hoisted(() => ({
   token: 'native' as 'native' | 'erc20',
   /** Connected as a Safe app, whose Safe is the account. */
@@ -48,6 +52,8 @@ const m = vi.hoisted(() => ({
   queries: {} as Record<string, unknown>,
   realNativeRecovery: false,
   nativePrepared: null as unknown,
+  /** The SDK's prepareUserPay, run by the real query. */
+  prepareUserPay: (async () => PREPARED_DEFAULT) as (...args: unknown[]) => Promise<unknown>,
   /** Drive the real shop cart, not the empty stand-in. */
   realCart: false,
 }))
@@ -92,7 +98,9 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 vi.mock('@tanstack/react-query', async importOriginal => {
   const actual = await importOriginal<typeof import('@tanstack/react-query')>()
   return { ...actual, useQueryClient: () => displayQueries,
-    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => m.realNativeRecovery && options.queryKey[0] === DEFIFA_RECOVERY_QUERY_PREFIX[0]
+    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => options.queryKey[0] === 'prepareUserPay'
+      ? actual.useQuery(options, prepareQueries)
+      : m.realNativeRecovery && options.queryKey[0] === DEFIFA_RECOVERY_QUERY_PREFIX[0]
       ? actual.useQuery(options, displayQueries)
       : query(String(options.queryKey[0] === 'projectDisplay' ? options.queryKey[4] : options.queryKey[0])),
   }
@@ -105,6 +113,7 @@ vi.mock('@/hooks/useShop721', async original => ({
 vi.mock('@bananapus/nana-sdk-core/v6', async original => {
   const actual = await original<typeof import('@bananapus/nana-sdk-core/v6')>()
   return { ...actual, getProjectNftInventory: vi.fn(async () => null),
+    prepareUserPay: (...args: unknown[]) => m.prepareUserPay(...args),
     prepareDefifaPay: (...args: Parameters<typeof actual.prepareDefifaPay>) => m.nativePrepared ? Promise.resolve(m.nativePrepared) : actual.prepareDefifaPay(...args),
   }
 })
@@ -173,11 +182,6 @@ function query(key: string) {
         data: { contexts: [contextFor(m.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
         isError: false,
       }
-    case 'prepareUserPay':
-      return {
-        data: PREPARED,
-        isFetching: false, isError: false, isPlaceholderData: false, isStale: false, refetch: vi.fn(),
-      }
     case 'payAllowance':
       return { data: 0n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
     case 'payShopCredits':
@@ -204,8 +208,10 @@ beforeEach(() => {
   m.queries = {}
   m.realNativeRecovery = false
   m.nativePrepared = null
+  m.prepareUserPay = vi.fn(async () => PREPARED)
   m.realCart = false
   displayQueries.clear()
+  prepareQueries.clear()
   localStorage.clear()
   m.watchSafeProposal = () => new Promise(() => {})
   host = document.createElement('div')
@@ -255,6 +261,8 @@ async function reviewPayment(amount = '1', payDisclosure?: string) {
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 450))
   })
+  // The real prepareUserPay query settles a tick later.
+  await waitUntil(() => button('Pay', false)?.disabled === false)
   if (payDisclosure) expect(host.textContent).not.toContain(payDisclosure)
   await click('Pay')
   expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
@@ -353,23 +361,76 @@ describe('a payment reviewed for one account', () => {
   })
 })
 
-describe('a payment prepareUserPay cannot prepare', () => {
-  it('blocks paying and offers a retry instead of crashing', async () => {
-    const refetch = vi.fn(async () => ({}))
-    m.queries.prepareUserPay = { data: undefined, isFetching: false, isError: true, isPlaceholderData: false, isStale: false, refetch }
-    await act(async () =>
-      root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
-    )
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+async function typeAmount(amount: string) {
+  const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, amount)
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
+const renderPanel = () => act(async () =>
+  root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+const preparedArgs = (call: number) => (vi.mocked(m.prepareUserPay).mock.calls[call] as unknown[])[1] as Record<string, unknown>
+
+describe('a payment prepareUserPay prepares', () => {
+  it('prepares the typed amount at the terminal entry for the payer', async () => {
+    await reviewPayment('1')
+    expect(preparedArgs(0)).toMatchObject({ chainId: 1, terminal: TERMINAL, projectId: 42n, token: NATIVE, amount: 10n ** 18n, beneficiary: ALICE, tiers: undefined })
+  })
+
+  it('approves the terminal entry for exactly the amount', async () => {
+    m.token = 'erc20'
+    await reviewPayment('7')
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ functionName: string; address: Address; args: readonly unknown[] }]
+    expect(request.functionName).toBe('approve')
+    expect(request.address).toBe(USDC)
+    expect(request.args).toEqual([TERMINAL, 7_000_000n])
+  })
+
+  it('blocks paying while the preparation is pending', async () => {
+    m.prepareUserPay = vi.fn(() => new Promise(() => {}))
+    await renderPanel()
+    await typeAmount('1')
+    await settle()
+    expect(m.prepareUserPay).toHaveBeenCalled()
+    expect(button('Pay').disabled).toBe(true)
+  })
+
+  it('blocks paying when the preparation fails, and offers a retry', async () => {
+    m.prepareUserPay = vi.fn(async () => { throw new Error('hookOf unreadable') })
+    await renderPanel()
+    await typeAmount('1')
     await waitUntil(() => host.textContent?.includes('Try again') ?? false)
     expect(button('Pay').disabled).toBe(true)
     await click('Try again')
-    expect(refetch).toHaveBeenCalled()
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1)
+    expect(vi.mocked(m.prepareUserPay).mock.calls.length).toBeGreaterThan(1)
     expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('pays the amount typed now, not the one prepared before it changed', async () => {
+    let release!: (value: unknown) => void
+    m.prepareUserPay = vi.fn(async (_client: unknown, args: { amount: bigint }) =>
+      args.amount === 10n ** 18n ? new Promise(resolve => { release = resolve }) : PREPARED) as never
+    await renderPanel()
+    await typeAmount('100')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    expect(button('Pay').disabled).toBe(false)
+    // Changed and clicked inside the debounce: nothing opens until 1 ETH is prepared.
+    await typeAmount('1')
+    await click('Pay')
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1)
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    await act(async () => release(PREPARED))
+    await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[]; value: bigint }]
+    expect(request.args[2]).toBe(10n ** 18n)
+    expect(request.value).toBe(10n ** 18n)
   })
 })
 
@@ -458,6 +519,10 @@ describe('a checkout whose items are all gone', () => {
     )
     await act(async () => root.render(panel()))
     await act(async () => cart.setQuantity(1, 2))
+    // A checkout prepares with its tiers: the hook's id target and one id per item.
+    const withTiers = () => vi.mocked(m.prepareUserPay).mock.calls.map(call => (call as unknown[])[1] as { tiers?: unknown }).find(args => args.tiers)
+    await waitUntil(() => !!withTiers())
+    expect(withTiers()).toMatchObject({ tiers: { metadataIdTarget: USDC, tierIdsToMint: [1n, 1n] } })
     // Every hat sold elsewhere: the cart is pruned, the choice kept. Then the shop stops resolving.
     m.queries.payShop = shopWith(0)
     await act(async () => root.render(panel()))
@@ -496,6 +561,7 @@ describe('a payment from a Safe', () => {
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 450))
     })
+    await waitUntil(() => ['first', 'second'].every(name => panelButton(name, 'Pay')?.disabled === false))
   }
   const panel = (name: string) => host.querySelector<HTMLElement>(`[data-panel="${name}"]`)!
   const panelButton = (name: string, label: string) =>
@@ -785,7 +851,7 @@ describe('compatible basic funding', () => {
         ? { data: { protocol: 'defifa' }, isSuccess: true }
         : { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
       m.queries.nativeInventory = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
-      m.queries.prepareUserPay = { data: null, isError: true }
+      m.prepareUserPay = vi.fn(async () => { throw new Error('unreadable') })
       m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: Math.floor(Date.now() / 1000) + 3600, pausePay: true, terminals: [TERMINAL], unknown: [] }, isError: false }
       await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
       expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()

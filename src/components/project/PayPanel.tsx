@@ -283,7 +283,6 @@ export function PayPanel({
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null);
   const [memo, setMemo] = useState("");
-  const [showRouteComparison, setShowRouteComparison] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [sequenceStarted, setSequenceStarted] = useState(false);
   const [sequenceComplete, setSequenceComplete] = useState(false);
@@ -1155,6 +1154,13 @@ export function PayPanel({
       return;
     }
     if (!address) return;
+    // The amount sent is the one prepared, which trails the input by its
+    // debounce. Prepare what is typed now, then continue once that is ready.
+    if (amount !== debouncedAmount) {
+      setDebouncedAmount(amount);
+      setSubmitWhenFresh(true);
+      return;
+    }
     const creditOnlyCheckout =
       mode === "pay" && cartCount > 0 && cartAmountDue === 0n;
     if (
@@ -1209,11 +1215,11 @@ export function PayPanel({
       setSubmitWhenFresh(false);
       return;
     }
-    if (!previewReady || previewIsStale) return;
+    if (!previewReady || (mode === "pay" && previewIsStale)) return;
     setSubmitWhenFresh(false);
     submit();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [submitWhenFresh, previewReady, previewIsStale, previewError]);
+  }, [submitWhenFresh, previewReady, previewIsStale, previewError, mode]);
 
   const runPaymentSequence = async () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
@@ -1736,14 +1742,6 @@ export function PayPanel({
               >
                 {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{" "}
                 {projectTokenLabel}
-                <button
-                  type="button"
-                  onClick={() => setShowRouteComparison(current => !current)}
-                  aria-expanded={showRouteComparison}
-                  className="ml-2 inline-flex border border-bluebs-400 px-1.5 py-0.5 align-middle text-[10px] font-medium tracking-wide text-bluebs-700 hover:bg-bluebs-25"
-                >
-                  {context?.viaRouter ? "Buy tokens" : "Create tokens"}
-                </button>
               </p>
             ) : (
               <Skeleton
@@ -1752,11 +1750,6 @@ export function PayPanel({
                 aria-label="Calculating token return"
               />
             )}
-            {showRouteComparison && context?.viaRouter ? (
-              <p className="mt-2 border-t border-smoke-200 pt-2 text-xs text-smoke-500">
-                The project converts your payment using its chosen trade route.
-              </p>
-            ) : null}
           </div>
         ) : null}
       </div>
