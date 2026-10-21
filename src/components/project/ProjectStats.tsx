@@ -56,7 +56,7 @@ type ChainTreasury = {
  * leaves out. Null while any chain is unread: its holdings are unknown, not unpriced.
  */
 export function treasuryTotal(
-  rows: readonly TreasuryRow[],
+  rows: ReadonlyArray<Pick<TreasuryRow, 'symbol' | 'balance' | 'usd'>>,
   failedChainIds: readonly number[],
 ): { usd: bigint; unpriced: string[] } | null {
   if (failedChainIds.length > 0) return null
