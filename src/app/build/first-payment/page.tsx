@@ -42,7 +42,7 @@ export default async function FirstPaymentPage() {
         'The script finds the contract that manages the project’s rules and tokens, called its controller. It reads the active terms, called a ruleset, from one recorded block of chain history. It checks the network and block again so the result refers to one consistent observation.',
       ],
       blocks: [
-        { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@3.5.1 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
+        { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
         { type: 'links', items: [{ href: '/examples/read-project.mjs', label: 'Read or save read-project.mjs' }] },
         { type: 'code', label: 'Complete read-project.mjs', code: readExample },
         { type: 'table', label: 'What success looks like', rows: [
@@ -65,7 +65,7 @@ export default async function FirstPaymentPage() {
         { type: 'links', items: [{ href: '/examples/preview-payment.mjs', label: 'Read or save preview-payment.mjs' }] },
         { type: 'code', label: 'Complete preview-payment.mjs', code: previewExample },
         { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" wei. Wei is ETH’s smallest unit; divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the trial result, and the encoded request (calldata). Divide token amounts by 10^18 for displayed amounts.' },
-        { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox software library (SDK) 3.5.1 and viem 2.55.19. The read used Base Sepolia block 48450062, hash 0xd25159ec66c7e4fda01735ed078e22c765e4dc99aa66b5aaea5612f388aeb6eb. The payment was simulated only. Run the examples again to get current results.' },
+        { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox software library (SDK) 3.5.2 and viem 2.55.19. The read used Base Sepolia block 48474379, hash 0x3a95b1444467e678b41aa9e4abb612fe9a0632246dcf28b257455f60c37bb083. The payment was simulated only. Run the examples again to get current results.' },
       ],
     },
     {

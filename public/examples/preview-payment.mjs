@@ -1,5 +1,5 @@
 // Read and simulate a native test-ETH payment. This script never signs or sends.
-// npm install --save-exact @bananapus/nana-sdk-core@3.5.1 viem@2.55.19
+// npm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19
 // JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 import { createPublicClient, decodeFunctionData, encodeFunctionData, http, isAddress, parseEther, zeroAddress } from 'viem'
 import { baseSepolia } from 'viem/chains'
