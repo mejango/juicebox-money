@@ -5,16 +5,17 @@ import { getTopBalanceProjects } from '@/lib/top-projects'
 const DEFAULT_LIMIT = 8
 const MAX_LIMIT = 32
 
-function pageParam(value: string | null, fallback: number, max?: number) {
+function pageParam(value: string | null, fallback: number, min: number, max: number) {
+  if (!value) return fallback
   const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed < 0) return fallback
-  return max === undefined ? parsed : Math.min(parsed, max)
+  if (!Number.isSafeInteger(parsed) || parsed < min) return fallback
+  return Math.min(parsed, max)
 }
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
-  const limit = pageParam(searchParams.get('limit'), DEFAULT_LIMIT, MAX_LIMIT)
-  const offset = pageParam(searchParams.get('offset'), 0)
+  const limit = pageParam(searchParams.get('limit'), DEFAULT_LIMIT, 1, MAX_LIMIT)
+  const offset = pageParam(searchParams.get('offset'), 0, 0, Number.MAX_SAFE_INTEGER)
   try {
     const page = await getTopBalanceProjects(limit + 1, offset)
     return NextResponse.json(
