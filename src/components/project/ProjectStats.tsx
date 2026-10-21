@@ -51,6 +51,25 @@ type ChainTreasury = {
   rows: TreasuryRow[]
 }
 
+/**
+ * The priced tokens' USD total, and the symbols of held tokens with no USD price, which it
+ * leaves out. Null while any chain is unread: its holdings are unknown, not unpriced.
+ */
+export function treasuryTotal(
+  rows: readonly TreasuryRow[],
+  failedChainIds: readonly number[],
+): { usd: bigint; unpriced: string[] } | null {
+  if (failedChainIds.length > 0) return null
+  return {
+    usd: rows.reduce((sum, row) => sum + (row.usd ?? 0n), 0n),
+    unpriced: [
+      ...new Set(
+        rows.filter(row => row.balance !== 0n && row.usd == null).map(row => row.symbol),
+      ),
+    ],
+  }
+}
+
 type ParticipantPage = {
   items: BsParticipant[]
   totalCount: number
@@ -289,19 +308,7 @@ export function ProjectStats({
       const failedChainIds = chainResults
         .filter(result => !result.verified)
         .map(result => result.chainId)
-      const fullyPriced =
-        failedChainIds.length === 0 &&
-        rows.every(row => row.balance === 0n || row.usd != null)
-      const pricedTotal = rows.reduce(
-        (sum, row) => sum + (row.usd ?? 0n),
-        0n,
-      )
-
-      return {
-        rows,
-        failedChainIds,
-        totalUsd: fullyPriced ? pricedTotal : null,
-      }
+      return { rows, failedChainIds }
     },
   }))
 
@@ -374,12 +381,14 @@ export function ProjectStats({
       ? '—'
       : `${holderCount.toLocaleString('en-US')}${holderCountIsExact ? '' : '+'}`
 
+  // From the rows at render, so a persisted answer from an older build still reads.
+  const treasury = data ? treasuryTotal(data.rows, data.failedChainIds) : null
   const hasBreakdown =
     !!data && (data.rows.length > 0 || data.failedChainIds.length > 0)
   const treasuryValue = isLoading
     ? <Skeleton as="span" className="inline-block h-7 w-24 rounded align-middle" />
-    : data?.totalUsd != null
-      ? formatUsd18(data.totalUsd)
+    : treasury
+      ? formatUsd18(treasury.usd)
       : '—'
 
   return (
@@ -471,6 +480,11 @@ export function ProjectStats({
               <span>All chains</span>
               <span className="tabular-nums">{treasuryValue}</span>
             </div>
+            {treasury?.unpriced.length ? (
+              <p className="mt-1 text-[11px] text-smoke-500">
+                Excludes {treasury.unpriced.join(', ')}: no USD price
+              </p>
+            ) : null}
           </HoverBreakdownStat>
         ) : (
           <Stat
