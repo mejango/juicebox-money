@@ -56,6 +56,8 @@ const m = vi.hoisted(() => ({
   prepareUserPay: (async () => PREPARED_DEFAULT) as (...args: unknown[]) => Promise<unknown>,
   /** Drive the real shop cart, not the empty stand-in. */
   realCart: false,
+  /** Offer buying ETH with dollars in the token select. */
+  onRamp: false,
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -129,7 +131,7 @@ vi.mock('@/hooks/useTokenBalances', () => ({
     ]),
   }),
 }))
-vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
+vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: m.onRamp, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', async original => {
   const actual = await original<typeof import('@/components/project/ShopCartProvider')>()
   const empty = { quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }
@@ -214,6 +216,7 @@ beforeEach(() => {
   m.nativePrepared = null
   m.prepareUserPay = vi.fn(async () => PREPARED)
   m.realCart = false
+  m.onRamp = false
   displayQueries.clear()
   prepareQueries.clear()
   localStorage.clear()
@@ -264,11 +267,7 @@ async function enterAmount(amount = '1', payDisclosure?: string) {
   await act(async () =>
     root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} payDisclosure={payDisclosure} />),
   )
-  const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, amount)
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-  })
+  await typeAmount(amount)
   // The panel debounces the amount for 400 ms before it previews and quotes.
   await act(async () => {
     await new Promise(resolve => setTimeout(resolve, 450))
@@ -1314,6 +1313,74 @@ describe("a payment whose pool price couldn't be read", () => {
     expect(panelNotice()).toBe(false)
   })
 
+  it('keeps the notice, not Refreshing, through a refetch the payer did not ask for', async () => {
+    let answer!: (value: unknown) => void
+    m.prepareUserPay = vi.fn()
+      .mockResolvedValueOnce(FAILED)
+      .mockReturnValueOnce(new Promise(resolve => { answer = resolve })) as never
+    await enterAmount()
+    await act(async () => { void prepareQueries.refetchQueries({ queryKey: ['prepareUserPay'] }) })
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length === 2)
+    // Let the panel render the fetch in flight.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+    expect(prepareQueries.isFetching()).toBe(1)
+
+    expect(panelNotice()).toBe(true)
+    expect(host.textContent).not.toContain('Refreshing…')
+    await act(async () => answer(FAILED))
+    await waitUntil(() => false)
+    expect(panelNotice()).toBe(true)
+    expect(host.textContent).not.toContain('Refreshing…')
+  })
+
+  it("drops the warning as the amount changes, until the new amount's own quote says so", async () => {
+    let answer!: (value: unknown) => void
+    m.prepareUserPay = vi.fn()
+      .mockResolvedValueOnce(FAILED)
+      .mockReturnValueOnce(new Promise(resolve => { answer = resolve })) as never
+    await enterAmount('1')
+    expect(panelNotice()).toBe(true)
+
+    await typeAmount('2')
+    // Still debouncing: the warning was the old amount's.
+    expect(panelNotice()).toBe(false)
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length === 2)
+    // Quoting the new amount over the old one's placeholder: no warning, no Refreshing.
+    expect(panelNotice()).toBe(false)
+    expect(host.textContent).not.toContain('Refreshing…')
+
+    await act(async () => answer(FAILED))
+    await waitUntil(panelNotice)
+    expect(panelNotice()).toBe(true)
+  })
+
+  it('says nothing while the payer buys ETH with dollars', async () => {
+    m.onRamp = true
+    m.prepareUserPay = vi.fn(async () => FAILED)
+    await enterAmount()
+    expect(panelNotice()).toBe(true)
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Payment token"]')!
+    await act(async () => {
+      select.value = 'buy'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    // The choice sticks for a payer who holds the token too.
+    expect(select.value).toBe('buy')
+    expect(panelNotice()).toBe(false)
+  })
+
+  it('drops the review warning beside an error the review shows', async () => {
+    m.prepareUserPay = vi.fn(async () => FAILED)
+    await reviewPayment()
+    expect(reviewNotice()).toBe(true)
+    await act(async () => wallet.connect(BOB))
+    await click('Confirm & Pay')
+    await waitUntil(() => !!dialogError())
+
+    expect(dialogError()).toBe(CHANGED)
+    expect(reviewNotice()).toBe(false)
+  })
+
   it('stays out of the way of an error a fresh price cannot fix', async () => {
     m.prepareUserPay = vi.fn(async () => FAILED)
     m.queries.paySurface = {
@@ -1323,11 +1390,7 @@ describe("a payment whose pool price couldn't be read", () => {
     await act(async () =>
       root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />),
     )
-    const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')
-      input.dispatchEvent(new Event('input', { bubbles: true }))
-    })
+    await typeAmount('1')
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 0)
     await waitUntil(() => false)

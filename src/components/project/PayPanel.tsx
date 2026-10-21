@@ -970,6 +970,14 @@ export function PayPanel({
       }),
   });
   const preview = prepared?.preview;
+  // The payment whose quote the payer asked to read again, until that read settles.
+  // A background refetch keeps the notice; only the payer's own retry says Refreshing.
+  const [quoteRetryFor, setQuoteRetryFor] = useState<string | null>(null);
+  const retryQuote = () => {
+    const key = paymentInputs;
+    setQuoteRetryFor(key);
+    void refetchPreview().finally(() => setQuoteRetryFor(current => (current === key ? null : current)));
+  };
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
@@ -1997,15 +2005,17 @@ export function PayPanel({
       ) : null}
 
       {/* Only while it can still change this payment: not beside an error a retry can't fix, nor once it is sent. */}
-      {mode === "pay" && amountRaw > 0n && !previewError && prepared?.quoteFailed &&
+      {/* The quote must be the one for what is typed now, not a previous amount's. */}
+      {mode === "pay" && amountRaw > 0n && amount === debouncedAmount && !payWithDollars &&
+      !previewError && !previewIsPrevious && prepared?.quoteFailed &&
       !formClosed && !panelTxError && !busy && !sequenceOpen ? (
         <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
-          {previewLoading ? "Refreshing…" : (
+          {quoteRetryFor === paymentInputs ? "Refreshing…" : (
             <>
               {PAY_QUOTE_FAILED_MESSAGE}{" "}
               <button
                 type="button"
-                onClick={() => void refetchPreview()}
+                onClick={retryQuote}
                 className="font-medium underline underline-offset-2"
               >
                 Try again
@@ -2136,7 +2146,8 @@ export function PayPanel({
             setPayerSlippage(null);
           }}
         >
-          {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage ? (
+          {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage &&
+          !sequenceError && !sequenceSafeHeld ? (
             <p className="text-sm text-smoke-700">{PAY_QUOTE_FAILED_MESSAGE}</p>
           ) : null}
           {retrySlippageBps !== null ? (
