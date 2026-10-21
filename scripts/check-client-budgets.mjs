@@ -42,7 +42,8 @@ const routes = [
   { route: '/create', path: '/create', kib: 395, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
-  { route: '/[urn]', path: '/eth:1', kib: 503, text: 'Browser Fixture Project' },
+  // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
+  { route: '/[urn]', path: '/eth:1', kib: 504, text: 'Browser Fixture Project' },
   { route: '/account/[address]', path: `/account/${account}`, kib: 405, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.

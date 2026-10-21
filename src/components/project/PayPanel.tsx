@@ -149,6 +149,8 @@ type ReviewedPayment = {
   payment: string;
   /** The tolerance prepareUserPay floored this payment's minimum by: what a retry loosens from. */
   slippageBps: bigint;
+  /** The pool's price was unreadable when this minimum was prepared: it covers only the mint rate. */
+  quoteFailed: boolean;
 };
 
 const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
@@ -1282,6 +1284,7 @@ export function PayPanel({
       amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
       cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined, payment: paymentInputs,
       slippageBps: slippageBps !== undefined ? BigInt(slippageBps) : PAY_DEFAULT_SLIPPAGE_BPS,
+      quoteFailed: mode === "pay" && !!prepared?.quoteFailed,
     });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
@@ -1991,17 +1994,22 @@ export function PayPanel({
         </p>
       ) : null}
 
-      {mode === "pay" && amountRaw > 0n && !previewError && prepared?.quoteFailed ? (
-        <p className="mt-2 text-sm text-smoke-700">
-          {PAY_QUOTE_FAILED_MESSAGE}{" "}
-          <button
-            type="button"
-            onClick={() => void refetchPreview()}
-            disabled={previewLoading}
-            className="font-medium underline underline-offset-2"
-          >
-            Try again
-          </button>
+      {/* Only while it can still change this payment: not beside an error a retry can't fix, nor once it is sent. */}
+      {mode === "pay" && amountRaw > 0n && !previewError && prepared?.quoteFailed &&
+      !formClosed && !panelTxError && !busy && !sequenceOpen ? (
+        <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
+          {previewLoading ? "Refreshing…" : (
+            <>
+              {PAY_QUOTE_FAILED_MESSAGE}{" "}
+              <button
+                type="button"
+                onClick={() => void refetchPreview()}
+                className="font-medium underline underline-offset-2"
+              >
+                Try again
+              </button>
+            </>
+          )}
         </p>
       ) : null}
 
@@ -2126,6 +2134,9 @@ export function PayPanel({
             setPayerSlippage(null);
           }}
         >
+          {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage ? (
+            <p className="text-sm text-smoke-700">{PAY_QUOTE_FAILED_MESSAGE}</p>
+          ) : null}
           {retrySlippageBps !== null ? (
             <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}
