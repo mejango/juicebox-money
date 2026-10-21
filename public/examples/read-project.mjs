@@ -1,5 +1,5 @@
 // Juicebox V6: read Base Sepolia project 1 without a wallet or private key.
-// npm install --save-exact @bananapus/nana-sdk-core@2.3.2 viem@2.55.19
+// npm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19
 import { createPublicClient, http, zeroAddress } from 'viem'
 import { baseSepolia } from 'viem/chains'
 import {

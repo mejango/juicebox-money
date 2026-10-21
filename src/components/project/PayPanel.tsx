@@ -30,6 +30,7 @@ import {
   payRetrySlippageBps,
   effectiveTierPrice,
   getProjectNftInventory,
+  PAY_QUOTE_FAILED_MESSAGE,
   prepareUserPay,
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
@@ -148,6 +149,8 @@ type ReviewedPayment = {
   payment: string;
   /** The tolerance prepareUserPay floored this payment's minimum by: what a retry loosens from. */
   slippageBps: bigint;
+  /** The pool's price was unreadable when this minimum was prepared: it covers only the mint rate. */
+  quoteFailed: boolean;
 };
 
 const PAYMENT_CHANGED = "This payment changed during review. Close it and pay again to review the new one.";
@@ -481,7 +484,9 @@ export function PayPanel({
       return;
     }
     const key = selectedKeyRef.current;
-    const idx = key ? list.findIndex((t) => payTokenKey(t) === key) : -1;
+    // Touched with no token picked: the payer chose dollars, which no refetch removes.
+    if (!key) return;
+    const idx = list.findIndex((t) => payTokenKey(t) === key);
     if (idx >= 0) {
       if (idx !== tokenIndex) setTokenIndex(idx);
     } else {
@@ -965,6 +970,14 @@ export function PayPanel({
       }),
   });
   const preview = prepared?.preview;
+  // The payment whose quote the payer asked to read again, until that read settles.
+  // A background refetch keeps the notice; only the payer's own retry says Refreshing.
+  const [quoteRetryFor, setQuoteRetryFor] = useState<string | null>(null);
+  const retryQuote = () => {
+    const key = paymentInputs;
+    setQuoteRetryFor(key);
+    void refetchPreview().finally(() => setQuoteRetryFor(current => (current === key ? null : current)));
+  };
 
   // A VERIFIED zero preview may submit (min 0 — zero-issuance pay is
   // legitimate); an unavailable preview blocks (never send blind).
@@ -1281,6 +1294,7 @@ export function PayPanel({
       amountRaw, minReturned, account: address, mode, terminal: terminalAddress, token: context.token,
       cartKey, metadata: mode === "pay" ? prepared?.metadata : undefined, payment: paymentInputs,
       slippageBps: slippageBps !== undefined ? BigInt(slippageBps) : PAY_DEFAULT_SLIPPAGE_BPS,
+      quoteFailed: mode === "pay" && !!prepared?.quoteFailed,
     });
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
@@ -1990,6 +2004,27 @@ export function PayPanel({
         </p>
       ) : null}
 
+      {/* Only while it can still change this payment: not beside an error a retry can't fix, nor once it is sent. */}
+      {/* The quote must be the one for what is typed now, not a previous amount's. */}
+      {mode === "pay" && amountRaw > 0n && amount === debouncedAmount && !payWithDollars &&
+      !previewError && !previewIsPrevious && prepared?.quoteFailed &&
+      !formClosed && !panelTxError && !busy && !sequenceOpen ? (
+        <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
+          {quoteRetryFor === paymentInputs ? "Refreshing…" : (
+            <>
+              {PAY_QUOTE_FAILED_MESSAGE}{" "}
+              <button
+                type="button"
+                onClick={retryQuote}
+                className="font-medium underline underline-offset-2"
+              >
+                Try again
+              </button>
+            </>
+          )}
+        </p>
+      ) : null}
+
       {surfaceError ? (
         <p className="mt-3 text-sm text-red-600">
           Couldn&apos;t verify this project&apos;s accepted tokens — payments
@@ -2111,6 +2146,10 @@ export function PayPanel({
             setPayerSlippage(null);
           }}
         >
+          {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage &&
+          !sequenceError && !sequenceSafeHeld ? (
+            <p className="text-sm text-smoke-700">{PAY_QUOTE_FAILED_MESSAGE}</p>
+          ) : null}
           {retrySlippageBps !== null ? (
             <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}

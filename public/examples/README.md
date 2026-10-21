@@ -5,7 +5,7 @@ Edit them here to keep both copies in sync.
 
 The read example uses Base Sepolia project 1 by default. The simulation example
 uses the same project, test ETH, and a public payer address. It sets a minimum of
-99% of the quoted tokens. Neither script signs or sends a payment. Do not add private-key
+99% of the quoted tokens, or of the minted tokens if the market price can't load. Neither script signs or sends a payment. Do not add private-key
 handling or a write command to these examples.
 
 ## Check the example
@@ -13,7 +13,7 @@ handling or a write command to these examples.
 Use Node.js 22 or newer and the pinned package versions:
 
 ```sh
-npm install --save-exact @bananapus/nana-sdk-core@2.3.2 viem@2.55.19
+npm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19
 node read-project.mjs
 JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 ```

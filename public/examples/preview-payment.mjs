@@ -1,10 +1,10 @@
 // Read and simulate a native test-ETH payment. This script never signs or sends.
-// npm install --save-exact @bananapus/nana-sdk-core@2.3.2 viem@2.55.19
+// npm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19
 // JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 import { createPublicClient, decodeFunctionData, encodeFunctionData, http, isAddress, parseEther, zeroAddress } from 'viem'
 import { baseSepolia } from 'viem/chains'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
-import { buildPayTx, previewPay, resolvePaymentTerminal, slippageFloor } from '@bananapus/nana-sdk-core/v6'
+import { buildPayTx, PAY_QUOTE_FAILED_MESSAGE, prepareUserPay, resolvePaymentTerminal } from '@bananapus/nana-sdk-core/v6'
 
 const payer = process.env.JB_PAYER
 if (!payer || !isAddress(payer) || payer.toLowerCase() === zeroAddress) {
@@ -24,17 +24,20 @@ const client = createPublicClient({
 if (await client.getChainId() !== baseSepolia.id) throw new Error('The RPC must serve Base Sepolia (84532).')
 const amount = parseEther('0.000001')
 const terminal = await resolvePaymentTerminal(client, { chainId: baseSepolia.id, projectId, token: NATIVE_TOKEN })
-// Terminal preview includes the configured hooks. It is not a best-market-route quote.
-const quote = await previewPay(client, {
+// The preview through the configured hooks, the metadata for the buyback hook's
+// pool-or-mint choice, and the minimum: the pool's quote (or the mint rate) less 1%.
+const prepared = await prepareUserPay(client, {
   chainId: baseSepolia.id, terminal: terminal.address, projectId,
   token: NATIVE_TOKEN, amount, beneficiary: payer,
 })
+const quote = prepared.preview
+const { minReturnedTokens, metadata } = prepared
+if (prepared.quoteFailed) console.warn(PAY_QUOTE_FAILED_MESSAGE)
 if (quote.beneficiaryTokenCount === 0n) throw new Error('The tutorial expects token output; this route currently quotes zero.')
-const minReturnedTokens = slippageFloor(quote.beneficiaryTokenCount, 100n) // 1% below this quote.
 if (minReturnedTokens === 0n) throw new Error('The minimum output rounded to zero; inspect the terms before continuing.')
 const request = buildPayTx({
   chainId: baseSepolia.id, terminal: terminal.address, projectId,
-  token: NATIVE_TOKEN, amount, beneficiary: payer, minReturnedTokens,
+  token: NATIVE_TOKEN, amount, beneficiary: payer, minReturnedTokens, metadata,
   memo: 'Learn, build, inspect: test payment',
 })
 const data = encodeFunctionData(request)
