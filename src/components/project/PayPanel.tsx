@@ -30,6 +30,7 @@ import {
   payRetrySlippageBps,
   effectiveTierPrice,
   getProjectNftInventory,
+  PAY_QUOTE_FAILED_MESSAGE,
   prepareUserPay,
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
@@ -1979,6 +1980,20 @@ export function PayPanel({
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
           until the preview works.{" "}
+          <button
+            type="button"
+            onClick={() => void refetchPreview()}
+            disabled={previewLoading}
+            className="font-medium underline underline-offset-2"
+          >
+            Try again
+          </button>
+        </p>
+      ) : null}
+
+      {mode === "pay" && amountRaw > 0n && !previewError && prepared?.quoteFailed ? (
+        <p className="mt-2 text-sm text-smoke-700">
+          {PAY_QUOTE_FAILED_MESSAGE}{" "}
           <button
             type="button"
             onClick={() => void refetchPreview()}
