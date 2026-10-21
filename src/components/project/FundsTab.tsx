@@ -43,6 +43,7 @@ import {
 } from 'viem'
 import { useConfig, usePublicClient, useReadContract } from 'wagmi'
 import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
+import { treasuryTotal } from '@/components/project/ProjectStats'
 import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -147,9 +148,7 @@ type ChainFundsResult = {
 type FundsKind = FundsKindDescriptor & {
   snapshots: ChainFundsResult[]
   totalBalance: bigint
-  totalUsd: bigint
   readsVerified: boolean
-  fullyPriced: boolean
 }
 
 async function readChainFunds(
@@ -437,9 +436,7 @@ export function FundsTab({
       ...descriptor,
       snapshots,
       totalBalance: present.reduce((sum, snapshot) => sum + snapshot.balance, 0n),
-      totalUsd: present.reduce((sum, snapshot) => sum + (snapshot.usd ?? 0n), 0n),
       readsVerified,
-      fullyPriced: readsVerified && present.every(snapshot => snapshot.balance === 0n || snapshot.usd != null),
     }
   })
   const refetch = () => Promise.all(chainPairs.map(([id]) => invalidateProjectDisplayQueries(queryClient, id)))
@@ -485,20 +482,18 @@ export function FundsTab({
   const home = selected.snapshots.find(
     result => result.chainId === chainId && result.projectId === projectId,
   )?.snapshot
+  // The same total as the page header: priced tokens, the unpriced named.
   const allReadsVerified = matrix.every(kind => kind.readsVerified)
-  const allFullyPriced = matrix.every(kind => kind.fullyPriced)
-  const totalUsd = matrix.reduce((sum, kind) => sum + kind.totalUsd, 0n)
-  const rawBalances = matrix
-    .filter(kind => kind.totalBalance > 0n)
-    .map(
-      kind =>
-        `${kind.readsVerified ? formatTokenAmount(kind.totalBalance, kind.decimals) : '…'} ${kind.symbol}`,
-    )
-  const totalBalanceLabel = !allReadsVerified
-    ? '—'
-    : allFullyPriced
-      ? formatUsd18(totalUsd)
-      : rawBalances.join(' + ') || '$0.00'
+  const treasury = allReadsVerified
+    ? treasuryTotal(
+        matrix.flatMap(kind =>
+          kind.snapshots.flatMap(result =>
+            result.snapshot ? [{ ...result.snapshot, symbol: kind.symbol }] : [],
+          ),
+        ),
+        [],
+      )
+    : null
   const hasPayoutLimit =
     home?.payoutLines.some(line => line.amount > 0n) ?? false
   const hasAllowance =
@@ -512,8 +507,13 @@ export function FundsTab({
       <span className="field-label">Funds</span>
       <p className="mt-2 text-sm text-smoke-700">Total balance</p>
       <p className="mt-1 font-agrandir text-2xl font-medium text-ink">
-        {totalBalanceLabel}
+        {treasury ? formatUsd18(treasury.usd) : '—'}
       </p>
+      {treasury?.unpriced.length ? (
+        <p className="mt-1 text-xs text-smoke-500">
+          Excludes {treasury.unpriced.join(', ')}: no USD price
+        </p>
+      ) : null}
 
       <div className="mt-5 flex flex-wrap gap-x-6 border-b border-smoke-200">
         {matrix.map(kind => {
