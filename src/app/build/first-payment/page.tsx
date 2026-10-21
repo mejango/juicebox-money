@@ -57,14 +57,14 @@ export default async function FirstPaymentPage() {
     {
       id: 'preview', part: 'Build', title: 'Preview a payment',
       paragraphs: [
-        'This step prepares a payment of 0.000001 test ETH. It finds the project’s payment contract, called a terminal, and requests a quote that includes any configured extensions. It sets a minimum of 99% of the quoted tokens, then runs a trial of that exact request, called a simulation. Enter only your public wallet address, never a private key.',
+        'This step prepares a payment of 0.000001 test ETH. It finds the project’s payment contract, called a terminal, and requests a quote that includes any configured extensions. It sets a minimum of 99% of the quoted tokens, or of the minted tokens if the market price can’t load, then runs a trial of that exact request, called a simulation. Enter only your public wallet address, never a private key.',
         'The trial does not send a payment. It shows how this request would run against current chain data. The app may find a different way to buy tokens, so review its fresh quote when you pay.',
       ],
       blocks: [
         { type: 'code', label: 'Download and simulate with your public address', code: 'curl --fail -O https://juicebox.money/examples/preview-payment.mjs\n# Replace this placeholder with your public wallet address.\nJB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs' },
         { type: 'links', items: [{ href: '/examples/preview-payment.mjs', label: 'Read or save preview-payment.mjs' }] },
         { type: 'code', label: 'Complete preview-payment.mjs', code: previewExample },
-        { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" wei. Wei is ETH’s smallest unit; divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the trial result, and the encoded request (calldata). Divide token amounts by 10^18 for displayed amounts. If the script first warns that it couldn’t load the market price, its minimum may be lower than usual.' },
+        { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" wei. Wei is ETH’s smallest unit; divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the trial result, and the encoded request (calldata). Divide token amounts by 10^18 for displayed amounts.' },
         { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox software library (SDK) 3.5.1 and viem 2.55.19. The read used Base Sepolia block 48450062, hash 0xd25159ec66c7e4fda01735ed078e22c765e4dc99aa66b5aaea5612f388aeb6eb. The payment was simulated only. Run the examples again to get current results.' },
       ],
     },
