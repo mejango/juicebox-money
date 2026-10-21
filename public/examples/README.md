@@ -13,7 +13,7 @@ handling or a write command to these examples.
 Use Node.js 22 or newer and the pinned package versions:
 
 ```sh
-npm install --save-exact @bananapus/nana-sdk-core@2.3.2 viem@2.55.19
+npm install --save-exact @bananapus/nana-sdk-core@3.5.1 viem@2.55.19
 node read-project.mjs
 JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 ```
