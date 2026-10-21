@@ -48,7 +48,7 @@ import {
   resolveMarket,
   type MarketResult,
 } from '@/components/project/MarketSection'
-import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { getTokenUsdRates, type BsRevnetPriceHistory } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
   netCashOutDisplayValue,
@@ -60,6 +60,8 @@ import {
 import { fetchIndexedPoolLiquidityEvents } from '@/lib/lp-positions-queries'
 import {
   ammSeriesFrom,
+  axisRate,
+  floorAtMoment,
   poolReservesSeriesFrom,
   usdRateOf,
   type PricePoint,
@@ -70,6 +72,8 @@ import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 
 const PRICE_REFRESH_MS = 15_000
+/** One cadence for the floor history and the rates that price it, so new moments never meet a stale rate. */
+const HISTORY_REFRESH = { staleTime: 30_000, refetchInterval: PRICE_REFRESH_MS, refetchOnWindowFocus: true, retry: 1 }
 
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
@@ -77,26 +81,19 @@ const PRICE_REFRESH_MS = 15_000
  * Overview is a server component), then reads the live omnichain cash-out
  * floor and Uniswap V4 AMM price as current reference points.
  */
-/** The rate to convert one historical point with: its own if the indexer recorded one and the
- *  axis is the unit that rate measures, otherwise the live feed. */
-function axisRate(
-  perPointRates: boolean,
-  pointRate: number | undefined,
-  live: number,
-): number {
-  return (perPointRates ? pointRate : undefined) ?? live
-}
-
 export function RevnetPriceCard({
   chainId,
   projectId,
   chains,
   suckerGroupId,
+  severalTokens,
 }: {
   chainId: JBChainId
   projectId: number
   chains: [number, number][]
   suckerGroupId: string | null
+  /** The group accepts more than one token kind, per the indexed deployments. */
+  severalTokens: boolean
 }) {
   const queryClient = useQueryClient()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
@@ -379,10 +376,7 @@ export function RevnetPriceCard({
     cachedQuery({
     queryKey: ['revnetPriceHistory', suckerGroupId],
     enabled: !!suckerGroupId,
-    staleTime: 30_000,
-    refetchInterval: PRICE_REFRESH_MS,
-    refetchOnWindowFocus: true,
-    retry: 1,
+    ...HISTORY_REFRESH,
     queryFn: async (): Promise<BsRevnetPriceHistory> => {
       // chainId is an endpoint-routing hint (testnet groups live on the
       // testnet indexer); it never filters the group.
@@ -403,6 +397,23 @@ export function RevnetPriceCard({
   // ETH-denominated ruleset must keep using the live base/accounting feed rather than reading
   // a USD number as if it were ETH. Per-point where available, live rate everywhere else.
   const perPointRates = references?.baseCurrency === BASE_CURRENCY_USD
+
+  // A group of several tokens prices its native-axis floor from the USD
+  // balance, in the accounting token at that token's own indexed rate.
+  const backingToken = data.contexts[0]?.token
+  const { data: accountingRates } = useKeptQuery(
+    cachedQuery({
+      queryKey: ['tokenUsdRates', chainId, projectId, backingToken ?? null],
+      enabled: severalTokens && !perPointRates && !!backingToken,
+      ...HISTORY_REFRESH,
+      queryFn: async ({ signal }) =>
+        (await getTokenUsdRates({ chainId, projectId, token: backingToken! }, { signal }))
+          .flatMap(row => {
+            const rate = usdRateOf(row.tokenUsdRate)
+            return rate === undefined ? [] : [{ timestamp: row.timestamp, rate }]
+          }),
+    }),
+  )
 
   const floorHistory = useMemo<PricePoint[]>(() => {
     const decimals = data?.contexts[0]?.decimals
@@ -434,31 +445,38 @@ export function RevnetPriceCard({
         tax = ruleset.metadata.cashOutTaxRate
       }
       try {
-        const value = netCashOutDisplayValue(
-          cashOutPriceFromTotals({
-            balance: BigInt(moment.balance),
-            tokenSupply: BigInt(moment.tokenSupply),
-            cashOutTaxRate: tax,
-            balanceDecimals: decimals,
-          }),
+        const value = floorAtMoment(moment, {
           tax,
-        )
+          decimals,
+          perPointRates,
+          historyRate,
+          severalTokens,
+          accountingUsdRate: accountingRates?.findLast(rate => rate.timestamp <= timestamp)?.rate,
+        })
         if (!value) return []
-        const onAxis = value * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
+        // With one accounting token the raw balance moves only with funds, so
+        // it says which way money flowed, and on a USD axis the USD balance
+        // tells rate moves apart. With several, only the USD balance is in
+        // one unit.
+        const balanceUsd = BigInt(moment.balanceUsd || '0')
+        const mixedBacking = severalTokens && balanceUsd > 0n
         const observation: CashOutObservation = {
-          balance: BigInt(moment.balance),
+          balance: mixedBacking ? balanceUsd : BigInt(moment.balance),
           tokenSupply: BigInt(moment.tokenSupply),
           cashOutTax: tax,
           price: value,
+          balanceUsd:
+            !mixedBacking && perPointRates && balanceUsd > 0n ? balanceUsd : undefined,
+          mixedBacking,
         }
         const reason = explainCashOutChange(previous, observation)
         previous = observation
-        return [{ timestamp, value: onAxis, reason }]
+        return [{ timestamp, value, reason }]
       } catch {
         return []
       }
       })
-  }, [all, data, history?.moments, historyRate, perPointRates])
+  }, [accountingRates, all, data, history?.moments, historyRate, perPointRates, severalTokens])
 
   const cashOutTaxHistory = useMemo<CashOutTaxPoint[]>(() => {
     const byTimestamp = new Map<number, number>()

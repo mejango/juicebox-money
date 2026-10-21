@@ -14,6 +14,7 @@ import {
   getSuckerGroupAddToBalance,
   getSuckerGroupMoments,
   getSuckerGroupProjects,
+  getTokenUsdRates,
 } from '@/lib/bendystraw'
 import { fetchIndexedLpPositions, fetchIndexedPoolLiquidityEvents } from '@/lib/lp-positions-queries'
 import { fetchPendingPayments } from '@/lib/pending-payments'
@@ -103,6 +104,8 @@ describe("a Bendystraw read's signal", () => {
     ['@/lib/bendystraw#getRevnetOperator', signal => getRevnetOperator(8453, 11, { signal })],
     ['@/lib/bendystraw#getProjectPayers', signal => getProjectPayers([[8453, 11]], { signal })],
     ['@/lib/bendystraw#getSuckerGroupMoments', signal => getSuckerGroupMoments('group', { signal })],
+    ['@/lib/bendystraw#getTokenUsdRates', signal =>
+      getTokenUsdRates({ chainId: 8453, projectId: 11, token: '0x000000000000000000000000000000000000EEEe' }, { signal })],
     ['@/lib/bendystraw#getSuckerGroupAddToBalance', signal => getSuckerGroupAddToBalance('group', { signal })],
     ['@/lib/lp-positions-queries#fetchIndexedLpPositions', signal => fetchIndexedLpPositions({ chainId: 8453, poolId: POOL, signal })],
     ['@/lib/lp-positions-queries#fetchIndexedPoolLiquidityEvents', signal =>

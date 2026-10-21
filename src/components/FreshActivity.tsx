@@ -9,22 +9,13 @@ import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { activityAmountToken, combinedActivityParts, groupSameTxEvents } from './ActivityList'
+import { combinedActivityParts, feedAmountToken, groupSameTxEvents } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
 
 const POLL_MS = 15_000
 const PAGE_SIZE = 8
-
-function hasPositiveIndexedAmount(value: string | null | undefined): boolean {
-  if (!value) return false
-  try {
-    return BigInt(value) > 0n
-  } catch {
-    return false
-  }
-}
 
 /**
  * The "Fresh activity" rail: latest project-oriented V6 events. Server-renders the initial rows,
@@ -149,19 +140,7 @@ function Row({
   )
 
   const parts = combinedActivityParts(group, tokenUnit)
-  const rawAmountFallback = !hasPositiveIndexedAmount(parts.amountUsd)
-    ? activityAmountToken(
-        parts.amountRaw,
-        parts.amountAsset,
-        event.project?.tokenSymbol && event.project.decimals !== null
-          ? {
-              symbol: event.project.tokenSymbol.replace(/^\$+/, ''),
-              decimals: event.project.decimals,
-            }
-          : null,
-        event.chainId,
-      )
-    : null
+  const amountToken = feedAmountToken(parts, event.project, event.chainId)
   const actor = parts.actor
   const explorer = explorerHostname(event.chainId)
   const actorUrl = explorer
@@ -195,7 +174,7 @@ function Row({
               chainId={event.chainId}
               txHash={event.txHash}
               amountUsd={parts.amountUsd}
-              amountToken={rawAmountFallback}
+              amountToken={amountToken}
               direction={parts.direction}
             />
           </div>

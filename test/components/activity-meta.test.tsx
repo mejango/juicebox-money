@@ -216,6 +216,14 @@ describe('single accounting-token determination', () => {
     expect(suckerGroupAccountingToken(rows)).toBeNull()
   })
 
+  it('returns null when a deployment accepts more than one token', () => {
+    const rows = [
+      projectRow({ chainId: 1, accountingTokenCount: 2 }),
+      projectRow({ chainId: 8453, accountingTokenCount: 1 }),
+    ]
+    expect(suckerGroupAccountingToken(rows)).toBeNull()
+  })
+
   it('returns null for unknown kinds and empty sets', () => {
     expect(suckerGroupAccountingToken([])).toBeNull()
     expect(

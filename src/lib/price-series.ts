@@ -1,4 +1,5 @@
-import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import type { BsPriceMoment, BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { cashOutPriceFromTotals, netCashOutDisplayValue } from '@/lib/cashOut'
 import type { BsPoolLiquidityEvent } from '@/lib/lp-positions-queries'
 import {
   getAmountsForLiquidity,
@@ -164,6 +165,66 @@ export function usdRateOf(raw: string | null | undefined): number | undefined {
   if (raw === null || raw === undefined) return undefined
   const rate = Number(raw) / 1e18
   return Number.isFinite(rate) && rate > 0 ? rate : undefined
+}
+
+/** The rate to convert one historical point with: its own if the indexer recorded one and the
+ *  axis is the unit that rate measures, otherwise the live feed. */
+export function axisRate(
+  perPointRates: boolean,
+  pointRate: number | undefined,
+  live: number,
+): number {
+  return (perPointRates ? pointRate : undefined) ?? live
+}
+
+/**
+ * One moment's net cash-out floor on the chart axis. Null when the moment has
+ * no floor. Throws on an unparseable row.
+ *
+ * A group that accepts one token keeps its exact raw balance, priced from
+ * `balanceUsd` only on a USD axis. A group of several tokens adds unlike units
+ * in its raw balance, so it always prices from `balanceUsd`: as is on a USD
+ * axis, otherwise in the accounting token at that token's own indexed USD
+ * rate in force at the moment (`accountingUsdRate`). Without that rate the
+ * moment is left out. The group moment's `accountingTokenUsdRate` follows
+ * whichever chain last moved, so it is not used for a group of several tokens.
+ */
+export function floorAtMoment(
+  moment: BsPriceMoment,
+  {
+    tax,
+    decimals,
+    perPointRates,
+    historyRate,
+    severalTokens,
+    accountingUsdRate,
+  }: {
+    tax: number
+    decimals: number
+    perPointRates: boolean
+    historyRate: number
+    severalTokens: boolean
+    /** USD per one whole accounting token at the moment, from its own per-token history. */
+    accountingUsdRate?: number
+  },
+): number | null {
+  const balanceUsd = BigInt(moment.balanceUsd || '0')
+  if (severalTokens && !perPointRates && accountingUsdRate === undefined) return null
+  const inUsd = severalTokens || (perPointRates && balanceUsd > 0n)
+  const price = netCashOutDisplayValue(
+    cashOutPriceFromTotals({
+      balance: inUsd ? balanceUsd : BigInt(moment.balance),
+      tokenSupply: BigInt(moment.tokenSupply),
+      cashOutTaxRate: tax,
+      balanceDecimals: inUsd ? 18 : decimals,
+    }),
+    tax,
+  )
+  if (!price) return null
+  if (!inUsd) {
+    return price * axisRate(perPointRates, usdRateOf(moment.accountingTokenUsdRate), historyRate)
+  }
+  return perPointRates ? price : (price / accountingUsdRate!) * historyRate
 }
 
 export function ammSeriesFrom({

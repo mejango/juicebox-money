@@ -56,9 +56,10 @@ function usd(value: number) {
  *
  * Volume is cumulative INTAKE — indexed payment volume plus funds added
  * straight to the terminal — so it can only rise. Balance is the actual
- * terminal balance, so payouts and cash outs pull it down. Both series are
- * the indexer's per-event-time USD accruals (volumeUsd, balanceUsd,
- * amountUsd), so they stay honest across accounting-context switches.
+ * terminal balance, so payouts and cash outs pull it down. Volume sums each
+ * payment and addition at its own time's USD value (volumeUsd, amountUsd);
+ * balance is every token held at its latest USD rate (balanceUsd), so both
+ * stay honest when a project accepts several tokens.
  */
 function bucketize(
   moments: BsPriceMoment[],

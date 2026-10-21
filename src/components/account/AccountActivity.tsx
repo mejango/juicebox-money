@@ -6,6 +6,7 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { ActorLink } from '@/components/ActorLink'
 import {
   combinedActivityParts,
+  feedAmountToken,
   groupSameTxEvents,
   mergeActivityEvents,
 } from '@/components/ActivityList'
@@ -156,10 +157,9 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
     event.projectId,
   )
   const tokenUnit = isV6 ? v6TokenUnit : 'tokens'
-  const { actor, actions, direction, kind, headline, memo, amountUsd } = combinedActivityParts(
-    group,
-    tokenUnit,
-  )
+  const parts = combinedActivityParts(group, tokenUnit)
+  const { actor, actions, direction, kind, headline, memo, amountUsd } = parts
+  const amountToken = feedAmountToken(parts, event.project, event.chainId)
   const explorer = explorerHostname(event.chainId)
   const actorUrl =
     actor && explorer ? `https://${explorer}/address/${actor}` : null
@@ -197,6 +197,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
             {/* Flow cluster left, "time on <chain>" right, prefixed actor below. */}
             <ActivityAmountLine
               amountUsd={amountUsd}
+              amountToken={amountToken}
               direction={direction}
               kind={kind}
               headline={headline}

@@ -1,10 +1,5 @@
-import {
-  bendystraw,
-  suckerGroupAccountingToken,
-  BsProject,
-} from './bendystraw'
+import { bendystraw, BsProject } from './bendystraw'
 import { fillIndexedMetadata } from './project-metadata-fill'
-import { deploymentKey, getHomepageIndexedTrust } from './top-projects'
 import { legacyProjectHref, toUrn } from './urn'
 
 /**
@@ -20,11 +15,8 @@ export type TrendingCard = {
   name: string
   tagline: string | null
   logoUri: string | null
-  volume: string
-  /** null when the group's members disagree on the accounting token, so the
-   *  group volume has no single unit to state it in. */
-  decimals: number | null
-  symbol: string | null
+  /** The group's payment volume, each payment valued in USD at its own time. 18-dec. */
+  volumeUsd: string
   paymentsCount: number
   chainIds: number[]
   trendingScore: bigint
@@ -34,6 +26,7 @@ type SuckerGroupTrending = {
   id: string
   version: number
   volume: string
+  volumeUsd: string
   trendingScore: string
   paymentsCount: number
   projects: { items: BsProject[] }
@@ -51,11 +44,11 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         limit: $limit
       ) {
         items {
-          id version volume trendingScore paymentsCount
+          id version volume volumeUsd trendingScore paymentsCount
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
-              projectId chainId name logoUri metadataUri projectTagline tokenSymbol
-              decimals suckerGroupId volume paymentsCount
+              projectId chainId name logoUri metadataUri projectTagline
+              suckerGroupId paymentsCount
             }
           }
         }
@@ -65,16 +58,12 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     { policy: 'stable' },
   )
 
-  const [groups, trust] = await Promise.all([
-    Promise.all(
-      data.suckerGroups.items.map(async group => ({
-        ...group,
-        projects: { items: await fillIndexedMetadata(group.projects.items) },
-      })),
-    ),
-    getHomepageIndexedTrust().catch(() => null),
-  ])
-  const trusted = new Set(trust?.trusted)
+  const groups = await Promise.all(
+    data.suckerGroups.items.map(async group => ({
+      ...group,
+      projects: { items: await fillIndexedMetadata(group.projects.items) },
+    })),
+  )
   return groups.flatMap(group => {
     const members = group.projects.items
     const representative =
@@ -84,19 +73,6 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
     if (!representative) return []
     // Skip unnamed dead groups; the storefront isn't a block explorer.
     if (!representative.name && BigInt(group.volume) === 0n) return []
-
-    // `volume` is the GROUP total, so labelling it with one member's symbol and
-    // decimals is only correct when every member agrees — a USDC member paired
-    // with an ETH one renders the total 1e12x off and calls it ETH. The query
-    // caps members at 8; a full page can't be checked for agreement at all.
-    // A V6 group whose raw totals mix tokens states no volume; see
-    // indexedAmountsTrusted.
-    const accounting =
-      members.length < 8 &&
-      (group.version !== 6 ||
-        members.every(m => trusted.has(deploymentKey(m.chainId, m.projectId))))
-        ? suckerGroupAccountingToken(members)
-        : null
 
     const urn = toUrn(representative.chainId, representative.projectId)
     return [
@@ -115,9 +91,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         name: representative.name ?? `Project ${representative.projectId}`,
         tagline: representative.projectTagline,
         logoUri: representative.logoUri,
-        volume: group.volume,
-        decimals: accounting?.decimals ?? null,
-        symbol: accounting?.symbol ?? null,
+        volumeUsd: group.volumeUsd,
         paymentsCount: group.paymentsCount,
         chainIds: members.map(m => m.chainId),
         trendingScore: BigInt(group.trendingScore),

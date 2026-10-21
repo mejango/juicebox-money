@@ -83,7 +83,10 @@ describe('persisted Bendystraw browser operations', () => {
 })
 
 describe('the relay when the indexer fails', () => {
-  const [operation] = Object.entries(registry)[0]
+  // The one-project lookup, whatever order the registry's hashes put it in.
+  const [operation] = Object.entries(registry).find(([, query]) =>
+    /^query\(\$chainId: Float!, \$projectId: Float!\) \{\s*project\(/.test(query),
+  )!
   const params = { params: Promise.resolve({ net: 'mainnet' }) }
   const relay = () =>
     POST(

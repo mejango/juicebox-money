@@ -104,6 +104,9 @@ function completeProjectRow(
     isRevnet: null,
     owner: null,
     metadataUri: null,
+    accountingTokenCount: 1,
+    balanceUsd: '0',
+    projectTokenBalances: { items: [] },
     ...overrides,
   }
 }
@@ -199,6 +202,9 @@ describe('account activity query', () => {
       txHash: '0x2',
       from: '0xother',
       project: { name: 'P', logoUri: null, tokenSymbol: 'USDC', decimals: 6 },
+      token: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      decimals: 6,
+      tokenSymbol: 'USDC',
     }
     const fetchMock = vi.fn().mockResolvedValue(
       accountActivityResponse({

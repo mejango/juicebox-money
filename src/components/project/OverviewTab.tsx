@@ -116,6 +116,7 @@ export function OverviewTab({
   authorities,
   chains,
   suckerGroupId,
+  severalTokens,
 }: {
   chainId: JBChainId;
   projectId: number;
@@ -131,6 +132,8 @@ export function OverviewTab({
   /** Per-chain deployments: [chainId, projectId]. */
   chains: [number, number][];
   suckerGroupId: string | null;
+  /** The group accepts more than one token kind, so its raw balance adds unlike units. */
+  severalTokens: boolean;
 }) {
   const links = socialLinks.filter(([, href]) => href);
   return (
@@ -175,6 +178,7 @@ export function OverviewTab({
           projectId={projectId}
           chains={chains}
           suckerGroupId={suckerGroupId}
+          severalTokens={severalTokens}
         />
       ) : (
         <FundingChart suckerGroupId={suckerGroupId} />

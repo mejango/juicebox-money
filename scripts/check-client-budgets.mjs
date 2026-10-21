@@ -41,7 +41,8 @@ const routes = [
   { route: '/audit', path: '/audit', kib: 229, text: 'Verify Juicebox.' },
   { route: '/create', path: '/create', kib: 395, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
-  { route: '/[urn]', path: '/eth:1', kib: 502, text: 'Browser Fixture Project' },
+  // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
+  { route: '/[urn]', path: '/eth:1', kib: 503, text: 'Browser Fixture Project' },
   { route: '/account/[address]', path: `/account/${account}`, kib: 405, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.

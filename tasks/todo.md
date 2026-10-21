@@ -1,3 +1,29 @@
+# Bendystraw per-token data (2026-10-20)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/7d1fdce3-54c6-4145-93c3-bfa2558645d2/scratchpad/client-round-brief.md. Branch fix/bendystraw-per-token from origin/main 4075902.
+
+- [x] 1. Queries: PROJECT_FIELDS gains accountingTokenCount and projectTokenBalances rows; event fragments gain tokenSymbol; search and owned-projects order by volumeUsd.
+- [x] 2. Homepage: delete indexed-amounts-trusted and getHomepageIndexedTrust (on-chain multicalls). Top ranks by suckerGroup.balanceUsd. Trending shows group volumeUsd. Reserves: Secured total and per-chain token lines from projectTokenBalances; Secured history, per-chain history and JBX fees from projectTokenBalanceMoments; passed-through from suckerGroupMoment.volumeUsd plus addToBalance amountUsd. Multi-token groups count again.
+- [x] 3. Project surfaces: revnet floor history from moment balanceUsd (raw fallback when unvalued); price-history downsample metric on balanceUsd; link preview from projectTokenBalances rows; suckerGroupAccountingToken refuses a group with accountingTokenCount > 1.
+- [x] 4. Activity: event tokenSymbol labels the amount, knownTokenSymbol then USD as fallbacks; fan-out keeps the shared-token rule.
+- [x] 5. Comments on balanceUsd meaning (FundingChart, BsPriceMoment).
+- [x] 6. Registry regenerated, browser fixture fields/rows updated, tests rewritten.
+- [x] 7. Gate: npm run check (suites one at a time), Codex loop until approve, PR, no merge.
+
+## Plan refinement
+- **Objective:** jbm reads Bendystraw's per-token data so multi-token projects show correct amounts everywhere (homepage chart, Secured, Top, Trending, previews, revnet floor, activity) and the on-chain trust workaround is gone; success = no raw mixed-unit totals rendered, gates green, Codex approves.
+- **System fit:** Outcome (correct public numbers) -> capability (Bendystraw per-token fields, live) -> evidence (live introspection + sample rows 2026-10-20) -> prepared action (query/fixture/registry edits) -> authority (PR only, no merge) -> verified result (npm run check, Codex) -> learning (lessons if corrected). Owners: bendystraw.ts owns documents and BsProject; homepage-reserves/top-projects/trending own homepage math; ActivityList owns amount labeling. Transactions, wallet, pay flows unaffected.
+- **Reuse and simplicity:** Reuse getPagedItems, formatUsd18, formatTokenAmount, knownTokenSymbol, usdRateOf; delete indexed-amounts-trusted.ts, getHomepageIndexedTrust, readPerChain, groupBalanceUsd and ethPrice use on the homepage; global paged moments replace per-group and per-project fan-out.
+- **Evidence and unknowns:** Live schema has project.accountingTokenCount/projectTokenBalances, root projectTokenBalances (23 rows) and projectTokenBalanceMoments (902 rows), suckerGroup.balanceUsd/volumeUsd (V4/V5 too), no suckerGroup.trendingVolumeUsd; projectMoments returns 0 rows. Per-token usdRate is the rate at that key's last change, so replaying moments with each row's tokenUsdRate lands on projectTokenBalances.balanceUsd.
+- **Verification:** Unit tests for reserves (multi-token group counted, per-chain token lines, fees), top ranking by balanceUsd, trending USD, preview rows, activity tokenSymbol and fan-out; schema:check against live; registry/fixture parity; full npm run check incl. browser suites.
+- **Resource budget:** One worktree; one pass of edits per surface; replan if live data contradicts the brief or the bundle budget moves more than the new code.
+
+## Review
+- Gate: npm run check green (242 files / 3176 unit tests, schema check against live mainnet and testnet, build:browser, budgets, 85/85 browser tests); npm run build green. Browser tests ran with PLAYWRIGHT_APP_PORT=3197 because another session's server holds :3100.
+- Budget: /[urn] 502 -> 503 KiB (502.2) for event-symbol labels and the USD floor.
+- Codex gpt-6.1-sol: six passes, approve on the sixth. Fixed: project activity labels own tokens on multi-token projects; addToBalance amountUsd fallback; preview never shows a mixed raw balance and values unnamed or row-less holdings in USD; floor tooltip names rate moves and only describes several-token backings; USD axis floor from balanceUsd, native axis exact raw unless several tokens (indexed); passed-through and Secured headlines survive history or per-token failures.
+- Revnet parity follow-up (revnet-money#92): Fresh and account feeds now show the event's own token over USD (beneficiary sources select token/decimals/tokenSymbol); a several-token revnet on a native axis converts moment balanceUsd at the accounting token's own tokenUsdRate from projectTokenBalanceMoments, omitting moments before any rate, refreshed on the floor history's cadence. Codex passes 7 (stale rate history, fixed) and 8 (approve). Gate green again: 3181 unit tests, 85/85 browser, /[urn] 502.5/503 KiB.
+
 # Pay minimum: SDK 3.3.0 quote everywhere, failure reason, adjustable minimum (2026-10-20)
 
 Ruling (jango): get the payer the most tokens possible; when a payment fails, say why and let the payer adjust their minimum.

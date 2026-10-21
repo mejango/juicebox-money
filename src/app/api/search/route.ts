@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
         byGroup.set(key, { representative: p, members: [p] })
       } else {
         existing.members.push(p)
-        if (BigInt(p.volume) > BigInt(existing.representative.volume)) {
+        if (BigInt(p.volumeUsd) > BigInt(existing.representative.volumeUsd)) {
           existing.representative = p
         }
       }
