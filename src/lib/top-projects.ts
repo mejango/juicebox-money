@@ -2,10 +2,15 @@ import { unstable_cache } from 'next/cache'
 import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 import { formatUnits } from 'viem'
 import { bendystraw, type BsProject } from './bendystraw'
+import { displayChainSlug } from './chainDisplay'
 import { toUrn } from './urn'
 
 export type TopBalanceProject = {
   key: string
+  rank: number
+  projectId: number
+  chainId: number
+  chainSlug: string | null
   href: string
   name: string
   tagline: string | null
@@ -122,6 +127,9 @@ export async function getTopBalanceProjects(
         if (!Number.isFinite(balanceUsd)) return []
         return [{
           key: group.id,
+          projectId: project.projectId,
+          chainId: project.chainId,
+          chainSlug: displayChainSlug(project.chainId),
           href: `/${toUrn(project.chainId, project.projectId)}`,
           name: named?.name ?? `Project ${project.projectId}`,
           tagline: project.projectTagline,
@@ -131,6 +139,7 @@ export async function getTopBalanceProjects(
       })
       .sort((a, b) => b.balanceUsd - a.balanceUsd)
       .slice(offset, offset + limit)
+      .map((project, index) => ({ ...project, rank: offset + index + 1 }))
   } catch {
     return []
   }
