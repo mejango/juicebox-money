@@ -775,7 +775,7 @@ const graphqlFixtures = [
           id balanceUsd volumeUsd
           projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
             items {
-              projectId chainId version name logoUri projectTagline volume volumeUsd balance
+              projectId chainId version name logoUri projectTagline volume volumeUsd balance balanceUsd
               paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
               decimals currency isRevnet owner metadataUri
             }
