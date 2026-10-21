@@ -45,7 +45,7 @@ const cachedBalanceGroups = unstable_cache(
               id balanceUsd volumeUsd
               projects(orderBy: "chainId", orderDirection: "asc", limit: 8) {
                 items {
-                  projectId chainId version name logoUri projectTagline volume volumeUsd balance
+                  projectId chainId version name logoUri projectTagline volume volumeUsd balance balanceUsd
                   paymentsCount contributorsCount createdAt suckerGroupId token tokenSymbol
                   decimals currency isRevnet owner metadataUri
                 }
@@ -68,9 +68,36 @@ const cachedBalanceGroups = unstable_cache(
       })),
     )
   },
-  ['juicebox-home-balance-groups-v5'],
+  ['juicebox-home-balance-groups-v6'],
   { revalidate: 600 },
 )
+
+function scaledUsd(value: string | null | undefined): bigint | null {
+  if (!value) return null
+  try {
+    return BigInt(value.split('.')[0])
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The group member holding the most money, so a cross-chain group links to the chain its
+ * balance is on. Ties and unpriced members fall back to the earliest member. Revnet
+ * Money's top-projects reader applies the same rule.
+ */
+export function largestBalanceProject(projects: readonly BsProject[]): BsProject | undefined {
+  let best = projects[0]
+  let bestUsd = scaledUsd(best?.balanceUsd)
+  for (const project of projects.slice(1)) {
+    const usd = scaledUsd(project.balanceUsd)
+    if (usd !== null && (bestUsd === null || usd > bestUsd)) {
+      best = project
+      bestUsd = usd
+    }
+  }
+  return best
+}
 
 export async function getHomepageBalanceGroups(): Promise<BalanceGroup[]> {
   try {
@@ -88,14 +115,15 @@ export async function getTopBalanceProjects(
     const groups = await cachedBalanceGroups()
     return groups
       .flatMap(group => {
-        const project = group.projects.items.find(item => item.name) ?? group.projects.items[0]
+        const project = largestBalanceProject(group.projects.items)
         if (!project) return []
+        const named = project.name ? project : group.projects.items.find(item => item.name)
         const balanceUsd = Number(formatUnits(BigInt(group.balanceUsd), 18))
         if (!Number.isFinite(balanceUsd)) return []
         return [{
           key: group.id,
           href: `/${toUrn(project.chainId, project.projectId)}`,
-          name: project.name ?? `Project ${project.projectId}`,
+          name: named?.name ?? `Project ${project.projectId}`,
           tagline: project.projectTagline,
           logoUri: project.logoUri,
           balanceUsd,

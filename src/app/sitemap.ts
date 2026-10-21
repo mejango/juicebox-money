@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next'
-import { getHomepageBalanceGroups } from '@/lib/top-projects'
+import { getHomepageBalanceGroups, largestBalanceProject } from '@/lib/top-projects'
 import { toUrn } from '@/lib/urn'
 
 // Project pages are reached through client-side search and links, so a crawler has
@@ -24,9 +24,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   for (const group of groups) {
     // One entry per sucker group. The same project on four chains renders four
     // near-identical pages; listing them all would be asking for a duplicate-content
-    // penalty. The named deployment is the one the rest of the site links to.
-    const project =
-      group.projects.items.find(item => item.name) ?? group.projects.items[0]
+    // penalty. The deployment holding the balance is the one the homepage links to.
+    const project = largestBalanceProject(group.projects.items)
     if (!project) continue
     const urn = toUrn(project.chainId, project.projectId)
     if (seen.has(urn)) continue
