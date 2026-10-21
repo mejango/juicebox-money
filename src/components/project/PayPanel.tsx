@@ -484,7 +484,9 @@ export function PayPanel({
       return;
     }
     const key = selectedKeyRef.current;
-    const idx = key ? list.findIndex((t) => payTokenKey(t) === key) : -1;
+    // Touched with no token picked: the payer chose dollars, which no refetch removes.
+    if (!key) return;
+    const idx = list.findIndex((t) => payTokenKey(t) === key);
     if (idx >= 0) {
       if (idx !== tokenIndex) setTokenIndex(idx);
     } else {
