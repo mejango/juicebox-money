@@ -20,6 +20,7 @@ import {
   buildToRemoteTx,
   classifySuckerTransport,
   findSuckerTransportValue,
+  getRegisteredSucker,
   getV6SuckerPairs,
   jbSuckerV6Abi,
   suckerBytes32ToAddress,
@@ -129,6 +130,30 @@ export async function findToRemoteValue(
   )
   if (value !== null) assertSuckerTransportValue('ccip', value, fee)
   return value
+}
+
+/**
+ * The `toRemote` that ships a queued group's outbox. The indexer only says which
+ * sucker holds the movements; it is sent to the project's sucker as the registry
+ * lists it, and throws `UnverifiedSuckerError` when the registry doesn't.
+ */
+export async function prepareQueuedExecute(
+  client: PublicClient,
+  group: { sourceChainId: number; destChainId: number; sucker: Address; token: Address; projectId: number; account: Address },
+) {
+  const chainId = group.sourceChainId as JBChainId
+  const sucker = await getRegisteredSucker(client, {
+    chainId,
+    projectId: BigInt(group.projectId),
+    remoteChainId: group.destChainId as JBChainId,
+    sucker: group.sucker,
+  })
+  const infra = await classifyInfra(client, sucker)
+  const value = await findToRemoteValue(client, chainId, sucker, group.token, infra, group.account)
+  if (value === null) {
+    throw new Error('The bridge fee could not be determined yet — try again shortly.')
+  }
+  return { sucker, request: buildToRemoteTx({ chainId, sucker, token: group.token, value }) }
 }
 
 export function unpackAddress(bytes32: string): Address {
@@ -544,6 +569,7 @@ function QueuedMovementsCard({
               key={`${g.sourceChainId}->${g.destChainId}:${g.token}:${g.sucker}`}
               group={g}
               chains={chains}
+              projectId={projectId}
             />
           ))}
         </div>
@@ -555,7 +581,9 @@ function QueuedMovementsCard({
 function MovementGroup({
   group,
   chains,
+  projectId,
 }: {
+  projectId: number
   group: {
     sourceChainId: number
     destChainId: number
@@ -601,29 +629,12 @@ function MovementGroup({
         chainId: group.sourceChainId as JBChainId,
       }) as PublicClient | undefined
       if (!client) throw new Error(`Unsupported chain ${group.sourceChainId}.`)
-      const infra = await classifyInfra(client, group.sucker)
-      const value = await findToRemoteValue(
-        client,
-        group.sourceChainId as JBChainId,
-        group.sucker,
-        group.token,
-        infra,
-        address,
-      )
-      if (value === null) {
-        throw new Error('The bridge fee could not be determined yet — try again shortly.')
-      }
-      const request = buildToRemoteTx({
-        chainId: group.sourceChainId as JBChainId,
-        sucker: group.sucker,
-        token: group.token,
-        value,
-      })
+      const { sucker, request } = await prepareQueuedExecute(client, { ...group, projectId, account: address })
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
       await tx.send({ ...request, abi: request.abi as Abi }, {
         reviewedAccount: address,
-        intent: bridgeIntent({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address }),
-        legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address })],
+        intent: bridgeIntent({ chainId: group.sourceChainId, sucker, token: group.token, account: address }),
+        legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker, token: group.token, account: address })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')

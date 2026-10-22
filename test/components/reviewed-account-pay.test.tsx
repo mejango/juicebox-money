@@ -17,7 +17,13 @@ import { encodeAbiParameters, encodeFunctionData, erc20Abi, zeroAddress, type Ad
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFIFA_RECOVERY_QUERY_PREFIX, defifaWriteNamespace, readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
-import { buildDefifaPayMetadata, buildPayTx, PAY_QUOTE_FAILED_MESSAGE } from '@bananapus/nana-sdk-core/v6'
+import {
+  buildDefifaPayMetadata,
+  buildPayTx,
+  PAY_QUOTE_FAILED_MESSAGE,
+  PAY_SWAP_QUOTE_FAILED_MESSAGE,
+  PaySwapQuoteFailedError,
+} from '@bananapus/nana-sdk-core/v6'
 import {
   HELD_AWAY_SUCCESS_LINE, HELD_CONFIRMING_LINE, HELD_EXIT_LABEL, HELD_RELEASED_ELSEWHERE_LINE, HELD_RELEASED_LINE, HELD_SEND_AGAIN_LABEL,
   SAVED_ATTEMPT_CHECK_LINE, SAVED_ATTEMPT_UNREADABLE_LINE, WRITE_HOLD_IN_TAB_LINE, WRITE_HOLD_PENDING_LINE,
@@ -430,6 +436,20 @@ describe('a payment prepareUserPay prepares', () => {
     await click('Try again')
     await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1)
     expect(vi.mocked(m.prepareUserPay).mock.calls.length).toBeGreaterThan(1)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('shows a failed swap quote as one line with Retry, and never pays on it', async () => {
+    m.prepareUserPay = vi.fn(async () => { throw new PaySwapQuoteFailedError(new Error('quoter unreadable')) })
+    await renderPanel()
+    await typeAmount('1')
+    await waitUntil(() => host.textContent?.includes(PAY_SWAP_QUOTE_FAILED_MESSAGE) ?? false)
+    const line = [...host.querySelectorAll('p')].find(p => p.textContent?.includes(PAY_SWAP_QUOTE_FAILED_MESSAGE))
+    expect(line?.textContent).toBe(`${PAY_SWAP_QUOTE_FAILED_MESSAGE} Retry`)
+    expect(host.textContent).not.toContain("Couldn't verify what this payment returns")
+    expect(button('Pay').disabled).toBe(true)
+    await click('Retry')
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > 1)
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 

@@ -31,6 +31,8 @@ import {
   effectiveTierPrice,
   getProjectNftInventory,
   PAY_QUOTE_FAILED_MESSAGE,
+  PAY_SWAP_QUOTE_FAILED_MESSAGE,
+  PaySwapQuoteFailedError,
   prepareUserPay,
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
@@ -934,6 +936,7 @@ export function PayPanel({
     data: prepared,
     isFetching: previewLoading,
     isError: previewError,
+    error: previewFailure,
     isPlaceholderData: previewIsPrevious,
     isStale: previewIsStale,
     refetch: refetchPreview,
@@ -2001,7 +2004,22 @@ export function PayPanel({
         className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
       />
 
-      {mode === "pay" && amountRaw > 0n && previewError ? (
+      {mode === "pay" && amountRaw > 0n && previewFailure instanceof PaySwapQuoteFailedError ? (
+        <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
+          {quoteRetryFor === paymentInputs ? "Refreshing…" : (
+            <>
+              {PAY_SWAP_QUOTE_FAILED_MESSAGE}{" "}
+              <button
+                type="button"
+                onClick={retryQuote}
+                className="font-medium underline underline-offset-2"
+              >
+                Retry
+              </button>
+            </>
+          )}
+        </p>
+      ) : mode === "pay" && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
           until the preview works.{" "}
