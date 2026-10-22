@@ -3,7 +3,7 @@
 import { getAccount, type Config } from '@wagmi/core'
 import type { Address } from 'viem'
 import { REVIEWED_ACCOUNT_CHANGED_LINE, ReviewLineError } from '@bananapus/nana-sdk-core/review'
-import { assertNoViewAs } from '@/lib/viewAs'
+import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 /**
  * A request is built for the account that reviewed it (its beneficiary,
@@ -30,7 +30,7 @@ export function captureWalletContext(
 ): () => void {
   const connectorUid = getAccount(config).connector?.uid
   return () => {
-    assertNoViewAs()
+    if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
     const live = getAccount(config)
     if (!account || !live.address || live.address.toLowerCase() !== account.toLowerCase() ||
         live.chainId !== chainId || live.connector?.uid !== connectorUid) {

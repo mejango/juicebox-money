@@ -72,7 +72,12 @@ vi.mock('@/lib/wallet-core', async () => {
     request: async ({ method }: { method: string }) => method === 'eth_call' ? `0x${'0'.repeat(64)}` : null,
   }) }
 })
-vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: mocks.viewAs }))
+vi.mock('@/lib/viewAs', () => ({
+  assertNoViewAs: mocks.viewAs,
+  // Viewing as another account is what makes `mocks.viewAs` throw.
+  getViewAs: () => { try { mocks.viewAs(); return null } catch { return '0x2222222222222222222222222222222222222222' } },
+  VIEW_AS_WRITE_BLOCKED: 'View-as is read-only',
+}))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
   simulateStateChangingTransaction: mocks.simulate,
