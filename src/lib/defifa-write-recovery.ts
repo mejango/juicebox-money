@@ -4,6 +4,7 @@ import {
   readBrowserWriteRecovery,
   writeHeldMessage,
   type ReviewedWriteRecoveryRecord,
+  ReviewLineError,
 } from '@bananapus/nana-sdk-core/review'
 import type { Address } from 'viem'
 import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
@@ -45,7 +46,7 @@ export async function runRecoverableDefifaWrite({ scope, action, run, onRecord }
 }) {
   const [call] = action.calls
   if (action.calls.length !== 1 || call.chainId !== scope.chainId || action.account.toLowerCase() !== scope.account.toLowerCase()) {
-    throw new Error('The recovery scope does not match the reviewed account and network.')
+    throw new ReviewLineError('The recovery scope does not match the reviewed account and network.')
   }
   const previous = readDefifaWriteRecovery(scope)
   if (previous) {

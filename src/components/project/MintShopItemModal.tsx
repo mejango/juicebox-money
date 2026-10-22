@@ -1,5 +1,6 @@
 'use client'
 
+import { ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { shop721QueryKey } from '@/hooks/useShop721'
 
 import {
@@ -101,7 +102,7 @@ export function MintShopItemModal({
       const client = getPublicClient(config, {
         chainId: chainId as SupportedChainId,
       }) as PublicClient | undefined
-      if (!client) throw new Error(`${chainName(chainId)} is unavailable.`)
+      if (!client) throw new ReviewLineError(`${chainName(chainId)} is unavailable.`)
       await assertMintReady(client, {
         chainId,
         projectId,
@@ -286,9 +287,9 @@ async function assertMintReady(
     isRevnet,
     tierLimit: 1,
   })
-  if (liveShop?.protocol === 'defifa') throw new Error('Use the collection’s native NFT checkout.')
+  if (liveShop?.protocol === 'defifa') throw new ReviewLineError('Use the collection’s native NFT checkout.')
   if (!liveShop || liveShop.hook.toLowerCase() !== hook.toLowerCase()) {
-    throw new Error('The project’s live shop hook changed. Review the mint again.')
+    throw new ReviewLineError('The project’s live shop hook changed. Review the mint again.')
   }
 
   const owner = await client.readContract({
@@ -305,7 +306,7 @@ async function assertMintReady(
       permissionIds: [JBPermissionIdsV6.MINT_721],
     })
     if (!allowed) {
-      throw new Error(
+      throw new ReviewLineError(
         `This wallet cannot mint shop items on ${chainName(chainId)}.`,
       )
     }
@@ -323,10 +324,10 @@ async function assertMintReady(
     args: [hook, BigInt(tierId), false],
   })
   if (Number(liveTier.id) !== tierId || !liveTier.flags.allowOwnerMint) {
-    throw new Error('This item does not allow owner/operator free mints.')
+    throw new ReviewLineError('This item does not allow owner/operator free mints.')
   }
   if (Number(liveTier.remainingSupply) < quantity) {
-    throw new Error(
+    throw new ReviewLineError(
       `Only ${liveTier.remainingSupply.toString()} item${liveTier.remainingSupply === 1 ? '' : 's'} remain on ${chainName(chainId)}.`,
     )
   }

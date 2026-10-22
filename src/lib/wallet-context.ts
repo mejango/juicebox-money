@@ -2,7 +2,7 @@
 
 import { getAccount, type Config } from '@wagmi/core'
 import type { Address } from 'viem'
-import { REVIEWED_ACCOUNT_CHANGED_LINE } from '@bananapus/nana-sdk-core/review'
+import { REVIEWED_ACCOUNT_CHANGED_LINE, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { assertNoViewAs } from '@/lib/viewAs'
 
 /**
@@ -15,7 +15,7 @@ export function assertReviewedAccountConnected(
   connected: Address | undefined,
   message = REVIEWED_ACCOUNT_CHANGED_LINE,
 ): void {
-  if (connected?.toLowerCase() !== reviewed.toLowerCase()) throw new Error(message)
+  if (connected?.toLowerCase() !== reviewed.toLowerCase()) throw new ReviewLineError(message)
 }
 
 /** Capture the reviewed connector before preparation; check live authority
@@ -34,7 +34,7 @@ export function captureWalletContext(
     const live = getAccount(config)
     if (!account || !live.address || live.address.toLowerCase() !== account.toLowerCase() ||
         live.chainId !== chainId || live.connector?.uid !== connectorUid) {
-      throw new Error(message)
+      throw new ReviewLineError(message)
     }
   }
 }

@@ -1,4 +1,4 @@
-import { encodeFunctionData, erc20Abi, type Hex } from 'viem'
+import { encodeFunctionData, erc20Abi, parseAbi, type Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
 import { hashOf, reviewedCall } from '@/lib/reviewed-call'
 
@@ -20,6 +20,18 @@ describe('reviewedCall', () => {
 
   it('keeps a given value and label', () => {
     expect(reviewedCall({ ...request, value: 3n, label: 'Approve' })).toMatchObject({ value: 3n, label: 'Approve' })
+  })
+})
+
+describe('Safe queue adoption', () => {
+  it("adopts a queued proposal that differs only in a liquidity mint's deadline or a Permit2 approval's expiration", () => {
+    const abi = parseAbi([
+      'function modifyLiquidities(bytes unlockData, uint256 deadline) payable',
+      'function approve(address token, address spender, uint160 amount, uint48 expiration)',
+    ])
+    expect(reviewedCall({ chainId: 1, address: TOKEN, abi, functionName: 'modifyLiquidities', args: ['0x12', 9n] }).adoptIgnoringArgs).toEqual([1])
+    expect(reviewedCall({ chainId: 1, address: TOKEN, abi, functionName: 'approve', args: [TOKEN, SPENDER, 1n, 2] }).adoptIgnoringArgs).toEqual([3])
+    expect('adoptIgnoringArgs' in reviewedCall(request)).toBe(false)
   })
 })
 

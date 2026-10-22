@@ -6,7 +6,7 @@ import { usePublicClient } from 'wagmi'
 import { encodeFunctionData, erc20Abi, formatUnits, isAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { DefifaNftTransactionRevertedError, defifaPhaseAllowsPay, effectiveTierPrice, MAX_DEFIFA_ACTION_NFTS, prepareDefifaPay, verifyDefifaNftTransaction, type PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
-import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
+import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { hashOf, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
@@ -94,13 +94,14 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const assertCurrent = (frozen: Review) => {
     const now = current.current
     if (flowSignal().aborted || generation.current !== frozen.generation || now.chainId !== frozen.chainId || now.projectId !== frozen.projectId || now.hook !== frozen.hook || now.client !== frozen.client || now.address?.toLowerCase() !== frozen.account.toLowerCase())
-      throw new Error('The connected account or project changed. Review again.')
+      throw new ReviewLineError('The connected account or project changed. Review again.')
   }
   const prepareFresh = async (frozen: Review) => {
     assertCurrent(frozen)
     const fresh = await prepareDefifaPay(frozen.client, { chainId: frozen.chainId, projectId: BigInt(frozen.projectId), account: frozen.account, expectedHook: frozen.hook, tierIdsToMint: frozen.tierIds, attestationDelegate: frozen.delegate })
+      .catch((cause: unknown) => { throw new ReviewLineError('This mint changed or is not open now. Review again.', { cause }) })
     assertCurrent(frozen)
-    if (!samePreparation(frozen.prepared, fresh)) throw new Error('The price or voting delegation changed. Review again.')
+    if (!samePreparation(frozen.prepared, fresh)) throw new ReviewLineError('The price or voting delegation changed. Review again.')
     return fresh
   }
   const prepare = async () => {
@@ -110,7 +111,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     setPreparing(true)
     setError(null)
     try {
-      if (delegate && !isAddress(delegate)) throw new Error('Enter a valid voting delegate address.')
+      if (delegate && !isAddress(delegate)) throw new ReviewLineError('Enter a valid voting delegate address.')
       const tierIds = shop.tiers.flatMap(tier => Array<bigint>(quantities[tier.id] ?? 0).fill(BigInt(tier.id))).sort((left, right) => left < right ? -1 : left > right ? 1 : 0)
       const prepared = await prepareDefifaPay(client, { chainId, projectId: BigInt(projectId), account: address, expectedHook: shop.hook, tierIdsToMint: tierIds, attestationDelegate: (delegate || zeroAddress) as Address })
       const token = prepared.inventory.pricing.token
@@ -143,7 +144,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
         await prepareFresh(review)
         if (!approving && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
           const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
-          if (allowance < review.prepared.amount) throw new Error('Mint payment allowance is insufficient. Review again.')
+          if (allowance < review.prepared.amount) throw new ReviewLineError('Mint payment allowance is insufficient. Review again.')
         }
       } }
       const result = await runRecoverableDefifaWrite({
@@ -165,7 +166,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   }
   const clearOriginal = async (frozen: Review) => {
     const record = recoveryRecord.current
-    if (!record) throw new Error('The original recovery record is unavailable. Keep this action pending.')
+    if (!record) throw new ReviewLineError('The original recovery record is unavailable. Keep this action pending.')
     await clearDefifaWriteRecovery({ chainId: frozen.chainId, projectId: frozen.projectId, account: frozen.account, action: 'pay' }, record)
     recoveryRecord.current = null
   }
@@ -188,7 +189,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
           return
         }
         const allowance = await review.client.readContract({ address: request.address, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], blockNumber: active.receipt.blockNumber })
-        if (allowance < review.prepared.amount) throw new Error('Confirmed allowance is insufficient for this mint.')
+        if (allowance < review.prepared.amount) throw new ReviewLineError('Confirmed allowance is insufficient for this mint.')
         await clearOriginal(review)
         setApprovalBlock(active.receipt.blockNumber)
         submissionStarted.current = false
@@ -226,7 +227,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     if (review && (submissionUnknown || (submitted && step !== 'verified' && step !== 'failed'))) {
       try {
         const retained = readDefifaWriteRecovery({ chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' })
-        if (!retained || retained.id !== recoveryRecord.current?.id) throw new Error('The original recovery record is unavailable. Keep this action pending.')
+        if (!retained || retained.id !== recoveryRecord.current?.id) throw new ReviewLineError('The original recovery record is unavailable. Keep this action pending.')
       } catch (reason) { setError(message(reason)); return }
     }
     locked.current = false

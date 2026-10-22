@@ -55,7 +55,7 @@ import {
 import { usePublicClient } from "wagmi";
 import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
-import { reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
+import { revertedReceipt, reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -79,7 +79,7 @@ import {
   buildAddToBalanceRequest,
   buildErc20ApproveRequest,
 } from "@/lib/transaction-builders";
-import { approvalIntent, payIntent, WRITE_HOLD_REVERTED_LINE } from "@bananapus/nana-sdk-core/review";
+import { approvalIntent, payIntent, ReviewLineError } from "@bananapus/nana-sdk-core/review";
 import { legacyPayKeys } from "@/lib/legacy-intents";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/wallet-context";
@@ -1058,7 +1058,7 @@ export function PayPanel({
   const endedPayment = paymentRunEnded === "payment" ? tx.failure : null;
   const endedPay = mode === "pay" ? endedPayment : null;
   const payFailure = endedPay ? decodePayFailure(endedPay) : null;
-  const minedRevert = endedPayment instanceof Error && endedPayment.message === WRITE_HOLD_REVERTED_LINE;
+  const minedRevert = !!revertedReceipt(endedPayment);
   // A mined revert carries no reason: the pay is reviewed again, quoted and simulated afresh.
   const reviewAfterRevert = mode === "pay" && minedRevert;
   // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
@@ -1255,7 +1255,7 @@ export function PayPanel({
         prepared.minReturnedTokens === reviewed.minReturned);
     const identityReady = mode !== "pay" || (!nativeMarket && identity.isSuccess);
     if (formClosed || cartBlocked || !identityReady || !unchanged || !preparedFresh) {
-      throw new Error(PAYMENT_CHANGED);
+      throw new ReviewLineError(PAYMENT_CHANGED);
     }
   };
 
@@ -1379,7 +1379,7 @@ export function PayPanel({
           chainId, projectId: BigInt(projectId), isRevnet, tierLimit: 1,
         });
         if (liveInventory?.protocol === 'defifa') {
-          throw new Error('Defifa payments are not supported by this form.');
+          throw new ReviewLineError('Defifa payments are not supported by this form.');
         }
       }
       const tokenApproval = actionOf("token-approval");
@@ -1414,7 +1414,7 @@ export function PayPanel({
       }
       const paymentAction = actionOf("payment");
       if (paymentAction?.kind !== "payment") {
-        throw new Error("The reviewed payment action is unavailable.");
+        throw new ReviewLineError("The reviewed payment action is unavailable.");
       }
       const paymentRequest = paymentAction.request;
 

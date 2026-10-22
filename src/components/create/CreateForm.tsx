@@ -32,9 +32,9 @@ import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
 import { captureWalletContext } from "@/lib/wallet-context";
+import { revertedReceipt } from "@/lib/reviewed-call";
 import {
   isDefiniteWalletRejection,
-  WRITE_HOLD_REVERTED_LINE,
   type SavedAttempt,
   type WriteHoldHandle,
 } from "@bananapus/nana-sdk-core/review";
@@ -1699,7 +1699,7 @@ export function CreateForm() {
             },
           }).catch((error: unknown) => {
             // A mined revert is read from its receipt below.
-            if (hash && error instanceof Error && error.message === WRITE_HOLD_REVERTED_LINE) return;
+            if (hash && revertedReceipt(error)) return;
             // Another attempt holds this launch (another tab's, or one still out): its state and exit, never a send.
             // By name: the hold's module loads with the launch, not with the form.
             if (error instanceof Error && error.name === "WriteHeldError") {

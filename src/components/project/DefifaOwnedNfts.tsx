@@ -1,5 +1,6 @@
 'use client'
 
+import { ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   getDefifaHoldings, prepareDefifaCashOut, prepareDefifaTransfer,
@@ -161,12 +162,12 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     setError(null)
     try {
       const raw = [...selected, ...manual.split(/[\s,]+/).filter(Boolean)]
-      if (!raw.length || raw.some(value => !/^[1-9]\d{0,77}$/.test(value))) throw new Error('Select NFTs or enter valid positive token IDs.')
+      if (!raw.length || raw.some(value => !/^[1-9]\d{0,77}$/.test(value))) throw new ReviewLineError('Select NFTs or enter valid positive token IDs.')
       const tokenIds = [...new Set(raw)].map(BigInt)
-      if (tokenIds.length > MAX_DEFIFA_ACTION_NFTS) throw new Error(`Select at most ${MAX_DEFIFA_ACTION_NFTS} NFTs per action.`)
-      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new Error('NFT cash-out is not available in this phase.')
-      if (kind === 'transfer' && tokenIds.length !== 1) throw new Error('Select exactly one NFT to transfer.')
-      if (kind === 'transfer' && (!isAddress(recipient) || recipient === zeroAddress)) throw new Error('Enter a valid nonzero recipient address.')
+      if (tokenIds.length > MAX_DEFIFA_ACTION_NFTS) throw new ReviewLineError(`Select at most ${MAX_DEFIFA_ACTION_NFTS} NFTs per action.`)
+      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new ReviewLineError('NFT cash-out is not available in this phase.')
+      if (kind === 'transfer' && tokenIds.length !== 1) throw new ReviewLineError('Select exactly one NFT to transfer.')
+      if (kind === 'transfer' && (!isAddress(recipient) || recipient === zeroAddress)) throw new ReviewLineError('Enter a valid nonzero recipient address.')
       const to = kind === 'transfer' ? recipient as Address : address
       const context = { chainId, projectId: BigInt(projectId), account: address, expectedHook: shop.hook }
       let result: CashOut | Transfer
@@ -174,12 +175,12 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       if (kind === 'cash-out') {
         const quote = await prepareDefifaCashOut(client, { ...context, tokenIds })
         if (signal.aborted || actorContext.current.generation !== generation) return
-        if (quote.reclaimAmount === 0n && quote.protocolRewards.defifaAmount === 0n && quote.protocolRewards.baseProtocolAmount === 0n) throw new Error('These NFTs have nothing to claim right now.')
+        if (quote.reclaimAmount === 0n && quote.protocolRewards.defifaAmount === 0n && quote.protocolRewards.baseProtocolAmount === 0n) throw new ReviewLineError('These NFTs have nothing to claim right now.')
         minimum = quote.reclaimAmount > 0n ? slippageFloor(quote.reclaimAmount) : 0n
         result = minimum > 0n ? await prepareDefifaCashOut(client, { ...context, tokenIds, minimumReclaim: minimum }) : quote
       } else result = await prepareDefifaTransfer(client, { ...context, tokenId: tokenIds[0], recipient: to })
       if (signal.aborted || actorContext.current.generation !== generation) return
-      if (getAccount(config).address?.toLowerCase() !== address.toLowerCase()) throw new Error('Your account changed. Review again.')
+      if (getAccount(config).address?.toLowerCase() !== address.toLowerCase()) throw new ReviewLineError('Your account changed. Review again.')
       tx.reset()
       setProof('idle')
       markWrite(false)
@@ -196,8 +197,8 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     const generation = actorContext.current.generation
     const signal = flowSignal()
     const assertWriteState = () => {
-      if (signal.aborted) throw new Error('This NFT action closed before submission. Prepare it again.')
-      if (actorContext.current.generation !== generation) throw new Error('Your account or project changed before submission. Prepare this action again.')
+      if (signal.aborted) throw new ReviewLineError('This NFT action closed before submission. Prepare it again.')
+      if (actorContext.current.generation !== generation) throw new ReviewLineError('Your account or project changed before submission. Prepare this action again.')
     }
     sending.current = true
     setError(null)
@@ -224,7 +225,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
           assertWriteState()
           if (requestKey(fresh) !== requestKey(plan.result) || fresh.inventory.implementation.toLowerCase() !== plan.result.inventory.implementation.toLowerCase() || fresh.inventory.phase !== plan.result.inventory.phase ||
             ('reclaimAmount' in fresh && 'reclaimAmount' in plan.result && (fresh.reclaimAmount !== plan.result.reclaimAmount || rewardsKey(fresh) !== rewardsKey(plan.result)))) {
-            throw new Error('The NFT action changed. Close this review and prepare it again.')
+            throw new ReviewLineError('The NFT action changed. Close this review and prepare it again.')
           }
         },
         },
@@ -243,9 +244,9 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     // Dismiss the local review only after the SDK confirms its unresolved intent remains recoverable.
     if (proof !== 'verified' && proof !== 'reverted' && (tx.hash || tx.phase === 'submitted' || sent.current)) {
       try {
-        if (!plan || !recovery.current) throw new Error('The original action is not yet saved for recovery.')
+        if (!plan || !recovery.current) throw new ReviewLineError('The original action is not yet saved for recovery.')
         const retained = readDefifaWriteRecovery({ chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind })
-        if (!retained || retained.id !== recovery.current.id) throw new Error('The original action could not be confirmed in recovery storage.')
+        if (!retained || retained.id !== recovery.current.id) throw new ReviewLineError('The original action could not be confirmed in recovery storage.')
         void queries.invalidateQueries({ queryKey: DEFIFA_RECOVERY_QUERY_PREFIX })
       } catch (reason) { setError(message(reason)); return }
     }

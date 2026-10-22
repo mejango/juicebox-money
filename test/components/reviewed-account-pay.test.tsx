@@ -1310,12 +1310,12 @@ describe('a payment that falls short of its minimum', () => {
     expect(button('Confirm & Pay')).toBeDefined()
   })
 
-  it("shows the run's own line for a failure it cannot read, never a cancel", async () => {
+  it("shows the network line for a failure it cannot read, never its text or a cancel", async () => {
     simulationsReject(new Error('header not found'))
     await reviewPayment()
     await click('Confirm & Pay')
     await waitUntil(() => !!dialogError())
-    expect(dialogError()).toBe('header not found')
+    expect(dialogError()).toBe("The network returned an error. Check your wallet's activity before you try again.")
     expect(wallet.writeContract).not.toHaveBeenCalled()
     expect(allowedDecrease()).toBeNull()
   })

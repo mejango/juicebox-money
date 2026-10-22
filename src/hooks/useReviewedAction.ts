@@ -3,7 +3,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Address, TransactionReceipt } from 'viem'
-import type { ReviewedAction, ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import { ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useWallet } from '@/hooks/useWallet'
@@ -12,7 +12,8 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, useSafeConnection } from '@/lib/
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 
-export { hashOf, reviewedCall, type TxRequest } from '@/lib/reviewed-call'
+import { revertedReceipt } from '@/lib/reviewed-call'
+export { hashOf, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
 import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
@@ -66,9 +67,11 @@ export function useReviewedAction(chainId?: number) {
   const runner = useReviewedRun({
     account: address,
     ...reviewedSendDeps,
+    // The send engine loads once a page mounts a write, not with the page.
+    engine: () => import('@bananapus/nana-sdk-core/review'),
     guard: () => {
-      if (isCenterWallet) throw new Error(CENTER_WALLET_REFUSED)
-      if (getViewAs()) throw new Error(VIEW_AS_WRITE_BLOCKED)
+      if (isCenterWallet) throw new ReviewLineError(CENTER_WALLET_REFUSED)
+      if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
     },
   })
   const [result, setResult] = useState<ReviewedResult | null>(null)
@@ -82,11 +85,13 @@ export function useReviewedAction(chainId?: number) {
     setSentOn(action.calls[0]?.chainId)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
-      const done = await runner.run({
+      const ended = await runner.run({
         ...action,
         description: reviewDescription(action.description, viaSafe ? SAFE_NONCE_GUIDANCE : null),
         ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
       })
+      // A failed run shows its line through `error` and its value through `failure`.
+      const done = ended?.status === 'failed' ? null : ended
       setResult(done)
       return done
     } finally {
@@ -110,7 +115,8 @@ export function useReviewedAction(chainId?: number) {
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
     : runner.error
 
-  const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.hash
+  // A Safe proposal its hold settled ends on the execution's hash and receipt.
+  const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
   const confirmed = phase === 'success' && hash ? `${shownChainId}:${hash}` : null
   const invalidated = useRef<string | null>(null)
   useEffect(() => {
@@ -124,7 +130,10 @@ export function useReviewedAction(chainId?: number) {
     setResult(null)
     runner.reset()
   }
-  const receipt: TransactionReceipt | null = result?.status === 'done' ? result.receipts.at(-1) ?? null : null
+  // A finished run's, a settled proposal's, or a step that mined and reverted.
+  const receipt: TransactionReceipt | null = result?.status === 'done'
+    ? result.receipts.at(-1) ?? null
+    : runner.receipt ?? revertedReceipt(runner.failure)
   const safeProposalHash = phase === 'submitted' ? runner.safeTxHash : null
 
   return {

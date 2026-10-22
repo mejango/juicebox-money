@@ -19,11 +19,10 @@ import { wagmiConfig } from '@/providers/Providers'
 import type { LaunchPlan } from '@/lib/launch'
 import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisigs } from '@/lib/launch-multisig'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { reviewedCall } from '@/lib/reviewed-call'
+import { reviewedCall, revertedReceipt } from '@/lib/reviewed-call'
 import { sendReviewedWrite } from '@/lib/reviewed-send'
 import {
   simulateStateChangingTransaction,
-  WRITE_HOLD_REVERTED_LINE,
   writeIntentKey,
   intent,
   type SavedAttempt,
@@ -240,7 +239,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
         },
       }).catch((error: unknown) => {
         // A mined revert is read from its receipt below; anything else stays as the hold left it.
-        if (!(hash && error instanceof Error && error.message === WRITE_HOLD_REVERTED_LINE)) throw error
+        if (!(hash && revertedReceipt(error))) throw error
       })
       if (!hash) throw new Error('The wallet returned no Safe setup hash. Check your wallet before trying again.')
       if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
