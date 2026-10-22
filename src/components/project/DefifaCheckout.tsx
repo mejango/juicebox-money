@@ -15,6 +15,7 @@ import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
 import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -116,7 +117,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       const token = prepared.inventory.pricing.token
       const allowance = token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? prepared.amount : await client.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [address, prepared.transaction.address] })
       if (flowSignal().aborted || generation.current !== attempt) return
-      setReview({ generation: attempt, chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { chainId, address: token, abi: erc20Abi, functionName: 'approve', args: [prepared.transaction.address, prepared.amount], value: 0n, label: 'Approve Defifa mint payment' } : null })
+      setReview({ generation: attempt, chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { ...buildErc20ApproveRequest({ chainId, token, spender: prepared.transaction.address, amount: prepared.amount }), value: 0n, label: 'Approve Defifa mint payment' } : null })
       setStep('review')
       setSubmitted(null)
       submissionStarted.current = false

@@ -2,7 +2,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
-import { UserRejectedRequestError, erc20Abi, zeroAddress, type Address } from 'viem'
+import { UserRejectedRequestError, zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
 import type { Shop } from '@/hooks/useShop721'
@@ -39,6 +39,7 @@ import { DefifaNftTransactionRevertedError, buildDefifaPayMetadata, buildPayTx }
 import { wallet, sentHash } from '../support/fake-wallet'
 import { DefifaCheckout } from '@/components/project/DefifaCheckout'
 import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 
 const shop = {
   protocol: 'defifa', hook: HOOK, phase: 1,
@@ -251,7 +252,9 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(wallet.requestReview).toHaveBeenCalledWith(expect.objectContaining({ address: TOKEN, functionName: 'approve', args: [TERMINAL, 100n], account: ALICE }), expect.objectContaining({ label: 'Approve Defifa mint payment' }))
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     const call = (wallet.writeContract.mock.calls[0] as unknown as [{ abi: unknown; args: unknown[] }])[0]
-    expect(call.abi).toBe(erc20Abi); expect(call.args).toEqual([TERMINAL, 100n])
+    // The shared no-return approve ABI, so a token like mainnet USDT that returns nothing still simulates and decodes.
+    expect(call.abi).toEqual(buildErc20ApproveRequest({ chainId: 1, token: TOKEN, spender: TERMINAL, amount: 100n }).abi)
+    expect(call.abi).toEqual([expect.objectContaining({ name: 'approve', outputs: [] })]); expect(call.args).toEqual([TERMINAL, 100n])
     await act(async () => wallet.confirm(sentHash(1), 77n))
     expect(text(renderer.root)).toContain('Payment approval verified.')
     await click('Confirm mint')
