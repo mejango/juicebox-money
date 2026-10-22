@@ -424,7 +424,7 @@ function hexBlock(n: bigint): string {
   return '0x' + n.toString(16)
 }
 
-async function getPoolLogs(
+export async function getPoolLogs(
   client: PublicClient,
   pm: Address,
   poolId: `0x${string}`,

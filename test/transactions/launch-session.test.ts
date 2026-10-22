@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import type { Hex } from 'viem'
 import safeFixture from '../fixtures/safe-1.4.1.json'
@@ -17,6 +17,7 @@ import {
   recordLaunchChainStatus,
   remainingLaunchChains,
   saveLaunchSession,
+  withLaunchLock,
   type LaunchChainStatus,
   type LaunchSession,
 } from '@/lib/launch-session'
@@ -633,5 +634,41 @@ describe('direct Safe launch evidence and abandonment', () => {
     expect(recordLaunchChainStatus(1, { phase: 'signing', directSafeCall: call })).toBe(false)
     window.localStorage.setItem = original
     expect(loadLaunchSession()!.statuses[1]).toEqual({ phase: 'pending' })
+  })
+})
+
+describe('the cross-tab launch lock', () => {
+  const lockedBy = (held: boolean) => {
+    const request = vi.fn(async (_name: string, options: { ifAvailable?: boolean }, fn: (lock: object | null) => unknown) =>
+      fn(held || !options.ifAvailable ? {} : null))
+    vi.stubGlobal('navigator', { locks: { request } })
+    return request
+  }
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('runs under the jbm-launch lock, waiting for it unless told another tab may hold it', async () => {
+    const request = lockedBy(true)
+    const fn = vi.fn()
+    await withLaunchLock(fn)
+    await withLaunchLock(fn, 'busy')
+    expect(request.mock.calls.map(([name, options]) => [name, options])).toEqual([
+      ['jbm-launch', { ifAvailable: false }],
+      ['jbm-launch', { ifAvailable: true }],
+    ])
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  it("throws the busy line and leaves the work unrun while another tab holds it", async () => {
+    lockedBy(false)
+    const fn = vi.fn()
+    await expect(withLaunchLock(fn, 'Another tab is processing a launch.')).rejects.toThrow('Another tab is processing a launch.')
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('runs the work at once in a browser without Web Locks', async () => {
+    vi.stubGlobal('navigator', {})
+    const fn = vi.fn()
+    void withLaunchLock(fn, 'busy')
+    expect(fn).toHaveBeenCalledOnce()
   })
 })

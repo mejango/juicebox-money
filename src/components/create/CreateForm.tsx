@@ -74,6 +74,7 @@ import {
   recordLaunchChainStatus,
   remainingLaunchChains,
   saveLaunchSession,
+  withLaunchLock,
   type LaunchChainStatus,
   type LaunchSession,
 } from "@/lib/launch-session";
@@ -1903,12 +1904,7 @@ export function CreateForm() {
       // Nothing left to resume: drop the persisted progress record and the
       // saved draft it was built from.
       const salt = pinnedRef.current?.salt ?? restoredSessionRef.current?.salt;
-      const clear = () => completeLaunchSession(salt);
-      if (navigator.locks) {
-        await navigator.locks.request("jbm-launch", clear);
-      } else {
-        clear();
-      }
+      await withLaunchLock(() => completeLaunchSession(salt));
       restoredSessionRef.current = null;
       setPhase("done");
     }
@@ -2074,14 +2070,7 @@ export function CreateForm() {
               throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
             }
           };
-          if (navigator.locks) {
-            await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
-              if (!lock) throw new Error("Another tab is processing a launch. Return to that tab to continue.");
-              save();
-            });
-          } else {
-            save();
-          }
+          await withLaunchLock(save, "Another tab is processing a launch. Return to that tab to continue.");
         }
         restoredSessionRef.current = session;
       }
@@ -2187,14 +2176,7 @@ export function CreateForm() {
       setConfirmOpen(false);
     };
     try {
-      if (navigator.locks) {
-        await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
-          if (!lock) throw new Error("Another tab is processing this launch. Return to that tab to continue.");
-          abandon();
-        });
-      } else {
-        abandon();
-      }
+      await withLaunchLock(abandon, "Another tab is processing this launch. Return to that tab to continue.");
     } catch (error) {
       // Keep local recovery errors intact, including the word "cancel".
       setLaunchError(error instanceof Error ? error.message : "Could not cancel this deployment. Please try again.");
@@ -2379,11 +2361,7 @@ export function CreateForm() {
     setStatuses(session.statuses);
     setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
     if (remainingLaunchChains(session).length === 0) {
-      if (navigator.locks) {
-        void navigator.locks.request("jbm-launch", () => completeLaunchSession(session.salt));
-      } else {
-        completeLaunchSession(session.salt);
-      }
+      void withLaunchLock(() => completeLaunchSession(session.salt));
       restoredSessionRef.current = null;
       setPhase("done");
     } else {
