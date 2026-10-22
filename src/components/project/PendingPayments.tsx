@@ -15,6 +15,7 @@ import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
 import { LoadingText } from '@/components/ui/LoadingText'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import type { RawAttempt } from '@/lib/raw-relayr'
+import { useLinkedDeployments } from '@/lib/sucker-group'
 import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
 import { isReplaceableProjectBatch, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
@@ -27,9 +28,12 @@ const amountLabel = ({ payment, decimals, symbol }: ReviewedPayment) => decimals
   ? 'Amount unavailable'
   : `${formatUnits(BigInt(payment.amount), decimals)} ${symbol}`
 
-export function PendingPayments({ chainId, projectId, chains }: {
+export function PendingPayments({ chainId, projectId, chains: listed }: {
   chainId: JBChainId; projectId: number; chains: readonly (readonly [number, number])[]
 }) {
+  // Payments are retried only on deployments the onchain registry links to this one.
+  // Saved recovery is still found by every listed deployment, since the user already reviewed it.
+  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
   const { address, isConnected, openSignIn } = useWallet()
   // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
   const flowSignal = useUnmountSignal()
@@ -56,9 +60,9 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const [cancellable, setCancellable] = useState(false)
   const cancelQuote = useRef<AbortController | null>(null)
   useEffect(() => {
-    try { setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) }
+    try { setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed])) }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not read saved payment actions.') }
-  }, [chainId, projectId, chains])
+  }, [chainId, projectId, listed])
 
   // A quote that never arrived, or expired unfunded, releases itself: nothing was paid.
   const recoveryId = recovery?.id
@@ -68,11 +72,11 @@ export function PendingPayments({ chainId, projectId, chains }: {
     let current = true
     void (async () => {
       try {
-        if (await recheckProjectBatch(recoveryScope, recoveryId) && current) setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+        if (await recheckProjectBatch(recoveryScope, recoveryId) && current) setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed]))
       } catch { /* a batch another tab is working on stays as it is */ }
     })()
     return () => { current = false }
-  }, [recoveryId, recoveryScope, chainId, projectId, chains])
+  }, [recoveryId, recoveryScope, chainId, projectId, listed])
 
   const pending = useQuery({
     queryKey: ['pendingPayments', 'destination-inventory', chainId, projectId, chains],
@@ -129,7 +133,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     setBusy(true); setError(null)
     try {
       const released = await recheckProjectBatch(recovery.scope, recovery.id)
-      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed]))
       setStatus(released ? 'The old quote expired without funding. Review all available payments in a new batch.' : 'The saved batch still needs recovery. Resume it to check its original attempts.')
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not check saved batch.') }
     finally { setBusy(false) }
@@ -138,7 +142,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
   const begin = (payments: ReviewedPayment[]) => {
     if (!isConnected || !address) { openSignIn(); return }
     try {
-      const found = loadPendingPaymentBatch([[chainId, projectId], ...chains])
+      const found = loadPendingPaymentBatch([[chainId, projectId], ...listed])
       const journal = found && !isReplaceableProjectBatch(found) ? found : null
       setReplaceDraft(found && !journal ? { scope: found.scope, id: found.id } : undefined)
       setSaved(found)
@@ -191,16 +195,16 @@ export function PendingPayments({ chainId, projectId, chains }: {
           const outcome = pendingPaymentOutcome(call, receipt)
           setOutcomes(previous => ({ ...previous, [call.id]: outcome === 'routed' ? 'Payment routed.' : outcome === 'returned' ? 'Payment returned to its source project.' : 'Attempt confirmed; payment is still awaiting routing.' }))
         },
-        onProgress: progress => { setStatus(progress.message); setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains])) },
+        onProgress: progress => { setStatus(progress.message); setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed])) },
       })
-      setSaved(result.status === 'pending' ? result : loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      setSaved(result.status === 'pending' ? result : loadPendingPaymentBatch([[chainId, projectId], ...listed]))
       if (result.status === 'pending') recover(result)
       setComplete(result.status === 'complete')
       setStatus(result.status === 'complete' ? 'The reviewed batch is finished. Each payment’s outcome is shown below.' : 'The original action is saved. Resume it to check its execution before trying again.')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Could not finish the reviewed payments.')
       discard.capture(failure)
-      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...chains]))
+      setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed]))
       recover(loadProjectBatch(savedSelection?.scope ?? scope))
     } finally {
       // Replacement consumes the old draft identity. Reopen to bind any new recovery journal.
@@ -232,6 +236,7 @@ export function PendingPayments({ chainId, projectId, chains }: {
     <details>
       <summary className="cursor-pointer text-sm font-medium">{rows.length ? `${rows.length} ${rows.length === 1 ? 'payment needs' : 'payments need'} processing.` : 'Saved payment batch'}</summary>
       <p className="mt-3 text-sm text-smoke-500">These payments did not have sufficient gas to process automatically.</p>
+      {line ? <p role="alert" className="mt-2 text-xs text-error-500">{line}</p> : null}
       {recovery ? <p className="mt-2 text-sm text-smoke-500">Saved batch: {recovery.completedIds.length} of {recovery.calls.length} attempts handled. {projectBatchRecoveryReason(recovery)}</p> : null}
       {recovery ? <button type="button" className="mt-2 text-sm underline" disabled={busy} onClick={() => void recheckSaved()}>Re-check saved batch</button> : null}
       {status && !open ? <p className="mt-2 text-sm text-smoke-500" role="status"><LoadingText text={transactionMessage(status)} /></p> : null}

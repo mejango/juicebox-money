@@ -62,6 +62,7 @@ import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
 import { chainName } from "@/lib/urn";
+import { requireLinkedPairs } from "@/lib/sucker-group";
 import {
   approvalStatusLabel,
   planRulesetQueue,
@@ -1258,6 +1259,7 @@ function RulesetEditorForm({
       }
       const multi = selectedChains.size > 1;
       if (multi && !relayrSupportsChains(projectChains.filter(([id]) => selectedChains.has(id)).map(([id]) => id))) throw new Error("Choose supported chains from the same network family: all mainnets or all testnets.");
+      await requireLinkedPairs([chainId, projectId], projectChains.filter(([id]) => selectedChains.has(id)));
       const live = await Promise.all(projectChains.filter(([id]) => selectedChains.has(id)).map(([id, pid]) => readQueueDestination(id, pid, address)));
       const route = live.find(destination => destination.chainId === chainId)!;
       if (!route || queueSourceFingerprint(route.data.sources[action]) !== queueSourceFingerprint(source)) {

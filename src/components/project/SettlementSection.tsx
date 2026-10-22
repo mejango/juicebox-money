@@ -54,6 +54,7 @@ import {
 import { isKnownController } from '@/lib/manage'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
+import { useLinkedDeployments } from '@/lib/sucker-group'
 import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { bridgeIntent } from '@bananapus/nana-sdk-core/review'
@@ -147,7 +148,7 @@ export function unpackAddress(bytes32: string): Address {
 export function SettlementSection({
   chainId,
   projectId,
-  chains,
+  chains: listed,
   isRevnet,
 }: {
   chainId: JBChainId
@@ -155,8 +156,11 @@ export function SettlementSection({
   chains: [number, number][]
   isRevnet: boolean
 }) {
+  // Gossip, executes and claims reach another chain only once the onchain registry links its project.
+  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
   return (
     <div className="space-y-5" data-flavor={isRevnet ? 'revnet' : 'custom'}>
+      {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
       <CompositionCard chains={chains} />
       <GossipCard chainId={chainId} projectId={projectId} chains={chains} />
       <BridgesCard chains={chains} />
@@ -497,6 +501,8 @@ function QueuedMovementsCard({
       { sourceChainId: number; destChainId: number; sucker: Address; token: Address; rows: BridgeMovement[] }
     >()
     for (const m of data ?? []) {
+      // Only movements between deployments the onchain registry links: Execute and Claim write to both ends.
+      if (!chains.some(([id]) => id === m.sourceChainId) || !chains.some(([id]) => id === m.destChainId)) continue
       // Keyed by the SUCKER too, not just the pair and token. A project with two suckers for
       // the same pair+token (a native and a CCIP generation, say) collapsed into one row whose
       // Execute shipped only the first sucker's outbox, silently leaving the other's behind.
@@ -513,7 +519,7 @@ function QueuedMovementsCard({
       byKey.get(key)!.rows.push(m)
     }
     return [...byKey.values()]
-  }, [data])
+  }, [data, chains])
 
   return (
     <div className="card p-5">

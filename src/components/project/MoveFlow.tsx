@@ -45,6 +45,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { approvalIntent, bridgeIntent } from '@bananapus/nana-sdk-core/review'
 import { chainName } from '@/lib/urn'
+import { useLinkedPair } from '@/lib/sucker-group'
 
 /** The frozen, reviewed prepare: what the user confirms is exactly what's
  *  sent, including the min the preview backed. */
@@ -178,6 +179,11 @@ export function MoveCard({
   }, [amount])
 
   const selectedPair = dests.find(d => d.chainId === to) ?? null
+  // Both ends come from the indexer's chain list: a move is built only once the onchain registry links them.
+  const multichain = chains.length > 1
+  const fromCheck = useLinkedPair([chainId, projectId], fromPid === null ? null : [from, fromPid], multichain)
+  const toCheck = useLinkedPair([chainId, projectId], selectedPair ? [selectedPair.chainId, selectedPair.projectId] : null, multichain)
+  const pairLine = fromCheck.line ?? toCheck.line
 
   return (
     <div>
@@ -274,7 +280,15 @@ export function MoveCard({
           fromPid !== null &&
           src?.token &&
           parsedAmount > 0n &&
-          address ? (
+          address ? !(fromCheck.linked && toCheck.linked) ? (
+            pairLine ? (
+              <p role="alert" className="text-xs text-error-500">{pairLine}</p>
+            ) : (
+              <div className="flex justify-end">
+                <button disabled className="btn-primary min-h-[44px] px-5 text-sm">Checking…</button>
+              </div>
+            )
+          ) : (
             <MoveFlow
               key={`${from}:${to}`}
               from={from as JBChainId}

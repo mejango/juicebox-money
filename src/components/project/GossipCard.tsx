@@ -44,6 +44,7 @@ import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
 import { chainName } from '@/lib/urn'
+import { requireLinkedPairs, unconfirmedPairLine, type ProjectPair } from '@/lib/sucker-group'
 import { PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { explorerTxUrl } from '@/lib/chainDisplay'
@@ -358,6 +359,7 @@ async function readLiveChain(
  * drift, and the Sync send never bypasses useSafeTx.
  */
 export function GossipCard({
+  chainId: homeChainId,
   projectId,
   chains,
 }: {
@@ -562,6 +564,8 @@ export function GossipCard({
                 live={data.live}
                 knownByChain={knownByChain}
                 projectId={projectId}
+                home={[homeChainId, projectId]}
+                chains={chains}
                 syncMarks={syncMarks}
                 onSyncSent={markSyncSent}
                 onSyncCleared={clearSyncMark}
@@ -581,6 +585,8 @@ function GossipBlock({
   live,
   knownByChain,
   projectId,
+  home,
+  chains,
   syncMarks,
   onSyncSent,
   onSyncCleared,
@@ -590,6 +596,8 @@ function GossipBlock({
   live: Record<number, LiveChain>
   knownByChain: Record<number, number[]>
   projectId: number
+  home: ProjectPair
+  chains: readonly ProjectPair[]
   syncMarks: Record<string, number>
   onSyncSent: (key: string) => void
   onSyncCleared: (key: string) => void
@@ -667,6 +675,8 @@ function GossipBlock({
                   extras={extras}
                   redundant={redundant}
                   projectId={projectId}
+                  home={home}
+                  chains={chains}
                   syncMarks={syncMarks}
                   onSyncSent={onSyncSent}
                   onSyncCleared={onSyncCleared}
@@ -697,6 +707,8 @@ function GossipRow({
   extras,
   redundant,
   projectId,
+  home,
+  chains,
   syncMarks,
   onSyncSent,
   onSyncCleared,
@@ -708,6 +720,9 @@ function GossipRow({
   extras: number[]
   redundant: boolean
   projectId: number
+  /** The page's own deployment and its listed ones: a sync goes to a peer only once the onchain registry links it. */
+  home: ProjectPair
+  chains: readonly ProjectPair[]
   syncMarks: Record<string, number>
   onSyncSent: (key: string) => void
   onSyncCleared: (key: string) => void
@@ -784,6 +799,9 @@ function GossipRow({
         chainId: peer.peerChainId as JBChainId,
       }) as PublicClient | undefined
       if (!client) throw new Error(`Unsupported chain ${peer.peerChainId}.`)
+      const peerPair = chains.find(([id]) => id === peer.peerChainId)
+      if (!peerPair) throw new Error(unconfirmedPairLine(peer.peerChainId))
+      await requireLinkedPairs(home, [peerPair])
       const infra = await classifyInfra(client, peer.syncSucker)
       const targetChainId = peer.peerChainId as JBChainId
       const value = await findSyncValue(

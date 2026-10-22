@@ -65,6 +65,7 @@ import { stickyDestinationProblem } from '@/lib/sticky-check'
 import { StickyRecipient } from '@/components/project/StickyRecipient'
 import { buildSplitGroupsAuthorityCall } from '@/lib/transaction-builders'
 import { chainName } from '@/lib/urn'
+import { requireLinkedPairs } from '@/lib/sucker-group'
 
 /** A stable string of the on-chain splits, for fingerprint comparison. */
 function fingerprint(splits: readonly RawSplit[]): string {
@@ -856,6 +857,7 @@ function EditSplitsModal({
     try {
       const chosen = projectChains.filter(([id]) => selectedChains.has(id))
       if (chosen.length > 1 && !relayrSupportsChains(chosen.map(([id]) => id))) throw new Error('Choose supported chains from the same network family: all mainnets or all testnets.')
+      await requireLinkedPairs([chainId, projectId], chosen)
       for (const [id, pid] of chosen) {
         if (pendingSplitJournal(splitJournalKey(id, pid, groupId))) {
           onPending()

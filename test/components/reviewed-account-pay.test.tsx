@@ -58,6 +58,10 @@ const m = vi.hoisted(() => ({
   realCart: false,
   /** Offer buying ETH with dollars in the token select. */
   onRamp: false,
+  /** The onchain sucker group the SDK reads from the registries. */
+  resolveSuckers: (async () => []) as (...args: unknown[]) => Promise<unknown>,
+  /** The chain the fake wallet is on; a switch moves it. */
+  walletChain: 1,
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
@@ -65,7 +69,7 @@ vi.mock('@wagmi/core', async importOriginal => {
   const { wallet } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
-    getAccount: () => ({ address: wallet.account, chainId: 1 }),
+    getAccount: () => ({ address: wallet.account, chainId: m.walletChain }),
   }
 })
 vi.mock('wagmi', async () => {
@@ -102,6 +106,8 @@ vi.mock('@tanstack/react-query', async importOriginal => {
   return { ...actual, useQueryClient: () => displayQueries,
     useQuery: (options: Parameters<typeof actual.useQuery>[0]) => options.queryKey[0] === 'prepareUserPay'
       ? actual.useQuery(options, prepareQueries)
+      : options.queryKey[0] === 'suckerGroup'
+      ? actual.useQuery({ ...options, retry: false }, displayQueries)
       : m.realNativeRecovery && options.queryKey[0] === DEFIFA_RECOVERY_QUERY_PREFIX[0]
       ? actual.useQuery(options, displayQueries)
       : query(String(options.queryKey[0] === 'projectDisplay' ? options.queryKey[4] : options.queryKey[0])),
@@ -111,6 +117,10 @@ vi.mock('@/hooks/useShop721', async original => ({
   ...(await original<typeof import('@/hooks/useShop721')>()),
   useShop721Media: () => ({ data: undefined }),
   useShop721: () => ({ data: null, isSuccess: true, ...m.queries.nativeInventory as object }),
+}))
+vi.mock('@bananapus/nana-sdk-core', async original => ({
+  ...(await original<typeof import('@bananapus/nana-sdk-core')>()),
+  resolveSuckers: (...args: unknown[]) => m.resolveSuckers(...args),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => {
   const actual = await original<typeof import('@bananapus/nana-sdk-core/v6')>()
@@ -202,6 +212,7 @@ function query(key: string) {
 
 import { sentHash, wallet } from '../support/fake-wallet'
 import { PayPanel } from '@/components/project/PayPanel'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 
 let host: HTMLDivElement
 let root: Root
@@ -217,6 +228,9 @@ beforeEach(() => {
   m.prepareUserPay = vi.fn(async () => PREPARED)
   m.realCart = false
   m.onRamp = false
+  m.resolveSuckers = async () => []
+  m.walletChain = 1
+  clearSuckerGroups()
   displayQueries.clear()
   prepareQueries.clear()
   localStorage.clear()
@@ -1397,5 +1411,69 @@ describe("a payment whose pool price couldn't be read", () => {
 
     expect(host.textContent).toContain('Payments are paused under the current rules.')
     expect(panelNotice()).toBe(false)
+  })
+})
+
+describe("paying another chain's deployment", () => {
+  const renderGroup = () => act(async () =>
+    root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42], [8453, 7]]} />))
+  async function pickBase() {
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Chain"]')!
+    await act(async () => { select.value = '8453'; select.dispatchEvent(new Event('change', { bubbles: true })) })
+  }
+  const BASE_LINKED = [{ peerChainId: 1, projectId: 42n }, { peerChainId: 8453, projectId: 7n }]
+
+  it('pays the Base project the registry links, with one review and no added step', async () => {
+    m.resolveSuckers = vi.fn(async () => BASE_LINKED)
+    wallet.switchChain.mockImplementation((async ({ chainId }: { chainId: number }) => { m.walletChain = chainId }) as never)
+    await renderGroup(); await pickBase()
+    await typeAmount('1'); await settle()
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    expect(m.resolveSuckers).toHaveBeenCalledWith(expect.objectContaining({ chainId: 1, projectId: 42n, version: 6 }))
+    await click('Pay')
+    const reviews = wallet.requestReview.mock.calls.length
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writeContract.mock.calls.length === 1)
+    expect(wallet.requestReview.mock.calls.length - reviews).toBe(1)
+    const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ functionName: string; args: readonly unknown[] }]
+    expect(request.functionName).toBe('pay')
+    expect(request.args[0]).toBe(7n)
+  })
+
+  it('refuses a Base project the registry does not link, with one line and no write', async () => {
+    m.resolveSuckers = vi.fn(async () => [{ peerChainId: 1, projectId: 42n }, { peerChainId: 8453, projectId: 8n }])
+    await renderGroup(); await pickBase()
+    await typeAmount('1'); await settle()
+    await waitUntil(() => !!host.textContent?.includes("The Base project listed here isn't linked onchain."))
+    expect(host.textContent).toContain("The Base project listed here isn't linked onchain.")
+    expect(button('Pay').disabled).toBe(true)
+    await click('Pay')
+    expect(host.querySelector('[data-tx-confirm]')).toBeNull()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('says it could not confirm Base when the registry read fails', async () => {
+    m.resolveSuckers = vi.fn(async () => { throw new Error('rpc down') })
+    await renderGroup(); await pickBase()
+    await typeAmount('1'); await settle()
+    await waitUntil(() => !!host.textContent?.includes("Couldn't confirm Base belongs to this project."))
+    expect(host.textContent).toContain("Couldn't confirm Base belongs to this project.")
+    expect(button('Pay').disabled).toBe(true)
+  })
+
+  it('shows the button loading while the registry read is pending', async () => {
+    m.resolveSuckers = () => new Promise(() => {})
+    await renderGroup(); await pickBase()
+    await typeAmount('1'); await settle()
+    expect(button('Checking…').disabled).toBe(true)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it("pays the page's own deployment without waiting for the registry", async () => {
+    m.resolveSuckers = () => new Promise(() => {})
+    await renderGroup()
+    await typeAmount('1'); await settle()
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    expect(button('Pay').disabled).toBe(false)
   })
 })

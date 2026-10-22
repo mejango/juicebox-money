@@ -10,7 +10,9 @@ const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true },
   clientFor: vi.fn(), runAuthorityCalls: vi.fn(), loadSession: vi.fn(), resume: vi.fn(), discard: vi.fn(),
   current: vi.fn(), upcoming: vi.fn(), contexts: vi.fn(), identity: vi.fn(),
+  resolveSuckers: vi.fn(),
 }))
+vi.mock('@bananapus/nana-sdk-core', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core')>(), resolveSuckers: mocks.resolveSuckers }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => mocks.wallet }))
 vi.mock('wagmi', async original => ({
@@ -33,6 +35,7 @@ vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'ETH' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getUpcomingRuleset: mocks.upcoming, getAccountingContexts: mocks.contexts }))
 
 import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 import { relayrCallsScope } from '@/lib/relayr'
 
 /** A flow that never ends, for runs whose signal is not under test. */
@@ -82,6 +85,8 @@ function installReads() {
   }
 }
 beforeEach(() => {
+  clearSuckerGroups()
+  mocks.resolveSuckers.mockReset().mockImplementation(async () => currentReview.destinations.map(item => ({ peerChainId: item.chainId, projectId: BigInt(item.projectId) })))
   storage.clear(); reads.clear(); currentReview = review(); mocks.wallet.address = ACCOUNT
   vi.stubGlobal('navigator', { locks: { request: async (_name: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
   vi.stubGlobal('window', { localStorage: { getItem: (key: string) => storage.get(key) ?? null, setItem: (key: string, value: string) => storage.set(key, value), removeItem: (key: string) => storage.delete(key) } })
@@ -113,6 +118,32 @@ describe('multichain ruleset configuration', () => {
       expect(boxes.map(box => box.props.disabled)).toEqual([true, false, false, false, true])
       for (const box of boxes.slice(1, 4)) await act(async () => { box.props.onChange() })
       expect(selection.findAllByType('input').map(box => box.props.checked)).toEqual([true, true, true, true, false])
+    } finally {
+      await act(async () => renderer.unmount())
+      queryClient.clear()
+    }
+  })
+
+  it('refuses a peer the onchain registry does not link before reading or queueing it', async () => {
+    currentReview = review([11155111, 84532])
+    installReads()
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 11155111, projectId: 101n }])
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
+    const home = currentReview.destinations[0]
+    queryClient.setQueryData(['queueRulesetPrefill', home.chainId, home.projectId, home.controller], home.data)
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<QueryClientProvider client={queryClient}><QueueRulesetFlow chainId={home.chainId} projectId={home.projectId} isRevnet={false} chains={currentReview.destinations.map(item => [item.chainId, item.projectId])} /></QueryClientProvider>) })
+    try {
+      await act(async () => { renderer.root.findAllByType('button').find(button => button.children.includes('Edit rules'))!.props.onClick() })
+      await act(async () => { await queryClient.refetchQueries({ queryKey: ['queueRulesetDestinations'] }) })
+      const selection = renderer.root.findAllByType('fieldset').find(fieldset => fieldset.findAllByType('legend').some(legend => legend.children.includes('Queue on')))!
+      await act(async () => { selection.findAllByType('input')[1].props.onChange() })
+      await act(async () => { renderer.root.findAll(node => node.props.label === 'Reserved share' && typeof node.props.onChange === 'function')[0].props.onChange('12') })
+      const reads = mocks.current.mock.calls.length
+      await act(async () => { await renderer.root.findAllByType('button').find(button => button.children.includes('Queue new rules'))!.props.onClick() })
+      expect(JSON.stringify(renderer.toJSON())).toContain("The Base Sepolia project listed here isn't linked onchain.")
+      expect(mocks.current.mock.calls.length).toBe(reads)
+      expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
     } finally {
       await act(async () => renderer.unmount())
       queryClient.clear()

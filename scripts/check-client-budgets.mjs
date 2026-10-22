@@ -39,11 +39,13 @@ const routes = [
   { route: '/build', path: '/build', kib: 226, text: 'Build on Juicebox' },
   { route: '/build/first-payment', path: '/build/first-payment', kib: 224, text: 'Your first Juicebox payment.' },
   { route: '/audit', path: '/audit', kib: 229, text: 'Verify Juicebox.' },
-  { route: '/create', path: '/create', kib: 395, text: 'Start a project' },
+  // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
+  // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
+  { route: '/create', path: '/create', kib: 397, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
-  { route: '/[urn]', path: '/eth:1', kib: 504, text: 'Browser Fixture Project' },
+  { route: '/[urn]', path: '/eth:1', kib: 517, text: 'Browser Fixture Project' },
   { route: '/account/[address]', path: `/account/${account}`, kib: 405, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
@@ -57,7 +59,7 @@ const budgets = {
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK; the route ceilings and the lazy-load
   // assertions below are what protect first paint. History: git log -p.
-  allScripts: 2615 * KIB,
+  allScripts: 2621 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

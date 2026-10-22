@@ -10,6 +10,7 @@ import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDia
 import { TxError } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { chainName } from '@/lib/urn'
+import { requireLinkedPairs } from '@/lib/sucker-group'
 import { formatTokenAmount } from '@/lib/format'
 import { invalidatePreparationQueries, preparationStaleTime } from '@/lib/preparation-query'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
@@ -130,6 +131,7 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       if (saved?.status === 'pending') { setBatch(saved); return }
       const chosen = projectState.projects.filter(project => selected.has(project.chainId))
       if (!chosen.length) throw new Error('Choose at least one chain.')
+      await requireLinkedPairs([chainId, projectId], chosen.map(project => [project.chainId, project.projectId]))
       const destinations = await Promise.all(chosen.map(async project => {
         if (kind === 'reserved') return reviewReserved(project, address)
         const option = options.data?.find(item => item.project.chainId === project.chainId)?.payout

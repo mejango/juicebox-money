@@ -13,6 +13,7 @@ import { MultiChainBuybackRouterCard } from '@/components/project/MultiChainBuyb
 import { AuthorityPowersCard } from '@/components/project/AuthorityPowersCard'
 import { ProjectHandleCard } from '@/components/project/ProjectHandleCard'
 import { SafeBatchTray } from '@/components/project/SafeBatchTray'
+import { useLinkedDeployments } from '@/lib/sucker-group'
 
 /**
  * The back-office cards on the Owner/Operator tab: who controls the project
@@ -46,14 +47,17 @@ export function BackOfficeTab({
   /** Current pinned profile used to prefill the chain-aware metadata editor. */
   profile: AuthorityEditProfile
 }) {
-  const currentDeployment = deployments.find(
+  // Every card here writes to each listed deployment: only the ones the onchain registry links.
+  const { deployments: linked, line } = useLinkedDeployments([chainId, projectId], deployments)
+  const currentDeployment = linked.find(
     deployment =>
       deployment.chainId === chainId && deployment.projectId === projectId,
   )
   return (
     <div className="space-y-5">
+      {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
       <AuthorityOverview
-        deployments={deployments}
+        deployments={linked}
         isRevnet={isRevnet}
         afterAccount={<SafeBatchTray chainId={chainId} />}
         beforePermissions={
@@ -66,16 +70,16 @@ export function BackOfficeTab({
               />
             ) : null}
             <AuthorityEditsCard
-              deployments={deployments}
+              deployments={linked}
               isRevnet={isRevnet}
               profile={profile}
               suckerGroupId={suckerGroupId}
             />
             {!isRevnet ? (
-              <AuthorityPowersCard deployments={deployments} />
+              <AuthorityPowersCard deployments={linked} />
             ) : null}
             <MultiChainBuybackRouterCard
-              deployments={deployments}
+              deployments={linked}
               isRevnet={isRevnet}
             />
           </>

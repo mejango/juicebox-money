@@ -502,6 +502,7 @@ describe('project payer write flow', () => {
 
 describe('auto-issuance write flow', () => {
   const props = {
+    home: [1, 42] as const,
     chainId: 1 as const,
     projectId: 42,
     stageId: '3',

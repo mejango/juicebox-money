@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   service: true,
 }))
 
+vi.mock('@bananapus/nana-sdk-core', async original => ({
+  ...await original<typeof import('@bananapus/nana-sdk-core')>(),
+  resolveSuckers: async () => [{ peerChainId: 1, projectId: 2n }, { peerChainId: 8453, projectId: 6n }],
+}))
 vi.mock('next/image', () => ({
   default: (props: Record<string, unknown>) =>
     createElement('img', { ...props, src: 'asset' }),
@@ -65,6 +69,8 @@ const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const HOOK = '0xB222Da5A71e8FB89a5A38b7c920EaB5DfbC74B91' as Address
 const TERMINAL = '0x4a56AEf5b6A5b9742AbB02cA67C5a85ba183D901' as Address
 const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
+import { clearSuckerGroups } from '@/lib/sucker-group'
+
 const DEPLOYMENTS = [
   { chainId: 1 as const, projectId: 2, indexedAuthority: SAFE },
   { chainId: 8453 as const, projectId: 6, indexedAuthority: SAFE },
@@ -74,6 +80,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  clearSuckerGroups()
   window.localStorage.clear()
   container = document.createElement('div')
   document.body.append(container)
@@ -114,7 +121,7 @@ function render(
   act(() =>
     root.render(
       <QueryClientProvider client={client}>
-        <SafeBatchProvider deployments={DEPLOYMENTS} isRevnet={false}>
+        <SafeBatchProvider home={[DEPLOYMENTS[0].chainId, DEPLOYMENTS[0].projectId]} deployments={DEPLOYMENTS} isRevnet={false}>
           <SafeBatchTray chainId={1} />
         </SafeBatchProvider>
       </QueryClientProvider>,

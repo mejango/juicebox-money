@@ -97,6 +97,7 @@ import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField"
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
+import { useLinkedPair } from '@/lib/sucker-group'
 
 // The loading line is the chunk's own boundary; without it a first load falls
 // through to the route skeleton.
@@ -282,6 +283,8 @@ export function PayPanel({
     setDeployment({ chainId: initialChainId, projectId: initialProjectId });
   }, [initialChainId, initialProjectId]);
 
+  // Another chain's deployment comes from the indexer: it is paid only once the onchain registry links it.
+  const pairCheck = useLinkedPair([initialChainId, initialProjectId], [chainId, projectId], chains.length > 1);
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const inventory = useShop721(chainId, projectId, isRevnet);
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
@@ -518,6 +521,8 @@ export function PayPanel({
 
   const payActionLabel = notStarted
     ? "Soon"
+    : pairCheck.pending
+      ? "Checking…"
     : !isConnected
       ? "Sign in"
       : mode === "pay"
@@ -1198,6 +1203,7 @@ export function PayPanel({
   // One guard for the Pay button and for submit, which re-enters after a
   // queued preparation: whatever changed meanwhile still blocks the review.
   const formClosed =
+    !pairCheck.linked ||
     notStarted ||
     surfaceError ||
     terminalBlocked ||
@@ -1555,6 +1561,9 @@ export function PayPanel({
   }
 
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
+  if (mode === 'pay' && nativeMarket && !pairCheck.linked) {
+    return pairCheck.line ? <p role="alert" className="text-sm text-red-600">{pairCheck.line}</p> : <ProjectPayPanelSkeleton embedded />;
+  }
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
     return <div className="space-y-4"><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
@@ -1790,6 +1799,9 @@ export function PayPanel({
             selector it sits under. */}
         <div className="mt-1.5 flex items-start">
           <div className="min-w-0 flex-1 pr-3">
+            {pairCheck.line ? (
+              <p role="alert" className="text-xs text-error-500">{pairCheck.line}</p>
+            ) : null}
             {notStarted ? (
               <p className="text-xs text-smoke-700">
                 Starts in {formatStartCountdown(startsAt - now)}.

@@ -18,6 +18,7 @@ import {
   writeSafeBatch,
   type BatchStep,
 } from '@/lib/safe-batch'
+import { useLinkedDeployments, type ProjectPair } from '@/lib/sucker-group'
 import { chainName } from '@/lib/urn'
 
 export type SafeBatchDeployment = {
@@ -47,14 +48,19 @@ const SafeBatchContext = createContext<SafeBatchContextValue | null>(null)
  * the queue survives tab switches; localStorage keeps it across reloads.
  */
 export function SafeBatchProvider({
-  deployments,
+  home,
+  deployments: listed,
   isRevnet,
   children,
 }: {
+  /** The page's own deployment. */
+  home: ProjectPair
   deployments: SafeBatchDeployment[]
   isRevnet: boolean
   children: ReactNode
 }) {
+  // Batches are built and mirrored only on deployments the onchain registry links to this one.
+  const { deployments } = useLinkedDeployments(home, listed)
   const [batches, setBatches] = useState<Record<number, BatchStep[]>>({})
   const [notice, setNotice] = useState<string | null>(null)
 
