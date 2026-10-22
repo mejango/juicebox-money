@@ -55,7 +55,7 @@ export function safeBatchHold({ chainId, safe, intent, calls, legacy = [] }: {
 export async function proposeSafeBatch({
   chainId,
   safe,
-  calls,
+  calls: given,
   title,
   intent,
   legacy,
@@ -74,6 +74,9 @@ export async function proposeSafeBatch({
   legacy?: readonly string[]
 }): Promise<Hex> {
   assertNoViewAs()
+  // Each field read once: simulation, review, hold and proposal all use this copy, never the caller's array.
+  const calls: readonly SequenceCall[] = Object.freeze(given.map(({ to, data, value, label, dependsOnPrior, abi, functionName, args, contractName }) =>
+    Object.freeze({ to, data, value, label, dependsOnPrior, abi, functionName, args, contractName })))
   if (!calls.length) throw new Error('A batch needs at least one call.')
   // The batch was reviewed for this Safe: refuse before simulating or
   // reviewing it when the wallet is connected as another account.

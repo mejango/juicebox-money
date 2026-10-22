@@ -134,7 +134,7 @@ async function runOnce(call: Parameters<Action['run']>[0]) {
     result = await ref.current!.run(call)
   })
   await act(async () => renderer.unmount())
-  return result
+  return result as Awaited<ReturnType<Action['run']>>
 }
 
 describe('useReviewedAction', () => {
@@ -170,6 +170,7 @@ describe('useReviewedAction', () => {
       { chainId: 10, account: ALICE, safe: false, namespace: intent, call: { to: built.address, data: '0x', value: 0n } },
       { legacy },
     )
-    expect(byIntent.peek().settled?.result).toBe('success')
+    const state = byIntent.peek()
+    expect(state.status === 'clear' ? state.settled?.result : state.status).toBe('success')
   })
 })

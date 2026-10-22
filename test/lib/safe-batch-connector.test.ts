@@ -85,3 +85,21 @@ describe('a Safe batch held by its intent', () => {
     expect(m.sendCalls).not.toHaveBeenCalled()
   })
 })
+
+describe('a Safe batch sends what it reviewed', () => {
+  it('proposes the reviewed calls even when the caller changes its array during the review', async () => {
+    const { requireTransactionReview } = await import('@/lib/transaction-review')
+    const request = batch(5)
+    const calls = request.calls as { to: Address; data: Hex; value: bigint; label: string }[]
+    vi.mocked(requireTransactionReview).mockImplementationOnce(async () => {
+      calls[1].data = '0xdead'
+      calls[1].value = 7n
+      calls.push({ to: SAFE, data: '0xbeef', value: 0n, label: 'Added' })
+    })
+    m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL })
+    await expect(proposeSafeBatch({ ...request, intent: 'intent:reviewed-bytes:test' })).resolves.toBe(PROPOSAL)
+    const reviewed = vi.mocked(requireTransactionReview).mock.calls.at(-1)![0].calls.map(({ to, data, value }) => ({ to, data, value }))
+    expect(m.sendCalls.mock.calls[0][1].calls).toEqual(reviewed)
+    expect(reviewed[1]).toEqual({ to: TARGET, data: `0x5678${(5).toString(16).padStart(8, '0')}`, value: 0n })
+  })
+})
