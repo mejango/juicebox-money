@@ -132,19 +132,26 @@ export async function findToRemoteValue(
   return value
 }
 
+/** The project's id on `chainId` among its linked deployments (`[chainId, projectId]` pairs). */
+function projectOn(chains: [number, number][], chainId: number): bigint {
+  const projectId = chains.find(([candidate]) => candidate === chainId)?.[1]
+  if (projectId === undefined) throw new Error('The cross-chain project mapping is unavailable.')
+  return BigInt(projectId)
+}
+
 /**
  * The `toRemote` that ships a queued group's outbox. The indexer only says which
- * sucker holds the movements; it is sent to the project's sucker as the registry
- * lists it, and throws `UnverifiedSuckerError` when the registry doesn't.
+ * sucker holds the movements; it is sent to the project's sucker as the source
+ * chain's registry lists it, and throws `UnverifiedSuckerError` when it doesn't.
  */
 export async function prepareQueuedExecute(
   client: PublicClient,
-  group: { sourceChainId: number; destChainId: number; sucker: Address; token: Address; projectId: number; account: Address },
+  group: { sourceChainId: number; destChainId: number; sucker: Address; token: Address; chains: [number, number][]; account: Address },
 ) {
   const chainId = group.sourceChainId as JBChainId
   const sucker = await getRegisteredSucker(client, {
     chainId,
-    projectId: BigInt(group.projectId),
+    projectId: projectOn(group.chains, chainId),
     remoteChainId: group.destChainId as JBChainId,
     sucker: group.sucker,
   })
@@ -154,6 +161,29 @@ export async function prepareQueuedExecute(
     throw new Error('The bridge fee could not be determined yet — try again shortly.')
   }
   return { sucker, request: buildToRemoteTx({ chainId, sucker, token: group.token, value }) }
+}
+
+/**
+ * The claim of one move, read and sent only through the project's suckers as
+ * each chain's registry lists them: an indexer's addresses are never trusted.
+ * Throws `UnverifiedSuckerError` when either registry doesn't list its sucker.
+ */
+export async function prepareClaim(
+  sourceClient: PublicClient,
+  destClient: PublicClient,
+  m: BridgeMovement,
+  chains: [number, number][],
+) {
+  const sourceChainId = m.sourceChainId as JBChainId
+  const destChainId = m.destChainId as JBChainId
+  const sourceProjectId = projectOn(chains, sourceChainId)
+  const destinationProjectId = projectOn(chains, destChainId)
+  const [sourceSucker, destSucker] = await Promise.all([
+    getRegisteredSucker(sourceClient, { chainId: sourceChainId, projectId: sourceProjectId, remoteChainId: destChainId, sucker: m.sourceSucker as Address }),
+    getRegisteredSucker(destClient, { chainId: destChainId, projectId: destinationProjectId, remoteChainId: sourceChainId, sucker: m.destSucker as Address }),
+  ])
+  const claim = await buildClaim(sourceClient, destClient, { ...m, sourceSucker, destSucker }, { sourceProjectId, destinationProjectId })
+  return buildBridgeClaimTx({ chainId: destChainId, sucker: destSucker, claim })
 }
 
 export function unpackAddress(bytes32: string): Address {
@@ -569,7 +599,6 @@ function QueuedMovementsCard({
               key={`${g.sourceChainId}->${g.destChainId}:${g.token}:${g.sucker}`}
               group={g}
               chains={chains}
-              projectId={projectId}
             />
           ))}
         </div>
@@ -581,9 +610,7 @@ function QueuedMovementsCard({
 function MovementGroup({
   group,
   chains,
-  projectId,
 }: {
-  projectId: number
   group: {
     sourceChainId: number
     destChainId: number
@@ -629,7 +656,7 @@ function MovementGroup({
         chainId: group.sourceChainId as JBChainId,
       }) as PublicClient | undefined
       if (!client) throw new Error(`Unsupported chain ${group.sourceChainId}.`)
-      const { sucker, request } = await prepareQueuedExecute(client, { ...group, projectId, account: address })
+      const { sucker, request } = await prepareQueuedExecute(client, { ...group, chains, account: address })
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
       await tx.send({ ...request, abi: request.abi as Abi }, {
         reviewedAccount: address,
@@ -880,24 +907,7 @@ function ClaimButton({
       if (!sourceClient || !destClient) {
         throw new Error('Unsupported chain.')
       }
-      const sourceProjectId = chains.find(
-        ([candidate]) => candidate === m.sourceChainId,
-      )?.[1]
-      const destinationProjectId = chains.find(
-        ([candidate]) => candidate === m.destChainId,
-      )?.[1]
-      if (sourceProjectId === undefined || destinationProjectId === undefined) {
-        throw new Error('The cross-chain project mapping is unavailable.')
-      }
-      const claimData = await buildClaim(sourceClient, destClient, m, {
-        sourceProjectId: BigInt(sourceProjectId),
-        destinationProjectId: BigInt(destinationProjectId),
-      })
-      const request = buildBridgeClaimTx({
-        chainId: m.destChainId as JBChainId,
-        sucker: m.destSucker as Address,
-        claim: claimData,
-      })
+      const request = await prepareClaim(sourceClient, destClient, m, chains)
       // Permissionless: the beneficiary is in the leaf, not the sender.
       await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: address })
     } catch (e) {
