@@ -25,7 +25,7 @@ vi.mock('@/lib/fee-buyback-client', () => ({
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
-import { REVIEW_REQUESTS } from './fixtures/review-requests'
+import { REVIEW_REQUESTS } from '@bananapus/nana-sdk-core/testing'
 import './dialog-shim'
 
 let container: HTMLDivElement

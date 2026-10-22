@@ -1,9 +1,9 @@
 'use client'
 
 import { useMemo, useState, type ReactNode } from 'react'
-import { zeroAddress } from 'viem'
 import {
-  knownAddressName,
+  addressLabel,
+  currencyLabel,
   type PrettyStep,
   type V4PlanStep,
 } from '@bananapus/nana-sdk-core/review/decode'
@@ -77,19 +77,6 @@ function V4PlanRow({ label, children }: { label: string; children: React.ReactNo
       <dd className="min-w-0 break-all font-mono text-smoke-700">{children}</dd>
     </div>
   )
-}
-
-/** "Name | 0x…" for a known address, otherwise the address. */
-function addressLabel(chainId: number, address: string): string {
-  const label = knownAddressName(chainId, address)
-  return label ? `${label} | ${address}` : address
-}
-
-/** A Uniswap currency, where address zero is native ETH. An owner, hook or recipient never is. */
-function currencyLabel(chainId: number, currency: string): string {
-  return currency.toLowerCase() === zeroAddress
-    ? `native ETH | ${currency}`
-    : addressLabel(chainId, currency)
 }
 
 function v4Amounts(pair: { currency0: bigint; currency1: bigint }): string {
@@ -530,13 +517,7 @@ function ReviewModal({
   onFinish: (approved: boolean) => void
 }) {
   const { request } = pending
-  const model = useMemo(() => {
-    try {
-      return buildReviewModel(request)
-    } catch {
-      return null
-    }
-  }, [request])
+  const model = useMemo(() => buildReviewModel(request), [request])
   const feeReview = useFeeBuybackReview(request.calls)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -553,7 +534,9 @@ function ReviewModal({
 
   const titleId = `transaction-review-title-${pending.id}`
   const descriptionId = `transaction-review-description-${pending.id}`
-  if (!model) return <UnreadableReview titleId={titleId} onFinish={onFinish} />
+  if (model.warnings.some(warning => warning.code === 'unreadable')) {
+    return <UnreadableReview titleId={titleId} onFinish={onFinish} />
+  }
 
   const isAuthorization = model.kind !== 'transaction'
   /** Some authorizations are signed as a plain message rather than typed data. */
