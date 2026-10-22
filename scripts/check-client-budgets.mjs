@@ -33,23 +33,26 @@ const account = `0x${'1'.repeat(40)}`
 // whose server render threw is handed to the client with `$RX(`.
 const NOT_FOUND_DIGEST = 'NEXT_HTTP_ERROR_FALLBACK;404'
 const RENDER_ERROR = '$RX('
+// Next 16.4.2 (security fix for GHSA-2464-fhr4-w9xw) adds 0.3 to 1.2 KiB to every route's framework chunks.
 const routes = [
-  { route: '/', path: '/', kib: 341, text: 'Fund your' },
-  { route: '/learn', path: '/learn', kib: 224, text: 'Learn Juicebox' },
-  { route: '/build', path: '/build', kib: 226, text: 'Build on Juicebox' },
-  { route: '/build/first-payment', path: '/build/first-payment', kib: 224, text: 'Your first Juicebox payment.' },
-  { route: '/audit', path: '/audit', kib: 229, text: 'Verify Juicebox.' },
+  { route: '/', path: '/', kib: 342, text: 'Fund your' },
+  { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
+  { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
+  { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment.' },
+  { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox.' },
   // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
-  { route: '/create', path: '/create', kib: 397, text: 'Start a project' },
+  // 397 -> 398: Next 16.4.2.
+  { route: '/create', path: '/create', kib: 398, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
-  { route: '/[urn]', path: '/eth:1', kib: 517, text: 'Browser Fixture Project' },
-  { route: '/account/[address]', path: `/account/${account}`, kib: 405, text: 'Holdings' },
+  // 517 -> 519: Next 16.4.2.
+  { route: '/[urn]', path: '/eth:1', kib: 519, text: 'Browser Fixture Project' },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 406, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
-  { route: '/_not-found', path: '/account/not-an-account', kib: 224, text: 'This juicebox is empty', notFound: true },
+  { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
   // Hands deeper legacy paths to old.juicebox.money; there is no page to load.
   { route: '/[urn]/[...rest]', path: '/v3/45', status: 307 },
 ]
