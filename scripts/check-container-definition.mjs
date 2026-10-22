@@ -10,7 +10,7 @@ const globalStyles = readFileSync('src/app/globals.css', 'utf8')
 
 const checks = [
   [
-    /^FROM node:26\.7\.0-bookworm-slim@sha256:cd565714d4da3e84bfd341e31448f81d47c6362198f152345297c9c1154e6341 AS base$/m,
+    /^FROM node:26\.12\.1-bookworm-slim@sha256:28147155d47dc31abe0a46e0d12b59b2fb3d0a2dcc5dc65fce76a074180b16fe AS base$/m,
     'the Node base image must be versioned and digest-pinned',
   ],
   [
