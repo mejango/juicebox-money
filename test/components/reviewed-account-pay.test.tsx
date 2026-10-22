@@ -85,6 +85,8 @@ vi.mock('@/lib/transaction-review', async importOriginal => {
   return {
     ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
     requestContractTransactionReview: wallet.requestReview,
+    // The checkout review of every call in a native mint: approved, like the per-call review.
+    requireTransactionReview: async () => undefined,
   }
 })
 vi.mock('@/lib/safe-connector', async importOriginal => ({
@@ -986,7 +988,8 @@ describe('compatible basic funding', () => {
     await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
     await waitUntil(() => !!host.querySelector('[title="Add Home team to cart"]'))
     await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
-    await click('Review mint'); await click(leg === 'native mint' ? 'Confirm mint' : 'Approve payment')
+    // The one checkout review approves every call; the first then goes straight to simulation.
+    await click('Review mint')
     await waitUntil(() => wallet.client.simulateContract.mock.calls.length === 1)
     await click('Add to balance')
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
@@ -1014,9 +1017,8 @@ describe('compatible basic funding', () => {
     await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
     await waitUntil(() => !!host.querySelector('[title="Add Home team to cart"]'))
     await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
-    await click('Review mint')
     wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection dropped after invocation'))
-    await click('Confirm mint')
+    await click('Review mint')
     await waitUntil(() => !!host.textContent?.includes('wallet submission is unconfirmed'))
     const scope = { chainId: 1, projectId: 42, account: ALICE, action: 'pay' as const }
     const original = readDefifaWriteRecovery(scope)!
