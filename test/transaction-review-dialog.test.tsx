@@ -24,7 +24,7 @@ vi.mock('@/lib/fee-buyback-client', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
 import { REVIEW_REQUESTS } from './fixtures/review-requests'
 import './dialog-shim'
 
@@ -62,4 +62,34 @@ describe('transaction review dialog', () => {
       expect(await renderedDialog(request)).toMatchSnapshot()
     })
   }
+
+  it('shows each signature the action asks for, with its text, rows and calls', async () => {
+    const payment = REVIEW_REQUESTS['pay with 721 metadata'].calls[0]
+    const { TransactionReviewDialog } = await import('@/components/TransactionReviewDialog')
+    const request: TransactionReviewRequest = {
+      calls: [],
+      signatures: [
+        { kind: 'message', chainId: 8453, message: 'List my project on Sticky' },
+        {
+          kind: 'permit2',
+          chainId: 1,
+          typedData: { primaryType: 'PermitSingle' },
+          steps: [{ title: 'Permit2 allowance', rows: [['Spender', '0x2222222222222222222222222222222222222222']] }],
+        },
+        { kind: 'forward-request', chainId: 8453, typedData: { primaryType: 'ForwardRequest' }, calls: [payment] },
+      ],
+    }
+    act(() => root.render(
+      <TransactionReviewDialog pending={{ kind: 'review', id: 1, request, resolve: () => {} }} onFinish={() => {}} />,
+    ))
+    const text = document.querySelector('dialog')?.textContent ?? ''
+    expect(text).toContain('Signature 1 of 3')
+    expect(text).toContain('List my project on Sticky')
+    expect(text).toContain('Permit2 approval')
+    expect(text).toContain('Spender:0x2222222222222222222222222222222222222222')
+    expect(text).toContain('Relayed request')
+    expect(text).toContain('Calls it lets someone run, in order')
+    expect(text).toContain('pay(uint256, address, uint256, address, uint256, string, bytes)')
+    expect(text).toContain('plus the exact')
+  })
 })
