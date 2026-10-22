@@ -29,6 +29,7 @@ npm run ts:check
 npm run env:check:all
 npm run protocol:check
 npm run transaction:check
+npm run wallet:check
 npm test
 npm run test:coverage
 npm run test:browser:install
@@ -98,9 +99,14 @@ enables the full artifact comparison; it does not trust the fixture alone.
 - [`test/TRANSACTION_COVERAGE.md`](test/TRANSACTION_COVERAGE.md) is the safety
   inventory. Every new wallet write must add or update a row and should have an
   exact ABI round-trip test before it is considered covered.
+- `wallet:check` runs the SDK's `nana-wallet-check` over `src`. Every raw
+  wallet API call, signing RPC string, `registerTransactionReviewHandler` call
+  and `reviewedInParent` use must have a row in `wallet-boundaries.json` naming
+  its file, line, boundary and test; a new, moved or removed site fails the
+  gate. It also refuses imports of `@bananapus/nana-sdk-react`.
 - `transaction:check` parses every production TypeScript file and compares all
-  `useSafeTx`, authority, reviewed direct-write, and raw wallet API call sites
-  against `test/transaction-sites.json`. A new or moved write fails CI until its
+  `useSafeTx`, authority and reviewed direct-write call sites against
+  `test/transaction-sites.json`. A new or moved write fails CI until its
   reviewed boundary and transaction-coverage action are explicitly inventoried.
   Each of the 33 current `useSafeTx.send` sites has its own stable action record;
   the gate requires one record per send, exact request/calldata coverage, and a

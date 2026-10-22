@@ -1,0 +1,250 @@
+{
+  "format": "juice-sdk-wallet-boundaries-1",
+  "sites": [
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 134,
+      "api": "registerTransactionReviewHandler",
+      "boundary": "Old-review handler: the provider queues the SDK's boolean review requests (Safe, Relayr and authority paths) into the one review dialog. Removed when those paths move to core (J5).",
+      "test": "test/components/transaction-review-project-scope.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 326,
+      "api": "useWriteContract",
+      "boundary": "Creates the wagmi write used by the launch flow; every write below goes through submitReviewedContractWrite or the multisig preparation after review.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 1622,
+      "api": "writeContractAsync",
+      "boundary": "Launch writes (multisig preparation and the launch call itself): sent only from the reviewed, simulated request after the durable launch marker is saved. Moves to sendReviewed in J3.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 1747,
+      "api": "writeContractAsync",
+      "boundary": "Launch writes (multisig preparation and the launch call itself): sent only from the reviewed, simulated request after the durable launch marker is saved. Moves to sendReviewed in J3.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 1908,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 2077,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 2190,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/create/CreateForm.tsx",
+      "line": 2382,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "test": "test/components/create-launch-recovery.test.tsx"
+    },
+    {
+      "file": "src/components/project/DefifaCheckout.tsx",
+      "line": 143,
+      "api": "reviewedInParent",
+      "boundary": "The checkout's own review dialog already showed the approval and the mint, so the send skips a second review. Removed with the one-confirmation change (J4).",
+      "test": "test/components/defifa-checkout.test.tsx"
+    },
+    {
+      "file": "src/components/project/EditSplitsFlow.tsx",
+      "line": 411,
+      "api": "request",
+      "boundary": "navigator.locks.request over each destination's split journal key: cross-tab coordination, never a wallet RPC.",
+      "test": "test/components/edit-splits.test.ts"
+    },
+    {
+      "file": "src/components/project/MarketSection.tsx",
+      "line": 441,
+      "api": "request",
+      "boundary": "Public-client eth_getLogs read of pool events; a read, never a wallet RPC.",
+      "test": "test/contracts/market-liquidity.test.ts"
+    },
+    {
+      "file": "src/components/project/MintShopItemModal.tsx",
+      "line": 84,
+      "api": "useWriteContract",
+      "boundary": "Creates the wagmi write used by the shop mint; the write goes through submitReviewedContractWrite after review.",
+      "test": "test/components/mint-shop-item-gas.test.tsx"
+    },
+    {
+      "file": "src/components/project/MintShopItemModal.tsx",
+      "line": 273,
+      "api": "writeContractAsync",
+      "boundary": "Sends the reviewed, simulated mint request after the wallet and Safe mode are rechecked. Moves to sendReviewed in J3.",
+      "test": "test/components/mint-shop-item-gas.test.tsx"
+    },
+    {
+      "file": "src/components/project/QueueRulesetFlow.tsx",
+      "line": 705,
+      "api": "request",
+      "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
+      "test": "test/components/queue-ruleset-multichain.test.tsx"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 175,
+      "api": "useWriteContract",
+      "boundary": "Creates the wagmi write behind useSafeTx, the shared reviewed contract-write hook. Deleted in J3.",
+      "test": "test/transactions/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 306,
+      "api": "reviewedInParent",
+      "boundary": "useSafeTx skips its own review when the caller's dialog already reviewed the call. Deleted with useSafeTx in J3.",
+      "test": "test/transactions/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/hooks/useSafeTx.ts",
+      "line": 371,
+      "api": "writeContractAsync",
+      "boundary": "Sends the reviewed, simulated request under the write hold. Deleted in J3.",
+      "test": "test/transactions/use-safe-tx.test.ts"
+    },
+    {
+      "file": "src/lib/authority.ts",
+      "line": 291,
+      "api": "reviewedInParent",
+      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
+      "test": "test/components/safe-queue-authority.test.ts"
+    },
+    {
+      "file": "src/lib/authority.ts",
+      "line": 697,
+      "api": "reviewedInParent",
+      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
+      "test": "test/components/safe-queue-authority.test.ts"
+    },
+    {
+      "file": "src/lib/authority.ts",
+      "line": 745,
+      "api": "sendTransaction",
+      "boundary": "Sends a reviewed authority call (direct or Safe execTransaction) under the write hold after the gate's final checks. Moves to core in J5.",
+      "test": "test/components/safe-queue-authority.test.ts"
+    },
+    {
+      "file": "src/lib/authority.ts",
+      "line": 825,
+      "api": "reviewedInParent",
+      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
+      "test": "test/components/safe-queue-authority.test.ts"
+    },
+    {
+      "file": "src/lib/authority.ts",
+      "line": 888,
+      "api": "sendTransaction",
+      "boundary": "Sends a reviewed authority call (direct or Safe execTransaction) under the write hold after the gate's final checks. Moves to core in J5.",
+      "test": "test/components/safe-queue-authority.test.ts"
+    },
+    {
+      "file": "src/lib/forwarder-authorization.ts",
+      "line": 91,
+      "api": "request",
+      "boundary": "navigator.locks.request on the per-account forwarder authorization lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/forwarder-authorization.test.ts"
+    },
+    {
+      "file": "src/lib/launch-multisig-direct.ts",
+      "line": 74,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/launch-multisig-direct.test.ts"
+    },
+    {
+      "file": "src/lib/launch-multisig-direct.ts",
+      "line": 268,
+      "api": "writeContract",
+      "boundary": "Calls the caller's reviewed write for a launch multisig after the durable marker is saved. Moves to sendReviewed in J3.",
+      "test": "test/transactions/launch-multisig-direct.test.ts"
+    },
+    {
+      "file": "src/lib/launch-relayr.ts",
+      "line": 193,
+      "api": "request",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/launch-relayr.test.ts"
+    },
+    {
+      "file": "src/lib/payer-relayr.ts",
+      "line": 599,
+      "api": "sendTransaction",
+      "boundary": "Deploys a project payer from the reviewed call under the SDK write hold. Moves to core in J5.",
+      "test": "test/transactions/payer-relayr.test.ts"
+    },
+    {
+      "file": "src/lib/project-batch.ts",
+      "line": 745,
+      "api": "reviewedInParent",
+      "boundary": "The batch dialog already reviewed the group, so runAuthorityCalls skips its own review when the connection mode is unchanged. Moves to core sequences in J4.",
+      "test": "test/transactions/project-batch.test.ts"
+    },
+    {
+      "file": "src/lib/project-handles.ts",
+      "line": 257,
+      "api": "request",
+      "boundary": "Public-client eth_call read with a return-size cap; a read, never a wallet RPC.",
+      "test": "test/contracts/project-handles.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 120,
+      "api": "request",
+      "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/relayr.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 1016,
+      "api": "signTypedData",
+      "boundary": "Signs a reviewed ERC-2771 forward request after the account is rechecked. Moves to core runRelayrReviewed in J5.",
+      "test": "test/transactions/relayr.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 1237,
+      "api": "sendTransaction",
+      "boundary": "Pays a reviewed Relayr quote under the payment hold after the saved marker. Moves to core runRelayrReviewed in J5.",
+      "test": "test/transactions/relayr.test.ts"
+    },
+    {
+      "file": "src/lib/safe-batch-connector.ts",
+      "line": 110,
+      "api": "sendCalls",
+      "boundary": "Hands a reviewed batch to the Safe app connection under the Safe batch hold. Replaced by proposeReviewedSafeTransaction in J5.",
+      "test": "test/lib/safe-batch-connector.test.ts"
+    },
+    {
+      "file": "src/lib/safe.ts",
+      "line": 399,
+      "api": "signTypedData",
+      "boundary": "Signs a reviewed Safe transaction hash after the Safe state and hash are rechecked. Moves to core safeSend in J5.",
+      "test": "test/transactions/safe.test.ts"
+    },
+    {
+      "file": "src/lib/safe.ts",
+      "line": 738,
+      "api": "writeContract",
+      "boundary": "Sends the simulated, reviewed contract call (Safe execTransaction or direct) after the wallet and Safe mode are rechecked. Moves to core in J5.",
+      "test": "test/transactions/safe.test.ts"
+    }
+  ]
+}

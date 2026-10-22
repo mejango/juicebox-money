@@ -411,33 +411,5 @@
         "Create an Owner or Operator Safe during launch"
       ]
     }
-  },
-  "rawWalletCalls": {
-    "useWriteContract": {
-      "src/components/create/CreateForm.tsx": 1,
-      "src/components/project/MintShopItemModal.tsx": 1,
-      "src/hooks/useSafeTx.ts": 1
-    },
-    "writeContractAsync": {
-      "src/components/create/CreateForm.tsx": 2,
-      "src/components/project/MintShopItemModal.tsx": 1,
-      "src/hooks/useSafeTx.ts": 1
-    },
-    "writeContract": {
-      "src/lib/launch-multisig-direct.ts": 1,
-      "src/lib/safe.ts": 1
-    },
-    "sendTransaction": {
-      "src/lib/authority.ts": 2,
-      "src/lib/payer-relayr.ts": 1,
-      "src/lib/relayr.ts": 1
-    },
-    "signTypedData": {
-      "src/lib/relayr.ts": 1,
-      "src/lib/safe.ts": 1
-    },
-    "sendCalls": {
-      "src/lib/safe-batch-connector.ts": 1
-    }
   }
 }
