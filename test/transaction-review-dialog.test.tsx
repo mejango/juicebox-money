@@ -90,7 +90,7 @@ describe('transaction review dialog', () => {
     expect(text).toContain('Relayed request')
     expect(text).toContain('Calls it lets someone run, in order')
     expect(text).toContain('pay(uint256, address, uint256, address, uint256, string, bytes)')
-    expect(text).toContain('plus the exact')
+    expect(text).toContain('plus the exact message and typed data your signatures commit to')
   })
 
   it('describes a message authorization on a call as a message', async () => {

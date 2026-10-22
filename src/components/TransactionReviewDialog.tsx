@@ -470,6 +470,25 @@ function SignatureView({
   )
 }
 
+/** What the review says about the signed data, by whether it holds a message, typed data or both. */
+const COMMITMENT_TEXT = {
+  message: {
+    banner: 'The Raw view also includes the exact message your signature commits to.',
+    raw: 'The exact message your signature commits to, plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.',
+    agree: ', plus the exact message your signature commits to',
+  },
+  typed: {
+    banner: 'The Raw view also includes the exact typed-data domain and message your signature commits to.',
+    raw: 'Exact typed data plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.',
+    agree: ', plus the exact typed data',
+  },
+  both: {
+    banner: 'The Raw view also includes the exact message and typed data your signatures commit to.',
+    raw: 'The exact message and typed data your signatures commit to, plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.',
+    agree: ', plus the exact message and typed data your signatures commit to',
+  },
+} as const
+
 /** The request could not be described, so it cannot be approved. */
 function UnreadableReview({
   titleId,
@@ -538,10 +557,12 @@ function ReviewModal({
 
   const isAuthorization = model.kind !== 'transaction'
   /** Some authorizations are signed as a plain message rather than typed data. */
-  const signsMessage = request.authorization
-    ? (request.authorization as { kind?: string }).kind === 'message'
-    : model.signatures.length > 0 && model.signatures.every(signature => signature.kind === 'message')
-  const commitsToSignature = Boolean(request.authorization) || model.signatures.length > 0
+  const authorizationIsMessage = (request.authorization as { kind?: string } | undefined)?.kind === 'message'
+  const kinds = model.signatures.map(signature => signature.kind)
+  const signsMessage = (Boolean(request.authorization) && authorizationIsMessage) || kinds.includes('message')
+  const signsTypedData =
+    (Boolean(request.authorization) && !authorizationIsMessage) || kinds.some(kind => kind !== 'message')
+  const commitment = signsMessage ? (signsTypedData ? 'both' : 'message') : signsTypedData ? 'typed' : null
 
   return (
     <ModalDialog
@@ -579,11 +600,9 @@ function ReviewModal({
               {model.description}
             </p>
           </div>
-          {commitsToSignature ? (
+          {commitment ? (
             <div className="mt-3 rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3 text-xs leading-relaxed text-bluebs-700">
-              {signsMessage
-                ? 'The Raw view also includes the exact message your signature commits to.'
-                : 'The Raw view also includes the exact typed-data domain and message your signature commits to.'}
+              {COMMITMENT_TEXT[commitment].banner}
             </div>
           ) : null}
 
@@ -625,10 +644,8 @@ function ReviewModal({
             </summary>
             <div className="border-t border-smoke-200 p-4">
               <p className="mb-2 text-xs leading-relaxed text-smoke-600">
-                {commitsToSignature
-                  ? signsMessage
-                    ? 'The exact message your signature commits to, plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
-                    : 'Exact typed data plus the resulting app-controlled call. Hex value is the native token amount; data is the complete calldata.'
+                {commitment
+                  ? COMMITMENT_TEXT[commitment].raw
                   : 'Exact app-controlled JSON-RPC call fields. Hex value is the native token amount; data is the complete calldata.'}
               </p>
               <pre className="max-h-[28rem] overflow-auto rounded-xl border border-smoke-200 bg-grey-900 p-4 font-mono text-[11px] leading-relaxed text-grey-25">
@@ -649,11 +666,7 @@ function ReviewModal({
             />
             <span>
               I reviewed the chain, destination, native value, and calldata
-              {commitsToSignature
-                ? signsMessage
-                  ? ', plus the exact message your signature commits to'
-                  : ', plus the exact typed data'
-                : ''}. I
+              {commitment ? COMMITMENT_TEXT[commitment].agree : ''}. I
               agree to {isAuthorization ? 'authorize' : 'send'} this exact call.
             </span>
           </label>
