@@ -42,14 +42,14 @@ const routes = [
   { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox.' },
   // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
-  // 397 -> 398: Next 16.4.2.
-  { route: '/create', path: '/create', kib: 398, text: 'Start a project' },
+  { route: '/create', path: '/create', kib: 397, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
-  // 517 -> 519: Next 16.4.2.
-  { route: '/[urn]', path: '/eth:1', kib: 519, text: 'Browser Fixture Project' },
-  { route: '/account/[address]', path: `/account/${account}`, kib: 406, text: 'Holdings' },
+  // 517 -> 513: SDK 4 local.4 and Next 16.4.2.
+  { route: '/[urn]', path: '/eth:1', kib: 513, text: 'Browser Fixture Project' },
+  // 406 -> 407: the SDK 4 wallet check.
+  { route: '/account/[address]', path: `/account/${account}`, kib: 407, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
