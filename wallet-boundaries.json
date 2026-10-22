@@ -19,7 +19,7 @@
       "file": "src/components/create/CreateForm.tsx",
       "line": 1622,
       "api": "writeContractAsync",
-      "boundary": "Launch multisig preparation: prepareLaunchMultisigs calls this write only after its review and durable marker. Moves to sendReviewed in J3.",
+      "boundary": "Launch multisig preparation: prepareLaunchMultisigs calls this write only after its review and durable marker. Moves to sendReviewed in J3. The test drives prepareLaunchMultisigs with an injected writer; this callback has no direct test until J3.",
       "test": "test/transactions/launch-multisig-direct.test.ts"
     },
     {
@@ -33,14 +33,14 @@
       "file": "src/components/create/CreateForm.tsx",
       "line": 1908,
       "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC. The browser test exercises the abandon path's lock; this path's lock has no direct test.",
       "test": "test/browser/launch.spec.ts"
     },
     {
       "file": "src/components/create/CreateForm.tsx",
       "line": 2078,
       "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC. The browser test exercises the abandon path's lock; this path's lock has no direct test.",
       "test": "test/browser/launch.spec.ts"
     },
     {
@@ -54,7 +54,7 @@
       "file": "src/components/create/CreateForm.tsx",
       "line": 2383,
       "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC.",
+      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination, never a wallet RPC. The browser test exercises the abandon path's lock; this path's lock has no direct test.",
       "test": "test/browser/launch.spec.ts"
     },
     {
@@ -75,7 +75,7 @@
       "file": "src/components/project/MarketSection.tsx",
       "line": 441,
       "api": "request",
-      "boundary": "Public-client eth_getLogs read of the pool's Initialize and ModifyLiquidity events; a read, never a wallet RPC. The test covers the liquidity math these logs feed.",
+      "boundary": "Public-client eth_getLogs read of the pool's Initialize and ModifyLiquidity events; a read, never a wallet RPC. The test covers the liquidity math these logs feed; the scan itself has no direct test.",
       "test": "test/contracts/market-liquidity.test.ts"
     },
     {
