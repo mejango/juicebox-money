@@ -470,6 +470,37 @@ function SignatureView({
   )
 }
 
+/** The request could not be described, so it cannot be approved. */
+function UnreadableReview({
+  titleId,
+  onFinish,
+}: {
+  titleId: string
+  onFinish: (approved: boolean) => void
+}) {
+  return (
+    <ModalDialog
+      onClose={() => onFinish(false)}
+      labelledBy={titleId}
+      className="items-start justify-center px-3 py-4 sm:px-6 sm:py-8"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-smoke-300 bg-bone p-5 shadow-2xl">
+        <h2 id={titleId} className="font-agrandir text-xl font-medium text-ink">
+          {"Can't review this request"}
+        </h2>
+        <p className="mt-2 text-sm text-smoke-700">
+          {"It holds values the review can't show, so nothing was sent or signed."}
+        </p>
+        <div className="mt-4 flex justify-end">
+          <button type="button" onClick={() => onFinish(false)} className="btn-secondary min-h-[44px] px-5 text-sm">
+            Close
+          </button>
+        </div>
+      </div>
+    </ModalDialog>
+  )
+}
+
 function ReviewModal({
   pending,
   onFinish,
@@ -480,7 +511,13 @@ function ReviewModal({
   onFinish: (approved: boolean) => void
 }) {
   const { request } = pending
-  const model = useMemo(() => buildReviewModel(request), [request])
+  const model = useMemo(() => {
+    try {
+      return buildReviewModel(request)
+    } catch {
+      return null
+    }
+  }, [request])
   const feeReview = useFeeBuybackReview(request.calls)
   const [agreed, setAgreed] = useState(false)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
@@ -497,10 +534,14 @@ function ReviewModal({
 
   const titleId = `transaction-review-title-${pending.id}`
   const descriptionId = `transaction-review-description-${pending.id}`
+  if (!model) return <UnreadableReview titleId={titleId} onFinish={onFinish} />
+
   const isAuthorization = model.kind !== 'transaction'
   /** Some authorizations are signed as a plain message rather than typed data. */
-  const signsMessage = model.kind === 'message'
-  const commitsToSignature = model.authorization !== null || model.signatures.length > 0
+  const signsMessage = request.authorization
+    ? (request.authorization as { kind?: string }).kind === 'message'
+    : model.signatures.length > 0 && model.signatures.every(signature => signature.kind === 'message')
+  const commitsToSignature = Boolean(request.authorization) || model.signatures.length > 0
 
   return (
     <ModalDialog

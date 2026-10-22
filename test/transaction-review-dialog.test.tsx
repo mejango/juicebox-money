@@ -92,4 +92,34 @@ describe('transaction review dialog', () => {
     expect(text).toContain('pay(uint256, address, uint256, address, uint256, string, bytes)')
     expect(text).toContain('plus the exact')
   })
+
+  it('describes a message authorization on a call as a message', async () => {
+    const payment = REVIEW_REQUESTS['pay with 721 metadata'].calls[0]
+    const { TransactionReviewDialog } = await import('@/components/TransactionReviewDialog')
+    const request = { calls: [payment], authorization: { kind: 'message', message: 'hello' } }
+    act(() => root.render(
+      <TransactionReviewDialog pending={{ kind: 'review', id: 1, request, resolve: () => {} }} onFinish={() => {}} />,
+    ))
+    const text = document.querySelector('dialog')?.textContent ?? ''
+    expect(text).toContain('plus the exact message your signature commits to')
+    expect(text).not.toContain('typed data')
+  })
+
+  it('refuses a request it cannot describe, and Close declines it', async () => {
+    const payment = REVIEW_REQUESTS['pay with 721 metadata'].calls[0]
+    const { TransactionReviewDialog } = await import('@/components/TransactionReviewDialog')
+    const finished: unknown[] = []
+    const request = { calls: [payment], authorization: { amount: Number.NaN } }
+    act(() => root.render(
+      <TransactionReviewDialog
+        pending={{ kind: 'review', id: 1, request, resolve: () => {} }}
+        onFinish={approved => finished.push(approved)}
+      />,
+    ))
+    const dialog = document.querySelector('dialog')
+    expect(dialog?.textContent).toContain("Can't review this request")
+    const close = [...(dialog?.querySelectorAll('button') ?? [])].find(button => button.textContent === 'Close')
+    act(() => close?.click())
+    expect(finished).toEqual([false])
+  })
 })
