@@ -44,13 +44,6 @@
       "test": "test/components/edit-splits-multichain.test.tsx"
     },
     {
-      "file": "src/components/project/MarketSection.tsx",
-      "line": 441,
-      "api": "request",
-      "boundary": "Public-client eth_getLogs read of the pool's Initialize and ModifyLiquidity events; a read, never a wallet RPC.",
-      "test": "test/components/market-pool-logs.test.ts"
-    },
-    {
       "file": "src/components/project/MintShopItemModal.tsx",
       "line": 84,
       "api": "useWriteContract",
@@ -136,31 +129,10 @@
     },
     {
       "file": "src/lib/launch-multisig-direct.ts",
-      "line": 74,
-      "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab coordination, never a wallet RPC.",
-      "test": "test/transactions/launch-multisig-direct.test.ts"
-    },
-    {
-      "file": "src/lib/launch-multisig-direct.ts",
       "line": 268,
       "api": "writeContract",
       "boundary": "Calls the caller's reviewed write for a launch multisig after the durable marker is saved. Moves to sendReviewed in J3.",
       "test": "test/transactions/launch-multisig-direct.test.ts"
-    },
-    {
-      "file": "src/lib/launch-relayr.ts",
-      "line": 193,
-      "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab coordination, never a wallet RPC.",
-      "test": "test/transactions/launch-relayr.test.ts"
-    },
-    {
-      "file": "src/lib/launch-session.ts",
-      "line": 408,
-      "api": "request",
-      "boundary": "navigator.locks.request on the jbm-launch lock: cross-tab launch coordination for every launch save, finish and abandon, never a wallet RPC.",
-      "test": "test/transactions/launch-session.test.ts"
     },
     {
       "file": "src/lib/payer-relayr.ts",
@@ -175,13 +147,6 @@
       "api": "reviewedInParent",
       "boundary": "The batch dialog already reviewed the group, so runAuthorityCalls skips its own review when the connection mode is unchanged. Moves to core sequences in J4.",
       "test": "test/transactions/project-batch.test.ts"
-    },
-    {
-      "file": "src/lib/project-handles.ts",
-      "line": 257,
-      "api": "request",
-      "boundary": "Public-client eth_call read with a return-size cap; a read, never a wallet RPC.",
-      "test": "test/contracts/project-handles.test.ts"
     },
     {
       "file": "src/lib/relayr.ts",
