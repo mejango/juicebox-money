@@ -8,6 +8,7 @@ import {
 import { isSafeConnection } from '@/lib/safe-connector'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { writeHolds } from '@/lib/write-holds'
+import { loadReviewEngine } from '@/lib/preload-review'
 import { wagmiConfig } from '@/providers/Providers'
 
 /** jbm's wallet, chains and write hold, as core's reviewed send takes them. */
@@ -29,6 +30,6 @@ export const reviewedSendDeps: ReviewedSendDeps = {
  */
 export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
   // The send engine loads with the write, not with the page.
-  const { sendReviewed } = await import('@bananapus/nana-sdk-core/review')
+  const { sendReviewed } = await loadReviewEngine()
   return sendReviewed({ ...action, guard: assertNoViewAs }, reviewedSendDeps)
 }

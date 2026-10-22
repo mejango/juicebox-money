@@ -22,6 +22,7 @@ import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
 import { formatTokenAmount } from '@/lib/format'
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { defifaPhaseLabel } from '@/lib/defifa-phase'
+import { friendlyError } from '@/lib/errors'
 
 type Review = {
   generation: number
@@ -38,7 +39,7 @@ type Review = {
   selection: { id: number; name: string }[]
 }
 type Step = 'review' | 'approval' | 'mint' | 'verified' | 'failed'
-const message = (error: unknown) => error instanceof Error ? error.message : 'Unable to prepare this mint.'
+const message = (error: unknown) => error instanceof Error ? friendlyError(error) : 'Unable to prepare this mint.'
 const preparationEvidence = (prepared: PreparedDefifaPay) => JSON.stringify([prepared.selectedTiers, prepared.effectiveDelegates], (_, value) => typeof value === 'bigint' ? value.toString() : value)
 const samePreparation = (a: PreparedDefifaPay, b: PreparedDefifaPay) =>
   encodeFunctionData(a.transaction) === encodeFunctionData(b.transaction) &&
@@ -138,9 +139,11 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     setError(null)
     const approving = !!review.approval && approvalBlock === undefined
     const request = approving ? review.approval! : { ...review.prepared.transaction, label: 'Mint Defifa NFTs' }
+    // A sent transaction is followed by its receipt (a revert included); only an unsent submission is unknown.
+    let sent = false
     try {
       assertCurrent(review)
-      const action: ReviewedRun = { account: review.account, calls: [reviewedCall(request, { simulationBlockNumber: approving ? undefined : approvalBlock })], assertWriteState: () => assertCurrent(review), beforeWallet: () => { assertCurrent(review); submissionStarted.current = true }, onUnsent: () => { submissionStarted.current = false }, onSubmitted: (_call, _step, hash, { safe }) => { setStep(approving ? 'approval' : 'mint'); setSubmitted({ hash, safe }) }, reverify: async () => {
+      const action: ReviewedRun = { account: review.account, calls: [reviewedCall(request, { simulationBlockNumber: approving ? undefined : approvalBlock })], assertWriteState: () => assertCurrent(review), beforeWallet: () => { assertCurrent(review); submissionStarted.current = true }, onUnsent: () => { submissionStarted.current = false }, onSubmitted: (_call, _step, hash, { safe }) => { sent = true; setStep(approving ? 'approval' : 'mint'); setSubmitted({ hash, safe }) }, reverify: async () => {
         await prepareFresh(review)
         if (!approving && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
           const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
@@ -154,7 +157,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       if (result) {
         setStep(approving ? 'approval' : 'mint')
         setSubmitted({ hash: hashOf(result)!, safe: result.status === 'proposed' })
-      } else if (submissionStarted.current) {
+      } else if (submissionStarted.current && !sent) {
         setSubmissionUnknown(true)
       } else locked.current = false
     } catch (reason) {

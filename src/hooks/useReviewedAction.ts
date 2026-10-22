@@ -11,6 +11,7 @@ import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, useSafeConnection } from '@/lib/safe-connector'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
+import { loadReviewEngine, preloadReviewDialog } from '@/lib/preload-review'
 
 import { revertedReceipt } from '@/lib/reviewed-call'
 export { hashOf, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
@@ -68,12 +69,13 @@ export function useReviewedAction(chainId?: number) {
     account: address,
     ...reviewedSendDeps,
     // The send engine loads once a page mounts a write, not with the page.
-    engine: () => import('@bananapus/nana-sdk-core/review'),
+    engine: loadReviewEngine,
     guard: () => {
       if (isCenterWallet) throw new ReviewLineError(CENTER_WALLET_REFUSED)
       if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
     },
   })
+  useEffect(preloadReviewDialog, [])
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
   const inFlight = useRef(false)

@@ -100,6 +100,14 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(controls.verify).toHaveBeenCalledWith(wallet.client, expect.objectContaining({ account: ALICE, hook: HOOK, transaction: prepared().transaction }), expect.objectContaining({ transactionHash: sentHash(1) }))
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
+  it('treats a mined revert as a sent transaction to verify, not an unknown submission', async () => {
+    controls.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError())
+    await openReview(); await click('Confirm mint')
+    await act(async () => wallet.confirm(sentHash(1), 10n, 'reverted'))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    expect(text(renderer.root)).not.toContain('wallet submission is unconfirmed')
+    expect(text(renderer.root)).toContain(sentHash(1))
+  })
   it("says in its review when this browser can't remember pending transactions", async () => {
     vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError') })
     await openReview()

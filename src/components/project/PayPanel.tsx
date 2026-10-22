@@ -1083,6 +1083,17 @@ export function PayPanel({
     setSequenceSafeStage(null);
   };
 
+  // An approval whose tracking ended before it settled can still confirm later; it then counts as done, not cancelled.
+  useEffect(() => {
+    if (paymentRunEnded !== "token-approval" || approveTx.phase !== "success") return;
+    setPaymentRunEnded(null);
+    setSequenceCompletedKinds(current =>
+      current.includes("token-approval") ? current : [...current, "token-approval"],
+    );
+    setSequenceStatus(null);
+    void refetchAllowance();
+  }, [paymentRunEnded, approveTx.phase, refetchAllowance]);
+
   useEffect(() => {
     if (!sequenceSafeStage) return;
     if (sequenceSafePhase === "error") {

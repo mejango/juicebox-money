@@ -652,6 +652,28 @@ describe('a payment whose receipt watch gives up', () => {
   })
 })
 
+describe('an approval whose receipt watch gives up', () => {
+  it('counts the approval once it confirms later, and pays without approving again', async () => {
+    m.token = 'erc20'
+    await reviewPayment()
+    await click('Confirm & Pay')
+    await waitUntil(() => host.textContent?.includes('Confirming your transaction.') ?? false)
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
+    wallet.giveUp()
+    await act(async () => { await vi.advanceTimersByTimeAsync(200_000) })
+    vi.useRealTimers()
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    // The approval lands after the watch ended; the hold's follower sees it as the page regains focus.
+    await act(async () => wallet.confirm(sentHash(1)))
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    await waitUntil(() => !(host.textContent?.includes('Token approval was cancelled.') ?? false))
+    // The open review continues to the payment; its confirmation sends it.
+    await click('Confirm & Pay')
+    await waitUntil(() => wallet.writes().length === 2)
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'pay', account: ALICE }])
+  })
+})
+
 describe('a held payment whose token the app switched', () => {
   it('refuses the same typed amount in the currency the app fell back to, before the wallet', async () => {
     m.safe = true
