@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { Hex } from 'viem'
+import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import type { ReviewedRun } from '@/hooks/useReviewedAction'
 import { vi } from 'vitest'
 
 type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'unconfirmed' | 'submitted' | 'success' | 'error'
@@ -14,12 +16,13 @@ type EngineState = {
 const IDLE: EngineState = { phase: 'idle', hash: null, receipt: null, error: null, notice: null }
 
 /**
- * A stand-in for useSafeTx whose sends the test answers, keeping the engine's
- * rules: a send it takes shows its hash as pending before `send` resolves, a
- * send it does not take (a closed review) changes nothing and answers null,
- * and `reset` clears the last result.
+ * A stand-in for useReviewedAction whose runs the test answers, keeping the
+ * engine's rules: a run it takes shows its hash as pending before it
+ * resolves, a run it does not take (a closed review) changes nothing and
+ * answers null, and `reset` clears the last result. `send` records each run
+ * as the call its flow built and the run's options with the call's keys.
  */
-function fakeSafeTx() {
+function fakeReviewedAction() {
   let state = IDLE
   const listeners = new Set<() => void>()
   const waiting: ((hash: Hex | null) => void)[] = []
@@ -35,13 +38,17 @@ function fakeSafeTx() {
   }
   const send = vi.fn(
     (_request: unknown, _options?: unknown) =>
-      new Promise<Hex | null>(resolve => {
+      new Promise<ReviewedResult | null>(resolve => {
         waiting.push(hash => {
           if (hash) set({ phase: 'pending', hash, receipt: null, error: null })
-          resolve(hash)
+          resolve(hash ? { status: 'done', hashes: [hash], receipts: [] } : null)
         })
       }),
   )
+  const run = (action: ReviewedRun) => {
+    const [{ chainId, to, abi, functionName, args, value, label, intent, legacy, simulationBlockNumber, dependsOnPrior }] = action.calls
+    return send({ chainId, address: to, abi, functionName, args, value, label }, { ...action, intent, legacy, simulationBlockNumber, dependsOnPrior })
+  }
   const reset = vi.fn(() => set(IDLE))
   /** Closing a confirm: the engine forgets its state, as `reset` does here. */
   const dismiss = vi.fn(() => set(IDLE))
@@ -49,7 +56,7 @@ function fakeSafeTx() {
     send,
     reset,
     dismiss,
-    useSafeTx() {
+    useReviewedAction() {
       const snapshot = useSyncExternalStore(subscribe, () => state)
       return {
         ...snapshot,
@@ -62,7 +69,8 @@ function fakeSafeTx() {
         safeProposalHash: null,
         safeNonceGuidance: null,
         confirmationUncertain: snapshot.phase === 'unconfirmed',
-        send,
+        failure: null,
+        run,
         reset,
         dismiss,
       }
@@ -97,4 +105,4 @@ function fakeSafeTx() {
   }
 }
 
-export const engine = fakeSafeTx()
+export const engine = fakeReviewedAction()

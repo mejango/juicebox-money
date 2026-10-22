@@ -21,7 +21,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -79,7 +79,7 @@ export function tokenMeta(
  * the connected holder's own loans (with per-loan repay) and every loan against
  * the revnet. Opening a loan now lives in the Accounts (YOU) card
  * (GetLoanFlow). Repaying re-reads authoritative on-chain state and goes
- * through useSafeTx (simulate-first).
+ * through the reviewed send (simulate-first).
  */
 export function LoansSection({
   chainId,
@@ -355,8 +355,8 @@ function RepayFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
-  const approveTx = useSafeTx(chainId)
-  const repayTx = useSafeTx(chainId)
+  const approveTx = useReviewedAction(chainId)
+  const repayTx = useReviewedAction(chainId)
 
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -376,11 +376,19 @@ function RepayFlow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [repayTx.phase])
 
+  /** The repayment, simulated where its approval landed when one did. */
+  const sendRepay = (current: NonNullable<typeof plan>) => repayTx.run({
+    account: current.account,
+    calls: [reviewedCall(current.request, {
+      intent: current.intents.repay,
+      legacy: current.legacy.repay,
+      ...(approveTx.receipt ? { simulationBlockNumber: approveTx.receipt.blockNumber } : {}),
+    })],
+  })
+
   // Once the ERC-20 approval lands, send the repayment held in the plan.
   useEffect(() => {
-    if (approveTx.phase === 'success' && plan?.approve) {
-      repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
-    }
+    if (approveTx.phase === 'success' && plan?.approve) void sendRepay(plan)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [approveTx.phase])
 
@@ -474,14 +482,14 @@ function RepayFlow({
     if (!plan || busy) return
     setFlowError(null)
     if (plan.isNative) {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
+      await sendRepay(plan)
       return
     }
     if (!plan.approve || approveTx.phase === 'success') {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
+      await sendRepay(plan)
       return
     }
-    await approveTx.send(plan.approve, { reviewedAccount: plan.account, intent: plan.intents.approve })
+    await approveTx.run({ account: plan.account, calls: [reviewedCall(plan.approve, { intent: plan.intents.approve })] })
   }
 
   const closeDialog = () => {

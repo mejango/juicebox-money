@@ -11,7 +11,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ isConnected: true, address: '0x1111111111111111111111111111111111111111', openSignIn: vi.fn() }) }))
-vi.mock('@/hooks/useSafeTx', () => ({ useSafeTx: () => ({ status: 'idle', reset: vi.fn() }), txPhaseLabel: () => '' }))
+vi.mock('@/hooks/useReviewedAction', async () => ({ ...(await import('@/lib/reviewed-call')), useReviewedAction: () => ({ phase: 'idle', reset: vi.fn() }), txPhaseLabel: () => '' }))
 vi.mock('wagmi', () => ({ useConfig: () => ({}) }))
 vi.mock('wagmi/actions', () => ({ getPublicClient: () => ({ readContract: async () => 10n ** 18n }) }))
 

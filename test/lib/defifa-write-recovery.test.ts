@@ -2,9 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, erc20Abi, TransactionNotFoundError, type Address, type Hex } from 'viem'
 import { createBrowserWriteRecovery, createHeldWriteStorage } from '@bananapus/nana-sdk-core/review'
-import { clearDefifaWriteRecovery, defifaWriteNamespace, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, defifaWriteNamespace, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { writeHolds } from '@/lib/write-holds'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import { reviewedCall, type TxRequest } from '@/lib/reviewed-call'
+import type { ReviewedRun } from '@/hooks/useReviewedAction'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const TOKEN = '0x2222222222222222222222222222222222222222' as Address
@@ -35,9 +36,9 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
 
   it('keeps a Safe proposal row saved before the write hold from being sent again without the explicit exit', async () => {
     await saved(true)
-    const send = vi.fn(async () => HASH)
-    await expect(sendRecoverableDefifaWrite({ scope, request, send, options: { reviewedAccount: ACCOUNT } })).rejects.toThrow()
-    expect(send).not.toHaveBeenCalled()
+    const run = vi.fn()
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall(request)] }, run })).rejects.toThrow()
+    expect(run).not.toHaveBeenCalled()
     // The hold of its namespace says what is held, with no exit while the proposal can still run.
     const client = { getChainId: async () => 8453, getTransactionReceipt: async () => null, getTransaction: async ({ hash }: { hash: Hex }) => { throw new TransactionNotFoundError({ hash }) } }
     const state = await writeHolds.open({ chainId: 8453, account: ACCOUNT, safe: true, namespace: defifaWriteNamespace(scope), call }).state(client as never)
@@ -45,31 +46,40 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
   })
 
   it('refuses mismatched reviewed scope before reserving or exposing a wallet', async () => {
-    const send = vi.fn(async () => HASH)
-    await expect(sendRecoverableDefifaWrite({ scope, request: { ...request, chainId: 1 }, send, options: { reviewedAccount: ACCOUNT } })).rejects.toThrow('reviewed account and network')
-    await expect(sendRecoverableDefifaWrite({ scope, request, send, options: { reviewedAccount: TOKEN } })).rejects.toThrow('reviewed account and network')
-    expect(send).not.toHaveBeenCalled()
+    const run = vi.fn()
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall({ ...request, chainId: 1 })] }, run })).rejects.toThrow('reviewed account and network')
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: TOKEN, calls: [reviewedCall(request)] }, run })).rejects.toThrow('reviewed account and network')
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall(request), reviewedCall(request)] }, run })).rejects.toThrow('reviewed account and network')
+    expect(run).not.toHaveBeenCalled()
     expect(readDefifaWriteRecovery(scope)).toBeNull()
   })
 
   it("sends under the hold of the action's namespace, one for approval and mint, another per project", async () => {
-    const send = vi.fn(async (_request: TxRequest, options: TxSendOptions) => { await options.beforeWrite?.(); return HASH })
-    await sendRecoverableDefifaWrite({ scope, request, send, options: { reviewedAccount: ACCOUNT } })
-    await sendRecoverableDefifaWrite({ scope: { ...scope, projectId: 46 }, request, send, options: { reviewedAccount: ACCOUNT } })
-    expect(send.mock.calls.map(([, options]) => options.intent)).toEqual(['defifa:pay:27', 'defifa:pay:46'])
+    const run = vi.fn(async (action: ReviewedRun) => {
+      await action.beforeWallet?.(action.calls[0], 0)
+      return { status: 'done' as const, hashes: [HASH], receipts: [] }
+    })
+    const action = (chainId: number): ReviewedRun => ({ account: ACCOUNT, calls: [reviewedCall({ ...request, chainId })] })
+    await runRecoverableDefifaWrite({ scope, action: action(8453), run })
+    await runRecoverableDefifaWrite({ scope: { ...scope, projectId: 46 }, action: action(8453), run })
+    expect(run.mock.calls.map(([sent]) => sent.calls[0].intent)).toEqual(['defifa:pay:27', 'defifa:pay:46'])
   })
 
-  for (const outcome of ['onWriteRejected', 'onBeforeWriteAborted'] as const) {
-    it(`passes the typed ${outcome} callback through, and tells the card nothing is held`, async () => {
-      const callback = vi.fn()
-      const onRecord = vi.fn()
-      await sendRecoverableDefifaWrite({ scope, request, onRecord, options: { reviewedAccount: ACCOUNT, [outcome]: callback }, send: async (_request, options) => {
-        await options.beforeWrite?.(); await options[outcome]?.(); return null
-      } })
-      expect(callback).toHaveBeenCalledOnce()
-      expect(onRecord).toHaveBeenLastCalledWith(null)
+  it('passes the onUnsent callback through, and tells the card nothing is held', async () => {
+    const onUnsent = vi.fn()
+    const onRecord = vi.fn()
+    await runRecoverableDefifaWrite({
+      scope, onRecord,
+      action: { account: ACCOUNT, calls: [reviewedCall(request)], onUnsent },
+      run: async action => {
+        await action.beforeWallet?.(action.calls[0], 0)
+        await action.onUnsent?.(action.calls[0], 0)
+        return null
+      },
     })
-  }
+    expect(onUnsent).toHaveBeenCalledOnce()
+    expect(onRecord).toHaveBeenLastCalledWith(null)
+  })
 
   it('clears only the exact retained record, and nothing once the hold settled it', async () => {
     const original = await saved()

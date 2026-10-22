@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Hex } from 'viem'
-import type { useSafeTx } from '@/hooks/useSafeTx'
+import type { ReviewedActionState } from '@/hooks/useReviewedAction'
 
 /**
- * Sends a plan's steps through one useSafeTx, each once the step before it
+ * Sends a plan's steps through one reviewed action, each once the step before it
  * confirmed. `send` gets the block the last confirmed step landed in, so a
  * step that spends an approval simulates where that approval is visible.
  *
@@ -30,7 +30,7 @@ export function useStepRun<Step>({
   send,
   onFinish,
 }: {
-  tx: ReturnType<typeof useSafeTx>
+  tx: ReviewedActionState
   send: (step: Step, confirmedAt: bigint | undefined) => Promise<Hex | null>
   /** The last step confirmed, in the transaction `hash`. */
   onFinish: (hash: Hex) => void

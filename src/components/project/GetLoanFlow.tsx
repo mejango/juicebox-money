@@ -29,7 +29,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
@@ -69,7 +69,7 @@ type ReviewedBorrow = {
  * Accounts (YOU) card can render it inline. Borrow against your revnet tokens
  * (REVLoans.borrowFrom, tx #8) without selling: the tokens are held as
  * collateral and returned when you repay. Every write re-reads authoritative
- * on-chain state and goes through useSafeTx (simulate-first). Loans are locked
+ * on-chain state and goes through the reviewed send (simulate-first). Loans are locked
  * while a revnet's cash-out delay is active — borrowable reads 0 then, and the
  * flow aborts rather than send.
  *
@@ -113,8 +113,8 @@ export function GetLoanFlow({
   const [quoting, setQuoting] = useState(false)
   const [awaitingBorrow, setAwaitingBorrow] = useState(false)
 
-  const permTx = useSafeTx(chainId)
-  const borrowTx = useSafeTx(chainId)
+  const permTx = useReviewedAction(chainId)
+  const borrowTx = useReviewedAction(chainId)
 
   const ctx =
     ctxs.find(c => c.token === ctxToken) ?? ctxs[0] ?? undefined
@@ -213,11 +213,15 @@ export function GetLoanFlow({
         prepaidFeePercent: BigInt(r.prepaid),
         holder: r.account,
       })
-      await borrowTx.send(request, {
-        reviewedAccount: r.account,
-        // Its minimum re-quotes on retry: held as this holder's borrow from the project.
-        intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
-        legacy: legacyBorrowKeys({ chainId, projectId, token: r.ctxToken, collateral: amount, prepaid: r.prepaid, beneficiary: r.account }),
+      await borrowTx.run({
+        account: r.account,
+        calls: [reviewedCall(request, {
+          // Its minimum re-quotes on retry: held as this holder's borrow from the project.
+          intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
+          legacy: legacyBorrowKeys({ chainId, projectId, token: r.ctxToken, collateral: amount, prepaid: r.prepaid, beneficiary: r.account }),
+          // The permission it needs, when granted just before, took effect here.
+          ...(permTx.receipt ? { simulationBlockNumber: permTx.receipt.blockNumber } : {}),
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
@@ -255,7 +259,7 @@ export function GetLoanFlow({
       })
       setAwaitingBorrow(true)
       setQuoting(false)
-      await permTx.send(permReq, { reviewedAccount: r.account })
+      await permTx.run({ account: r.account, calls: [reviewedCall(permReq)] })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)

@@ -9,7 +9,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { hashOf, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyEditMarketKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
@@ -133,7 +133,7 @@ export function MarketEditPanel({
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { connectedAddress, isViewAs } = useViewedAccount()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const queryClient = useQueryClient()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const pairSym = pool.pair.symbol
@@ -282,55 +282,58 @@ export function MarketEditPanel({
       // included, sends only from the account the plan was reviewed for.
       const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
-        return tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
+        return tx.run({
+          account: reviewedAccount,
           // Its amount follows the live pool: held as a step of the liquidity action.
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
-        )
+          calls: [reviewedCall(buildErc20ApproveRequest({
+              chainId,
+              token: step.token,
+              spender: UNISWAP_PERMIT2_ADDRESS,
+              amount: step.amount,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }),
+            })],
+        }).then(hashOf)
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }) },
-        )
+        return tx.run({
+          account: reviewedAccount,
+          calls: [reviewedCall(buildPermit2ApproveRequest({
+              chainId,
+              token: step.token,
+              positionManager,
+              amount: step.amount,
+              expiration: step.expiration,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }),
+            })],
+        }).then(hashOf)
       }
-      return tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: p.plan.unlockData,
-          deadline: swapDeadline(isSafeConnection(wagmiConfig)),
-          value: p.plan.value,
-        }),
-        {
-          reviewedAccount,
-          simulationBlockNumber: confirmedAt,
-          // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
-          intent: p.intent,
-          legacy: p.legacy,
-          reviewNotice: describeMarketEdit(p.pool, p.plan, sym),
-          reverify: async () => {
-            if (!client) return
-            const { market, positions } = await readLive(p.account)
-            const problem = marketEditStillFits(p.plan, {
-              sqrtP: market.sqrtP,
-              liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
-            })
-            if (problem) throw new FlowError(problem)
-          },
+      return tx.run({
+        account: reviewedAccount,
+        calls: [reviewedCall(buildModifyLiquiditiesRequest({
+            chainId,
+            positionManager,
+            unlockData: p.plan.unlockData,
+            deadline: swapDeadline(isSafeConnection(wagmiConfig)),
+            value: p.plan.value,
+          }), {
+            simulationBlockNumber: confirmedAt,
+            // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
+            intent: p.intent,
+            legacy: p.legacy,
+          })],
+        description: describeMarketEdit(p.pool, p.plan, sym),
+        reverify: async () => {
+          if (!client) return
+          const { market, positions } = await readLive(p.account)
+          const problem = marketEditStillFits(p.plan, {
+            sqrtP: market.sqrtP,
+            liquidityOf: id => positions.find(pos => pos.tokenId === id)?.liquidity,
+          })
+          if (problem) throw new FlowError(problem)
         },
-      )
+      }).then(hashOf)
     },
     // readLive closes over stable props; the plan itself is read from the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps

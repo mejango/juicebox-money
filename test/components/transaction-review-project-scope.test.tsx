@@ -9,7 +9,7 @@ vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined }) }))
 vi.mock('@/providers/ProjectRouteContext', () => ({ useProjectReviewScope: () => mocks.scope }))
 vi.mock('@/providers/ProjectRouteBlockedContext', () => ({ useProjectRouteBlocked: () => mocks.blocked }))
 vi.mock('@/components/TransactionReviewDialog', () => ({ TransactionReviewDialog: ({ pending, onFinish }: TransactionReviewDialogProps) => <div>
-  <p>{pending.kind === 'review' ? pending.request.title : 'Funding'}</p>
+  <p>{pending.kind === 'review' ? (pending.request ?? pending.model)?.title : 'Funding'}</p>
   <button onClick={() => onFinish(pending.kind === 'review' ? true : 8453)}>Approve</button>
   <button onClick={() => onFinish(null)}>Cancel</button>
 </div> }))

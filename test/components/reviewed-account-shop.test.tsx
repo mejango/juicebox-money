@@ -23,16 +23,18 @@ const CHANGED = 'The connected account changed. Review again.'
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
 vi.mock('wagmi/actions', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('wagmi/actions')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
     getPublicClient: () => wallet.client,
   }

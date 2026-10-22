@@ -2,8 +2,8 @@
  * Cash out, burn and borrow freeze the holder (and the beneficiary of what
  * comes back) at review, from the connected account. When the wallet switches
  * to another account before the confirm, or between a loan's permission and
- * its borrow, nothing more reaches the wallet: the real useSafeTx and the
- * SDK's reviewed write refuse the send, and the dialog says why.
+ * its borrow, nothing more reaches the wallet: the real reviewed run
+ * refuses the send, and the dialog says why.
  */
 
 import { QueryClient } from '@tanstack/react-query'
@@ -33,9 +33,10 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })

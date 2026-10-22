@@ -33,7 +33,7 @@ import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { hashOf, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useStepRun } from '@/hooks/useStepRun'
 import { useWallet } from '@/hooks/useWallet'
 import {
@@ -72,8 +72,8 @@ import { buildMarketMint, type MarketMint } from '@/lib/market-liquidity'
  * Difference from website (deliberate, and safer): where website folds a gasless
  * Permit2 signature into a PositionManager.multicall, this app authorizes Permit2
  * with an on-chain Permit2.approve — so EVERY step (ERC-20 → Permit2, Permit2 →
- * PositionManager, then the mint) is its own reviewed useSafeTx transaction that
- * is simulated before it is signed. No signature ever bypasses useSafeTx. The
+ * PositionManager, then the mint) is its own reviewed transaction (useReviewedAction) that
+ * is simulated before it is signed. No signature ever bypasses it. The
  * mint calldata (unlockData: MINT_POSITION + CLOSE + CLOSE [+ SWEEP]) and the
  * exact amounts sent are identical to website's.
  */
@@ -353,7 +353,7 @@ function AddLiquidityForm({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const chainMeta = JB_CHAINS[chainId]
 
   const pair = pool.pair
@@ -485,7 +485,7 @@ function AddLiquidityForm({
   const planRef = useRef<Plan | null>(null)
 
   // ----- send one step -----------------------------------------------------
-  // `confirmedAt` is the block of the run's last confirmed approval. `useSafeTx` documents
+  // `confirmedAt` is the block of the run's last confirmed approval. Core documents
   // `simulationBlockNumber` as REQUIRED when a reviewed write immediately follows an ERC-20 or
   // Permit2 approval: on a lagging load-balanced RPC the mint otherwise simulates against a
   // pre-approval block and reverts on allowance — after the user has already paid for two
@@ -498,50 +498,53 @@ function AddLiquidityForm({
       // included, sends only from the account the plan was reviewed for.
       const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
-        return tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
+        return tx.run({
+          account: reviewedAccount,
           // Its amount follows the live pool: held as a step of the liquidity action.
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
-        )
+          calls: [reviewedCall(buildErc20ApproveRequest({
+              chainId,
+              token: step.token,
+              spender: UNISWAP_PERMIT2_ADDRESS,
+              amount: step.amount,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }),
+            })],
+        }).then(hashOf)
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager: p.posm,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: p.posm }) },
-        )
+        return tx.run({
+          account: reviewedAccount,
+          calls: [reviewedCall(buildPermit2ApproveRequest({
+              chainId,
+              token: step.token,
+              positionManager: p.posm,
+              amount: step.amount,
+              expiration: step.expiration,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: p.posm }),
+            })],
+        }).then(hashOf)
       }
       // Deadline is set at send time — everything that touches funds is
       // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
       // gets 30 days (matching the Permit2 steps) because signature
       // collection outlives 20 minutes and would strand the mint.
       const deadline = swapDeadline(isSafeConnection(wagmiConfig))
-      return tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager: p.posm,
-          unlockData: p.mint.unlockData,
-          deadline,
-          value: p.mint.value,
-        }),
-        {
-          reviewedAccount,
-          simulationBlockNumber: confirmedAt,
-          // Its deadline restamps and a fresh plan re-prices it: held as a change to this pool.
-          intent: p.intent,
-          legacy: p.legacy,
-        },
-      )
+      return tx.run({
+        account: reviewedAccount,
+        calls: [reviewedCall(buildModifyLiquiditiesRequest({
+            chainId,
+            positionManager: p.posm,
+            unlockData: p.mint.unlockData,
+            deadline,
+            value: p.mint.value,
+          }), {
+            simulationBlockNumber: confirmedAt,
+            // Its deadline restamps and a fresh plan re-prices it: held as a change to this pool.
+            intent: p.intent,
+            legacy: p.legacy,
+          })],
+      }).then(hashOf)
     },
     [tx, chainId],
   )

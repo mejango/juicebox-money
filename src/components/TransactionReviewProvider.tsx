@@ -12,6 +12,7 @@ import {
   useState,
 } from 'react'
 import type { Address } from 'viem'
+import { registerReviewHandler, type ReviewModel } from '@bananapus/nana-sdk-core/review'
 import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import { useProjectReviewScope, type ProjectReviewScope } from '@/providers/ProjectRouteContext'
@@ -26,10 +27,14 @@ import {
 export type PendingReview = {
   kind: 'review'
   id: number
-  request: TransactionReviewRequest
   resolve: (approved: boolean) => void
   scope?: ProjectReviewScope | null
-}
+} & (
+  /** A boolean review (Safe, Relayr and authority paths) of the request itself. */
+  | { request: TransactionReviewRequest; model?: undefined }
+  /** Core's prompt: the model it bound, confirmed only by its own confirmation. */
+  | { model: ReviewModel; request?: undefined }
+)
 
 export type PendingFundingChainSelection = {
   kind: 'funding'
@@ -132,6 +137,16 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
   )
 
   useEffect(() => registerTransactionReviewHandler(enqueue), [enqueue])
+  useEffect(
+    () =>
+      registerReviewHandler(async prompt => {
+        const approved = await new Promise<boolean>(resolve => {
+          enqueueDialog({ kind: 'review', id: nextId.current++, model: prompt.model, resolve, scope: scopeRef.current })
+        })
+        return approved ? prompt.confirmation : null
+      }),
+    [enqueueDialog],
+  )
   useEffect(
     () => registerFundingChainSelectionHandler(enqueueFundingChainSelection),
     [enqueueFundingChainSelection],

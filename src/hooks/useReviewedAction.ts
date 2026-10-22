@@ -1,35 +1,155 @@
 'use client'
 
-import { getAccount, getPublicClient, getWalletClient, switchChain } from '@wagmi/core'
-import { viemWalletAdapter } from '@bananapus/nana-sdk-core/review'
+import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import type { Address, TransactionReceipt } from 'viem'
+import type { ReviewedAction, ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
-import type { PublicClient } from 'viem'
+import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useWallet } from '@/hooks/useWallet'
-import { isSafeConnection } from '@/lib/safe-connector'
+import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
+import { isSafeConnection, SAFE_NONCE_GUIDANCE, useSafeConnection } from '@/lib/safe-connector'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
-import { writeHolds } from '@/lib/write-holds'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
+
+export { hashOf, reviewedCall, type TxRequest } from '@/lib/reviewed-call'
+import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 
-/** Mirrors @bananapus/nana-sdk-core/review/react useReviewedRun: jbm's wallet, chains, write hold and guard. */
-export function useReviewedAction(): ReturnType<typeof useReviewedRun> {
+export type TxPhase =
+  | 'idle'
+  | 'review'
+  | 'simulating'
+  | 'signing'
+  | 'pending'
+  /** Held with the hold's own line: its exit, a wallet still pending, or a success that went through while away. */
+  | 'unconfirmed'
+  /** With a Safe, awaiting its signers: the hold's line says where it is. */
+  | 'submitted'
+  | 'success'
+  | 'error'
+
+/**
+ * The shared in-flight button copy: the fixed simulating/signing strings every
+ * flow uses, the caller's `pending` progress text, and its `idle` label
+ * (any non-in-flight phase falls through to `idle`). `confirm` overrides the
+ * signing string for flows with more specific wallet copy.
+ */
+export function txPhaseLabel(
+  phase: TxPhase,
+  labels: { idle: string; pending: string; confirm?: string },
+): string {
+  if (phase === 'simulating') return 'Double-checking the transaction…'
+  if (phase === 'signing') return labels.confirm ?? 'Confirm in your wallet…'
+  if (phase === 'pending') return labels.pending
+  return labels.idle
+}
+
+export type ReviewedRun = Omit<ReviewedAction, 'account' | 'guard'> & {
+  /** The account the calls were built for: the run is refused unless it is connected. */
+  account: Address
+}
+
+/**
+ * jbm's one reviewed send, over core's useReviewedRun: jbm's wallet, chains,
+ * write hold and guard, with each run's progress as the phases the flows show.
+ * Core reviews, simulates, holds, journals and sends; this hook only maps its
+ * state for display.
+ */
+export function useReviewedAction(chainId?: number) {
+  const queryClient = useQueryClient()
   const { address, isCenterWallet } = useWallet()
-  return useReviewedRun({
+  const isSafe = useSafeConnection(wagmiConfig)
+  const runner = useReviewedRun({
     account: address,
-    adapter: viemWalletAdapter({
-      walletClient: () => getWalletClient(wagmiConfig),
-      account: () => getAccount(wagmiConfig).address,
-      chainId: () => getAccount(wagmiConfig).chainId,
-      isSafe: () => isSafeConnection(wagmiConfig),
-      switchChain: chainId => switchChain(wagmiConfig, { chainId: chainId as never }),
-    }),
-    clientFor: chainId => getPublicClient(wagmiConfig, { chainId: chainId as never }) as PublicClient,
-    hold: writeHolds,
+    ...reviewedSendDeps,
     guard: () => {
       if (isCenterWallet) throw new Error(CENTER_WALLET_REFUSED)
       if (getViewAs()) throw new Error(VIEW_AS_WRITE_BLOCKED)
     },
   })
+  const [result, setResult] = useState<ReviewedResult | null>(null)
+  const [sentOn, setSentOn] = useState<number | undefined>(undefined)
+  const inFlight = useRef(false)
+
+  const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
+    if (inFlight.current) return null
+    inFlight.current = true
+    setResult(null)
+    setSentOn(action.calls[0]?.chainId)
+    const viaSafe = isSafeConnection(wagmiConfig)
+    try {
+      const done = await runner.run({
+        ...action,
+        description: reviewDescription(action.description, viaSafe ? SAFE_NONCE_GUIDANCE : null),
+        ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+      })
+      setResult(done)
+      return done
+    } finally {
+      inFlight.current = false
+    }
+  }
+
+  const { held } = runner
+  const phase: TxPhase =
+    runner.phase === 'done' ? 'success'
+      // A proposal the hold could no longer prove is held with its exit.
+      : runner.phase === 'proposed' ? (held?.phase === 'held' ? 'unconfirmed' : 'submitted')
+        : runner.phase === 'receipt' ? 'pending'
+          : runner.phase !== 'idle' ? runner.phase
+            : held ? 'unconfirmed'
+              : runner.error ? 'error'
+                : 'idle'
+  const shownChainId = sentOn ?? chainId ?? 0
+  const action = runner.exitAction ?? runner.sendAgainAction
+  const error: string | ReactElement | null = phase === 'unconfirmed' && held
+    ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
+    : runner.error
+
+  const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.hash
+  const confirmed = phase === 'success' && hash ? `${shownChainId}:${hash}` : null
+  const invalidated = useRef<string | null>(null)
+  useEffect(() => {
+    if (!confirmed || invalidated.current === confirmed) return
+    invalidated.current = confirmed
+    void invalidateProjectDisplayQueries(queryClient, shownChainId)
+  }, [confirmed, queryClient, shownChainId])
+
+  const reset = () => {
+    if (inFlight.current) return
+    setResult(null)
+    runner.reset()
+  }
+  const receipt: TransactionReceipt | null = result?.status === 'done' ? result.receipts.at(-1) ?? null : null
+  const safeProposalHash = phase === 'submitted' ? runner.safeTxHash : null
+
+  return {
+    run,
+    phase,
+    /** True while the run is in flight: in review, simulating, signing or awaiting its receipt. */
+    busy: phase === 'review' || phase === 'simulating' || phase === 'signing' || phase === 'pending',
+    /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
+    settled: phase === 'success' || phase === 'submitted' || phase === 'unconfirmed',
+    /** The one line a `submitted` confirm shows: the hold's. */
+    notice: phase === 'submitted' ? held?.line ?? null : null,
+    isSafe,
+    error,
+    /** The value the failed run threw, for a flow's own decoder. */
+    failure: runner.failure,
+    hash,
+    safeProposalHash,
+    safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
+    receipt,
+    /** The transaction has a hash, but its result could not be confirmed here. */
+    confirmationUncertain: phase === 'unconfirmed',
+    reset,
+    /** Close the current confirmation. The hold keeps the write; dismissing is never evidence that it can be sent again. */
+    dismiss: reset,
+  }
 }
+
+export type ReviewedActionState = ReturnType<typeof useReviewedAction>

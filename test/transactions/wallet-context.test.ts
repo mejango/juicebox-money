@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config } from '@wagmi/core'
-import { captureWalletContext } from '@/lib/wallet-context'
+import { assertReviewedAccountConnected, captureWalletContext } from '@/lib/wallet-context'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 const state = vi.hoisted(() => ({ address: '0x1111111111111111111111111111111111111111' as `0x${string}` | undefined, chainId: 1, connectorUid: 'reviewed' }))
@@ -33,5 +33,21 @@ describe('reviewed wallet context', () => {
     const check = captureWalletContext(config, { account, chainId: 1 })
     setViewAs(account)
     try { expect(check).toThrow(VIEW_AS_WRITE_BLOCKED) } finally { clearViewAs() }
+  })
+})
+
+describe('the reviewed account', () => {
+  const ALICE = '0x1111111111111111111111111111111111111111' as const
+  const BOB = '0x2222222222222222222222222222222222222222' as const
+  const CHECKSUMMED = '0xAbCdEf0123456789aBcDeF0123456789AbCdEf01' as const
+
+  it('matches the connected account in any letter case', () => {
+    expect(() => assertReviewedAccountConnected(CHECKSUMMED, CHECKSUMMED.toLowerCase() as `0x${string}`)).not.toThrow()
+  })
+
+  it('refuses another account, or none, plainly', () => {
+    expect(() => assertReviewedAccountConnected(ALICE, BOB)).toThrow('The connected account changed. Review again.')
+    expect(() => assertReviewedAccountConnected(ALICE, undefined)).toThrow('The connected account changed. Review again.')
+    expect(() => assertReviewedAccountConnected(ALICE, BOB, 'Review the batch again.')).toThrow('Review the batch again.')
   })
 })

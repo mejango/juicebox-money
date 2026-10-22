@@ -142,9 +142,10 @@ vi.mock('@/lib/payer-relayr', async importOriginal => {
     },
   }
 })
-vi.mock('@/hooks/useSafeTx', () => {
+vi.mock('@/hooks/useReviewedAction', async () => {
   return {
-    useSafeTx: () => {
+    ...(await import('@/lib/reviewed-call')),
+    useReviewedAction: () => {
       const approval = mocks.safeTxCall % 2 === 1
       mocks.safeTxCall += 1
       return {
@@ -154,7 +155,12 @@ vi.mock('@/hooks/useSafeTx', () => {
         receipt: null,
         error: approval ? null : mocks.txError,
         isSafe: false,
-        send: mocks.send,
+        // The flow's call as its builder made it, with the run's other options beside it.
+        run: async (action: import('@/hooks/useReviewedAction').ReviewedRun) => {
+          const [{ chainId, to, abi, functionName, args, value, intent, legacy, simulationBlockNumber }] = action.calls
+          const hash = await mocks.send({ chainId, address: to, abi, functionName, args, value }, { ...action, intent, legacy, simulationBlockNumber })
+          return hash ? { status: 'done' as const, hashes: [hash], receipts: [] } : null
+        },
         reset: mocks.reset,
       }
     },
@@ -195,6 +201,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   }
 })
 
+import { jbMultiTerminalAbi } from '@bananapus/nana-sdk-core'
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
@@ -277,7 +284,7 @@ beforeEach(() => {
     transaction: {
       chainId: 1,
       address: '0x5555555555555555555555555555555555555555',
-      abi: [],
+      abi: jbMultiTerminalAbi,
       functionName: 'cashOutTokensOf',
       args: [
         ALICE,

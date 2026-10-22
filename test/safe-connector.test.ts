@@ -41,7 +41,7 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
   waitForSafeExecutionHash: runtime.waitForSafeExecutionHash,
 }))
 
-import type { TxRequest } from '@/hooks/useSafeTx'
+import type { TxRequest } from '@/lib/reviewed-call'
 import {
   atOnceExecution,
   findPendingSafeAppProposal,

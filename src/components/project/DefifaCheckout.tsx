@@ -9,13 +9,13 @@ import { DefifaNftTransactionRevertedError, defifaPhaseAllowsPay, effectiveTierP
 import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
-import { useSafeTx, type TxRequest, type TxSendOptions } from '@/hooks/useSafeTx'
+import { hashOf, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
 import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
 import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
-import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, sendRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
@@ -70,8 +70,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const [submitted, setSubmitted] = useState<{ hash: Hex; safe: boolean } | null>(null)
   const [approvalBlock, setApprovalBlock] = useState<bigint>()
   const [checking, setChecking] = useState(false)
-  const approvalTx = useSafeTx(review?.chainId ?? chainId)
-  const mintTx = useSafeTx(review?.chainId ?? chainId)
+  const approvalTx = useReviewedAction(review?.chainId ?? chainId)
+  const mintTx = useReviewedAction(review?.chainId ?? chainId)
   const locked = useRef(false)
   const preparingRef = useRef(false)
   const generation = useRef(0)
@@ -136,25 +136,23 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     locked.current = true
     setError(null)
     const approving = !!review.approval && approvalBlock === undefined
-    const engine = approving ? approvalTx : mintTx
     const request = approving ? review.approval! : { ...review.prepared.transaction, label: 'Mint Defifa NFTs' }
     try {
       assertCurrent(review)
-      const options: TxSendOptions = { reviewedAccount: review.account, reviewedInParent: true, assertWriteState: () => assertCurrent(review), beforeWrite: () => { assertCurrent(review); submissionStarted.current = true }, onBeforeWriteAborted: () => { submissionStarted.current = false }, onWriteRejected: () => { submissionStarted.current = false }, simulationBlockNumber: approving ? undefined : approvalBlock, reverify: async () => {
+      const action: ReviewedRun = { account: review.account, calls: [reviewedCall(request, { simulationBlockNumber: approving ? undefined : approvalBlock })], assertWriteState: () => assertCurrent(review), beforeWallet: () => { assertCurrent(review); submissionStarted.current = true }, onUnsent: () => { submissionStarted.current = false }, onSubmitted: (_call, _step, hash, { safe }) => { setStep(approving ? 'approval' : 'mint'); setSubmitted({ hash, safe }) }, reverify: async () => {
         await prepareFresh(review)
         if (!approving && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
           const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
           if (allowance < review.prepared.amount) throw new Error('Mint payment allowance is insufficient. Review again.')
         }
       } }
-      const hash = await sendRecoverableDefifaWrite({
+      const result = await runRecoverableDefifaWrite({
         scope: { chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' },
-        request, options, onRecord: record => { recoveryRecord.current = record },
-        send: approving ? (request, options) => approvalTx.send(request, options) : (request, options) => mintTx.send(request, options),
+        action, onRecord: record => { recoveryRecord.current = record }, run: approving ? approvalTx.run : mintTx.run,
       })
-      if (hash) {
+      if (result) {
         setStep(approving ? 'approval' : 'mint')
-        setSubmitted({ hash, safe: engine.isSafe })
+        setSubmitted({ hash: hashOf(result)!, safe: result.status === 'proposed' })
       } else if (submissionStarted.current) {
         setSubmissionUnknown(true)
       } else locked.current = false

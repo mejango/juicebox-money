@@ -11,6 +11,7 @@ import { decodeFunctionData, numberToHex, type Abi, type Address, type Hex } fro
 import { buildBorrowTx, buildCashOutTx, buildPayTx } from '@bananapus/nana-sdk-core/v6'
 import { payIntent, registerReviewHandler } from '@bananapus/nana-sdk-core/review'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import baseline from './fixtures/use-safe-tx-calldata.json'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -127,7 +128,7 @@ async function runOnce(call: Parameters<Action['run']>[0]) {
   const ref = createRef<Action>()
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
-    renderer = TestRenderer.create(createElement(Harness, { ref }))
+    renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref })))
   })
   let result: Awaited<ReturnType<Action['run']>> = null
   await act(async () => {
@@ -143,7 +144,7 @@ describe('useReviewedAction', () => {
     for (const [name, built] of Object.entries(REQUESTS) as [keyof typeof REQUESTS, Built][]) {
       const data = baseline[name].data as Hex
       const decoded = decodeFunctionData({ abi: built.abi, data })
-      const result = await runOnce({
+      const result = await runOnce({ account: ALICE,
         calls: [{ chainId: built.chainId, to: built.address, data, value: built.value ?? 0n, abi: built.abi, functionName: decoded.functionName, args: decoded.args ?? [] }],
       })
       expect(result?.status).toBe('done')
@@ -164,7 +165,7 @@ describe('useReviewedAction', () => {
     const intent = payIntent({ chainId: 10, project: 4n, beneficiary: ALICE })
     const legacy = ['jbm-pay-legacy-key']
     const call = { chainId: 10, to: built.address, data, value: built.value ?? 0n, intent, legacy }
-    expect((await runOnce({ calls: [call] }))?.status).toBe('done')
+    expect((await runOnce({ account: ALICE, calls: [call] }))?.status).toBe('done')
     // The send was held under its intent: the same intent, with another call, sees its settlement.
     const byIntent = writeHolds.open(
       { chainId: 10, account: ALICE, safe: false, namespace: intent, call: { to: built.address, data: '0x', value: 0n } },

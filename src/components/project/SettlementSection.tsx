@@ -42,7 +42,7 @@ import { SkeletonTable } from '@/components/ui/Skeleton'
 import { GossipCard } from '@/components/project/GossipCard'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import type { BridgeMovement } from '@/lib/suckers-queries'
 import { buildClaim } from '@/lib/sucker-claims'
@@ -198,7 +198,7 @@ export function unpackAddress(bytes32: string): Address {
  * across chains, the bridges that link its deployments, the "move between
  * chains" flow, the queue of in-flight movements, and per-peer accounting
  * sync. Every fund-moving step fails closed on any unverified mapping,
- * unknown bridge infra, or missing proof, and never bypasses useSafeTx.
+ * unknown bridge infra, or missing proof, and never bypasses the reviewed send.
  */
 export function SettlementSection({
   chainId,
@@ -622,7 +622,7 @@ function MovementGroup({
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(group.sourceChainId)
+  const tx = useReviewedAction(group.sourceChainId)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -658,10 +658,12 @@ function MovementGroup({
       if (!client) throw new Error(`Unsupported chain ${group.sourceChainId}.`)
       const { sucker, request } = await prepareQueuedExecute(client, { ...group, chains, account: address })
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
-      await tx.send({ ...request, abi: request.abi as Abi }, {
-        reviewedAccount: address,
-        intent: bridgeIntent({ chainId: group.sourceChainId, sucker, token: group.token, account: address }),
-        legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker, token: group.token, account: address })],
+      await tx.run({
+        account: address,
+        calls: [reviewedCall({ ...request, abi: request.abi as Abi }, {
+          intent: bridgeIntent({ chainId: group.sourceChainId, sucker, token: group.token, account: address }),
+          legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker, token: group.token, account: address })],
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')
@@ -871,7 +873,7 @@ function ClaimButton({
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(m.destChainId)
+  const tx = useReviewedAction(m.destChainId)
   const [building, setBuilding] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -909,7 +911,7 @@ function ClaimButton({
       }
       const request = await prepareClaim(sourceClient, destClient, m, chains)
       // Permissionless: the beneficiary is in the leaf, not the sender.
-      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: address })
+      await tx.run({ account: address, calls: [reviewedCall({ ...request, abi: request.abi as Abi })] })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not claim.')
     } finally {

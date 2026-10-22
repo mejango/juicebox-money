@@ -15,11 +15,11 @@ import { getAccount } from 'wagmi/actions'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX, type Shop } from '@/hooks/useShop721'
-import { clearDefifaWriteRecovery, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_QUERY_PREFIX } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, readDefifaWriteRecovery, runRecoverableDefifaWrite, DEFIFA_RECOVERY_QUERY_PREFIX } from '@/lib/defifa-write-recovery'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 
 type CashOut = Awaited<ReturnType<typeof prepareDefifaCashOut>>
@@ -63,7 +63,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
-  const tx = useSafeTx(plan?.chainId ?? chainId)
+  const tx = useReviewedAction(plan?.chainId ?? chainId)
   const client = usePublicClient({ chainId: plan?.chainId ?? chainId }) as PublicClient | undefined
   const [proof, setProof] = useState<'idle' | 'checking' | 'verified' | 'reverted' | 'error'>('idle')
   const [failedTransaction, setFailedTransaction] = useState<{ hash: Hex; chainId: JBChainId }>()
@@ -202,19 +202,19 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     sending.current = true
     setError(null)
     try {
-      const hash = await sendRecoverableDefifaWrite({
+      const result = await runRecoverableDefifaWrite({
         scope: { chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind },
-        request: plan.result.transaction, send: (request, options) => tx.send(request, options),
+        run: tx.run,
         onRecord: record => { recovery.current = record; markWrite(record !== null) },
-        options: {
-        reviewedAccount: plan.account,
+        action: {
+        account: plan.account,
+        calls: [reviewedCall(plan.result.transaction)],
         assertWriteState,
-        beforeWrite: () => {
+        beforeWallet: () => {
           assertWriteState()
           markWrite(true)
         },
-        onBeforeWriteAborted: () => markWrite(false),
-        onWriteRejected: () => markWrite(false),
+        onUnsent: () => markWrite(false),
         reverify: async () => {
           assertWriteState()
           const context = { chainId: plan.chainId, projectId: BigInt(plan.projectId), account: plan.account, expectedHook: plan.result.inventory.hook }
@@ -229,9 +229,9 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
         },
         },
       })
-      if (hash) {
+      if (result) {
         markWrite(true)
-        if (tx.isSafe) setProposalHash(hash)
+        if (result.status === 'proposed') setProposalHash(result.safeTxHash)
       }
     } catch (reason) { setError(message(reason)) } finally {
       sending.current = false

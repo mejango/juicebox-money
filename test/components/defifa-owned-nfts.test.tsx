@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { zeroAddress, encodeFunctionData } from 'viem'
+import { zeroAddress } from 'viem'
 
 const m = vi.hoisted(() => ({ realEngine: false, account: '0x1111111111111111111111111111111111111111', holdings: vi.fn(), cash: vi.fn(), transfer: vi.fn(), verify: vi.fn(), clear: vi.fn(), read: vi.fn(), saved: null as unknown, send: vi.fn(), phase: 'idle', receipt: null as unknown, hash: null as unknown }))
 vi.mock('@/lib/defifa-write-recovery', async original => {
@@ -12,23 +12,23 @@ vi.mock('@/lib/defifa-write-recovery', async original => {
   clearDefifaWriteRecovery: m.clear,
   readDefifaWriteRecovery: (scope: Parameters<typeof actual.readDefifaWriteRecovery>[0]) => m.realEngine ? actual.readDefifaWriteRecovery(scope) : m.read(scope),
   DEFIFA_RECOVERY_QUERY_PREFIX: ['defifa-write-recovery'],
-  sendRecoverableDefifaWrite: async ({ send, request, options, onRecord, scope }: Parameters<typeof import('@/lib/defifa-write-recovery').sendRecoverableDefifaWrite>[0]) => {
-    if (m.realEngine) return actual.sendRecoverableDefifaWrite({ send, request, options, onRecord, scope })
-    const record = { version: 1 as const, id: 'owned-test', chainId: scope.chainId, account: scope.account, safe: false, call: { to: request.address, data: encodeFunctionData(request), value: '0' } }
-    return send(request, { ...options,
-      beforeWrite: async () => {
+  runRecoverableDefifaWrite: async ({ run, action, onRecord, scope }: Parameters<typeof import('@/lib/defifa-write-recovery').runRecoverableDefifaWrite>[0]) => {
+    if (m.realEngine) return actual.runRecoverableDefifaWrite({ run, action, onRecord, scope })
+    const [call] = action.calls
+    const record = { version: 1 as const, id: 'owned-test', chainId: scope.chainId, account: scope.account, safe: false, call: { to: call.to, data: call.data, value: '0' } }
+    return run({ ...action,
+      beforeWallet: async (reviewed, step) => {
         m.saved = record; onRecord?.(record)
-        try { await options.beforeWrite?.() } catch (error) { m.saved = null; onRecord?.(null); await options.onBeforeWriteAborted?.(); throw error }
+        try { await action.beforeWallet?.(reviewed, step) } catch (error) { m.saved = null; onRecord?.(null); await action.onUnsent?.(reviewed, step); throw error }
       },
-      onBeforeWriteAborted: async () => { m.saved = null; onRecord?.(null); await options.onBeforeWriteAborted?.() },
-      onWriteRejected: async () => { m.saved = null; onRecord?.(null); await options.onWriteRejected?.() },
+      onUnsent: async (reviewed, step) => { m.saved = null; onRecord?.(null); await action.onUnsent?.(reviewed, step) },
     })
   },
 }) })
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async original => {
-  const { wallet } = await import('../support/fake-wallet')
-  return { ...(await original<typeof import('@wagmi/core')>()), getAccount: () => ({ address: m.realEngine ? wallet.account : m.account, chainId: 1 }) }
+  const { wallet, walletActions } = await import('../support/fake-wallet')
+  return { ...(await original<typeof import('@wagmi/core')>()), ...walletActions, getAccount: () => ({ address: m.realEngine ? wallet.account : m.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async () => {
   const { walletHooks } = await import('../support/fake-wallet')
@@ -42,9 +42,9 @@ vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('../support/fake-wallet')
   return { useWallet: () => { const connected = useFakeWallet(); return m.realEngine ? connected : ({ address: m.account, openSignIn: vi.fn() }) } }
 })
-vi.mock('@/hooks/useSafeTx', async original => {
-  const actual = await original<typeof import('@/hooks/useSafeTx')>()
-  return { useSafeTx: (chainId: number) => m.realEngine ? actual.useSafeTx(chainId) : ({ phase: m.phase, hash: m.hash, receipt: m.receipt, send: m.send, busy: m.phase === 'pending', reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }
+vi.mock('@/hooks/useReviewedAction', async original => {
+  const actual = await original<typeof import('@/hooks/useReviewedAction')>()
+  return { ...actual, useReviewedAction: (chainId: number) => m.realEngine ? actual.useReviewedAction(chainId) : ({ phase: m.phase, hash: m.hash, receipt: m.receipt, run: m.send, busy: m.phase === 'pending', notice: null, error: null, reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }
 })
 vi.mock('@/lib/transaction-review', async original => {
   const { wallet } = await import('../support/fake-wallet')
@@ -84,7 +84,7 @@ beforeEach(async () => {
   m.account = '0x1111111111111111111111111111111111111111'; m.phase = 'idle'; m.receipt = null; m.hash = null
   m.holdings.mockReset().mockResolvedValue({ hook: HOOK, blockNumber: 99n, tokens: [], totalOwned: 1n, totalCandidates: 200n, nextCursor: '100', complete: false })
   m.cash.mockReset().mockImplementation(async () => cash()); m.transfer.mockReset().mockImplementation(async (_client, args) => ({ inventory, transaction: { chainId: 1, address: HOOK, abi: erc721Abi, functionName: 'safeTransferFrom', args: [args.account, args.recipient, args.tokenId] } }))
-  m.saved = null; m.read.mockReset().mockImplementation(() => m.saved); m.verify.mockReset().mockResolvedValue(undefined); m.clear.mockReset().mockImplementation(async () => { m.saved = null }); m.send.mockReset().mockImplementation(async (_request, options) => { if (m.account !== options.reviewedAccount) throw new Error('Account changed'); await options.reverify(); await options.beforeWrite?.(); return null })
+  m.saved = null; m.read.mockReset().mockImplementation(() => m.saved); m.verify.mockReset().mockResolvedValue(undefined); m.clear.mockReset().mockImplementation(async () => { m.saved = null }); m.send.mockReset().mockImplementation(async action => { if (m.account !== action.account) throw new Error('Account changed'); await action.reverify(action.calls[0], 0); await action.beforeWallet?.(action.calls[0], 0); return null })
   queries = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
 })
@@ -97,13 +97,15 @@ describe('native owned NFT actions', () => {
     vi.stubGlobal('navigator', { locks: { request: async (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
     const reservations = vi.spyOn(Storage.prototype, 'setItem')
     let release!: () => void
-    wallet.client.simulateContract.mockImplementationOnce(request => new Promise(resolve => { release = () => resolve({ request }) }))
+    // Every simulation, at review and before the send, waits until released.
+    const simulated = new Promise(resolve => { release = () => resolve('0x') })
+    wallet.client.request.mockImplementation(async ({ method }) => method === 'eth_call' ? simulated : Promise.reject(new Error(`unexpected ${method}`)))
     await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
     await manual()
     if (action === 'transfer') await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
     await click(action === 'transfer' ? 'Transfer Defifa NFT' : 'Cash out Defifa NFTs')
     await click('Confirm NFT action')
-    expect(wallet.client.simulateContract).toHaveBeenCalledTimes(1)
+    expect(wallet.client.request).toHaveBeenCalledWith(expect.objectContaining({ method: 'eth_call' }))
     expect(wallet.writeContract).not.toHaveBeenCalled()
     await act(async () => renderer.unmount())
     await act(async () => release()); await settle()
@@ -225,7 +227,7 @@ describe('native owned NFT actions', () => {
   })
   it('retains execution context across an account change after submission begins', async () => {
     let resolve!: (value: null) => void
-    m.send.mockImplementationOnce(async (_request, options) => { await options.beforeWrite(); return new Promise(done => { resolve = done }) })
+    m.send.mockImplementationOnce(async action => { await action.beforeWallet(action.calls[0], 0); return new Promise(done => { resolve = done }) })
     await manual(); await click('Cash out Defifa NFTs')
     await click('Confirm NFT action'); m.account = OTHER
     await act(async () => renderer.update(element()))
@@ -245,17 +247,17 @@ describe('native owned NFT actions', () => {
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Confirm NFT action')).toBeUndefined()
     expect(m.send).not.toHaveBeenCalled()
   })
-  it.each(['onBeforeWriteAborted', 'onWriteRejected'])('releases a typed %s before another deliberate attempt', async callback => {
-    m.send.mockImplementationOnce(async (_request, options) => { await options.beforeWrite(); await options[callback](); return null })
+  it('releases an unsent step before another deliberate attempt', async () => {
+    m.send.mockImplementationOnce(async action => { await action.beforeWallet(action.calls[0], 0); await action.onUnsent(action.calls[0], 0); return null })
     await manual(); await click('Cash out Defifa NFTs'); await click('Confirm NFT action')
     await click('Confirm NFT action'); expect(m.send).toHaveBeenCalledTimes(2)
   })
   it('rejects a project change between fresh verification and the wallet writer', async () => {
     let release!: () => void
-    m.send.mockImplementationOnce(async (_request, options) => {
-      await options.reverify()
+    m.send.mockImplementationOnce(async action => {
+      await action.reverify(action.calls[0], 0)
       await new Promise<void>(resolve => { release = resolve })
-      await options.beforeWrite()
+      await action.beforeWallet(action.calls[0], 0)
       throw new Error('Writer must not be reached')
     })
     await manual(); await click('Cash out Defifa NFTs'); await click('Confirm NFT action')

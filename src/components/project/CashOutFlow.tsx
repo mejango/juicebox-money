@@ -32,7 +32,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { useSafeTx, type TxRequest } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
@@ -77,7 +77,7 @@ type CashOutPlan = { account: Address; minimumReturn: bigint } & (
 /**
  * The cash-out flow (JBMultiTerminal.cashOutTokensOf), extracted from
  * TreasuryCard so both the treasury card and the Accounts (YOU) card render
- * the same panel. Every write goes through useSafeTx (simulate-first) and the
+ * the same panel. Every write goes through the reviewed send (simulate-first) and the
  * SDK's hook-aware slippage-protected route — a zero floor never sends.
  *
  * Rendered bare (no card chrome): the caller wraps it.
@@ -106,8 +106,8 @@ export function CashOutPanel({
   const { isConnected, address, openSignIn } = useWallet()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
-  const tx = useSafeTx(chainId)
-  const approveTx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
+  const approveTx = useReviewedAction(chainId)
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
@@ -519,18 +519,18 @@ export function CashOutPanel({
           throw new Error('No direct sell route is available.')
         }
         if (needsTokenApproval) {
-          await approveTx.send(
-            buildTokenApproval({
-              chainId,
-              token: projectToken.address,
-              spender: swapDeployment.permit2,
-              amount: cashOutCount,
-            }),
-            {
-              reviewedAccount,
-              intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }),
-            },
-          )
+          await approveTx.run({
+            account: reviewedAccount,
+            calls: [reviewedCall(
+              buildTokenApproval({
+                chainId,
+                token: projectToken.address,
+                spender: swapDeployment.permit2,
+                amount: cashOutCount,
+              }),
+              { intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
+            )],
+          })
           return
         }
         if (needsRouterApproval) {
@@ -540,17 +540,17 @@ export function CashOutPanel({
             amount: cashOutCount,
             expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
           })
-          await approveTx.send(
-            {
-              ...approval,
-              args: approval.args as unknown as readonly unknown[],
-              label: 'Approve swap router',
-            },
-            {
-              reviewedAccount,
-              intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: approval.args[1] as string }),
-            },
-          )
+          await approveTx.run({
+            account: reviewedAccount,
+            calls: [reviewedCall(
+              {
+                ...approval,
+                args: approval.args as unknown as readonly unknown[],
+                label: 'Approve swap router',
+              },
+              { intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: approval.args[1] as string }) },
+            )],
+          })
           return
         }
         const refreshedCashOut = await refetchCashOutRoute()
@@ -591,37 +591,40 @@ export function CashOutPanel({
           deadline: swapDeadline(tx.isSafe),
         })
         setUsedDirectSell(true)
-        await tx.send(
-          {
-            ...request,
-            args: request.args as unknown as readonly unknown[],
-            label:
-              'Sell claimed project tokens through the best available pool route',
-          },
-          {
-            reviewedAccount,
-            // Its deadline and minimum regenerate on retry: held by what the user chose.
-            intent: cashOutKey,
-            legacy: cashOutLegacy,
-            reviewNotice: minimumDropNotice({
-              displayedMinimum: plan.minimumReturn,
-              freshMinimum: refreshedBest.minimumReturn,
-              decimals: receiveDecimals,
-              symbol: receiveSymbol,
-            }),
-          },
-        )
+        await tx.run({
+          account: reviewedAccount,
+          calls: [reviewedCall(
+            {
+              ...request,
+              args: request.args as unknown as readonly unknown[],
+              label:
+                'Sell claimed project tokens through the best available pool route',
+            },
+            {
+              // Its deadline and minimum regenerate on retry: held by what the user chose.
+              intent: cashOutKey,
+              legacy: cashOutLegacy,
+              // An approval sent just before took effect here.
+              ...(approveTx.receipt ? { simulationBlockNumber: approveTx.receipt.blockNumber } : {}),
+            },
+          )],
+          description: minimumDropNotice({
+            displayedMinimum: plan.minimumReturn,
+            freshMinimum: refreshedBest.minimumReturn,
+            decimals: receiveDecimals,
+            symbol: receiveSymbol,
+          }),
+        })
         return
       }
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      await tx.send(plan.request, {
-        reviewedAccount,
-        reviewNotice: plan.reviewNotice,
+      await tx.run({
+        account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
-        intent: cashOutKey,
-        legacy: cashOutLegacy,
+        calls: [reviewedCall(plan.request, { intent: cashOutKey, legacy: cashOutLegacy })],
+        description: plan.reviewNotice,
       })
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))

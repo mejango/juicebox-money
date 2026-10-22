@@ -2,7 +2,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
-import { UserRejectedRequestError, erc20Abi, zeroAddress, type Address } from 'viem'
+import { UserRejectedRequestError, zeroAddress, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
 import type { Shop } from '@/hooks/useShop721'
@@ -21,8 +21,8 @@ vi.mock('@/hooks/useShop721', async original => ({ ...(await original<typeof imp
 vi.mock('@/components/project/DefifaRecovery', () => ({ DefifaRecovery: ({ children }: { children: ReactNode }) => children }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async original => {
-  const { wallet } = await import('../support/fake-wallet')
-  return { ...(await original<typeof import('@wagmi/core')>()), getAccount: () => ({ address: wallet.account, chainId: 1 }) }
+  const { wallet, walletActions } = await import('../support/fake-wallet')
+  return { ...(await original<typeof import('@wagmi/core')>()), ...walletActions, getAccount: () => ({ address: wallet.account, chainId: 1 }) }
 })
 vi.mock('wagmi', async () => ({ ...(await import('../support/fake-wallet')).walletHooks }))
 vi.mock('@/hooks/useWallet', async () => ({ useWallet: (await import('../support/fake-wallet')).useFakeWallet }))
@@ -70,6 +70,11 @@ async function click(label: string) {
   expect(button, label).toBeDefined()
   await act(async () => button!.props.onClick())
 }
+/** The chain confirms `hash`; the run's receipt wait and hold check settle. */
+async function confirmed(hash: Hex, blockNumber?: bigint) {
+  await act(async () => wallet.confirm(hash, blockNumber))
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+}
 async function openReview() { await click('Add Banny'); await click('Review mint') }
 beforeEach(async () => {
   localStorage.clear()
@@ -91,7 +96,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     expect(controls.prepare).toHaveBeenCalledTimes(2)
     expect(text(renderer.root)).not.toContain('NFT mint verified onchain.')
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(controls.verify).toHaveBeenCalledWith(wallet.client, expect.objectContaining({ account: ALICE, hook: HOOK, transaction: prepared().transaction }), expect.objectContaining({ transactionHash: sentHash(1) }))
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
@@ -145,15 +150,13 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
   it('refuses a project change during simulation before invoking the wallet', async () => {
-    let resolve!: (value: { request: Record<string, unknown> }) => void
-    let simulated!: Record<string, unknown>
-    wallet.client.simulateContract.mockImplementationOnce(async request => {
-      simulated = request
-      return new Promise<{ request: Record<string, unknown> }>(done => { resolve = done })
-    })
+    // Every simulation, at review and before the send, waits until released.
+    let resolve!: (value: Hex) => void
+    const simulated = new Promise<Hex>(done => { resolve = done })
+    wallet.client.request.mockImplementation(async ({ method }: { method: string }) => method === 'eth_call' ? simulated : Promise.reject(new Error(`unexpected ${method}`)))
     await openReview(); await click('Confirm mint')
     await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 43, shop })))
-    await act(async () => resolve({ request: simulated }))
+    await act(async () => resolve('0x'))
     expect(wallet.writeContract).not.toHaveBeenCalled()
     // The switched account's identity closes the stale review: nothing is written, and its own review starts fresh.
     expect(text(renderer.root)).toContain('Review mint')
@@ -205,7 +208,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
   it('permits an explicit new review only after the SDK proves the exact finalized mint failed', async () => {
     controls.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(sentHash(1), 1))
     await openReview(); await click('Confirm mint')
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(text(renderer.root)).toContain('NFT mint failed onchain')
     expect(text(renderer.root)).not.toContain('NFT mint verified onchain.')
     await click('Close review')
@@ -218,7 +221,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
   it.each([{ hash: sentHash(2), chainId: 1 }, { hash: sentHash(1), chainId: 8453 }])('does not release a failed proof for another identity $chainId/$hash', async ({ hash, chainId }) => {
     controls.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(hash, chainId))
     await openReview(); await click('Confirm mint')
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(text(renderer.root)).toContain('Confirmation needs verification')
     const original = readDefifaWriteRecovery({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })
     await click('Cancel')
@@ -232,32 +235,35 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(text(renderer.root)).toContain(sentHash(1))
     await click('Recheck confirmation')
     expect(wallet.writeContract).toHaveBeenCalledTimes(1)
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(text(renderer.root)).toContain('Receipt unavailable')
     expect(text(renderer.root)).not.toContain('NFT mint verified onchain.')
     await click('Recheck confirmation')
     expect(wallet.writeContract).toHaveBeenCalledTimes(1)
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
-  it('wallet-action:approve-defifa-mint-payment approves the exact amount, then simulates mint at the approval block', async () => {
+  it('wallet-action:approve-defifa-mint-payment approves the exact amount, then simulates the mint no earlier than the approval block', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockImplementation(async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => functionName === 'allowance' ? blockNumber === undefined ? 0n : 100n : Promise.reject(new Error('Unexpected read')))
     await openReview(); await click('Approve payment')
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ abi: unknown; args: unknown[] }])[0]
-    expect(call.abi).toBe(erc20Abi); expect(call.args).toEqual([TERMINAL, 100n])
-    await act(async () => wallet.confirm(sentHash(1), 77n))
+    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[] }])[0]
+    expect(call.address).toBe(TOKEN); expect(call.args).toEqual([TERMINAL, 100n])
+    await confirmed(sentHash(1), 77n)
     expect(text(renderer.root)).toContain('Payment approval verified.')
     await click('Confirm mint')
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'pay', account: ALICE }])
-    expect(wallet.client.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({ functionName: 'pay', blockNumber: 77n, account: ALICE }))
+    // The mint simulates as Alice, never on a block before the approval's.
+    const [{ params: [simulated, block] }] = wallet.client.request.mock.calls.at(-1) as unknown as [{ params: [{ from: Address; to: Address }, Hex] }]
+    expect(simulated).toMatchObject({ from: ALICE, to: TERMINAL })
+    expect(BigInt(block)).toBeGreaterThanOrEqual(77n)
   })
   it('allows a new deliberate review only after an authenticated failed approval', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockResolvedValue(0n)
     controls.approvalProof.mockResolvedValueOnce('failed')
     await openReview(); await click('Approve payment')
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(text(renderer.root)).toContain('payment approval failed onchain')
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Close review')?.props.disabled).toBe(false)
     await click('Close review')
@@ -272,7 +278,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
     wallet.client.readContract.mockResolvedValue(0n)
     controls.approvalProof.mockRejectedValue(new Error('Approval receipt unavailable'))
     await openReview(); await click('Approve payment')
-    await act(async () => wallet.confirm(sentHash(1)))
+    await confirmed(sentHash(1))
     expect(text(renderer.root)).toContain('Approval receipt unavailable')
     await click('Recheck confirmation')
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])

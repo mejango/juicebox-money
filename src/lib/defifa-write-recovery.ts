@@ -5,8 +5,9 @@ import {
   writeHeldMessage,
   type ReviewedWriteRecoveryRecord,
 } from '@bananapus/nana-sdk-core/review'
-import type { Address, Hex } from 'viem'
-import type { TxRequest, TxSendOptions } from '@/hooks/useSafeTx'
+import type { Address } from 'viem'
+import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import type { ReviewedRun } from '@/hooks/useReviewedAction'
 
 /** The SDK's held-write storage, shared with every write hold: the browser's, or this tab's memory. */
 const storage = createHeldWriteStorage()
@@ -32,18 +33,18 @@ export class PendingDefifaWriteError extends Error {
 }
 
 /**
- * Send a Defifa action under the SDK hold of its namespace: the hold reserves,
+ * Run a Defifa action under the SDK hold of its namespace: the hold reserves,
  * records and follows it. A saved earlier attempt goes to its recovery card
  * first, and `onRecord` hears of the hold's record as it changes.
  */
-export async function sendRecoverableDefifaWrite({ scope, request, send, options, onRecord }: {
+export async function runRecoverableDefifaWrite({ scope, action, run, onRecord }: {
   scope: DefifaRecoveryScope
-  request: TxRequest
-  send: (request: TxRequest, options: TxSendOptions) => Promise<Hex | null>
-  options: TxSendOptions
+  action: ReviewedRun
+  run: (action: ReviewedRun) => Promise<ReviewedResult | null>
   onRecord?: (record: ReviewedWriteRecoveryRecord | null) => void
 }) {
-  if (request.chainId !== scope.chainId || options.reviewedAccount.toLowerCase() !== scope.account.toLowerCase()) {
+  const [call] = action.calls
+  if (action.calls.length !== 1 || call.chainId !== scope.chainId || action.account.toLowerCase() !== scope.account.toLowerCase()) {
     throw new Error('The recovery scope does not match the reviewed account and network.')
   }
   const previous = readDefifaWriteRecovery(scope)
@@ -55,25 +56,26 @@ export async function sendRecoverableDefifaWrite({ scope, request, send, options
     onRecord?.(record)
     notifyRecovery()
   }
-  const hash = await send(request, {
-    ...options,
-    intent: defifaWriteNamespace(scope),
-    beforeWrite: async () => {
+  const result = await run({
+    ...action,
+    calls: [{ ...call, intent: defifaWriteNamespace(scope) }],
+    beforeWallet: async (reviewed, step) => {
       // The hold reserved this write just before: its record is the recovery record.
       told(readDefifaWriteRecovery(scope))
-      await options.beforeWrite?.()
+      await action.beforeWallet?.(reviewed, step)
     },
-    onBeforeWriteAborted: async () => {
+    onUnsent: async (reviewed, step) => {
       told(null)
-      await options.onBeforeWriteAborted?.()
-    },
-    onWriteRejected: async () => {
-      told(null)
-      await options.onWriteRejected?.()
+      await action.onUnsent?.(reviewed, step)
     },
   })
-  if (hash) told(readDefifaWriteRecovery(scope))
-  return hash
+  if (result) {
+    // A receipt the hold already settled leaves no record: the card keeps the one it was told.
+    const record = readDefifaWriteRecovery(scope)
+    if (record) told(record)
+    else notifyRecovery()
+  }
+  return result
 }
 
 /**

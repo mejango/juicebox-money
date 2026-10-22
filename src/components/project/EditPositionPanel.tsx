@@ -9,7 +9,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { hashOf, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyEditPositionKeys } from '@/lib/legacy-intents'
 import { useStepRun } from '@/hooks/useStepRun'
@@ -150,7 +150,7 @@ export function EditPositionPanel({
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { connectedAddress, isViewAs } = useViewedAccount()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const queryClient = useQueryClient()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const pairSym = pool.pair.symbol
@@ -348,59 +348,62 @@ export function EditPositionPanel({
       // included, sends only from the account the plan was reviewed for.
       const reviewedAccount = p.account
       if (step.kind === 'approve-erc20') {
-        return tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
+        return tx.run({
+          account: reviewedAccount,
           // Its amount follows the live pool: held as a step of the liquidity action.
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
-        )
+          calls: [reviewedCall(buildErc20ApproveRequest({
+              chainId,
+              token: step.token,
+              spender: UNISWAP_PERMIT2_ADDRESS,
+              amount: step.amount,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }),
+            })],
+        }).then(hashOf)
       }
       if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }) },
-        )
+        return tx.run({
+          account: reviewedAccount,
+          calls: [reviewedCall(buildPermit2ApproveRequest({
+              chainId,
+              token: step.token,
+              positionManager,
+              amount: step.amount,
+              expiration: step.expiration,
+            }), {
+              intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }),
+            })],
+        }).then(hashOf)
       }
       // Everything that touches funds is frozen inside unlockData; only the
       // deadline is stamped at send time.
-      return tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: p.plan.unlockData,
-          deadline: swapDeadline(isSafeConnection(wagmiConfig)),
-          value: p.plan.value,
-        }),
-        {
-          reviewedAccount,
-          simulationBlockNumber: confirmedAt,
-          // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
-          intent: p.intent,
-          legacy: p.legacy,
-          reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
-          // Runs after the review, so however long it sat open, a changed
-          // position or drift beyond the reviewed maxima still aborts first.
-          reverify: async () => {
-            if (!client) return
-            const { market, fresh } = await readLive(p.account)
-            const problem = editLiquidityStillFits(p.plan, {
-              sqrtP: market.sqrtP,
-              liquidity: fresh.liquidity,
-            })
-            if (problem) throw new FlowError(problem)
-          },
+      return tx.run({
+        account: reviewedAccount,
+        calls: [reviewedCall(buildModifyLiquiditiesRequest({
+            chainId,
+            positionManager,
+            unlockData: p.plan.unlockData,
+            deadline: swapDeadline(isSafeConnection(wagmiConfig)),
+            value: p.plan.value,
+          }), {
+            simulationBlockNumber: confirmedAt,
+            // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
+            intent: p.intent,
+            legacy: p.legacy,
+          })],
+        description: `${p.copy.lead} ${p.copy.detail}`,
+        // Runs after the review, so however long it sat open, a changed
+        // position or drift beyond the reviewed maxima still aborts first.
+        reverify: async () => {
+          if (!client) return
+          const { market, fresh } = await readLive(p.account)
+          const problem = editLiquidityStillFits(p.plan, {
+            sqrtP: market.sqrtP,
+            liquidity: fresh.liquidity,
+          })
+          if (problem) throw new FlowError(problem)
         },
-      )
+      }).then(hashOf)
     },
     // readLive closes over stable props; the plan itself is read from the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -59,7 +59,8 @@ export default defineConfig({
           functions: 55,
           lines: 68,
         },
-        'src/hooks/useSafeTx.ts': {
+        // jbm's one reviewed send over core's useReviewedRun.
+        'src/hooks/useReviewedAction.ts': {
           statements: 78,
           branches: 68,
           functions: 80,
@@ -84,7 +85,7 @@ export default defineConfig({
           functions: 75,
           lines: 85,
         },
-        'src/lib/contract-write.ts': {
+        'src/lib/reviewed-call.ts': {
           statements: 95,
           branches: 95,
           functions: 95,

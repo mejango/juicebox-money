@@ -21,7 +21,7 @@ import { useLinkedDeployments } from '@/lib/sucker-group'
  * powers, and the buyback-router controls. Every write follows the same
  * pattern as FundsTab: review freezes the exact args from LIVE re-reads, the
  * connected account is re-checked at confirm, and the signed call goes
- * through useSafeTx (simulate-first).
+ * through useReviewedAction (simulate-first).
  */
 export function BackOfficeTab({
   chainId,

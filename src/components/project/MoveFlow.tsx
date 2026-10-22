@@ -38,7 +38,7 @@ import {
 } from '@/components/project/SettlementSection'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -72,7 +72,7 @@ type ReviewedMove = {
  * SettlementSection so the Accounts (YOU) card can render it inline. Bridge
  * your deployed ERC-20 to another chain via the project's sucker. Every
  * fund-moving step fails closed on any unverified mapping, unknown bridge
- * infra, or missing proof, and never bypasses useSafeTx.
+ * infra, or missing proof, and never bypasses the reviewed send.
  *
  * Rendered bare (no card chrome): the caller wraps it.
  */
@@ -310,7 +310,7 @@ export function MoveCard({
 }
 
 /** The three-step move: approve the sucker, prepare (queue the leaf), then
- *  send to the remote chain. Each step is its own reviewed useSafeTx send. */
+ *  send to the remote chain. Each step is its own reviewed send. */
 function MoveFlow({
   from,
   fromPid,
@@ -336,7 +336,7 @@ function MoveFlow({
   account: Address
 }) {
   const config = useConfig()
-  const tx = useSafeTx(from)
+  const tx = useReviewedAction(from)
 
   // step: 0 review, 1 approve (if needed), 2 prepare, 3 send, 4 done
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
@@ -518,18 +518,18 @@ function MoveFlow({
   // send refuses any other connected account.
   const sendApprove = () => {
     if (!review || busy) return
-    tx.send(
-      buildErc20ApproveRequest({
-        chainId: from as JBChainId,
-        token: review.projectToken,
-        spender: review.sucker,
-        amount: review.amount,
-      }),
-      {
-        reviewedAccount: review.account,
-        intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }),
-      },
-    )
+    void tx.run({
+      account: review.account,
+      calls: [reviewedCall(
+        buildErc20ApproveRequest({
+          chainId: from as JBChainId,
+          token: review.projectToken,
+          spender: review.sucker,
+          amount: review.amount,
+        }),
+        { intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }) },
+      )],
+    })
   }
 
   const sendPrepare = () => {
@@ -542,11 +542,10 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi }, {
-      reviewedAccount: review.account,
+    void tx.run({
+      account: review.account,
       // Its minimum re-quotes on a fresh review: held by what the user chose to move.
-      intent: review.intent,
-      legacy: review.legacy,
+      calls: [reviewedCall({ ...request, abi: request.abi as Abi }, { intent: review.intent, legacy: review.legacy })],
     })
   }
 
@@ -578,11 +577,13 @@ function MoveFlow({
         token: review.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi }, {
-        reviewedAccount: review.account,
+      await tx.run({
+        account: review.account,
         // Its fee requotes on retry: held by the outbox send itself.
-        intent: bridgeIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
-        legacy: [legacyBridgeSendKey({ chainId: from, sucker: review.sucker, token: review.token, account: review.account })],
+        calls: [reviewedCall({ ...request, abi: request.abi as Abi }, {
+          intent: bridgeIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
+          legacy: [legacyBridgeSendKey({ chainId: from, sucker: review.sucker, token: review.token, account: review.account })],
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')

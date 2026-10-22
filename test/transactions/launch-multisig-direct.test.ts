@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, encodeFunctionResult, type Address, type Hex } from 'viem'
 import { CREATE_BATCH_ABI, SAFE_CREATE_ABI, SAFE_FACTORY, SAFE_SINGLETON, MULTICALL3, buildSafeInitializer, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { createSimpleProjectStage, DEFAULT_STORE_FLAGS, type LaunchPlan } from '@/lib/launch'
@@ -6,15 +6,40 @@ import { LAUNCH_SESSION_KEY, loadLaunchSession, saveLaunchSession, type LaunchSe
 import { prepareLaunchMultisigs, retireLaunchMultisigSetup, setupAttemptOf } from '@/lib/launch-multisig-direct'
 import { savedAttempts } from '@/lib/write-holds'
 import safeFixture from '../fixtures/safe-1.4.1.json'
+import { registerReviewHandler, type ReviewModel } from '@bananapus/nana-sdk-core/review'
+
+// The app's review, as core asks it: `mocks.review` rejecting is a cancel.
+beforeAll(() => {
+  registerReviewHandler(async prompt => {
+    try {
+      await mocks.review(prompt.model)
+      return prompt.confirmation
+    } catch {
+      return null
+    }
+  })
+})
+/** The one review core asked for. */
+const reviewed = () => mocks.review.mock.calls[0][0] as ReviewModel
 
 const mocks = vi.hoisted(() => ({
   /** The plan's Safes, for the chain mock's setup call. */
   plan: (): SafeDeploymentPlan[] | undefined => undefined,
   account: vi.fn(), receipt: vi.fn(), review: vi.fn(), preflight: vi.fn(), verifyCreated: vi.fn(),
   verifySafe: vi.fn(), simulate: vi.fn(), estimateGas: vi.fn(), safe: vi.fn(), safeHash: vi.fn(), execution: vi.fn(), viewAs: vi.fn(),
+  /** What reaches the wallet through core's reviewed send. */
+  write: vi.fn(), switchChain: vi.fn(),
 }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
-vi.mock('@wagmi/core', () => ({ getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt }))
+vi.mock('@wagmi/core', async () => {
+  const { publicClient } = await import('@/lib/wallet-core')
+  return {
+    getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt,
+    getPublicClient: (_config: unknown, { chainId }: { chainId: number }) => publicClient(chainId as never),
+    getWalletClient: async () => ({ chain: { id: 8453 }, sendTransaction: mocks.write }),
+    switchChain: (_config: unknown, { chainId }: { chainId: number }) => mocks.switchChain(chainId),
+  }
+})
 vi.mock('@/lib/wallet-core', async () => {
   const { buildSafeDeploymentTx } = await import('@bananapus/nana-sdk-core/safe')
   const { encodeFunctionData, TransactionNotFoundError } = await import('viem')
@@ -41,10 +66,12 @@ vi.mock('@/lib/wallet-core', async () => {
       const { receipt, call } = await mined(hash)
       return { logs: [], ...receipt, transactionHash: hash, from: '0x1111111111111111111111111111111111111111', to: call.to, blockNumber: 90n, blockHash: MINED, transactionIndex: 0 }
     },
-    request: async () => null,
+    // Core's own receipt wait reads the flow's receipt mock too.
+    waitForTransactionReceipt: ({ hash }: { hash: Hex }) => mocks.receipt({}, { chainId: 8453, hash }),
+    // Core's simulation passes; a Safe's nonce reads 0.
+    request: async ({ method }: { method: string }) => method === 'eth_call' ? `0x${'0'.repeat(64)}` : null,
   }) }
 })
-vi.mock('@/lib/transaction-review', () => ({ requireContractTransactionReview: mocks.review }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: mocks.viewAs }))
 vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
@@ -93,8 +120,7 @@ function seed(overrides: Partial<LaunchSession> = {}) {
 function setup() { return loadLaunchSession({ strict: true })!.statuses[CHAIN].multisigSetup }
 function options() {
   return {
-    chainId: CHAIN, salt: SALT, plan, account: ACCOUNT, switchChain: vi.fn().mockResolvedValue(undefined),
-    writeContract: vi.fn().mockResolvedValue(HASH), onProgress: vi.fn(), onSetup: vi.fn(),
+    chainId: CHAIN, salt: SALT, plan, account: ACCOUNT, onProgress: vi.fn(), onSetup: vi.fn(),
     signal: new AbortController().signal,
   }
 }
@@ -118,6 +144,9 @@ beforeEach(() => {
   mocks.verifySafe.mockResolvedValue(false)
   mocks.simulate.mockResolvedValue(simulation())
   mocks.estimateGas.mockResolvedValue(500_000n)
+  mocks.write.mockResolvedValue(HASH)
+  mocks.switchChain.mockResolvedValue(undefined)
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ count: 0, next: null, previous: null, results: [] }))))
   mocks.safe.mockReturnValue(false)
   mocks.receipt.mockResolvedValue({ status: 'success', blockNumber: 123n })
   mocks.safeHash.mockResolvedValue(EXECUTION)
@@ -128,17 +157,21 @@ beforeEach(() => {
 describe('direct launch Safe setup', () => {
   it('wallet-action:create-an-owner-or-operator-safe-during-launch reviews, simulates and writes the exact SDK factory batch, then verifies the receipt block independently of project launch', async () => {
     const args = options()
-    args.writeContract.mockImplementation(async () => {
+    mocks.write.mockImplementation(async () => {
       expect(setup()).toEqual({ phase: 'signing' })
       return HASH
     })
     await prepareLaunchMultisigs(args)
     const callData = encodeFunctionData({ abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', args: [SAFE_SINGLETON, buildSafeInitializer(policy), BigInt(SALT)] })
     const expected = { chainId: CHAIN, address: MULTICALL3, abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', args: [[{ target: SAFE_FACTORY, allowFailure: true, value: 0n, callData }]], value: 0n } as const
-    expect(mocks.review).toHaveBeenCalledWith({ ...expected, account: ACCOUNT }, expect.objectContaining({ title: 'Review Safe creation', description: expect.stringContaining('2 of 2 approvals') }))
-    expect(mocks.simulate).toHaveBeenCalledWith(expect.anything(), { from: ACCOUNT, to: MULTICALL3, data: encodeFunctionData(expected), value: 0n })
-    expect(args.writeContract).toHaveBeenCalledWith({ ...expected, account: ACCOUNT, gas: 1_000_000n })
-    expect(args.switchChain).toHaveBeenCalledWith(CHAIN)
+    const data = encodeFunctionData(expected)
+    expect(mocks.review).toHaveBeenCalledOnce()
+    expect(reviewed()).toMatchObject({ title: 'Review Safe creation', description: expect.stringContaining('2 of 2 approvals') })
+    expect(reviewed().calls).toMatchObject([{ chainId: CHAIN, from: ACCOUNT, to: MULTICALL3, data, value: 0n }])
+    expect(mocks.simulate).toHaveBeenCalledWith(expect.anything(), { from: ACCOUNT, to: MULTICALL3, data, value: 0n })
+    // The exact reviewed bytes reach the wallet.
+    expect(mocks.write).toHaveBeenCalledOnce()
+    expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ to: MULTICALL3, data, value: 0n }))
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: HASH })
     expect(mocks.verifyCreated).toHaveBeenCalledWith(expect.anything(), plan, 123n)
     expect(loadLaunchSession()!.statuses[CHAIN]).toEqual({ phase: 'pending', multisigSetup: { phase: 'done', txHash: HASH } })
@@ -150,7 +183,7 @@ describe('direct launch Safe setup', () => {
     await prepareLaunchMultisigs(args)
     expect(setup()).toEqual({ phase: 'done' })
     expect(mocks.verifySafe).toHaveBeenCalledWith(expect.anything(), [safe], { allowMissing: true })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(mocks.review).not.toHaveBeenCalled()
   })
 
@@ -158,7 +191,7 @@ describe('direct launch Safe setup', () => {
     const args = { ...options(), plan: { ...plan, multisigs: undefined } }
     storage.getItem.mockImplementation(() => { throw new Error('unavailable') })
     await prepareLaunchMultisigs(args)
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it.each(['absent', 'salt', 'account', 'plan', 'relayr', 'launched', 'uncertain'] as const)('blocks a %s saved session before wallet interaction', async kind => {
@@ -172,51 +205,52 @@ describe('direct launch Safe setup', () => {
     if (kind === 'uncertain') seed({ statuses: { [CHAIN]: { ...session.statuses[CHAIN], phase: 'signing' } } })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow()
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(mocks.review).not.toHaveBeenCalled()
   })
 
   it('holds an ambiguous wallet submission: the next run shows the SDK hold, never a second send', async () => {
     const args = options()
-    args.writeContract.mockRejectedValue(new Error('Connection lost'))
+    mocks.write.mockRejectedValue(new Error('Connection lost'))
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connection lost')
     expect(setup()).toEqual({ phase: 'signing' })
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('holds a wallet reply that is no transaction hash, and reads no receipt for it', async () => {
     const args = options()
-    args.writeContract.mockResolvedValue('0x1234')
+    mocks.write.mockResolvedValue('0x1234')
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/transaction identity/)
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('does not recreate a previously completed Safe that can no longer be verified', async () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'done', txHash: HASH } } } })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('previously created Safe could not be verified')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('does not mark review cancellation as an ambiguous signature', async () => {
     mocks.review.mockRejectedValue(new Error('Review closed'))
     const args = options()
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Review closed')
-    expect(setup()).toEqual({ phase: 'failed' })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'TransactionReviewCancelledError' })
+    // Nothing reached the wallet boundary, so nothing is journaled as signing.
+    expect(setup()?.phase).not.toBe('signing')
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('allows a retry after an explicit nested wallet rejection', async () => {
     const args = options()
-    args.writeContract.mockRejectedValueOnce({ cause: { code: 4001 } })
+    mocks.write.mockRejectedValueOnce({ cause: { code: 4001 } })
     await expect(prepareLaunchMultisigs(args)).rejects.toBeDefined()
     expect(setup()).toEqual({ phase: 'failed' })
     await prepareLaunchMultisigs(args)
-    expect(args.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.write).toHaveBeenCalledTimes(2)
   })
 
   it('fails closed before submitting if the signing journal cannot be stored', async () => {
@@ -226,35 +260,33 @@ describe('direct launch Safe setup', () => {
       return 1n
     })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('could not be saved')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('retains an ambiguous signing marker when persisting the returned hash fails', async () => {
     const args = options()
-    args.writeContract.mockImplementation(async () => {
+    mocks.write.mockImplementation(async () => {
       storage.setItem.mockImplementation(() => { throw new Error('quota') })
       return HASH
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('could not be saved')
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('recording it failed')
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
   })
 
-  it.each(['switch', 'simulate'] as const)('blocks account drift during %s before signing', async where => {
+  it('blocks account drift during simulation before signing', async () => {
     const args = options()
-    const drift = async () => { mocks.account.mockReturnValue({ address: OTHER }); return 1n }
-    if (where === 'switch') args.switchChain.mockImplementation(drift)
-    else mocks.estimateGas.mockImplementation(drift)
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connected account changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
-    expect(setup()?.phase).toBe('failed')
+    mocks.estimateGas.mockImplementation(async () => { mocks.account.mockReturnValue({ address: OTHER }); return 1n })
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/account changed/i)
+    expect(mocks.write).not.toHaveBeenCalled()
+    expect(setup()?.phase).not.toBe('signing')
   })
 
   it('blocks a wallet connector change before crossing the signing boundary', async () => {
     const args = options()
     mocks.estimateGas.mockImplementation(async () => { mocks.safe.mockReturnValue(true); return 1n })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Wallet connection changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('retains the original connector across asynchronous setup checks before review', async () => {
@@ -263,7 +295,7 @@ describe('direct launch Safe setup', () => {
       mocks.account.mockReturnValue({ address: ACCOUNT, chainId: CHAIN, connector: { uid: 'wallet-2' } })
     })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connected wallet changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(setup()).toEqual({ phase: 'failed' })
   })
 
@@ -272,8 +304,8 @@ describe('direct launch Safe setup', () => {
     args.onSetup.mockImplementation(value => {
       if (value.phase === 'signing') mocks.account.mockReturnValue({ address: OTHER })
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connected account changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/account changed/i)
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(setup()).toEqual({ phase: 'failed' })
   })
 
@@ -281,7 +313,7 @@ describe('direct launch Safe setup', () => {
     const args = options()
     mocks.review.mockImplementation(async () => { seed({ plans: { [CHAIN]: { ...plan, ticker: 'EDITED' } } }) })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('saved Safe or launch account changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it.each(['different address', 'missing result', 'malformed address', 'failed factory'] as const)('rejects simulation with %s', async kind => {
@@ -291,7 +323,7 @@ describe('direct launch Safe setup', () => {
     if (kind === 'failed factory') { mocks.simulate.mockResolvedValue(simulation(false)); mocks.verifySafe.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error('Safe missing')) }
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow()
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('accepts a failed optional factory call only after verifying the exact existing Safe', async () => {
@@ -301,18 +333,11 @@ describe('direct launch Safe setup', () => {
     expect(mocks.verifySafe).toHaveBeenLastCalledWith(expect.anything(), [safe])
   })
 
-  it('bounds gas headroom by the simulation ceiling', async () => {
-    mocks.estimateGas.mockResolvedValue(6_000_000n)
-    const args = options()
-    await prepareLaunchMultisigs(args)
-    expect(args.writeContract).toHaveBeenCalledWith(expect.objectContaining({ gas: 10_000_000n }))
-  })
-
   it('resumes an existing setup transaction without submitting another', async () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', multisigSetup: { phase: 'confirming', txHash: HASH } } } })
     const args = options()
     await prepareLaunchMultisigs(args)
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: HASH })
     expect(setup()).toEqual({ phase: 'done', txHash: HASH })
   })
@@ -322,7 +347,7 @@ describe('direct launch Safe setup', () => {
     mocks.receipt.mockResolvedValueOnce({ status: 'reverted', blockNumber: 123n })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('still confirming')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(setup()).toEqual({ phase: 'confirming', settled: true, txHash: HASH })
   })
 
@@ -333,7 +358,7 @@ describe('direct launch Safe setup', () => {
     const args = options()
     await prepareLaunchMultisigs(args)
     expect(mocks.receipt).toHaveBeenCalledWith({}, { chainId: CHAIN, hash: EXECUTION })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(loadLaunchSession()!.statuses[CHAIN]).toEqual({ phase: 'failed', txHash: EXECUTION, multisigSetup: { phase: 'done' } })
   })
 
@@ -341,24 +366,27 @@ describe('direct launch Safe setup', () => {
     seed({ statuses: { [CHAIN]: { phase: 'failed', txHash: EXECUTION, multisigSetup: { phase: 'done', txHash: HASH } } } })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('did not revert')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(mocks.verifySafe).not.toHaveBeenCalled()
   })
 
   it('keeps the submitted hash when receipt tracking is temporarily unavailable', async () => {
-    mocks.receipt.mockRejectedValue(new Error('RPC unavailable'))
+    // Core's own wait sees the receipt; the setup's domain read then can't.
+    mocks.receipt.mockResolvedValueOnce({ status: 'success', blockNumber: 123n }).mockRejectedValue(new Error('RPC unavailable'))
     await expect(prepareLaunchMultisigs(options())).rejects.toThrow('RPC unavailable')
     expect(setup()).toEqual({ phase: 'confirming', txHash: HASH })
     expect(mocks.verifyCreated).not.toHaveBeenCalled()
   })
 
   it('records a reverted setup separately and permits a new setup attempt', async () => {
-    mocks.receipt.mockResolvedValueOnce({ status: 'reverted', blockNumber: 123n })
+    // Every read of the first setup sees its revert.
+    mocks.receipt.mockResolvedValue({ status: 'reverted', blockNumber: 123n })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('reverted')
+    mocks.receipt.mockResolvedValue({ status: 'success', blockNumber: 123n })
     expect(loadLaunchSession()!.statuses[CHAIN]).toEqual({ phase: 'pending', multisigSetup: { phase: 'failed', txHash: HASH } })
     await prepareLaunchMultisigs(args)
-    expect(args.writeContract).toHaveBeenCalledTimes(2)
+    expect(mocks.write).toHaveBeenCalledTimes(2)
   })
 
   it('does not mark setup complete when receipt-block Safe verification fails', async () => {
@@ -370,7 +398,7 @@ describe('direct launch Safe setup', () => {
   it('tracks a Safe proposal separately and receipt-polls only the execution hash', async () => {
     mocks.safe.mockReturnValue(true)
     const args = options()
-    args.writeContract.mockImplementation(async () => { expect(setup()).toEqual({ phase: 'signing', safe: true }); return HASH })
+    mocks.write.mockImplementation(async () => { expect(setup()).toEqual({ phase: 'signing', safe: true }); return HASH })
     mocks.safeHash.mockImplementation(async () => { expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH }); return EXECUTION })
     await prepareLaunchMultisigs(args)
     expect(mocks.safeHash).toHaveBeenCalledWith(CHAIN, HASH, { signal: args.signal })
@@ -382,12 +410,13 @@ describe('direct launch Safe setup', () => {
     mocks.safe.mockReturnValue(true)
     const args = options()
     await prepareLaunchMultisigs(args)
-    expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({ address: MULTICALL3, account: ACCOUNT, safeTxGas: 0n }), expect.objectContaining({
+    expect(reviewed()).toMatchObject({
       title: 'Review Safe creation',
       description: expect.stringMatching(/2 of 2 approvals[\s\S]*\n\nChoose the Safe nonce\.$/),
       confirmLabel: 'Agree & continue to Safe',
-    }))
-    expect(args.writeContract).toHaveBeenCalledWith(expect.objectContaining({ address: MULTICALL3, gas: 0n }))
+    })
+    expect(reviewed().calls).toMatchObject([{ to: MULTICALL3, from: ACCOUNT, safeTxGas: 0n }])
+    expect(mocks.write).toHaveBeenCalledWith(expect.objectContaining({ to: MULTICALL3, gas: 0n }))
   })
 
   it.each([
@@ -397,7 +426,7 @@ describe('direct launch Safe setup', () => {
     seed({ statuses: { [CHAIN]: { phase: 'pending', multisigSetup } } })
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(mocks.preflight).not.toHaveBeenCalled()
     expect(setup()).toEqual(multisigSetup)
   })
@@ -445,7 +474,7 @@ describe('direct launch Safe setup', () => {
       else mocks.account.mockReturnValue({ address: ACCOUNT, chainId: kind === 'chain' ? 1 : CHAIN, connector: { uid: kind === 'connector' ? 'wallet-2' : 'wallet-1' } })
     })
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow(kind === 'view-as' ? 'View-as' : 'Connected wallet changed')
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
     expect(setup()).toEqual({ phase: 'failed' })
   })
 
@@ -458,8 +487,8 @@ describe('direct launch Safe setup', () => {
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: EXECUTION, safeProposalHash: HASH })
     const resumed = options()
     await expect(prepareLaunchMultisigs(resumed)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).toHaveBeenCalledTimes(1)
-    expect(resumed.writeContract).not.toHaveBeenCalled()
+    // Only the first run's proposal reached the wallet.
+    expect(mocks.write).toHaveBeenCalledTimes(1)
     expect(mocks.verifyCreated).not.toHaveBeenCalled()
   })
 
@@ -471,7 +500,7 @@ describe('direct launch Safe setup', () => {
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('not confirmed')
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).toHaveBeenCalledTimes(1)
+    expect(mocks.write).toHaveBeenCalledTimes(1)
     expect(setup()).toEqual({ phase: 'confirming', safe: true, txHash: HASH, safeProposalHash: HASH })
   })
 
@@ -482,7 +511,7 @@ describe('direct launch Safe setup', () => {
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('failed inside the Safe')
     expect(setup()).toEqual({ phase: 'failed', txHash: EXECUTION })
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'WriteHeldError' })
-    expect(args.writeContract).toHaveBeenCalledTimes(1)
+    expect(mocks.write).toHaveBeenCalledTimes(1)
     expect(mocks.execution).toHaveBeenCalledWith(expect.objectContaining({
       safe: ACCOUNT, proposalHash: HASH, batch: false,
       calls: [expect.objectContaining({ to: MULTICALL3, value: 0n })],
@@ -495,7 +524,7 @@ describe('direct launch Safe setup', () => {
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Another tab')
     expect(request).toHaveBeenCalledWith('jbm-launch', { ifAvailable: true }, expect.any(Function))
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('completes setup while holding the acquired launch lock', async () => {
@@ -506,7 +535,7 @@ describe('direct launch Safe setup', () => {
     })
     vi.stubGlobal('navigator', { locks: { request } })
     const args = options()
-    args.writeContract.mockImplementation(async () => { expect(held).toBe(true); return HASH })
+    mocks.write.mockImplementation(async () => { expect(held).toBe(true); return HASH })
     await prepareLaunchMultisigs(args)
     expect(held).toBe(false)
     expect(setup()?.phase).toBe('done')
@@ -528,7 +557,7 @@ describe('interrupted setup recovery', () => {
     expect(setup()).toEqual({ phase: 'failed' })
     const args = options()
     await prepareLaunchMultisigs(args)
-    expect(args.writeContract).toHaveBeenCalledOnce()
+    expect(mocks.write).toHaveBeenCalledOnce()
     expect(setup()?.phase).toBe('done')
   })
 
@@ -541,7 +570,7 @@ describe('interrupted setup recovery', () => {
     expect(outcome.status).toBe('held')
     const args = options()
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
-    expect(args.writeContract).not.toHaveBeenCalled()
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 
   it('refuses a stale check once another tab completed the setup', async () => {

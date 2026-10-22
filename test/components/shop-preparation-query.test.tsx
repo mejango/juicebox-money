@@ -24,8 +24,9 @@ vi.mock('wagmi/actions', () => ({
 vi.mock('@/hooks/useWallet', () => ({
   useWallet: () => ({ address: mocks.account, isConnected: true, openSignIn: vi.fn() }),
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: mocks.phase, busy: false, send: mocks.send, reset: mocks.reset }),
+vi.mock('@/hooks/useReviewedAction', async () => ({
+  ...(await import('@/lib/reviewed-call')),
+  useReviewedAction: () => ({ phase: mocks.phase, busy: false, run: mocks.send, reset: mocks.reset }),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
@@ -117,7 +118,7 @@ beforeEach(() => {
     if (functionName === 'feeFreeSurplusOf') return 0n
     throw new Error(`Unexpected contract read: ${functionName}`)
   })
-  mocks.send.mockReset().mockResolvedValue(undefined)
+  mocks.send.mockReset().mockResolvedValue(null)
 })
 
 afterEach(async () => {
@@ -172,7 +173,7 @@ describe('shop redemption preparation query', () => {
     expect(text(renderer!.root)).toContain('Confirm redemption')
     await click('Confirm & redeem')
     expect(mocks.send).toHaveBeenCalledTimes(1)
-    expect(mocks.send.mock.calls[0][1]).toMatchObject({ reviewedAccount: ALICE })
+    expect(mocks.send.mock.calls[0][0]).toMatchObject({ account: ALICE })
   })
 
   it('retries a failed quote on remount without granting it a freshness window', async () => {

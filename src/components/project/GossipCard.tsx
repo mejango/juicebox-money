@@ -39,7 +39,7 @@ import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { GossipTablesSkeleton } from '@/components/LoadingSkeletons'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { isKnownController } from '@/lib/manage'
@@ -356,7 +356,7 @@ async function readLiveChain(
  * fresh that snapshot is vs the peer's ACTUAL current values, and a Sync that
  * re-pushes a peer's accounting here. Every freshness check fails closed to
  * 'Unverified' on any unreadable or ambiguous state rather than inventing
- * drift, and the Sync send never bypasses useSafeTx.
+ * drift, and the Sync send never bypasses the reviewed send.
  */
 export function GossipCard({
   chainId: homeChainId,
@@ -730,7 +730,7 @@ function GossipRow({
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(peer.peerChainId)
+  const tx = useReviewedAction(peer.peerChainId)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -822,14 +822,16 @@ function GossipRow({
         value,
       })
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
-      await tx.send({ ...request, abi: request.abi as unknown as Abi }, {
-        reviewedAccount: address,
-        // A sync moves no token: keyed by the sucker and account; never the fee it requotes.
-        intent: syncIntent({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
-        legacy: [
-          legacySyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
-          legacyBridgeSyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
-        ],
+      await tx.run({
+        account: address,
+        calls: [reviewedCall({ ...request, abi: request.abi as unknown as Abi }, {
+          // A sync moves no token: keyed by the sucker and account; never the fee it requotes.
+          intent: syncIntent({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+          legacy: [
+            legacySyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+            legacyBridgeSyncKey({ chainId: targetChainId, sucker: peer.syncSucker, account: address }),
+          ],
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not sync.')

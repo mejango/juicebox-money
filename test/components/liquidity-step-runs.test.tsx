@@ -6,7 +6,7 @@
  *
  * - A run that stopped part way belongs to that plan only: after the account
  *   changes, its stopped step goes to the engine only as the old account's,
- *   which the engine refuses (useSafeTx and reviewed-account tests), and a
+ *   which the engine refuses (reviewed-action and reviewed-account tests), and a
  *   newly reviewed plan starts from its own first step for the new account,
  *   never from the old plan's stopped step (an approval for another account,
  *   or a write whose recipient is baked into its bytes).
@@ -34,9 +34,9 @@ const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, max
 const unlockDataFor = (account: string) => (account === ALICE ? '0xaa' : '0xbb') as Hex
 const ERC20 = [{ currency: TOKEN, max: 10n ** 18n }]
 
-vi.mock('@/hooks/useSafeTx', async () => {
+vi.mock('@/hooks/useReviewedAction', async () => {
   const { engine } = await import('../support/lp-flow-harness')
-  return { useSafeTx: () => engine.useSafeTx() }
+  return { ...(await import('@/lib/reviewed-call')), txPhaseLabel: (await import('@/hooks/useReviewedAction')).txPhaseLabel, useReviewedAction: () => engine.useReviewedAction() }
 })
 vi.mock('wagmi', async importOriginal => ({
   ...(await importOriginal<typeof import('wagmi')>()),
@@ -277,7 +277,7 @@ async function typeInto(label: string, value: string) {
 }
 
 const sent = () => engine.send.mock.calls.map(([request]) => request as Record<string, unknown>)
-const sentAs = () => (engine.send.mock.calls.at(-1)![1] as { reviewedAccount?: string }).reviewedAccount
+const sentAs = () => (engine.send.mock.calls.at(-1)![1] as { account?: string }).account
 const CHANGED = 'The connected account changed. Review again.'
 
 /** Close the confirm dialog with its cancel control. */
@@ -414,7 +414,7 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     const approvals = engine.send.mock.calls.filter(
       ([request]) => (request as { functionName?: string }).functionName === 'approve',
     )
-    expect(approvals.map(([, options]) => (options as { reviewedAccount?: string }).reviewedAccount)).toEqual([
+    expect(approvals.map(([, options]) => (options as { account?: string }).account)).toEqual([
       ALICE,
       ALICE,
       ALICE,

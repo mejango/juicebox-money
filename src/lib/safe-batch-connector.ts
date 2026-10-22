@@ -13,7 +13,7 @@ import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import { requireTransactionReview } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { assertReviewedAccountConnected } from '@/lib/contract-write'
+import { assertReviewedAccountConnected } from '@/lib/wallet-context'
 import { connectedWallet, publicClient } from '@/lib/wallet-core'
 
 const SAFE_CONNECTION_CHANGED = 'Safe connection changed. Review this batch again.'

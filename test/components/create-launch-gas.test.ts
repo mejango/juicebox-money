@@ -5,17 +5,16 @@ const source = readFileSync('src/components/create/CreateForm.tsx', 'utf8')
 
 /**
  * The wizard is not renderable under this suite. A Safe app signs a sent gas
- * limit as the proposal's safeTxGas, so pin the direct launch to review and
- * send Safe gas 0 through a Safe app, like every other Safe-app write.
+ * limit as the proposal's safeTxGas: the direct launch goes through core's
+ * reviewed send, which reviews and sends Safe gas 0 through a Safe app and the
+ * measured limit otherwise, so the form sets no gas of its own.
  */
 describe('direct launch gas', () => {
-  it('reviews Safe gas 0 through a Safe app', () => {
-    expect(source).toContain('...(viaSafe ? { safeTxGas: 0n } : {}),')
-  })
-
-  it('sends gas 0 through a Safe app and the measured limit otherwise', () => {
-    expect(source).toContain('gas: viaSafe ? 0n : gasWithHeadroom(estimate),')
-    expect(source).not.toMatch(/return \{ \.\.\.simulated, gas: gasWithHeadroom\(estimate\) \}/)
+  it("takes core's reviewed send and sets no gas of its own", () => {
+    expect(source).toContain('await sendReviewedWrite({')
+    expect(source).not.toContain('safeTxGas')
+    expect(source).not.toContain('gasWithHeadroom')
+    expect(source).not.toContain('writeContractAsync')
   })
 })
 
@@ -41,10 +40,10 @@ describe('direct launch submission and recovery boundaries', () => {
     const run = source.slice(source.indexOf('const runDirectChains ='), source.indexOf('const finishLaunch ='))
     expect(run.match(/isSafeConnection\(config\)/g)).toHaveLength(2)
     expect(run).toContain('const viaSafe = isSafeConnection(config);')
-    expect(run).toMatch(/\.\.\.simulated,\s*chainId,/)
+    expect(run).toMatch(/calls: \[\{\s*chainId, \.\.\.launchCall,/)
     expect(run).toContain('proposal = viaSafe ? hash : undefined;')
-    expect(run).toMatch(/beforeWrite: async \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
-    expect(run).toContain('onBeforeWriteAborted: () => {')
+    expect(run).toMatch(/beforeWallet: \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
+    expect(run).toContain('onUnsent: () => {')
   })
 
   it('retains original Safe call/proposal until authenticated inner proof and then verifies the project', () => {
@@ -72,9 +71,10 @@ describe('direct launch submission and recovery boundaries', () => {
   it('puts the launch under the SDK hold: the reservation right before the wallet, and the hold deciding a resume', () => {
     // A saved launch is recovered by the SDK first; a fresh one is sent under the hold of its launch key.
     expect(source).toContain('const outcome = await savedAttempts.recover(attempt, client as never);')
-    expect(source).toContain('namespace: launchNamespace(launch),')
-    expect(source).toContain('hash = await hold.send<Hex>(client as never, gate => submitReviewedContractWrite({')
-    expect(source).toContain('await gate.beforeSend();')
+    expect(source).toContain('namespace: launchNamespace(launch), call: launchCall,')
+    // Core reserves the hold under the launch key before `beforeWallet`, and journals the hash it returns.
+    expect(source).toContain('intent: launchNamespace(launch),')
+    expect(source).toMatch(/onSubmitted: \(_call, _step, submitted\) => \{\s*hash = submitted;[\s\S]*?updateStatus\(chainId, \{ phase: "confirming", txHash: submitted/)
     expect(source).not.toContain('This launch may already have been submitted. Recover the original wallet request before trying again.')
   })
 })

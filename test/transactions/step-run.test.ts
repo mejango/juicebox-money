@@ -2,10 +2,10 @@ import { createElement, createRef, forwardRef, useImperativeHandle } from 'react
 import TestRenderer, { act } from 'react-test-renderer'
 import type { Hex } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
-import type { useSafeTx } from '@/hooks/useSafeTx'
+import type { ReviewedActionState } from '@/hooks/useReviewedAction'
 import { useStepRun } from '@/hooks/useStepRun'
 
-type Tx = ReturnType<typeof useSafeTx>
+type Tx = ReviewedActionState
 type Run = ReturnType<typeof useStepRun<string>>
 type Props = {
   tx: Tx
@@ -23,7 +23,7 @@ const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
   return null
 })
 
-/** The engine's state as useSafeTx reports it, and a send whose answer each test gives. */
+/** The engine's state as useReviewedAction reports it, and a send whose answer each test gives. */
 async function renderRun() {
   const ref = createRef<Run>()
   const reset = vi.fn()
@@ -46,7 +46,7 @@ async function renderRun() {
   }
   /**
    * The engine answers the latest send: a hash it took, or null for one it did
-   * not. useSafeTx shows a taken hash as pending before `send` resolves;
+   * not. The engine shows a taken hash as pending before `send` resolves;
    * `showFirst: false` answers while it still shows its previous state.
    */
   const answer = async (

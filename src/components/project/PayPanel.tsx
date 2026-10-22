@@ -36,7 +36,6 @@ import {
   prepareUserPay,
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
-import { waitForTrackedReceipt } from "@bananapus/nana-sdk-core/review";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -56,7 +55,7 @@ import {
 import { usePublicClient } from "wagmi";
 import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
-import { useSafeTx, type TxRequest } from "@/hooks/useSafeTx";
+import { reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -80,10 +79,10 @@ import {
   buildAddToBalanceRequest,
   buildErc20ApproveRequest,
 } from "@/lib/transaction-builders";
-import { approvalIntent, payIntent } from "@bananapus/nana-sdk-core/review";
+import { approvalIntent, payIntent, WRITE_HOLD_REVERTED_LINE } from "@bananapus/nana-sdk-core/review";
 import { legacyPayKeys } from "@/lib/legacy-intents";
 import { chainName } from "@/lib/urn";
-import { assertReviewedAccountConnected } from "@/lib/contract-write";
+import { assertReviewedAccountConnected } from "@/lib/wallet-context";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
@@ -291,8 +290,8 @@ export function PayPanel({
   const inventory = useShop721(chainId, projectId, isRevnet);
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
-  const tx = useSafeTx(chainId);
-  const approveTx = useSafeTx(chainId);
+  const tx = useReviewedAction(chainId);
+  const approveTx = useReviewedAction(chainId);
   // Once an approval is confirmed, every dependent allowance read and final
   // simulation is anchored to that receipt block. Base providers are load
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
@@ -328,7 +327,6 @@ export function PayPanel({
   >(null);
   const [sequenceActions, setSequenceActions] = useState<PaymentSequenceAction[]>([]);
   /** A submitted payment whose receipt hasn't arrived. Retry stays blocked while set. */
-  const [sequencePending, setSequencePending] = useState<Hex | null>(null);
   // What the frozen actions actually authorize. The inputs behind them keep
   // moving while the dialog is open (the amount is debounced), so the summary
   // has to be captured with the actions rather than read live. `account`
@@ -343,7 +341,8 @@ export function PayPanel({
   /** The tolerance offered after a shortfall, until the payer reviews again with it. */
   const [retrySlippageBps, setRetrySlippageBps] = useState<number | null>(null);
   /** The payment reverted onchain: it is only reviewed again, quoted afresh. */
-  const [reviewAfterRevert, setReviewAfterRevert] = useState(false);
+  /** The step whose run ended without finishing: its own state says why, and what may follow. */
+  const [paymentRunEnded, setPaymentRunEnded] = useState<"token-approval" | "payment" | null>(null);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400);
     return () => clearTimeout(t);
@@ -1055,6 +1054,22 @@ export function PayPanel({
   const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
   // A stage the write hold holds (its follower couldn't prove it) shows the hold's line and exit.
   const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "unconfirmed" ? sequenceSafeTx.error : null;
+  const endedTx = paymentRunEnded === "token-approval" ? approveTx : paymentRunEnded === "payment" ? tx : null;
+  const endedPayment = paymentRunEnded === "payment" ? tx.failure : null;
+  const endedPay = mode === "pay" ? endedPayment : null;
+  const payFailure = endedPay ? decodePayFailure(endedPay) : null;
+  const minedRevert = endedPayment instanceof Error && endedPayment.message === WRITE_HOLD_REVERTED_LINE;
+  // A mined revert carries no reason: the pay is reviewed again, quoted and simulated afresh.
+  const reviewAfterRevert = mode === "pay" && minedRevert;
+  // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
+  const suggestedRetryBps = endedPay && sequenceSummary ? payRetrySlippageBps(payFailure, sequenceSummary.slippageBps) : null;
+  const retryBps = retrySlippageBps ?? (suggestedRetryBps === null ? null : Number(suggestedRetryBps));
+  const endedLine = !endedTx ? null
+    : endedTx.phase === "unconfirmed" ? endedTx.error
+      : minedRevert ? (mode === "pay" ? "The payment reverted." : "Payment reverted onchain.")
+      : payFailure?.message ?? endedTx.error ?? (paymentRunEnded === "payment" ? "Payment was cancelled." : "Token approval was cancelled.");
+  // A payment the hold still has in flight is never sent again from here.
+  const sequencePending = paymentRunEnded === "payment" && tx.phase === "unconfirmed" ? tx.hash : null;
   const panelTxError = [approveTx, tx]
     .map(item => (sequenceSafeHeld && item === sequenceSafeTx ? null : item.error))
     .find(Boolean) ?? null;
@@ -1342,10 +1357,7 @@ export function PayPanel({
     setSequenceStarted(true);
     setSequenceError(null);
     setRetrySlippageBps(null);
-    setReviewAfterRevert(false);
-    /** Why the payment's simulation failed, when it says. */
-    let failure: unknown;
-    let minedRevert = false;
+    setPaymentRunEnded(null);
     // Each send refuses another account on its own; checking before each step
     // also says so here, where a refused send would read as a cancelled one.
     const stillReviewed = () =>
@@ -1374,24 +1386,24 @@ export function PayPanel({
       if (tokenApproval?.kind === "token-approval") {
         await showAction("token-approval");
         setSequenceStatus(`Review and approve ${symbol} access.`);
-        const approvalHash = await approveTx.send(
-          tokenApproval.request,
-          { reviewedAccount: account, intent: tokenApproval.intent, legacy: tokenApproval.legacy, assertWriteState: () => writeState.current(reviewed) },
-        );
-        if (!approvalHash) {
-          // A write the final check refused says why, not that it was cancelled.
+        const approved = await approveTx.run({
+          account,
+          calls: [reviewedCall(tokenApproval.request, { intent: tokenApproval.intent, legacy: tokenApproval.legacy })],
+          assertWriteState: () => writeState.current(reviewed),
+        });
+        if (!approved) {
+          // A write the final check refused says why; otherwise the approval's own line does.
           writeState.current(reviewed);
-          throw new Error("Token approval was cancelled.");
+          setSequenceStatus(null);
+          setPaymentRunEnded("token-approval");
+          return;
         }
-        if (approveTx.isSafe) {
+        if (approved.status === "proposed") {
           setSequenceSafeStage("token-approval");
           setSequenceStatus("Approval proposed to your Safe. Execute it there before continuing.");
           return;
         }
-        setSequenceStatus(`Confirming ${symbol} approval onchain…`);
-        const receipt = await waitForTrackedReceipt(publicClient, approvalHash);
-        if (receipt.status !== "success") throw new Error(`${symbol} approval reverted onchain.`);
-        latestApprovalBlock = receipt.blockNumber;
+        latestApprovalBlock = approved.receipts.at(-1)?.blockNumber ?? latestApprovalBlock;
         approveTx.reset();
         await refetchAllowance();
         setSequenceCompletedKinds(current =>
@@ -1409,43 +1421,26 @@ export function PayPanel({
       stillReviewed();
       await showAction("payment");
       setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
-      const paymentHash = await tx.send(paymentRequest, {
-        reviewedAccount: account,
-        simulationBlockNumber: latestApprovalBlock,
-        intent: paymentAction.intent,
-        legacy: paymentAction.legacy,
+      const paid = await tx.run({
+        account,
+        calls: [reviewedCall(paymentRequest, {
+          simulationBlockNumber: latestApprovalBlock,
+          intent: paymentAction.intent,
+          legacy: paymentAction.legacy,
+        })],
         assertWriteState: () => writeState.current(reviewed),
-        onFailure: error => { failure = error },
       });
-      if (!paymentHash) {
+      if (!paid) {
         writeState.current(reviewed);
-        throw new Error("Payment was cancelled.");
+        // Its line, its retry and a held payment's "do not send again" come from the run's own state.
+        setSequenceStatus(null);
+        setPaymentRunEnded("payment");
+        return;
       }
-      if (tx.isSafe) {
+      if (paid.status === "proposed") {
         setSequenceSafeStage("payment");
         setSequenceStatus("Payment proposed to your Safe. Execute it there to finish.");
         return;
-      }
-      setSequenceStatus("Payment submitted. Confirming onchain…");
-      let paymentReceipt
-      try {
-        paymentReceipt = await waitForTrackedReceipt(publicClient, paymentHash);
-      } catch {
-        // The wait gave up (~5 min) — the payment is PENDING, not failed. Re-enabling the
-        // button here let a second `pay` go out while the first was still in flight, which
-        // is a genuine double payment; this waiter also bypasses useSafeTx's own
-        // "do not submit again" guard. Leave the sequence started so retry stays disabled.
-        setSequencePending(paymentHash);
-        setSequenceStatus(
-          "Still confirming onchain. Your payment was submitted — do NOT send it again. Check the transaction before retrying.",
-        );
-        return;
-      }
-      if (paymentReceipt.status !== "success") {
-        // A receipt carries no reason, and the block's end state is not what it reverted on: a pay is
-        // reviewed again, quoted and simulated afresh, and only that simulation's failure gives a reason.
-        if (mode === "pay") minedRevert = true;
-        throw new Error(mode === "pay" ? "The payment reverted." : "Payment reverted onchain.");
       }
       setSequenceCompletedKinds(current =>
         current.includes("payment") ? current : [...current, "payment"],
@@ -1461,12 +1456,7 @@ export function PayPanel({
       } catch (switched) {
         changed = switched instanceof Error ? switched.message : PAYMENT_CHANGED;
       }
-      const decoded = changed ? null : decodePayFailure(failure);
-      setSequenceError(changed ?? decoded?.message ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
-      // A candidate from the tolerance this attempt was prepared with; the payer sees and edits it, and it is prepared and reviewed again.
-      const retry = mode === "pay" ? payRetrySlippageBps(decoded, reviewed.slippageBps) : null;
-      setRetrySlippageBps(retry === null ? null : Number(retry));
-      setReviewAfterRevert(minedRevert && !changed);
+      setSequenceError(changed ?? (reason instanceof Error ? reason.message : "The payment could not be completed."));
     } finally {
       setSequenceStarted(false);
     }
@@ -1480,7 +1470,7 @@ export function PayPanel({
     void queryClient.invalidateQueries({ queryKey: ["prepareUserPay"] });
     tx.reset();
     setRetrySlippageBps(null);
-    setReviewAfterRevert(false);
+    setPaymentRunEnded(null);
     setSequenceOpen(false);
     setSequenceActions([]);
     setSequenceActionIndex(0);
@@ -1498,14 +1488,13 @@ export function PayPanel({
     setSequenceComplete(false);
     setSequenceActions([]);
     setSequenceSummary(null);
-    setSequencePending(null);
     setSequenceActionIndex(0);
     setSequenceCompletedKinds([]);
     setSequenceSafeStage(null);
     setSequenceStatus(null);
     setSequenceError(null);
     setRetrySlippageBps(null);
-    setReviewAfterRevert(false);
+    setPaymentRunEnded(null);
     setPayerSlippage(null);
     setAmount("");
     setDebouncedAmount("");
@@ -2155,11 +2144,11 @@ export function PayPanel({
             ).length,
           )}
           status={sequenceSafeNotice ?? sequenceStatus}
-          error={sequenceError ?? sequenceSafeHeld}
+          error={sequenceError ?? sequenceSafeHeld ?? endedLine}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
-          action={retrySlippageBps !== null || reviewAfterRevert ? "Review again" : mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
-          onConfirm={() => retrySlippageBps !== null || reviewAfterRevert ? reviewAgain(retrySlippageBps) : void runPaymentSequence()}
+          action={retryBps !== null || reviewAfterRevert ? "Review again" : mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
+          onConfirm={() => retryBps !== null || reviewAfterRevert ? reviewAgain(retryBps) : void runPaymentSequence()}
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             // An unproven or lost Safe stage ends with its line: Done dismisses it,
@@ -2172,16 +2161,16 @@ export function PayPanel({
             setSequenceStatus(null);
             setSequenceError(null);
             setRetrySlippageBps(null);
-            setReviewAfterRevert(false);
+            setPaymentRunEnded(null);
             setPayerSlippage(null);
           }}
         >
           {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage &&
-          !sequenceError && !sequenceSafeHeld ? (
+          !sequenceError && !sequenceSafeHeld && !endedLine ? (
             <p className="text-sm text-smoke-700">{PAY_QUOTE_FAILED_MESSAGE}</p>
           ) : null}
-          {retrySlippageBps !== null ? (
-            <AllowedDecreaseField bps={retrySlippageBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
+          {retryBps !== null ? (
+            <AllowedDecreaseField bps={retryBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}
         </TxConfirmDialog>
       ) : null}

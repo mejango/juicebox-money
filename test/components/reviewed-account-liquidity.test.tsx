@@ -8,7 +8,7 @@
  * that account: nothing more reaches the wallet, and the dialog says why.
  * A claim or a removal frozen for one account is never sent by another.
  *
- * The real useSafeTx, useStepRun and the SDK's reviewed write run here; only
+ * The real useReviewedAction, useStepRun and core's reviewed run run here; only
  * the wallet, the RPC and the app review are fakes.
  */
 
@@ -30,9 +30,10 @@ const ERC20 = [{ currency: TOKEN, max: 10n ** 18n }]
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })

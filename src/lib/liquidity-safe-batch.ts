@@ -17,7 +17,7 @@ import {
  * step list at review time (ERC-20 → Permit2, Permit2 → PositionManager, then
  * the mint or edit); under a Safe app connection those steps go out as one
  * MultiSend instead of one proposal per step. Every other connection keeps
- * the sequential reviewed `useSafeTx` path.
+ * the sequential reviewed `useReviewedAction` path.
  */
 export type LiquidityStep =
   | { kind: 'approve-erc20'; token: Address; amount: bigint; label: string }

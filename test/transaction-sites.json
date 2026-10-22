@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "useSafeTx": {
+  "reviewedActions": {
     "src/components/project/AddLiquidityFlow.tsx": {
       "hooks": 1,
       "sends": 3,
@@ -153,22 +153,10 @@
     },
     "src/components/project/LoansSection.tsx": {
       "hooks": 2,
-      "sends": 4,
+      "sends": 2,
       "sendSites": [
         {
-          "id": "repay-after-approval",
-          "actions": [
-            "Borrow or repay"
-          ]
-        },
-        {
-          "id": "repay-native-loan",
-          "actions": [
-            "Borrow or repay"
-          ]
-        },
-        {
-          "id": "repay-approved-erc20-loan",
+          "id": "repay-loan",
           "actions": [
             "Borrow or repay"
           ]
@@ -308,6 +296,18 @@
           ]
         }
       ]
+    },
+    "src/components/project/MintShopItemModal.tsx": {
+      "hooks": 1,
+      "sends": 1,
+      "sendSites": [
+        {
+          "id": "mint-without-payment",
+          "actions": [
+            "Mint shop tiers without payment"
+          ]
+        }
+      ]
     }
   },
   "authorityCalls": {
@@ -385,24 +385,6 @@
         "Launch a project",
         "Launch linked chains",
         "Deploy a revnet"
-      ]
-    },
-    "src/components/project/MintShopItemModal.tsx": {
-      "calls": 1,
-      "actions": [
-        "Mint shop tiers without payment"
-      ]
-    },
-    "src/lib/contract-write.ts": {
-      "calls": 1,
-      "actions": [
-        "Submit a reviewed direct write"
-      ]
-    },
-    "src/hooks/useSafeTx.ts": {
-      "calls": 1,
-      "actions": [
-        "Submit a reviewed direct write"
       ]
     },
     "src/lib/launch-multisig-direct.ts": {

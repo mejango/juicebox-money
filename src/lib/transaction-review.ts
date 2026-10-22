@@ -3,6 +3,7 @@
 import {
   buildTransactionDebugPrompt as buildDebugPrompt,
   buildTransactionReviewPrompt as buildReviewPrompt,
+  type ReviewModel,
   type TransactionReviewRequest,
 } from '@bananapus/nana-sdk-core/review'
 import { displayChainName, explorerOrigin } from '@/lib/chainDisplay'
@@ -33,7 +34,7 @@ export function buildTransactionDebugPrompt(
 }
 
 export function buildTransactionReviewPrompt(
-  request: TransactionReviewRequest,
+  request: TransactionReviewRequest | ReviewModel,
 ): string {
   return buildReviewPrompt(request, display)
 }

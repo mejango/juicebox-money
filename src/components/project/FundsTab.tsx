@@ -50,7 +50,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
 import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { FlowError, shortError } from '@/lib/errors'
@@ -819,7 +819,7 @@ function FundsTxFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
 
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
@@ -996,7 +996,7 @@ function FundsTxFlow({
   const handleConfirm = () => {
     if (!review || sending) return
     // The reviewed args embed the beneficiary: only that account may send them.
-    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent, legacy: review.legacy })
+    void tx.run({ account: review.account, calls: [reviewedCall(review.request, { intent: review.intent, legacy: review.legacy })] })
   }
 
   const closeReview = () => {
