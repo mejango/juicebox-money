@@ -1920,7 +1920,8 @@ export function CreateForm() {
    */
   const recoverUnreadable = async (pinned: NonNullable<typeof pinnedRef.current>, chainId: number) => {
     const [{ launchAttemptOf }, { SAVED_ATTEMPT_UNREADABLE_LINE }] = await Promise.all([
-      import("@/lib/launch-attempt"), import("@bananapus/nana-sdk-core/review"),
+      import("@/lib/launch-attempt"),
+      import(/* webpackExports: ["SAVED_ATTEMPT_UNREADABLE_LINE"] */ "@bananapus/nana-sdk-core/review"),
     ]);
     const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as PublicClient;
     setLaunchError(SAVED_ATTEMPT_UNREADABLE_LINE);
