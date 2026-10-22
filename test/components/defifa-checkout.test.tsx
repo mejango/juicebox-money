@@ -101,7 +101,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
   it('treats a mined revert as a sent transaction to verify, not an unknown submission', async () => {
-    controls.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError())
+    controls.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(sentHash(1), 1))
     await openReview(); await click('Confirm mint')
     await act(async () => wallet.confirm(sentHash(1), 10n, 'reverted'))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
