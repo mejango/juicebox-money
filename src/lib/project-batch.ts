@@ -21,7 +21,7 @@ import {
   waitForSafeExecutionHash,
 } from '@/lib/safe-connector'
 import {
-  hasRelayrPendingEvidence, loadRelayrPendingSession, relayrTargetSupportsForwarder,
+  hasRelayrPendingEvidence, loadRelayrPendingSession, relayrForwardGas, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
 } from '@/lib/relayr'
 import { isDefiniteWalletRejection, writeIntentKey, type ReviewedPlan, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
@@ -153,6 +153,31 @@ const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `proje
 const relayrRuns = (calls: ProjectBatchCall[]) => !isSafeConnection(wagmiConfig) &&
   calls.every(call => call.relayr === 'permissionless' && relayrSupportsChain(call.chainId)) && relayrPaymentChains(calls.map(call => call.chainId)).length > 0
 const savedRelayrRound = (scope: string) => loadRelayrPendingSession(scope) ?? loadRawRelayrSession(scope)
+
+/**
+ * The calls of a round Relayr forwards for `account` under one payment: its
+ * own EOA's calls on Relayr chains whose targets trust the forwarder, in the
+ * first network family with more than one. Real and test funds never mix;
+ * every other call keeps the separately reviewed direct path.
+ */
+async function relayGroupOf(batch: ProjectBatch, pending: ProjectBatchCall[], account: Address): Promise<ProjectBatchCall[]> {
+  const relayrChainIds = batch.relayrChainIds ?? [1, 10, 8453, 42161]
+  const eligibility = await Promise.all(pending.map(async call => {
+    if (call.relayr !== undefined || !relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || batch.submissions[call.id]) return false
+    const identity = await readAuthorityIdentity(clientFor(call.chainId), call.authority)
+    return (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa') && await relayrTargetSupportsForwarder(call)
+  }))
+  const families = new Map<number, ProjectBatchCall[]>()
+  for (const call of pending.filter((_call, index) => eligibility[index])) {
+    const family = relayrPaymentChains([call.chainId])[0]
+    if (family === undefined) continue
+    families.set(family, [...(families.get(family) ?? []), call])
+  }
+  return [...families.values()].find(calls => calls.length > 1) ?? []
+}
+
+/** A round the batch review showed as one Relayr round: its scope, the chain its fee bound is on, and its calls. */
+type RelayedRound = { round: string; chainId: number; ids: string[]; raw: boolean }
 
 /** No relay session or journal entry shows that anything left this browser. */
 function withoutRelayEvidence(batch: ProjectBatch): boolean {
@@ -479,7 +504,7 @@ export async function runProjectBatch({
     checkAccount()
     if (replacing) { replacing.abandoned = true; persist(replacing) }
     // This run's one review of every call, and whether it showed them as Safe-app proposals.
-    let reviewed: { plan: ReviewedPlan; viaSafe: boolean } | undefined
+    let reviewed: { plan: ReviewedPlan; viaSafe: boolean; relayed: Map<number, RelayedRound> } | undefined
     try {
     if (!batch) {
       const frozen = decode<ProjectBatchCall[]>(encode(proposedCalls))
@@ -497,15 +522,36 @@ export async function runProjectBatch({
       const viaSafe = isSafeConnection(wagmiConfig)
       const { reviewPlan } = await loadReviewEngine()
       const planned = batch
+      // Core bounds a round's fee on its first call's chain, so a round is
+      // shown as one only when the wallet's chain is in it, that call first.
+      const relayed = new Map<number, RelayedRound>()
+      if (!viaSafe && startChainId !== undefined) await Promise.all(planned.rounds.map(async (ids, index) => {
+        const calls = ids.map(id => planned.calls.find(item => item.id === id)!)
+        const raw = relayrRuns(calls)
+        const group = raw ? calls : await relayGroupOf(planned, calls, account)
+        if (group.some(call => call.chainId === startChainId)) {
+          relayed.set(index, { round: relayrScopeOf(planned, index), chainId: startChainId, ids: group.map(call => call.id), raw })
+        }
+      }))
+      const shown = [...batch.calls]
+      for (const { ids, chainId } of relayed.values()) {
+        // Calls of one round are on distinct chains, so the lead moves ahead of no call on its own chain.
+        const lead = shown.findIndex(call => ids.includes(call.id) && call.chainId === chainId)
+        const [call] = shown.splice(lead, 1)
+        shown.splice(shown.findIndex(item => ids.includes(item.id)), 0, call)
+      }
+      const relayedOf = (call: ProjectBatchCall) => [...relayed.values()].find(({ ids }) => ids.includes(call.id))
       const plan = await reviewPlan({ account, title,
         description: `${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Pay network fees once for this batch. Each payment has its own result.' : 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A round Relayr runs goes from its own account; every other call from its authority.
-        calls: batch.calls.map(call => ({ chainId: call.chainId,
-          from: relayrRuns(planned.rounds.find(ids => ids.includes(call.id))!.map(id => planned.calls.find(item => item.id === id)!)) ? 'relayr' as const : call.authority,
+        // A forwarded round's requests show with the gas each signs, as the account's own.
+        calls: shown.map(call => { const tag = relayedOf(call); return { chainId: call.chainId,
+          from: relayrRuns(planned.rounds.find(ids => ids.includes(call.id))!.map(id => planned.calls.find(item => item.id === id)!)) ? 'relayr' as const : tag ? account : call.authority,
+          ...(tag && !tag.raw ? { gas: relayrForwardGas(call) } : {}), ...(tag ? { relayrRound: tag.round } : {}),
           to: call.target, data: call.data, value: call.value ?? 0n, label: call.label, abi: call.abi,
-          functionName: call.functionName, args: call.args, contractName: call.contractName })) }, reviewedSendDeps)
-      reviewed = { plan, viaSafe }
+          functionName: call.functionName, args: call.args, contractName: call.contractName } }) }, reviewedSendDeps)
+      reviewed = { plan, viaSafe, relayed }
     }
     const journal = batch
     const complete = (ids: string[]) => {
@@ -536,6 +582,9 @@ export async function runProjectBatch({
       if (!pending.length) continue
       checkAccount()
       const relayrScope = relayrScopeOf(journal, round)
+      // This run's review showed this round as one Relayr round; a changed connection reviews it again.
+      const tag = reviewed && reviewed.viaSafe === isSafeConnection(wagmiConfig) ? reviewed.relayed.get(round) : undefined
+      const parent = tag && reviewed ? { plan: reviewed.plan, round: tag.round, chainId: tag.chainId } : undefined
       const rawSaved = loadRawRelayrSession(relayrScope)
       if (rawSaved || (relayrRuns(pending) && pending.every(call => !journal.submissions[call.id]))) {
         const boundIds = journal.relayrCallIds?.[String(round)]
@@ -554,7 +603,7 @@ export async function runProjectBatch({
           }
           try {
             await runRawRelayrCalls({ calls: rawCalls, account, pendingScope: relayrScope,
-              preferredPaymentChainId: startChainId, signal, onQuoted: onBeforePayment,
+              preferredPaymentChainId: startChainId, signal, onQuoted: onBeforePayment, ...(tag?.raw ? { planned: parent } : {}),
               onAttempts: attempts => onAttempts?.(Object.fromEntries(rawCalls.map((item, index) => [item.id, attempts[index]]))),
               reverify: async () => { checkAccount(); await mapConcurrentChecks(rawCalls, async call => { await reverify?.(call) }); checkAccount() },
               onProgress: progress => { notePublished(); report(progress.message, round) },
@@ -578,24 +627,8 @@ export async function runProjectBatch({
       const savedRelay = loadRelayrPendingSession(relayrScope)
       if (!boundRelayIds && (journal.relayrRounds.includes(round) || savedRelay)) relayCalls = pending
       if (!boundRelayIds && !journal.relayrRounds.includes(round) && !savedRelay && !isSafeConnection(wagmiConfig)) {
-        const relayrChainIds = journal.relayrChainIds ?? [1, 10, 8453, 42161]
-        const eligibility = await Promise.all(pending.map(async call => {
-          if (call.relayr !== undefined || !relayrChainIds.includes(call.chainId) || !relayrSupportsChain(call.chainId) || !isAddressEqual(call.authority, account) || journal.submissions[call.id]) return false
-          const identity = await readAuthorityIdentity(clientFor(call.chainId), call.authority)
-          return (identity?.kind === 'eoa' || identity?.kind === 'delegated-eoa') && await relayrTargetSupportsForwarder(call)
-        }))
-        const eligible = pending.filter((_call, index) => eligibility[index])
-        const families = new Map<number, ProjectBatchCall[]>()
-        for (const call of eligible) {
-          const family = relayrPaymentChains([call.chainId])[0]
-          if (family === undefined) continue
-          const calls = families.get(family) ?? []
-          calls.push(call)
-          families.set(family, calls)
-        }
-        // A saved round owns one paid bundle. Never combine real and test funds;
-        // other-family calls keep the existing separately reviewed direct path.
-        relayCalls = [...families.values()].find(calls => calls.length > 1) ?? []
+        // The calls the review showed as this round's Relayr round go as that round; a saved round owns one paid bundle.
+        relayCalls = tag && !tag.raw ? pending.filter(call => tag.ids.includes(call.id)) : await relayGroupOf(journal, pending, account)
       }
       if (relayCalls.length) {
         if (!journal.relayrRounds.includes(round)) journal.relayrRounds.push(round)
@@ -612,6 +645,7 @@ export async function runProjectBatch({
         notePublished()
         try {
           await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
+            ...(tag && !tag.raw ? { parent } : {}),
             reverify: async () => { checkAccount(); for (const call of relayCalls) await reverify?.(call) },
             onProgress: progress => report(progress.phase === 'executing'
               ? `Reported status: ${progress.done}/${progress.total} destinations complete; verifying their transactions…`
