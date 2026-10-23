@@ -29,7 +29,9 @@ const mocks = vi.hoisted(() => ({
   loadPayerDeployment: vi.fn(),
   runPayerDeployments: vi.fn(),
   writeText: vi.fn(),
+  resolveSuckers: vi.fn(),
 }))
+vi.mock('@bananapus/nana-sdk-core', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core')>(), resolveSuckers: mocks.resolveSuckers }))
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...props }: Record<string, unknown>) =>
@@ -113,6 +115,7 @@ vi.mock('@/lib/bendystraw', async importOriginal => {
 })
 
 import { ExtrasTab } from '@/components/project/ExtrasTab'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 import { buildPayerDeploymentReview, payerDeploymentRequest, type PayerDeploymentSession } from '@/lib/payer-relayr'
 
 const props = {
@@ -182,6 +185,8 @@ function payerRow(overrides: Partial<BsProjectPayer> = {}): BsProjectPayer {
 }
 
 beforeEach(() => {
+  clearSuckerGroups()
+  mocks.resolveSuckers.mockReset().mockResolvedValue([{ peerChainId: 1, projectId: 42n }, { peerChainId: 10, projectId: 84n }])
   mocks.address = ALICE
   mocks.connected = true
   mocks.payerRows = []
@@ -382,6 +387,29 @@ describe('payer deployment recovery', () => {
         { chainId: 10, projectId: 84, owner: ADMIN, beneficiary: ADMIN },
       ],
     })
+  })
+
+  it('refuses an Optimism project the onchain registry does not link, before the review', async () => {
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 42n }, { peerChainId: 10, projectId: 85n }])
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(ExtrasTab, { ...props, chains: [[1, 42], [10, 84]] })) })
+    await act(async () => buttonWith(renderer, 'Create payer address').props.onClick())
+    await act(async () => inputLabelled(renderer, 'Deploy on Optimism project #84').props.onChange({ target: { checked: true } }))
+    await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
+    expect(renderedText(renderer.root)).toContain("The Optimism project listed here isn't linked onchain.")
+    expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
+    expect(mocks.runPayerDeployments).not.toHaveBeenCalled()
+  })
+
+  it('holds the deploy button in its loading state while the registry is read', async () => {
+    mocks.resolveSuckers.mockReturnValue(new Promise(() => {}))
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(ExtrasTab, { ...props, chains: [[1, 42], [10, 84]] })) })
+    await act(async () => buttonWith(renderer, 'Create payer address').props.onClick())
+    await act(async () => inputLabelled(renderer, 'Deploy on Optimism project #84').props.onChange({ target: { checked: true } }))
+    await act(async () => { void buttonWith(renderer, 'Deploy payer address').props.onClick() })
+    expect(buttonWith(renderer, 'Checking…').props.disabled).toBe(true)
+    expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
   })
 
   it('uses the route project ID when sibling discovery contains a conflicting home-chain row', async () => {

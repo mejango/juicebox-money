@@ -120,7 +120,7 @@ describe('shared display consumers', () => {
     ))))
 
     await act(async () => root.render(<QueryClientProvider client={queryClient}>
-      <AutoIssuanceSection chains={[[1, 7]]} />
+      <AutoIssuanceSection home={[1, 7]} chains={[[1, 7]]} />
       <LoansSection chainId={1} projectId={7} />
     </QueryClientProvider>))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)) })

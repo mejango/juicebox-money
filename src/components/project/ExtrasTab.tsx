@@ -24,6 +24,7 @@ import {
   type ExportProjectProfile,
 } from '@/lib/project-draft-export'
 import { chainName } from '@/lib/urn'
+import { requireLinkedPairs } from '@/lib/sucker-group'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { explorerAddressUrl, explorerTxUrl } from '@/lib/chainDisplay'
 import { buildPayerDeploymentReview, finishPayerDeployment, loadPayerDeployment, payerDeploymentScope, runPayerDeployments, type PayerDeploymentSession } from '@/lib/payer-relayr'
@@ -214,7 +215,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   }, [scope, chainId])
 
   const invalidate = () => { setReview(null); setFlowError(null) }
-  const handleReview = () => {
+  const handleReview = async () => {
     if (busy || session) return
     if (!isConnected || !address) { openSignIn(); return }
     setFlowError(null)
@@ -225,10 +226,13 @@ function PayerAddressCard({ chainId, projectId, chains }: {
     }
     const owner = editable ? (adminInput.trim() ? resolvedAddress(adminInput.trim()) : address) : zeroAddress
     if (!owner) { setFlowError('Enter a valid admin address or ENS name.'); return }
+    setBusy(true)
     try {
+      await requireLinkedPairs([chainId, projectId], projects.filter(([id]) => selectedChains.includes(id)))
       setReview(buildPayerDeploymentReview({ projects, selectedChainIds: selectedChains, account: address,
         beneficiary: beneficiaryAddress, owner, memo: memo.trim(), addToBalance }))
     } catch (error) { setFlowError(error instanceof Error ? error.message : 'Could not review the payer addresses.') }
+    finally { setBusy(false) }
   }
   const run = async (frozen: PayerDeploymentSession) => {
     if (busy) return
@@ -334,7 +338,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                   </label>)}
                 </fieldset>
                 <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
-                <button onClick={handleReview} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
+                <button onClick={() => void handleReview()} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{busy && !review ? 'Checking…' : isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
               </>
             )}
             <TxError error={flowError} className="mt-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700" />

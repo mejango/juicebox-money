@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true, openSignIn: vi.fn() },
   load: vi.fn(), run: vi.fn(), payout: vi.fn(), reserved: vi.fn(), reverify: vi.fn(), verify: vi.fn(), options: [] as unknown[], discard: vi.fn(),
+  resolveSuckers: vi.fn(),
 }))
+vi.mock('@bananapus/nana-sdk-core', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core')>(), resolveSuckers: mocks.resolveSuckers }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
 vi.mock('@tanstack/react-query', async original => ({
   ...await original<typeof import('@tanstack/react-query')>(),
@@ -21,6 +23,7 @@ vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/
 
 import { DistributionBatchFlow, distributionBatchCalls } from '@/components/project/DistributionBatchFlow'
 import { RelayrDiscardError } from '@/lib/relayr'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 import type { Distribution, PayoutDistribution, ReservedDistribution } from '@/lib/project-distributions'
 
 const ACCOUNT = mocks.wallet.address as Address
@@ -57,6 +60,8 @@ async function click(renderer: ReactTestRenderer, label: string) {
   await act(async () => { await button!.props.onClick() })
 }
 beforeEach(() => {
+  clearSuckerGroups()
+  mocks.resolveSuckers.mockReset().mockResolvedValue(CHAINS.map(([peerChainId, projectId]) => ({ peerChainId, projectId: BigInt(projectId) })))
   queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   mocks.wallet.address = ACCOUNT
   mocks.load.mockReturnValue(null)
@@ -79,6 +84,18 @@ describe('distribution batch reviews and recovery', () => {
     await click(renderer, 'Review selected distributions')
     expect(text(renderer)).toContain('at most 6 decimal places')
     expect(mocks.payout).not.toHaveBeenCalled()
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('refuses a Base deployment the onchain registry does not link, before any distribution is built', async () => {
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 17n }, { peerChainId: 8453, projectId: 304n }])
+    const renderer = await mount('reserved')
+    await click(renderer, 'Distribute reserved tokens')
+    await act(async () => renderer.root.findAllByType('input')[1].props.onChange())
+    await click(renderer, 'Review selected distributions')
+    expect(text(renderer)).toContain("The Base project listed here isn't linked onchain.")
+    expect(mocks.resolveSuckers).toHaveBeenCalledWith(expect.objectContaining({ chainId: 1, projectId: 17n, version: 6 }))
+    expect(mocks.reserved).not.toHaveBeenCalled()
     expect(mocks.run).not.toHaveBeenCalled()
   })
 

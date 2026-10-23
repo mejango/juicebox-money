@@ -7,7 +7,9 @@ const mocks = vi.hoisted(() => ({
   account: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address,
   saved: null as null | { id: string; status: string; account: Address; calls: unknown[] },
   claim: vi.fn(), auto: vi.fn(), allocation: vi.fn(), run: vi.fn(), reverifyClaim: vi.fn(), reverifyAuto: vi.fn(), invalidate: vi.fn(), discard: vi.fn(),
+  resolveSuckers: vi.fn(),
 }))
+vi.mock('@bananapus/nana-sdk-core', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core')>(), resolveSuckers: mocks.resolveSuckers }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.account, openSignIn: vi.fn() }) }))
 vi.mock('@tanstack/react-query', () => ({ useQueryClient: () => ({ invalidateQueries: mocks.invalidate }) }))
@@ -25,6 +27,7 @@ vi.mock('@/lib/project-token-batch', () => ({
 
 import { AutoIssueAcrossChains, AutoIssueAllocation, ClaimCreditsAcrossChains } from '@/components/project/ProjectTokenBatchFlow'
 import { RelayrDiscardError } from '@/lib/relayr'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 
 const ACCOUNT = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as Address
 const BENEFICIARY = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as Address
@@ -42,11 +45,11 @@ function text(instance: ReactTestInstance): string {
   return instance.children.map(child => typeof child === 'object' ? text(child) : String(child)).join('')
 }
 const button = (renderer: TestRenderer.ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => text(item).includes(label))!
-async function render(auto = false) {
+async function render(auto = false, home: readonly [number, number] = chains[0]) {
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => { renderer = TestRenderer.create(auto
-    ? createElement(AutoIssueAcrossChains, { chains })
-    : createElement(ClaimCreditsAcrossChains, { chains, holder: ACCOUNT })) })
+    ? createElement(AutoIssueAcrossChains, { home, chains })
+    : createElement(ClaimCreditsAcrossChains, { home, chains, holder: ACCOUNT })) })
   return renderer
 }
 async function click(renderer: TestRenderer.ReactTestRenderer, label: string) {
@@ -54,6 +57,8 @@ async function click(renderer: TestRenderer.ReactTestRenderer, label: string) {
 }
 
 beforeEach(() => {
+  clearSuckerGroups()
+  mocks.resolveSuckers.mockReset().mockResolvedValue([{ peerChainId: 1, projectId: 42n }, { peerChainId: 10, projectId: 84n }])
   mocks.account = ACCOUNT
   mocks.saved = null
   mocks.claim.mockResolvedValue([call(1, 42), call(10, 84, 2)])
@@ -80,6 +85,36 @@ describe('aggregate token action reviews', () => {
       action: 'claim-credits', account: ACCOUNT, calls: [call(10, 84, 2)], reverify: mocks.reverifyClaim,
     }))
     expect(text(renderer.root)).toContain('All selected credits are now ERC-20')
+  })
+
+  it('refuses an Optimism project the onchain registry does not link, before reading any claim', async () => {
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 42n }])
+    const renderer = await render()
+    await click(renderer, 'Claim credits as ERC-20')
+    await click(renderer, 'Review selected chains')
+    expect(text(renderer.root)).toContain("The Optimism project listed here isn't linked onchain.")
+    expect(mocks.claim).not.toHaveBeenCalled()
+    expect(mocks.run).not.toHaveBeenCalled()
+  })
+
+  it('checks against the page\'s own deployment, not the first listed one', async () => {
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 10, projectId: 84n }])
+    const renderer = await render(false, chains[1])
+    await click(renderer, 'Claim credits as ERC-20')
+    await click(renderer, 'Review selected chains')
+    expect(mocks.resolveSuckers).toHaveBeenCalledWith(expect.objectContaining({ chainId: 10, projectId: 84n }))
+    expect(text(renderer.root)).toContain("The Ethereum project listed here isn't linked onchain.")
+    expect(mocks.claim).not.toHaveBeenCalled()
+  })
+
+  it('refuses a single remote allocation the onchain registry does not link', async () => {
+    mocks.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 42n }])
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(AutoIssueAllocation,
+      { home: chains[0], chainId: 10, projectId: 84, stageId: '1', beneficiary: BENEFICIARY })) })
+    await click(renderer, 'Distribute')
+    expect(text(renderer.root)).toContain("The Optimism project listed here isn't linked onchain.")
+    expect(mocks.allocation).not.toHaveBeenCalled()
   })
 
   it('resumes persisted claims without rebuilding changed credit balances', async () => {
@@ -163,7 +198,7 @@ describe('aggregate token action reviews', () => {
     mocks.saved = { id: 'aggregate', status: 'pending', account: ACCOUNT, calls: original }
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => { renderer = TestRenderer.create(createElement(AutoIssueAllocation,
-      { chainId: 1, projectId: 42, stageId: '1', beneficiary: BENEFICIARY })) })
+      { home: chains[0], chainId: 1, projectId: 42, stageId: '1', beneficiary: BENEFICIARY })) })
     expect(text(renderer.root)).not.toContain('Confirm auto issuance')
     await click(renderer, 'Resume saved batch')
     expect(text(renderer.root)).toContain('Project 84')

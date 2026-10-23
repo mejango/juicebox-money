@@ -65,6 +65,7 @@ import {
 } from '@/lib/format'
 import { TIER_UNLIMITED_SUPPLY } from '@/lib/tier-metadata'
 import { chainName } from '@/lib/urn'
+import { useLinkedDeployments } from '@/lib/sucker-group'
 import { wagmiConfig } from '@/providers/Providers'
 import { PERSIST } from '@/lib/query-persist'
 import { SPLIT_SALES_TOKEN_CREDIT_TITLE } from '@/lib/shop-copy'
@@ -156,7 +157,7 @@ export function ShopTab({
   chainId,
   projectId,
   isRevnet,
-  chains,
+  chains: listed,
 }: {
   chainId: JBChainId
   projectId: number
@@ -166,6 +167,8 @@ export function ShopTab({
    *  nothing to distinguish that from a genuinely single-chain project. */
   chains: [number, number][]
 }) {
+  // Edits and redemptions reach another chain's collection only once the onchain registry links its project.
+  const { deployments: chains, line: pairLine } = useLinkedDeployments([chainId, projectId], listed)
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useViewedAccount()
   const { quantities: cart, count: cartCount } = useShopCart()
@@ -282,7 +285,7 @@ export function ShopTab({
     data: writeTargets,
     isLoading: writeTargetsLoading,
   } = useKeptQuery({
-    queryKey: ['shop721WriteTargets', chains, isRevnet],
+    queryKey: ['shop721WriteTargets', chainId, projectId, chains, isRevnet],
     meta: PERSIST,
     enabled: (addItemsOpen || replaceTierId != null) && !!shop && shop.protocol !== 'defifa',
     staleTime: 30_000,
@@ -556,6 +559,8 @@ export function ShopTab({
   )
 
   return (
+    <>
+    {pairLine ? <p role="alert" className="mb-3 text-xs text-error-500">{pairLine}</p> : null}
     <SubTabs
       hashParent="shop"
       tabs={[
@@ -575,6 +580,7 @@ export function ShopTab({
         },
       ]}
     />
+    </>
   )
 }
 

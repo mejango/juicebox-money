@@ -12,6 +12,7 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
 import { chainName } from '@/lib/urn'
+import { requireLinkedPairs, type ProjectPair } from '@/lib/sucker-group'
 import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import {
   readAutoIssueCalls, readAutoIssueAllocationCall, readClaimCalls, reverifyAutoIssueCall, reverifyClaimCall,
@@ -26,34 +27,39 @@ function reviewedCallsKey(calls: ProjectBatchCall[]): string {
   })), (_key, value) => typeof value === 'bigint' ? value.toString() : value)
 }
 
-export function ClaimCreditsAcrossChains({ chains, holder, onDone }: {
+export function ClaimCreditsAcrossChains({ home, chains, holder, onDone }: {
+  home: ProjectPair
   chains: readonly ProjectTokenDestination[]
   holder: Address
   onDone?: () => void
 }) {
-  return <ProjectTokenBatchFlow action="claim-credits" chains={chains} holder={holder} onDone={onDone} />
+  return <ProjectTokenBatchFlow action="claim-credits" home={home} chains={chains} holder={holder} onDone={onDone} />
 }
 
-export function AutoIssueAcrossChains({ chains, onDone }: {
+export function AutoIssueAcrossChains({ home, chains, onDone }: {
+  home: ProjectPair
   chains: readonly ProjectTokenDestination[]
   onDone?: () => void
 }) {
-  return <ProjectTokenBatchFlow action="auto-issuance" chains={chains} onDone={onDone} />
+  return <ProjectTokenBatchFlow action="auto-issuance" home={home} chains={chains} onDone={onDone} />
 }
 
-export function AutoIssueAllocation({ chainId, projectId, stageId, beneficiary, onDone }: {
+export function AutoIssueAllocation({ home, chainId, projectId, stageId, beneficiary, onDone }: {
+  home: ProjectPair
   chainId: JBChainId
   projectId: number
   stageId: string
   beneficiary: Address
   onDone?: () => void
 }) {
-  return <ProjectTokenBatchFlow action="auto-issuance" chains={[[chainId, projectId]]}
+  return <ProjectTokenBatchFlow action="auto-issuance" home={home} chains={[[chainId, projectId]]}
     allocation={{ stageId, beneficiary }} onDone={onDone} />
 }
 
-function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
+function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDone }: {
   action: 'claim-credits' | 'auto-issuance'
+  /** The page's own deployment, which the onchain registry links the others to. */
+  home: ProjectPair
   chains: readonly ProjectTokenDestination[]
   holder?: Address
   allocation?: { stageId: string; beneficiary: Address }
@@ -103,6 +109,7 @@ function ProjectTokenBatchFlow({ action, chains, holder, allocation, onDone }: {
       if (saved) { setReview(saved.calls); setReviewBatchId(saved.id); setStatus(null); return }
       const destinations = chains.filter(([chainId]) => selected.has(chainId))
       if (!destinations.length) throw new Error('Select at least one chain.')
+      await requireLinkedPairs(home, destinations)
       setReview(isClaim ? await readClaimCalls(destinations, holder!) : allocation
         ? [await readAutoIssueAllocationCall(destinations[0][0] as JBChainId, destinations[0][1], allocation.stageId, allocation.beneficiary, account)]
         : await readAutoIssueCalls(destinations, account))

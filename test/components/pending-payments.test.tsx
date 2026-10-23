@@ -17,11 +17,13 @@ const mocks = vi.hoisted(() => ({
   query: new AbortController(),
   names: [] as { chainId: number; projectId: number; version: number; name: string | null }[], namesFn: null as ((context: { signal: AbortSignal }) => Promise<unknown>) | null, projects: vi.fn(),
   openSignIn: vi.fn(), fetch: vi.fn(), review: vi.fn(), reverify: vi.fn(), reconcile: vi.fn(), outcome: vi.fn(),
+  group: [] as { peerChainId: number; projectId: bigint }[],
   recheckBatch: vi.fn(), run: vi.fn(), draft: vi.fn(), load: vi.fn(), loadExact: vi.fn(), invalidate: vi.fn(), refetch: vi.fn(), discard: vi.fn(),
 }))
 vi.mock('@tanstack/react-query', () => ({
   useQueryClient: () => ({ invalidateQueries: mocks.invalidate }),
   useQuery: ({ queryKey, queryFn }: { queryKey: string[]; queryFn: (context: { signal: AbortSignal }) => Promise<unknown> }) => {
+    if (queryKey[0] === 'suckerGroup') return { data: mocks.group, isError: false }
     if (queryKey[0] === 'pendingPaymentProjectNames') {
       mocks.namesFn = queryFn as unknown as typeof mocks.namesFn
       return { data: mocks.names }
@@ -88,6 +90,7 @@ beforeEach(() => {
   mocks.connected = true; mocks.rows = []; mocks.names = []; mocks.projects.mockResolvedValue([]); mocks.error = null; mocks.checking = false; mocks.loading = false; mocks.verificationError = null
   mocks.address = '0x1111111111111111111111111111111111111111'
   mocks.load.mockReturnValue(null)
+  mocks.group = [{ peerChainId: 1, projectId: 17n }, { peerChainId: 10, projectId: 42n }]
   mocks.loadExact.mockReturnValue(null)
   mocks.invalidate.mockResolvedValue(undefined)
   mocks.reconcile.mockResolvedValue(null)
@@ -385,10 +388,20 @@ describe('pending payment review above activity', () => {
     expect(mocks.run).not.toHaveBeenCalled()
   })
 
-  it('rejects conflicting peer IDs before loading a partial inventory', async () => {
+  it('leaves out a conflicting peer ID the onchain registry does not link', async () => {
+    mocks.fetch.mockResolvedValue([])
     await render([[1, 99]])
-    await expect(mocks.queryFn!({ signal: mocks.query.signal })).rejects.toThrow('Conflicting project deployments')
-    expect(mocks.fetch).not.toHaveBeenCalled()
+    await mocks.queryFn!({ signal: mocks.query.signal })
+    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }]])
+  })
+
+  it('retries payments only on deployments the onchain registry links to this project', async () => {
+    mocks.group = [{ peerChainId: 1, projectId: 17n }, { peerChainId: 10, projectId: 43n }]
+    mocks.fetch.mockResolvedValue([])
+    await render()
+    await mocks.queryFn!({ signal: mocks.query.signal })
+    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }]])    // A batch the user already reviewed is still found on every listed deployment, so its recovery is never hidden.
+    expect(mocks.load).toHaveBeenCalledWith([[1, 17], [1, 17], [10, 42]])
   })
 
   it('opens the standard transaction review for the complete batch and only submits on confirmation', async () => {

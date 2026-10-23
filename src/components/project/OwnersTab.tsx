@@ -65,6 +65,7 @@ import {
   LiquidityPositions,
   useUserLpSummary,
 } from '@/components/project/LiquidityPositions'
+import { useLinkedDeployments } from '@/lib/sucker-group'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -93,7 +94,7 @@ export function OwnersTab({
   projectId,
   isRevnet,
   suckerGroupId,
-  chains,
+  chains: listed,
 }: {
   chainId: JBChainId
   projectId: number
@@ -102,8 +103,12 @@ export function OwnersTab({
   /** [chainId, projectId] pairs across the sucker group (incl. this chain). */
   chains: [number, number][]
 }) {
+  // Liquidity edits and the rest of the tab reach another chain only once the onchain registry links its project.
+  // The token batch flows take every listed pair: they find saved batches by it and check each pair themselves.
+  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
   return (
     <div className="space-y-5">
+      {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
       <TokenPanel
         chainId={chainId}
         projectId={projectId}
@@ -122,6 +127,7 @@ export function OwnersTab({
                   projectId={projectId}
                   isRevnet={isRevnet}
                   chains={chains}
+                  listed={listed}
                 />
                 <AllHoldersCard
                   chainId={chainId}
@@ -169,7 +175,7 @@ export function OwnersTab({
                 {
                   label: 'Auto issuance',
                   content: (
-                    <AutoIssuanceSection chains={chains} />
+                    <AutoIssuanceSection home={[chainId, projectId]} chains={listed} />
                   ),
                 },
                 {
@@ -219,11 +225,14 @@ function YouCard({
   projectId,
   isRevnet,
   chains,
+  listed,
 }: {
   chainId: JBChainId
   projectId: number
   isRevnet: boolean
   chains: [number, number][]
+  /** Every listed deployment: the token flows find their saved batches by it and check each pair before a new review. */
+  listed: [number, number][]
 }) {
   const { openSignIn } = useWallet()
   const { address } = useViewedAccount()
@@ -336,7 +345,7 @@ function YouCard({
             </table>
           </div>
 
-          {!isRevnet ? <ClaimCreditsAcrossChains chains={chains} holder={address!} /> : null}
+          {!isRevnet ? <ClaimCreditsAcrossChains home={[chainId, projectId]} chains={listed} holder={address!} /> : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
             {actionBtn('cashOut', 'Cash out')}

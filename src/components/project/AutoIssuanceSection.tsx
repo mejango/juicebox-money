@@ -11,6 +11,7 @@ import { type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AutoIssueAcrossChains, AutoIssueAllocation } from '@/components/project/ProjectTokenBatchFlow'
+import type { ProjectPair } from '@/lib/sucker-group'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import type { BsAutoIssuanceEvent } from '@/lib/loans-queries'
@@ -49,8 +50,11 @@ type Row = {
  * remaining amount.
  */
 export function AutoIssuanceSection({
+  home,
   chains,
 }: {
+  /** The page's own deployment. */
+  home: ProjectPair
   /** [chainId, projectId] pairs across the sucker group. */
   chains: [number, number][]
 }) {
@@ -134,7 +138,7 @@ export function AutoIssuanceSection({
           starts, anyone can create the tokens for them. This is called auto-issuance.
         </p>
       </div>
-      <AutoIssueAcrossChains chains={chains} onDone={() => { void refetch() }} />
+      <AutoIssueAcrossChains home={home} chains={chains} onDone={() => { void refetch() }} />
       {isLoading ? (
         <SkeletonTable rows={4} columns={5} className="mt-5" />
       ) : isError ? (
@@ -167,6 +171,7 @@ export function AutoIssuanceSection({
               {rows.map(row => (
                 <AutoIssueRow
                   key={`${row.chainId}:${row.stageId}:${row.beneficiary}`}
+                  home={home}
                   row={row}
                   onDistributed={refetch}
                 />
@@ -180,9 +185,11 @@ export function AutoIssuanceSection({
 }
 
 function AutoIssueRow({
+  home,
   row,
   onDistributed,
 }: {
+  home: ProjectPair
   row: Row
   onDistributed: () => void
 }) {
@@ -258,6 +265,7 @@ function AutoIssueRow({
       <td className="py-2 text-right">
         {available ? (
           <DistributeFlow
+            home={home}
             chainId={chainId}
             projectId={projectId}
             stageId={row.stageId}
@@ -283,6 +291,7 @@ function AutoIssueRow({
 
 /** Each row uses the same saved action as aggregate auto issuance. */
 export function DistributeFlow(props: {
+  home: ProjectPair
   chainId: JBChainId
   projectId: number
   stageId: string

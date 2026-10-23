@@ -12,6 +12,11 @@ const m = vi.hoisted(() => ({
   payout: vi.fn(),
   clients: new Map<number, unknown>(),
   failedChains: new Set<number>(),
+  resolveSuckers: vi.fn(),
+}))
+vi.mock('@bananapus/nana-sdk-core', async original => ({
+  ...await original<typeof import('@bananapus/nana-sdk-core')>(),
+  resolveSuckers: m.resolveSuckers,
 }))
 
 vi.mock('@/hooks/useWallet', () => ({
@@ -55,6 +60,7 @@ import { EditSplitsFlow } from '@/components/project/EditSplitsFlow'
 import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
 import { invalidateConfirmedPreparation } from '@/lib/preparation-query'
 import type { AuthorityResult } from '@/lib/authority'
+import { clearSuckerGroups } from '@/lib/sucker-group'
 
 let client: QueryClient
 let renderer: ReactTestRenderer | undefined
@@ -67,6 +73,8 @@ beforeEach(() => {
   vi.stubGlobal('window', { localStorage: { getItem: () => null } })
   m.address = '0x1111111111111111111111111111111111111111'
   m.failedChains.clear()
+  clearSuckerGroups()
+  m.resolveSuckers.mockReset().mockResolvedValue([{ peerChainId: 1, projectId: 17n }, { peerChainId: 8453, projectId: 303n }])
   m.read.mockImplementation(async (chainId: JBChainId, request: { functionName: string }) => {
     if (m.failedChains.has(chainId)) throw new Error('RPC unavailable')
     if (request.functionName === 'ownerOf') return m.address
@@ -150,6 +158,18 @@ it('reuses split draft reads on reopen for five seconds, then expires or invalid
     pending.resolve([])
     await Promise.all([first, second])
   })
+})
+
+it('refuses a reserved-recipient peer the onchain registry does not link before reviewing it', async () => {
+  m.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 17n }, { peerChainId: 8453, projectId: 304n }])
+  await render(splitEditor())
+  await click('Edit recipients')
+  const base = renderer!.root.findAllByType('label').find(node => node.findAllByType('span')[0]?.children.join('').startsWith('Base'))!.findByType('input')
+  expect(base.props.disabled).toBe(false)
+  await act(async () => { base.props.onChange() })
+  await click('Save splits')
+  expect(JSON.stringify(renderer!.toJSON())).toContain("The Base project listed here isn't linked onchain.")
+  expect(JSON.stringify(renderer!.toJSON())).not.toContain('Confirm and save')
 })
 
 it('does not reuse split data for another chain, project, group, ruleset or account', async () => {
