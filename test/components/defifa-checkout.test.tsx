@@ -266,10 +266,9 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(text(renderer.root)).toContain(`Payment approval spender${TERMINAL}`)
     await answer()
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[]; abi: unknown }])[0]
+    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[]; data: Hex }])[0]
     expect(call.address).toBe(TOKEN); expect(call.args).toEqual([TERMINAL, 100n])
-    // The shared no-return approve ABI, so a token like mainnet USDT that returns nothing still simulates and decodes.
-    expect(call.abi).toEqual(buildErc20ApproveRequest({ chainId: 1, token: TOKEN, spender: TERMINAL, amount: 100n }).abi)
+    expect(call.data).toBe(encodeFunctionData(buildErc20ApproveRequest({ chainId: 1, token: TOKEN, spender: TERMINAL, amount: 100n })))
     await confirmed(sentHash(1), 77n)
     for (let tries = 0; tries < 40 && wallet.writeContract.mock.calls.length < 2; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
     // No second review: the mint goes to the wallet once the approval confirms.
