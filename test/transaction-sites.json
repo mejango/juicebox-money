@@ -144,17 +144,12 @@
     },
     "src/components/project/MoveFlow.tsx": {
       "hooks": 1,
-      "sends": 3,
+      "sends": 2,
       "sendSites": [
         {
-          "id": "approve-project-token-for-sucker",
+          "id": "approve-and-prepare-token-move",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "prepare-token-move",
-          "actions": [
+            "Approve an ERC-20",
             "Prepare/move tokens cross-chain"
           ]
         },
@@ -211,18 +206,13 @@
       ]
     },
     "src/components/project/DefifaCheckout.tsx": {
-      "hooks": 2,
-      "sends": 2,
+      "hooks": 1,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "approve-native-defifa-payment",
+          "id": "approve-and-mint-defifa-nfts",
           "actions": [
-            "Approve Defifa mint payment"
-          ]
-        },
-        {
-          "id": "mint-native-defifa-nfts",
-          "actions": [
+            "Approve Defifa mint payment",
             "Mint Defifa NFTs"
           ]
         }

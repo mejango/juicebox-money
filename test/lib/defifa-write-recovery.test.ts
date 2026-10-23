@@ -49,7 +49,8 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
     const run = vi.fn()
     await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall({ ...request, chainId: 1 })] }, run })).rejects.toThrow('reviewed account and network')
     await expect(runRecoverableDefifaWrite({ scope, action: { account: TOKEN, calls: [reviewedCall(request)] }, run })).rejects.toThrow('reviewed account and network')
-    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall(request), reviewedCall(request)] }, run })).rejects.toThrow('reviewed account and network')
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall(request), reviewedCall({ ...request, chainId: 1 })] }, run })).rejects.toThrow('reviewed account and network')
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [] }, run })).rejects.toThrow('reviewed account and network')
     expect(run).not.toHaveBeenCalled()
     expect(readDefifaWriteRecovery(scope)).toBeNull()
   })
@@ -63,6 +64,22 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
     await runRecoverableDefifaWrite({ scope, action: action(8453), run })
     await runRecoverableDefifaWrite({ scope: { ...scope, projectId: 46 }, action: action(8453), run })
     expect(run.mock.calls.map(([sent]) => sent.calls[0].intent)).toEqual(['defifa:pay:27', 'defifa:pay:46'])
+  })
+
+  it('holds an approval step by its own key, the action by the namespace, and saves them as one sequence', async () => {
+    const onRecord = vi.fn()
+    const run = vi.fn(async (action: ReviewedRun) => {
+      // The approval step tells the card nothing: only the action's record is the recovery record.
+      await action.beforeWallet?.(action.calls[0], 0)
+      await action.onSubmitted?.(action.calls[0], 0, HASH, { safe: false, adopted: false })
+      return { status: 'done' as const, hashes: [HASH, HASH], receipts: [] }
+    })
+    const approval = reviewedCall(request, { intent: 'approval-key' })
+    await runRecoverableDefifaWrite({ scope, onRecord, action: { account: ACCOUNT, calls: [approval, reviewedCall(request, { dependsOnPrior: true })] }, run })
+    const [sent] = run.mock.calls[0]
+    expect(sent.calls.map(one => one.intent)).toEqual(['approval-key', 'defifa:pay:27'])
+    expect(sent.scope).toBe('defifa:pay:27')
+    expect(onRecord.mock.calls.every(([record]) => record === null)).toBe(true)
   })
 
   it('passes the onUnsent callback through, and tells the card nothing is held', async () => {

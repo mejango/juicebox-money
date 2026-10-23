@@ -36,9 +36,10 @@ import {
   SUCKER_EXTRA_ABI,
   type Infra,
 } from '@/components/project/SettlementSection'
-import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
+import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -309,8 +310,9 @@ export function MoveCard({
   )
 }
 
-/** The three-step move: approve the sucker, prepare (queue the leaf), then
- *  send to the remote chain. Each step is its own reviewed send. */
+/** The move: approve the sucker and prepare (queue the leaf) as one reviewed
+ *  run, then send the queued outbox to the remote chain, reviewed once it is
+ *  queued (its fee is read from the queued outbox). */
 function MoveFlow({
   from,
   fromPid,
@@ -349,6 +351,10 @@ function MoveFlow({
   const [open, setOpen] = useState(false)
   const [sentHash, setSentHash] = useState<`0x${string}` | null>(null)
   const advancedFor = useRef<number>(-1)
+  /** The approve-and-prepare run ended with only its approval at a Safe: once it settles, the prepare is next. */
+  const approvalOnly = useRef(false)
+  /** Each approve-and-prepare run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
   const busy = checking || tx.busy
 
@@ -361,7 +367,8 @@ function MoveFlow({
     if (advancedFor.current === step) return
     advancedFor.current = step
     if (step === 3) setSentHash(tx.hash)
-    setStep(s => (s < 4 ? ((s + 1) as typeof s) : s))
+    setStep(step === 3 ? 4 : approvalOnly.current ? 2 : 3)
+    approvalOnly.current = false
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase, step])
@@ -516,23 +523,8 @@ function MoveFlow({
 
   // Every step moves `review.account`'s tokens to it on the other chain: each
   // send refuses any other connected account.
-  const sendApprove = () => {
-    if (!review || busy) return
-    void tx.run({
-      account: review.account,
-      calls: [reviewedCall(
-        buildErc20ApproveRequest({
-          chainId: from as JBChainId,
-          token: review.projectToken,
-          spender: review.sucker,
-          amount: review.amount,
-        }),
-        { intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }) },
-      )],
-    })
-  }
-
-  const sendPrepare = () => {
+  /** The approval (when needed) and the prepare, in one review: the prepare simulates on the approval's receipt block. */
+  const sendPrepare = async () => {
     if (!review || busy) return
     const request = buildBridgePrepareTx({
       chainId: from,
@@ -542,11 +534,36 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    void tx.run({
-      account: review.account,
-      // Its minimum re-quotes on a fresh review: held by what the user chose to move.
-      calls: [reviewedCall({ ...request, abi: request.abi as Abi }, { intent: review.intent, legacy: review.legacy })],
+    const approve = step === 1 ? [reviewedCall(
+      buildErc20ApproveRequest({
+        chainId: from as JBChainId,
+        token: review.projectToken,
+        spender: review.sucker,
+        amount: review.amount,
+      }),
+      { intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }) },
+    )] : []
+    // Its minimum re-quotes on a fresh review: held by what the user chose to move.
+    const prepare = reviewedCall({ ...request, abi: request.abi as Abi }, {
+      intent: review.intent,
+      legacy: review.legacy,
+      ...(approve.length ? { dependsOnPrior: true } : {}),
     })
+    try {
+      const { calls, saved, scope } = await sequenceCalls(`jbm:move:${from}:${review.sucker}:${review.token}`, review.account, [...approve, prepare])
+      const offset = needsApproval ? 2 - calls.length : 0
+      setRunShown(calls.map((_, at) => offset + at))
+      approvalOnly.current = false
+      const ended = await tx.run({
+        account: review.account,
+        calls,
+        scope,
+        ...planShown(saved, { context: contextRows(rows) }),
+      })
+      approvalOnly.current = ended?.status === 'proposed' && ended.step < calls.length - 1
+    } catch (e) {
+      setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
+    }
   }
 
   const sendToRemote = async () => {
@@ -656,9 +673,8 @@ function MoveFlow({
       ]
     : []
 
-  const stepRun = step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
-  const stepIdle =
-    step === 1 ? 'Approve' : step === 2 ? 'Prepare' : `Send to ${chainName(to)}`
+  const stepRun = step === 1 || step === 2 ? () => void sendPrepare() : () => void sendToRemote()
+  const stepIdle = step === 1 || step === 2 ? 'Retry' : `Send to ${chainName(to)}`
 
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
@@ -726,12 +742,8 @@ function MoveFlow({
         title={step === 4 ? 'Move sent' : 'Confirm move'}
         rows={rows}
         steps={steps}
-        activeIndex={needsApproval ? step - 1 : step - 2}
-        stepsIntro={
-          needsApproval
-            ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-            : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-        }
+        activeIndex={step === 3 ? steps.length - 1 : liveStep(tx, runShown, needsApproval ? step - 1 : step - 2)}
+        stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
         start={step >= 1 && step <= 3 ? stepRun : undefined}
         startKey={step}
         next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}

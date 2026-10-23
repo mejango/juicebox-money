@@ -257,7 +257,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(wallet.writeContract).toHaveBeenCalledTimes(1)
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
-  it('wallet-action:approve-defifa-mint-payment approves the exact amount, then simulates the mint no earlier than the approval block', async () => {
+  it('wallet-action:approve-defifa-mint-payment approves the exact amount and mints in one review, the mint simulated no earlier than the approval block', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockImplementation(async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => functionName === 'allowance' ? blockNumber === undefined ? 0n : 100n : Promise.reject(new Error('Unexpected read')))
     await openReview(); await answer()
@@ -265,38 +265,28 @@ describe('native Defifa checkout through the reviewed engine', () => {
     const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[] }])[0]
     expect(call.address).toBe(TOKEN); expect(call.args).toEqual([TERMINAL, 100n])
     await confirmed(sentHash(1), 77n)
-    expect(text(renderer.root)).toContain('Payment approval verified.')
-    await answer()
+    for (let tries = 0; tries < 40 && wallet.writeContract.mock.calls.length < 2; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    // No second review: the mint goes to the wallet once the approval confirms.
+    expect(wallet.openReviews).toBe(0)
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'pay', account: ALICE }])
     // The mint simulates as Alice, never on a block before the approval's.
     const [{ params: [simulated, block] }] = wallet.client.request.mock.calls.at(-1) as unknown as [{ params: [{ from: Address; to: Address }, Hex] }]
     expect(simulated).toMatchObject({ from: ALICE, to: TERMINAL })
     expect(BigInt(block)).toBeGreaterThanOrEqual(77n)
+    await confirmed(sentHash(2))
+    expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
-  it('allows a new deliberate review only after an authenticated failed approval', async () => {
+  it('stops at an approval that reverts onchain and never sends the mint', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockResolvedValue(0n)
-    controls.approvalProof.mockResolvedValueOnce('failed')
     await openReview(); await answer()
-    await confirmed(sentHash(1))
-    expect(text(renderer.root)).toContain('payment approval failed onchain')
-    expect(renderer.root.findAllByType('button').find(node => text(node) === 'Close review')?.props.disabled).toBe(false)
-    await click('Close review')
-    expect(text(renderer.root)).toContain(sentHash(1))
-    await openReview()
-    expect(text(renderer.root)).toContain(sentHash(1))
-    expect(wallet.openReviews).toBe(1)
-    expect(wallet.writeContract).toHaveBeenCalledTimes(1)
-  })
-  it('retains failed approval proof and never starts a mint', async () => {
-    controls.prepare.mockResolvedValue(prepared(TOKEN))
-    wallet.client.readContract.mockResolvedValue(0n)
-    controls.approvalProof.mockRejectedValue(new Error('Approval receipt unavailable'))
-    await openReview(); await answer()
-    await confirmed(sentHash(1))
-    expect(text(renderer.root)).toContain('Approval receipt unavailable')
-    await click('Recheck confirmation')
+    await act(async () => wallet.confirm(sentHash(1), 10n, 'reverted'))
+    for (let tries = 0; tries < 20; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(text(renderer.root)).not.toContain('NFT mint verified onchain.')
+    // The approval left no Defifa recovery record: only a mint keeps one.
+    expect(readDefifaWriteRecovery({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })).toBeNull()
+    expect(renderer.root.findAllByType('button').some(node => text(node) === 'Try again')).toBe(true)
   })
   it('shows inactive phase honestly without a disabled mint placeholder', async () => {
     await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, phase: 3 } })))

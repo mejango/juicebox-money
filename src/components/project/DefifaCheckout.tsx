@@ -6,16 +6,16 @@ import { usePublicClient } from 'wagmi'
 import { encodeFunctionData, erc20Abi, formatUnits, isAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
 import { DefifaNftTransactionRevertedError, defifaPhaseAllowsPay, effectiveTierPrice, MAX_DEFIFA_ACTION_NFTS, prepareDefifaPay, verifyDefifaNftTransaction, type PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
-import { verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord, ReviewLineError } from '@bananapus/nana-sdk-core/review'
+import { approvalIntent, verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
-import { hashOf, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
+import { hashOf, liveStep, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
 import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
 import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
-import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, defifaWriteNamespace, PendingDefifaWriteError, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxProgress } from '@/components/ui/TxProgress'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
@@ -71,8 +71,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const [submitted, setSubmitted] = useState<{ hash: Hex; safe: boolean } | null>(null)
   const [approvalBlock, setApprovalBlock] = useState<bigint>()
   const [checking, setChecking] = useState(false)
-  const approvalTx = useReviewedAction(review?.chainId ?? chainId)
-  const mintTx = useReviewedAction(review?.chainId ?? chainId)
+  const tx = useReviewedAction(review?.chainId ?? chainId)
   const locked = useRef(false)
   const preparingRef = useRef(false)
   const generation = useRef(0)
@@ -124,8 +123,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       submissionStarted.current = false
       setSubmissionUnknown(false)
       setApprovalBlock(undefined)
-      approvalTx.reset()
-      mintTx.reset()
+      tx.reset()
     } catch (reason) {
       if (generation.current === attempt) setError(message(reason))
     } finally {
@@ -133,29 +131,41 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       if (generation.current === attempt) setPreparing(false)
     }
   }
+  /**
+   * The payment approval (when the allowance is short) and the mint, in one
+   * review: the mint simulates on the approval's receipt block. The same calls
+   * run again after a Safe executes the approval, so core continues at the
+   * mint and never asks for the approval twice.
+   */
   const confirm = async () => {
     if (!review || locked.current) return
     locked.current = true
     setError(null)
-    const approving = !!review.approval && approvalBlock === undefined
-    const request = approving ? review.approval! : { ...review.prepared.transaction, label: 'Mint Defifa NFTs' }
+    const scope = { chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' as const }
+    const mint = reviewedCall({ ...review.prepared.transaction, label: 'Mint Defifa NFTs' }, review.approval ? { dependsOnPrior: true } : {})
+    const calls = review.approval
+      ? [reviewedCall(review.approval, { intent: approvalIntent(defifaWriteNamespace(scope), { step: 'approve', token: review.approval.address, spender: review.prepared.transaction.address }) }), mint]
+      : [mint]
+    const last = calls.length - 1
     // A sent transaction is followed by its receipt (a revert included); only an unsent submission is unknown.
     let sent = false
     try {
       assertCurrent(review)
-      const action: ReviewedRun = { account: review.account, calls: [reviewedCall(request, { simulationBlockNumber: approving ? undefined : approvalBlock })], assertWriteState: () => assertCurrent(review), beforeWallet: () => { assertCurrent(review); submissionStarted.current = true }, onUnsent: () => { submissionStarted.current = false }, onSubmitted: (_call, _step, hash, { safe }) => { sent = true; setStep(approving ? 'approval' : 'mint'); setSubmitted({ hash, safe }) }, reverify: async () => {
+      const action: ReviewedRun = { account: review.account, calls, assertWriteState: () => assertCurrent(review), beforeWallet: (_call, at) => { assertCurrent(review); if (at === last) submissionStarted.current = true }, onUnsent: (_call, at) => { if (at === last) submissionStarted.current = false }, onSubmitted: (_call, at, hash, { safe }) => { if (at !== last) return; sent = true; setStep('mint'); setSubmitted({ hash, safe }) }, reverify: async (_call, at) => {
         await prepareFresh(review)
-        if (!approving && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
-          const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], ...(approvalBlock === undefined ? {} : { blockNumber: approvalBlock }) })
+        // With an approval step, the mint simulates on its receipt block: the simulation is the allowance check.
+        if (at === last && !review.approval && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
+          const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address] })
           if (allowance < review.prepared.amount) throw new ReviewLineError('Mint payment allowance is insufficient. Review again.')
         }
       } }
-      const result = await runRecoverableDefifaWrite({
-        scope: { chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' },
-        action, onRecord: record => { recoveryRecord.current = record }, run: approving ? approvalTx.run : mintTx.run,
-      })
-      if (result) {
-        setStep(approving ? 'approval' : 'mint')
+      const result = await runRecoverableDefifaWrite({ scope, action, onRecord: record => { recoveryRecord.current = record }, run: tx.run })
+      if (result?.status === 'proposed' && result.step < last) {
+        // A Safe executes each step as its own proposal: the approval first, then the mint, reviewed again once it runs.
+        setStep('approval')
+        setSubmitted({ hash: result.safeTxHash, safe: true })
+      } else if (result) {
+        setStep('mint')
         setSubmitted({ hash: hashOf(result)!, safe: result.status === 'proposed' })
       } else if (submissionStarted.current && !sent) {
         setSubmissionUnknown(true)
@@ -173,7 +183,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     await clearDefifaWriteRecovery({ chainId: frozen.chainId, projectId: frozen.projectId, account: frozen.account, action: 'pay' }, record)
     recoveryRecord.current = null
   }
-  const active = step === 'approval' ? approvalTx : mintTx
+  const active = tx
   const verify = async () => {
     if (!review || !submitted || !active.receipt || checking || step === 'verified' || step === 'failed') return
     setChecking(true)
@@ -183,8 +193,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
         const request = review.approval!
         const call = { to: request.address, data: encodeFunctionData({ abi: request.abi, functionName: request.functionName, args: request.args }), value: '0' }
         const status = await verifyReviewedWriteReceipt(review.client, { version: 1, id: submitted.hash, chainId: review.chainId, account: review.account, safe: submitted.safe, call, hash: submitted.hash }, active.receipt)
+        // An approval step keeps no Defifa recovery record: its own hold settled it.
         if (status === 'failed') {
-          await clearOriginal(review)
           submissionStarted.current = false
           setPreviousFailedTransaction({ hash: active.receipt.transactionHash, chainId: review.chainId, projectId: review.projectId, kind: 'approval' })
           setStep('failed')
@@ -193,7 +203,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
         }
         const allowance = await review.client.readContract({ address: request.address, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address], blockNumber: active.receipt.blockNumber })
         if (allowance < review.prepared.amount) throw new ReviewLineError('Confirmed allowance is insufficient for this mint.')
-        await clearOriginal(review)
+        // The same run again: core continues at the mint.
         setApprovalBlock(active.receipt.blockNumber)
         submissionStarted.current = false
         setStep('review')
@@ -227,7 +237,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   }, [submitted, active.receipt, active.phase])
   const closeReview = () => {
     if (busy) return
-    if (review && (submissionUnknown || (submitted && step !== 'verified' && step !== 'failed'))) {
+    // A submitted mint stays recoverable; an approval with a Safe is held by its own hold.
+    if (review && (submissionUnknown || (submitted && step === 'mint'))) {
       try {
         const retained = readDefifaWriteRecovery({ chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' })
         if (!retained || retained.id !== recoveryRecord.current?.id) throw new ReviewLineError('The original recovery record is unavailable. Keep this action pending.')
@@ -240,8 +251,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     setSubmissionUnknown(false)
     setSubmitted(null)
     submissionStarted.current = false
-    approvalTx.reset()
-    mintTx.reset()
+    tx.reset()
   }
   const count = Object.values(quantities).reduce((sum, value) => sum + value, 0)
   const allowed = shop.protocol === 'defifa' && shop.phase !== undefined && defifaPhaseAllowsPay(shop.phase)
@@ -250,7 +260,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const amountValue = formatUnits(review?.prepared.amount ?? selectedAmount, review?.prepared.inventory.pricing.decimals ?? shop.pricing.decimals)
   const amountSymbol = review?.symbol ?? shop.pricing.symbol
   const frozenAmount = review ? `${formatUnits(review.prepared.amount, review.prepared.inventory.pricing.decimals)} ${review.symbol}` : ''
-  const busy = approvalTx.busy || mintTx.busy || checking
+  const busy = tx.busy || checking
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['pay']} active={!!review}><div className="space-y-4">
     <p className="text-sm text-smoke-600">Protocol phase: {defifaPhaseLabel(shop.phase)}</p>
       <div className="mt-4">
@@ -306,7 +316,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       ...review.prepared.selectedTiers.map(tier => ({ label: `Tier ${tier.tierId}: ${review.selection.find(selected => BigInt(selected.id) === tier.tierId)?.name ?? 'NFT'}`, value: `${tier.count} NFTs × ${formatUnits(tier.unitPrice, review.prepared.inventory.pricing.decimals)} ${review.symbol}` })),
       { label: 'Payment', value: frozenAmount, strong: true },
       ...review.prepared.effectiveDelegates.map(effect => ({ label: `Tier ${effect.tierId} voting delegate`, value: effect.delegate, mono: true })),
-    ] : []} steps={[...(review?.approval ? [{ title: 'Approve Defifa mint payment' }] : []), { title: 'Mint Defifa NFTs' }]} activeIndex={approvalBlock === undefined && review?.approval ? 0 : review?.approval ? 1 : 0} start={!submitted && !submissionUnknown && step !== 'failed' ? () => void confirm() : undefined} startKey={approvalBlock} next={step === 'failed' ? { label: 'Close review', onClick: closeReview } : submitted ? { label: 'Recheck confirmation', onClick: () => void verify(), disabled: submissionUnknown || !active.receipt } : error && !submissionUnknown ? { label: 'Try again', onClick: () => void confirm() } : null} busy={busy} complete={step === 'verified'} status={submissionUnknown ? 'The wallet submission is unconfirmed. Check your wallet before taking further action. This mint has not been verified.' : step === 'verified' ? 'NFT mint verified onchain.' : submitted ? active.notice ?? `${submitted.safe ? 'Safe proposal' : 'Submitted transaction'} ${active.hash ?? submitted.hash}` : approvalBlock !== undefined ? 'Payment approval verified. Confirm the NFT mint.' : undefined} error={error ?? approvalTx.error ?? mintTx.error}>
+    ] : []} steps={[...(review?.approval ? [{ title: 'Approve Defifa mint payment' }] : []), { title: 'Mint Defifa NFTs' }]} activeIndex={liveStep(tx, review?.approval ? [0, 1] : [0], review?.approval && step !== 'mint' && approvalBlock === undefined ? 0 : review?.approval ? 1 : 0)} start={!submitted && !submissionUnknown && step !== 'failed' ? () => void confirm() : undefined} startKey={approvalBlock} next={step === 'failed' ? { label: 'Close review', onClick: closeReview } : submitted ? { label: 'Recheck confirmation', onClick: () => void verify(), disabled: submissionUnknown || !active.receipt } : (error || tx.error) && !submissionUnknown ? { label: 'Try again', onClick: () => void confirm() } : null} busy={busy} complete={step === 'verified'} status={submissionUnknown ? 'The wallet submission is unconfirmed. Check your wallet before taking further action. This mint has not been verified.' : step === 'verified' ? 'NFT mint verified onchain.' : submitted ? active.notice ?? `${submitted.safe ? 'Safe proposal' : 'Submitted transaction'} ${active.hash ?? submitted.hash}` : approvalBlock !== undefined ? 'Payment approval verified. Confirm the NFT mint.' : undefined} error={error ?? tx.error}>
       <p className="text-sm text-smoke-600">Minting to your account updates voting delegation for all your NFTs in each selected tier, including NFTs you already hold. A blank delegate preserves the native contract default.</p>
       <WriteRecoveryInTabNote />
     </TxProgress>
