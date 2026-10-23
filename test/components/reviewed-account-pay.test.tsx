@@ -1337,7 +1337,7 @@ describe('a payment that falls short of its minimum', () => {
     await reviewPayment()
     await click('Confirm & Pay')
     await waitUntil(() => !!dialogError())
-    expect(dialogError()).toBe("The network returned an error. Check your wallet's activity before you try again.")
+    expect(dialogError()).toBe("The network returned an error. Check your wallet's activity, then try again.")
     expect(wallet.writeContract).not.toHaveBeenCalled()
     expect(allowedDecrease()).toBeNull()
   })
