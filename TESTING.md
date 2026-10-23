@@ -100,8 +100,8 @@ enables the full artifact comparison; it does not trust the fixture alone.
   inventory. Every new wallet write must add or update a row and should have an
   exact ABI round-trip test before it is considered covered.
 - `wallet:check` runs the SDK's `nana-wallet-check` over `src`. Every raw
-  wallet API call, signing RPC string, `registerTransactionReviewHandler` call
-  and `reviewedInParent` use must have a row in `wallet-boundaries.json` naming
+  wallet API call, signing RPC string and `registerReviewHandler` call must
+  have a row in `wallet-boundaries.json` naming
   its file, line, boundary and test; a new, moved or removed site fails the
   gate. It also refuses imports of `@bananapus/nana-sdk-react`.
 - `transaction:check` parses every production TypeScript file and compares all

@@ -51,13 +51,15 @@ type Engine = typeof import('@bananapus/nana-sdk-core/review')
  * Core's own tests cover its holds, journals and simulations; this keeps a
  * jbm test on jbm's checks around them.
  */
-export async function fakeEngine({ send, receipt, sign, safe = () => false, switchChain = async () => {} }: {
+export async function fakeEngine({ send, receipt, sign, safe = () => false, switchChain = async () => {}, hold }: {
   send: (call: import('@bananapus/nana-sdk-core/review').ReviewedCall) => Promise<Hex>
   receipt?: (hash: Hex, chainId: number) => Promise<import('viem').TransactionReceipt>
   sign?: (typedData: import('viem').TypedDataDefinition) => Promise<Hex>
   safe?: () => boolean
   /** Core moves the wallet to the call's chain before `reverify`. */
   switchChain?: (chainId: number) => Promise<void>
+  /** Core's write hold over this client: each send is held under its intent, as core holds it. */
+  hold?: { holds: import('@bananapus/nana-sdk-core/review').WriteHold; client: (chainId: number) => unknown }
 }): Promise<Engine> {
   const core = await vi.importActual<Engine>('@bananapus/nana-sdk-core/review')
   const prompt = async (request: Parameters<Engine['buildReviewModel']>[0]) => {
@@ -65,10 +67,36 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     coreReviews.shown.push(model)
     if (!(await coreReviews.answer(model))) throw new core.TransactionReviewCancelledError()
   }
+  /** Core's plan rule as a test needs it: one unspent plan call, by exact key, for each call. */
+  const keyOf = (call: { chainId: number; from: string; to: string; data: string; value?: bigint; gas?: bigint }) =>
+    `${call.chainId}:${call.from.toLowerCase()}:${call.to.toLowerCase()}:${call.data.toLowerCase()}:${call.value ?? 0n}:${call.gas ?? ''}`
+  const spent = new WeakMap<object, boolean[]>()
+  const spend = (plan: import('@bananapus/nana-sdk-core/review').ReviewedPlan, account: string, calls: readonly import('@bananapus/nana-sdk-core/review').ReviewedCall[]) => {
+    const taken = [...(spent.get(plan) ?? [])]
+    if (!taken.length || plan.account.toLowerCase() !== account.toLowerCase()) throw new core.ReviewLineError(core.REVIEWED_PLAN_REFUSED_LINE)
+    for (const call of calls) {
+      const at = plan.calls.findIndex((planned, index) => !taken[index] && keyOf(planned) === keyOf({ ...call, from: account }))
+      if (at < 0) throw new core.ReviewLineError(core.REVIEWED_PLAN_REFUSED_LINE)
+      taken[at] = true
+    }
+    spent.set(plan, taken)
+  }
+  const reviewPlan: Engine['reviewPlan'] = async action => {
+    await prompt({ title: action.title, description: action.description ?? '', confirmLabel: action.confirmLabel,
+      context: action.context, calls: action.calls.map(call => ({ ...call, from: call.from === 'relayr' ? undefined : call.from ?? action.account })) })
+    const plan = { account: action.account, expiresAt: Date.now() + core.REVIEWED_PLAN_TTL_MS,
+      calls: action.calls.map(({ chainId, from, to, data, value, gas }) => ({ chainId, from: from ?? action.account, to, data,
+        value: value ?? 0n, ...(gas === undefined || from === 'relayr' ? {} : { gas }) })) }
+    spent.set(plan, plan.calls.map(() => false))
+    return plan
+  }
   const sendReviewed: Engine['sendReviewed'] = async action => {
     action.guard?.()
-    await prompt({ title: action.title, description: action.description ?? '', confirmLabel: action.confirmLabel,
-      context: action.context, calls: action.calls.map(call => ({ ...call, from: action.account })) })
+    if (action.plan) spend(action.plan, action.account, action.calls)
+    // A Safe app's calls show as safeTxGas 0, never the app's gas, as core shows them.
+    else await prompt({ title: action.title, description: action.description ?? '', confirmLabel: action.confirmLabel,
+      context: action.context, calls: action.calls.map(({ gas, ...call }) => ({ ...call, from: action.account,
+        ...(safe() ? { safeTxGas: 0n } : gas === undefined ? {} : { gas }) })) })
     const hashes: Hex[] = []
     const receipts: import('viem').TransactionReceipt[] = []
     for (const [step, call] of action.calls.entries()) {
@@ -87,9 +115,23 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
         await action.onUnsent?.(call, step)
         throw error
       }
+      // A Safe app proposes with safeTxGas 0, whatever gas the call names.
+      const sending = safe() ? { ...call, gas: 0n } : call
       try {
-        // A Safe app proposes with safeTxGas 0, whatever gas the call names.
-        hash = await send(safe() ? { ...call, gas: 0n } : call)
+        hash = hold
+          ? await core.openStepHold(hold.holds, action.account, safe(), call).send<Hex>(hold.client(call.chainId) as never, async gate => {
+            await gate.beforeSend()
+            let sent: Hex
+            try {
+              sent = await send(sending)
+            } catch (error) {
+              if (core.isDefiniteWalletRejection(error)) gate.onRejected()
+              throw error
+            }
+            gate.afterSubmit(sent)
+            return sent
+          })
+          : await send(sending)
       } catch (error) {
         if (core.isDefiniteWalletRejection(error)) await action.onUnsent?.(call, step)
         throw error
@@ -98,7 +140,7 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
       if (safe()) return { status: 'proposed', step, safeTxHash: hash }
       let mined: import('viem').TransactionReceipt
       try {
-        mined = await receipt!(hash, call.chainId)
+        mined = hold ? await core.waitForTrackedReceipt(hold.client(call.chainId) as never, hash, { attempts: 1, intervalMs: 0 }) : await receipt!(hash, call.chainId)
       } catch (cause) {
         throw new core.TransactionReceiptUnavailableError(hash, call.chainId, { cause })
       }
@@ -127,7 +169,10 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     const typed = signatures.map(typedDataOf)
     await prompt({ kind: 'authorization', title: action.title, description: action.description ?? '', calls: [],
       context: action.context, signatures: signatures.map((signature, index) => ({
-        kind: signature.kind, chainId: 'chainId' in signature ? signature.chainId : 0, typedData: typed[index] })) })
+        kind: signature.kind, chainId: 'chainId' in signature ? signature.chainId : 0, typedData: typed[index],
+        // The call a forward request lets the forwarder run, decoded as core shows it.
+        ...(signature.kind === 'forward-request' ? { calls: [{ chainId: signature.chainId, from: signature.request.from,
+          to: signature.request.to, data: signature.request.data, value: signature.request.value, gas: signature.request.gas }] } : {}) })) })
     const signed: Hex[] = []
     for (const [index, typedData] of typed.entries()) {
       const signature = signatures[index]
@@ -137,5 +182,5 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     }
     return signed
   }
-  return { ...core, sendReviewed, signReviewed }
+  return { ...core, reviewPlan, sendReviewed, signReviewed }
 }

@@ -24,9 +24,10 @@ import {
   hasRelayrPendingEvidence, loadRelayrPendingSession, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
 } from '@/lib/relayr'
-import { isDefiniteWalletRejection, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { isDefiniteWalletRejection, writeIntentKey, type ReviewedPlan, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, safeHoldNamespace, safeProposalKey, strictRetirable } from '@/lib/write-holds'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls, type RawAttempt } from '@/lib/raw-relayr'
 import { RawQuoteNotObtainedError } from '@/lib/raw-relayr-lifecycle'
@@ -474,8 +475,8 @@ export async function runProjectBatch({
     }
     checkAccount()
     if (replacing) { replacing.abandoned = true; persist(replacing) }
-    // Whether this run's batch review showed every call as a Safe-app proposal.
-    let reviewedViaSafe: boolean | undefined
+    // This run's one review of every call, and whether it showed them as Safe-app proposals.
+    let reviewed: { plan: ReviewedPlan; viaSafe: boolean } | undefined
     try {
     if (!batch) {
       const frozen = decode<ProjectBatchCall[]>(encode(proposedCalls))
@@ -491,13 +492,15 @@ export async function runProjectBatch({
       // This one review covers each wallet send below. A call's gas cap is not
       // its sent gas limit, which is measured at send time, so it is not shown.
       const viaSafe = isSafeConnection(wagmiConfig)
-      await requireTransactionReview({ title,
+      const { reviewPlan } = await loadReviewEngine()
+      const plan = await reviewPlan({ account, title,
         description: `${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Pay network fees once for this batch. Each payment has its own result.' : 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        // A Safe app signs the sent gas as safeTxGas; each call is sent with 0.
-        calls: batch.calls.map(({ gas: _gas, ...call }) => ({ ...call, from: call.authority, to: call.target,
-          value: call.value ?? 0n, ...(viaSafe ? { safeTxGas: 0n } : {}) })) })
-      reviewedViaSafe = viaSafe
+        // Permissionless calls run from Relayr's own account.
+        calls: batch.calls.map(call => ({ chainId: call.chainId, from: call.relayr === 'permissionless' ? 'relayr' as const : call.authority,
+          to: call.target, data: call.data, value: call.value ?? 0n, label: call.label, abi: call.abi,
+          functionName: call.functionName, args: call.args, contractName: call.contractName })) }, reviewedSendDeps)
+      reviewed = { plan, viaSafe }
     }
     const journal = batch
     const complete = (ids: string[]) => {
@@ -742,7 +745,7 @@ export async function runProjectBatch({
           },
           }], onProgress: progress => report(progress.message, round),
           // A resumed batch, or a connection that changed since, reviews each send again.
-          reviewedInParent: reviewedViaSafe === isSafeConnection(wagmiConfig), signal })
+          ...(reviewed && reviewed.viaSafe === isSafeConnection(wagmiConfig) ? { plan: reviewed.plan } : {}), signal })
         } catch (error) {
           const submission = journal.submissions[call.id]
           const receipt = acceptRevertedTransactions && submission?.kind === 'direct' && submission.hash
