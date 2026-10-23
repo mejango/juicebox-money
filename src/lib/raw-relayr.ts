@@ -1,6 +1,7 @@
 'use client'
 
 import { type JBChainId } from '@bananapus/nana-sdk-core'
+import type { ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 import { getAccount } from '@wagmi/core'
 import { isAddress, isAddressEqual, isHex, type Address, type Hex, type TransactionReceipt } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
@@ -104,11 +105,13 @@ function attemptStates(session: RawRelayrSession, results: (TransactionReceipt['
 }
 
 /** Only permissionless, zero-value calls belong here. The owner reviews and validates their semantic eligibility. */
-export async function runRawRelayrCalls({ calls, account, pendingScope, preferredPaymentChainId, reverify, signal, onQuoted, onAttempts, onProgress, onComplete }: {
+export async function runRawRelayrCalls({ calls, account, pendingScope, preferredPaymentChainId, planned, reverify, signal, onQuoted, onAttempts, onProgress, onComplete }: {
   calls: RawRelayrCall[]
   account: Address
   pendingScope: string
   preferredPaymentChainId?: number
+  /** A parent review that showed these calls as one Relayr round, with its fee bound on `chainId`. */
+  planned?: { plan: ReviewedPlan; round: string; chainId: number }
   reverify: () => Promise<void>
   /** Cancels the fee quote request, until the quote is saved. */
   signal?: AbortSignal
@@ -169,7 +172,7 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     let pollError: unknown
     if (session.phase !== 'complete') {
       try {
-        pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, assertAccount, releasable: true, signal, onQuoted,
+        pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, planned, assertAccount, releasable: true, signal, onQuoted,
           // A funding payment the app can't authenticate gets the SDK's one check; once the user checked it, the
           // bundle goes, and the owner reviews its calls again.
           checked: {
