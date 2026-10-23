@@ -9,6 +9,11 @@ import { SAVED_SEQUENCE_LINE, sequenceCalls } from '@/lib/reviewed-send'
 /** A plan's whole run: one reviewed call per step, in order, saved under `scope` so a stopped run resumes. */
 export type StepRunAction = ReviewedRun & { scope: string }
 
+/** The plan's step of the run's call `step`: a held sequence resumes as saved, so its calls are the plan's last ones. */
+function shownOf(current: { steps: readonly unknown[]; action: ReviewedRun | null }, step: number) {
+  return Math.max(0, current.steps.length - (current.action?.calls.length ?? current.steps.length) + step)
+}
+
 /**
  * Sends a plan's steps as one reviewed action: one review, then each step once
  * the one before it confirmed (core simulates it on that step's block).
@@ -75,8 +80,7 @@ export function useStepRun<Step>({
   const go = useCallback(
     async (current: typeof run.current) => {
       const frozen = current.action!
-      // A held sequence resumes as saved, so its steps map onto the plan's last ones.
-      const shown = (step: number) => Math.max(0, current.steps.length - frozen.calls.length + step)
+      const shown = (step: number) => shownOf(current, step)
       current.running = true
       current.waiting = null
       setRunning(true)
@@ -106,6 +110,12 @@ export function useStepRun<Step>({
     },
     [tx, send, halt, finish],
   )
+
+  // The step core is on, while it is reviewed, simulated, signed or awaited.
+  useEffect(() => {
+    const current = run.current
+    if (current.running && !current.holding && current.action && tx.busy) setIndex(shownOf(current, tx.step))
+  }, [tx.busy, tx.step])
 
   useEffect(() => {
     const current = run.current
@@ -145,10 +155,12 @@ export function useStepRun<Step>({
       setIndex(0)
       setRunSteps(steps)
       setRunning(true)
-      const { calls, saved, scope } = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
+      const { calls, saved, scope, held } = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
       if (run.current !== current) return
       // A saved run continues as it was reviewed: never under this plan's summary or checks.
       current.action = saved ? { account: fresh.account, scope, calls, description: SAVED_SEQUENCE_LINE } : { ...fresh, calls, scope }
+      // The saved step in flight is the one its hold settles: the run waits on it as if sent here.
+      if (held !== undefined) current.submitted = shownOf(current, held)
       await go(current)
     },
     [action, go],

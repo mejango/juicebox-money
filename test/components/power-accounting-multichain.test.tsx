@@ -94,6 +94,20 @@ describe('multichain accounting-token review', () => {
     }
   })
 
+  it('opens its review only once its acknowledgement is checked', async () => {
+    await renderForm()
+    await decimals('Ethereum', '6')
+    await decimals('Optimism', '18')
+    await review()
+    // Unchecked, the dialog has nothing to start: starting it would end silently.
+    expect(renderer!.root.findByType(TxProgress).props.start).toBeUndefined()
+    await act(async () => {
+      renderer!.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } })
+    })
+    await act(async () => { await renderer!.root.findByType(TxProgress).props.start() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+  })
+
   it('shows the line and Discard, in place of the error, when its saved Relayr session can only be discarded', async () => {
     mocks.runAuthorityCalls.mockRejectedValue(new RelayrDiscardError('authority:0xabc', 'changed'))
     await renderForm()

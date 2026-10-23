@@ -6,10 +6,10 @@ import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
 import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 
-const saved = vi.hoisted(() => ({ calls: null as unknown[] | null }))
+const saved = vi.hoisted(() => ({ calls: null as unknown[] | null, held: undefined as number | undefined }))
 vi.mock('@/lib/reviewed-send', () => ({
   SAVED_SEQUENCE_LINE: 'Saved as reviewed.',
-  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls: saved.calls ?? calls, saved: !!saved.calls, scope }),
+  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls: saved.calls ?? calls, saved: !!saved.calls, scope, ...(saved.held !== undefined ? { held: saved.held } : {}) }),
 }))
 
 type Tx = ReviewedActionState
@@ -30,6 +30,7 @@ const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
 
 beforeEach(() => {
   saved.calls = null
+  saved.held = undefined
 })
 
 /** The engine's state as useReviewedAction reports it, and runs whose ends each test gives. */
@@ -43,7 +44,7 @@ async function renderRun() {
   const run = vi.fn((sent: ReviewedRun) => new Promise<ReviewedResult | null>(resolve => {
     runs.push({ action: sent, end: async result => { await act(async () => resolve(result)) } })
   }))
-  let tx = { phase: 'idle', hash: null, failure: null, receipt: null, reset, run } as unknown as Tx
+  let tx = { phase: 'idle', busy: false, step: 0, hash: null, failure: null, receipt: null, reset, run } as unknown as Tx
   const render = () => createElement(Harness, { ref, tx, send: run, action, onFinish })
   await act(async () => {
     renderer = TestRenderer.create(render())
@@ -170,6 +171,29 @@ describe('useStepRun', () => {
     expect(t.runs[0].action).not.toHaveProperty('reverify')
     expect(t.runs[0].action.description).toBe('Saved as reviewed.')
     await t.submitted(0, H2)
+    expect(t.ref.current!.index).toBe(1)
+  })
+
+  it('finishes a restored run whose last step is still held once that step settles', async () => {
+    saved.calls = [call('approve'), call('mint')]
+    saved.held = 1
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    // Core refuses to resend the held step: the run ends on its hold, with no step taken this time.
+    await t.engine({ phase: 'unconfirmed' })
+    await t.runs[0].end(null)
+    expect(t.ref.current).toMatchObject({ unconfirmed: true, index: 1 })
+    await t.engine({ phase: 'success', hash: H2 })
+    expect(t.onFinish).toHaveBeenCalledWith(H2)
+    expect(t.run).toHaveBeenCalledOnce()
+  })
+
+  it('shows the step core is on while it is simulated and signed, before the wallet takes it', async () => {
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    await t.submitted(0, H1)
+    await t.engine({ phase: 'signing', busy: true, step: 1 })
     expect(t.ref.current!.index).toBe(1)
   })
 

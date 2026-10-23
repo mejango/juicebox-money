@@ -193,6 +193,7 @@ function query(key: string) {
 import { sentHash, wallet } from '../support/fake-wallet'
 import { PayPanel } from '@/components/project/PayPanel'
 import { clearSuckerGroups } from '@/lib/sucker-group'
+import { REVIEW_CLOSED_LINE } from '@/hooks/useReviewedAction'
 
 let host: HTMLDivElement
 let root: Root
@@ -578,7 +579,7 @@ describe('a reviewed payment whose form changes before the wallet', () => {
     await reviewPayment('1')
     await confirmReview(false)
     await waitUntil(() => !!dialogError())
-    expect(dialogError()).toBe('Payment was cancelled.')
+    expect(dialogError()).toBe(REVIEW_CLOSED_LINE)
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 

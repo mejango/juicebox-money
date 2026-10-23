@@ -29,7 +29,7 @@ describe('sequenceCalls', () => {
     for (const progress of [{ sending: { step: 1, reservation: 'r' } }, { sending: { step: 1, reservation: 'r' }, proposed: { step: 1, safeTxHash: '0x02' } }]) {
       engine.discardReviewedSequence.mockClear()
       engine.findReviewedSequence.mockReturnValue(record(progress))
-      expect(await sequenceCalls('scope', ALICE, FRESH)).toEqual({ calls: SAVED, saved: true, scope: 'scope' })
+      expect(await sequenceCalls('scope', ALICE, FRESH)).toEqual({ calls: SAVED, saved: true, scope: 'scope', held: 1 })
       expect(engine.discardReviewedSequence).not.toHaveBeenCalled()
     }
   })

@@ -506,8 +506,9 @@ export function PowerActionForm({
     onCancel()
   }
 
+  const acknowledged = ack && (!power.extreme || ackExtreme)
   const submit = async () => {
-    if (!review || !ack || (power.extreme && !ackExtreme) || busy) return
+    if (!review || !acknowledged || busy) return
     setBusy(true)
     setError(null)
     discard.capture(null)
@@ -715,8 +716,9 @@ export function PowerActionForm({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          start={() => void submit()}
-          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: !ack || (power.extreme && !ackExtreme) || discard.active } : null}
+          // The review opens once every acknowledgement is checked: checking them is the go-ahead.
+          start={acknowledged ? () => void submit() : undefined}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: !acknowledged || discard.active } : null}
           onClose={() => {
             if (done) {
               onCancel()

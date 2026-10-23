@@ -19,6 +19,9 @@ export { hashOf, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/rev
 import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
+/** A run the user closed at its review or wallet prompt: what happened, and the way on. */
+export const REVIEW_CLOSED_LINE = 'Nothing was sent. Review it again when you are ready.'
+
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 
@@ -80,6 +83,8 @@ export function useReviewedAction(chainId?: number) {
   const unmounted = useUnmountSignal()
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
+  /** The last run ended with nothing sent because the user closed its review or wallet prompt. */
+  const [cancelled, setCancelled] = useState(false)
   const inFlight = useRef(false)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
@@ -87,6 +92,7 @@ export function useReviewedAction(chainId?: number) {
     if (inFlight.current || unmounted().aborted) return null
     inFlight.current = true
     setResult(null)
+    setCancelled(false)
     setSentOn(action.calls[0]?.chainId)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
@@ -98,6 +104,7 @@ export function useReviewedAction(chainId?: number) {
       // A failed run shows its line through `error` and its value through `failure`.
       const done = ended?.status === 'failed' ? null : ended
       setResult(done)
+      setCancelled(ended === null && !unmounted().aborted)
       return done
     } finally {
       inFlight.current = false
@@ -112,13 +119,13 @@ export function useReviewedAction(chainId?: number) {
         : runner.phase === 'receipt' ? 'pending'
           : runner.phase !== 'idle' ? runner.phase
             : held ? 'unconfirmed'
-              : runner.error ? 'error'
+              : runner.error || cancelled ? 'error'
                 : 'idle'
   const shownChainId = sentOn ?? chainId ?? 0
   const action = runner.exitAction ?? runner.sendAgainAction
   const error: string | ReactElement | null = phase === 'unconfirmed' && held
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
-    : runner.error
+    : runner.error ?? (phase === 'error' && cancelled ? REVIEW_CLOSED_LINE : null)
 
   // A Safe proposal its hold settled ends on the execution's hash and receipt.
   const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
@@ -133,6 +140,7 @@ export function useReviewedAction(chainId?: number) {
   const reset = () => {
     if (inFlight.current) return
     setResult(null)
+    setCancelled(false)
     runner.reset()
   }
   // A finished run's, a settled proposal's, or a step that mined and reverted.
@@ -152,6 +160,8 @@ export function useReviewedAction(chainId?: number) {
     notice: phase === 'submitted' ? held?.line ?? null : null,
     isSafe,
     error,
+    /** The step of the run core is on (reviewing, simulating, signing or awaiting), counted in the run's calls. */
+    step: runner.step,
     /** The value the failed run threw, for a flow's own decoder. */
     failure: runner.failure,
     hash,

@@ -46,12 +46,13 @@ export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as 
  * remains, never a completed payment again. A saved run is shown as saved,
  * never under the fresh plan's summary or checks. `scope` is the run's: none
  * for a lone call, which its write hold and the hold's exit decide alone.
+ * `held` is the saved step in flight, which the resumed run settles first.
  */
 export async function sequenceCalls<Call>(
   scope: string,
   account: `0x${string}`,
   calls: Call[],
-): Promise<{ calls: Call[]; saved: boolean; scope?: string }> {
+): Promise<{ calls: Call[]; saved: boolean; scope?: string; held?: number }> {
   const engine = await loadReviewEngine()
   const unfinished = engine.findReviewedSequence(scope, account)
   const fresh = { calls, saved: false, ...(calls.length > 1 ? { scope } : {}) }
@@ -62,7 +63,7 @@ export async function sequenceCalls<Call>(
       return fresh
     } catch { /* Another window moved it on: continue it as saved. */ }
   }
-  return { calls: unfinished.calls as Call[], saved: true, scope }
+  return { calls: unfinished.calls as Call[], saved: true, scope, ...(unfinished.sending ? { held: unfinished.sending.step } : {}) }
 }
 
 /** A run's summary and plan checks: a saved run shows only its own line, never the fresh plan's. */

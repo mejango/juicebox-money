@@ -232,6 +232,7 @@ import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { PayPanel } from '@/components/project/PayPanel'
 import { LoansSection } from '@/components/project/LoansSection'
 import { ClaimCreditsAcrossChains } from '@/components/project/ProjectTokenBatchFlow'
+import { REVIEW_CLOSED_LINE } from '@/hooks/useReviewedAction'
 
 let page: Awaited<ReturnType<typeof renderWithReviews>> | null = null
 
@@ -324,6 +325,30 @@ describe('one confirmation per action', () => {
       { functionName: 'borrowFrom', account: ALICE },
     ])
     expect(progressConfirms()).toEqual([])
+  })
+
+  it('offers the action again at once when its review is closed, and sends it once', async () => {
+    page = await renderWithReviews(createElement(GetLoanFlow, { chainId: 1, projectId: 42, collateralSymbol: 'JBT' }))
+    await type(input => String(input.getAttribute('aria-label')).startsWith('Collateral'), '1')
+    await act(async () => button('Open the loan').click())
+    let cancel: HTMLButtonElement | undefined
+    for (let attempt = 0; attempt < 300 && !cancel; attempt++) {
+      cancel = document.querySelector<HTMLButtonElement>('dialog[open] [aria-label="Cancel transaction review"]') ?? undefined
+      await act(async () => { await vi.dynamicImportSettled(); await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    await act(async () => cancel!.click())
+    for (let attempt = 0; attempt < 100 && !document.body.textContent?.includes(REVIEW_CLOSED_LINE); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    expect(document.body.textContent).toContain(REVIEW_CLOSED_LINE)
+    expect(wallet.writes()).toEqual([])
+
+    const retry = [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Retry')
+    expect(retry).toBeDefined()
+    await act(async () => retry!.click())
+    const dialogs = await confirmEveryReview(() => wallet.writeContract.mock.calls.length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
+    expect(dialogs).toBe(1)
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['setPermissionsFor', 'borrowFrom'])
   })
 
   it('wallet-action:one-confirmation loan repayment: one review for the approval and the repayment', async () => {

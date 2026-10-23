@@ -1064,7 +1064,7 @@ export function PayPanel({
   const endedLine = !endedTx ? null
     : endedTx.phase === "unconfirmed" ? endedTx.error
       : minedRevert ? (mode === "pay" ? "The payment reverted." : "Payment reverted onchain.")
-      : payFailure?.message ?? endedTx.error ?? (mode === "pay" ? "Payment was cancelled." : "Adding to the balance was cancelled.");
+      : payFailure?.message ?? endedTx.error;
   // A payment the hold still has in flight is never sent again from here.
   const sequencePending = paymentRunEnded && tx.phase === "unconfirmed" ? tx.hash : null;
   const panelTxError = sequenceSafeHeld ? null : tx.error;
