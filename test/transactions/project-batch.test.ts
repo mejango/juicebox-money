@@ -191,13 +191,14 @@ describe('durable project batches', () => {
     expect(mocks.identity).not.toHaveBeenCalled()
   })
 
-  it('shows a raw round in the batch review as one Relayr round led by the wallet chain', async () => {
+  it('shows a raw round in the batch review as one Relayr round paid on the wallet chain', async () => {
     mocks.walletChainId = 10
     const calls = [call(1, 'a'), call(10, 'c')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
     expect((await run(calls)).status).toBe('complete')
     const [review] = mocks.review.mock.calls[0]
     const round = review.calls[0].relayrRound
-    expect(review.calls.map((item: { chainId: number; relayrRound?: string }) => [item.chainId, item.relayrRound])).toEqual([[10, round], [1, round]])
+    expect(review.calls.map((item: { chainId: number; relayrRound?: string }) => [item.chainId, item.relayrRound])).toEqual([[1, round], [10, round]])
+    expect(review.relayrRounds).toEqual({ [round]: { paymentChainId: 10 } })
     expect(mocks.rawRelayr.mock.calls[0][0].planned).toEqual({ plan: expect.anything(), round, chainId: 10 })
   })
 

@@ -153,7 +153,8 @@ beforeEach(() => {
   vi.resetAllMocks()
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
   m.account = ACCOUNT
-  m.chainId = 8453
+  // A chain Relayr takes no payment on: each run asks where to pay.
+  m.chainId = 137
   m.safe = false
   m.pending.mockReturnValue(null)
   storage = new Map()
@@ -369,7 +370,7 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay.mock.calls[0][0]).toMatchObject({ payment: { chain: 1 }, planned: { round: `launch:${'0x' + 'cc'.repeat(32)}` } })
   })
 
-  it('reviews once but asks where to pay when the wallet\'s chain is not a destination', async () => {
+  it('reviews once but asks where to pay when Relayr takes no payment on the wallet\'s chain', async () => {
     await run()
     expect(coreReviews.shown).toHaveLength(1)
     expect(m.funding).toHaveBeenCalledTimes(1)
@@ -393,6 +394,7 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it('offers exactly the valid same-family quote choices, including a single explicit choice', async () => {
+    m.chainId = 8453
     saveLaunchSession(session(TESTNETS, 421614))
     const makeQuote = m.quote.getMockImplementation()!
     m.quote.mockImplementationOnce(async signed => ({ ...await makeQuote(signed), payment_info: [
@@ -406,7 +408,8 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(11155111)
   })
 
-  it('preselects the chain the wallet was on when the launch started, not a chain signing switched to', async () => {
+  it('pays on the funding chain the wallet was on when the launch started, not a chain signing switched to', async () => {
+    m.chainId = 8453
     const forward = m.forward.getMockImplementation()!
     m.forward.mockImplementation(async (...args: Parameters<typeof forward>) => {
       m.chainId = args[0].chainId
@@ -414,7 +417,10 @@ describe('relayed launch execution and recovery', () => {
     })
     await run()
     expect(m.chainId).toBe(10)
-    expect(m.funding).toHaveBeenCalledExactlyOnceWith(expect.any(Array), 8453)
+    // Its review bounded the fee on 8453, not a destination, so no funding choice is asked.
+    expect(coreReviews.shown).toHaveLength(1)
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay.mock.calls[0][0]).toMatchObject({ payment: { chain: 8453 }, planned: { round: expect.any(String) } })
   })
 
   it('validates quote destination bindings before presenting its funding choices', async () => {

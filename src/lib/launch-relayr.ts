@@ -634,26 +634,26 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     /** The one review of every launch still to sign, and the Relayr round its fee bound covers. */
     let planned: { plan: ReviewedPlan; round: string; chainId: number } | undefined
     if (unsigned.length) {
-      // Core bounds a round's fee on its first call's chain: the wallet's, when it launches there.
-      const first = unsigned.find(item => item.chainId === startChainId)
-      const ordered = first ? [first, ...unsigned.filter(item => item !== first)] : unsigned
-      const multisig = ordered.filter(item => current.plans[item.chainId].multisigs?.length)
+      // The round's fee bound is on the wallet's chain, when Relayr takes payment there.
+      const payOn = startChainId !== undefined && relayrPaymentChains(current.chains).includes(startChainId) ? startChainId : undefined
+      const multisig = unsigned.filter(item => current.plans[item.chainId].multisigs?.length)
       // A Safe bundled with its launch reaches Relayr as another call than the
       // request signed, so its fee is reviewed apart; so is a launch resumed half signed.
-      const round = first && !multisig.length && !journal.signed.length ? `launch:${current.salt}` : undefined
+      const round = payOn && !multisig.length && !journal.signed.length ? `launch:${current.salt}` : undefined
       const { reviewPlan } = await loadReviewEngine()
       const plan = await reviewPlan({
         account,
-        title: ordered.length === 1 ? 'Review launch' : 'Review launches',
+        title: unsigned.length === 1 ? 'Review launch' : 'Review launches',
         description: [...new Set(multisig.map(item => launchMultisigReview(current.plans[item.chainId])))].concat(
           'Your signatures authorize these exact launches onchain. Relayr runs them once the network fee is paid.').join('\n\n'),
         ...(multisig.length ? { context: multisig.flatMap(item => launchMultisigRows(item.chainId, current.plans[item.chainId])
-          .map(row => ordered.length > 1 ? { ...row, label: `${row.label} on ${chainName(item.chainId)}` } : row)) } : {}),
-        calls: ordered.map(({ call }) => ({ chainId: call.chainId, from: account, to: call.target, data: call.data,
+          .map(row => unsigned.length > 1 ? { ...row, label: `${row.label} on ${chainName(item.chainId)}` } : row)) } : {}),
+        calls: unsigned.map(({ call }) => ({ chainId: call.chainId, from: account, to: call.target, data: call.data,
           value: call.value ?? 0n, gas: call.gas, ...(round ? { relayrRound: round } : {}),
           label: call.label, abi: call.abi, functionName: call.functionName, args: call.args })),
+        ...(round && payOn ? { relayrRounds: { [round]: { paymentChainId: payOn } } } : {}),
       }, await loadReviewedSendDeps())
-      if (first && round) planned = { plan, round, chainId: first.chainId }
+      if (payOn && round) planned = { plan, round, chainId: payOn }
       for (const { chainId, call, nonce } of unsigned) {
         requireAccount()
         assertAuthorizationAvailable(remaining)

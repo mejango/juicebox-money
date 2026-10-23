@@ -16,7 +16,7 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { withRelayrScopeLock } from '@/lib/relayr'
-import { relayrDestinationHash, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import { runRawRelayrLifecycle } from '@/lib/raw-relayr-lifecycle'
 
 const PREFIX = 'jb-payer-deploy-v1:'
@@ -456,8 +456,9 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     // One review covers every deployment the wallet sends in this run.
     const engine = await loadReviewEngine()
     let plan: ReviewedPlan | undefined
-    // Core bounds a Relayr round's fee on its first call's chain: the wallet's, when it deploys there.
-    const first = session.transport === 'relayr' ? session.calls.find(call => call.chainId === startChainId) : undefined
+    // A Relayr round's fee bound is on the wallet's chain, when Relayr takes payment there.
+    const payOn = session.transport === 'relayr' && startChainId !== undefined &&
+      relayrPaymentChains(session.calls.map(call => call.chainId)).includes(startChainId) ? startChainId : undefined
     if (!original && !active) {
       plan = await engine.reviewPlan({
         account: session.account,
@@ -465,8 +466,9 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         description: `Deploy one payer address for each selected project. Each address uses the beneficiary, admin, and behavior shown in its exact factory call.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A Relayr deployment runs from Relayr's own account, every one in one round under one fee bound.
-        calls: (first ? [first, ...session.calls.filter(call => call !== first)] : session.calls).map(call => ({ ...reviewedDeployment(call, session.transport),
-          ...(session.transport === 'relayr' ? { from: 'relayr' as const } : {}), ...(first ? { relayrRound: session.id } : {}) })),
+        calls: session.calls.map(call => ({ ...reviewedDeployment(call, session.transport),
+          ...(session.transport === 'relayr' ? { from: 'relayr' as const } : {}), ...(payOn ? { relayrRound: session.id } : {}) })),
+        ...(payOn ? { relayrRounds: { [session.id]: { paymentChainId: payOn } } } : {}),
       }, reviewedSendDeps)
       assertAccount(session)
       persist(true)
@@ -480,7 +482,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     if (session.transport === 'relayr') {
       const pollError = await runRawRelayrLifecycle({
         session, entries: session.calls.map(entryOf), preferredPaymentChainId: startChainId,
-        ...(plan && first ? { planned: { plan, round: session.id, chainId: first.chainId } } : {}),
+        ...(plan && payOn ? { planned: { plan, round: session.id, chainId: payOn } } : {}),
         checked: {
           stillSaved: () => { const now = readJournal(session.id); return !!now && !now.archived && now.phase !== 'complete' },
           retired: () => {
