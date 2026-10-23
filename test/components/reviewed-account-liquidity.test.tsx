@@ -8,7 +8,7 @@
  * that account: nothing more reaches the wallet, and the dialog says why.
  * A claim or a removal frozen for one account is never sent by another.
  *
- * The real useSafeTx, useStepRun and the SDK's reviewed write run here; only
+ * The real useReviewedAction, useStepRun and core's reviewed run run here; only
  * the wallet, the RPC and the app review are fakes.
  */
 
@@ -30,9 +30,10 @@ const ERC20 = [{ currency: TOKEN, max: 10n ** 18n }]
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
@@ -226,12 +227,9 @@ async function click(label: string, inConfirm = false) {
   await waitUntil(() => false)
 }
 
-/** The confirm dialog's action. */
+/** The plan's review opened on its own: let its first step reach the wallet. */
 async function confirm() {
-  const action = host.querySelector<HTMLButtonElement>('[data-tx-confirm] footer .btn-primary')
-  expect(action, 'the confirm dialog action').not.toBeNull()
-  await act(async () => action!.click())
-  await waitUntil(() => false)
+  await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
 }
 
 async function typeInto(label: string, value: string) {
@@ -335,18 +333,21 @@ describe('a liquidity plan reviewed for one account', () => {
 
 describe('an LP fee claim reviewed for one account', () => {
   it('wallet-action:claim-uniswap-v4-lp-fees never claims from an account switched to before confirming', async () => {
+    wallet.holdReviews()
     await render(<LiquidityPositions chains={[{ chainId: 1, projectId: 7 }]} sym="TKN" />)
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Claim fees'))
     await click('Claim fees')
     expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
+    await waitUntil(() => wallet.openReviews > 0)
+    expect(wallet.openReviews).toBe(1)
 
     await act(async () => wallet.connect(BOB))
     // Bob's own position loads; the claim frozen for Alice's stays open.
     await waitUntil(() => !!host.querySelector('[data-tx-confirm]') && !host.textContent?.includes('Reading your positions'))
-    await confirm()
+    await act(async () => wallet.answerReview(true))
+    await waitUntil(() => !!host.textContent?.includes(CHANGED))
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(host.textContent).toContain(CHANGED)
   })
 })

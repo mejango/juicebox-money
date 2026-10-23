@@ -7,7 +7,7 @@ import {
   buildSafeDeploymentTx,
   verifySafeDeployments,
 } from '@bananapus/nana-sdk-core/safe'
-import { getAccount, waitForTransactionReceipt } from '@wagmi/core'
+import { waitForTransactionReceipt } from '@wagmi/core'
 import {
   decodeFunctionResult,
   encodeFunctionData,
@@ -19,13 +19,10 @@ import { wagmiConfig } from '@/providers/Providers'
 import type { LaunchPlan } from '@/lib/launch'
 import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisigs } from '@/lib/launch-multisig'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
-import { submitReviewedContractWrite } from '@/lib/contract-write'
-import { requireContractTransactionReview } from '@/lib/transaction-review'
+import { reviewedCall, revertedReceipt } from '@/lib/reviewed-call'
+import { sendReviewedWrite } from '@/lib/reviewed-send'
 import {
-  gasWithHeadroom,
-  isDefiniteWalletRejection,
   simulateStateChangingTransaction,
-  TRANSACTION_SIMULATION_GAS,
   writeIntentKey,
   intent,
   type SavedAttempt,
@@ -37,18 +34,11 @@ import { captureWalletContext } from '@/lib/wallet-context'
 import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictRetirable, writeHolds } from '@/lib/write-holds'
 
 type Setup = NonNullable<LaunchChainStatus['multisigSetup']>
-type LaunchMultisigSetupRequest = ReturnType<typeof buildSafeDeploymentTx> & {
-  account: Address
-  gas: bigint
-}
-
 type PrepareOptions = {
   chainId: number
   salt: Hex
   plan: LaunchPlan
   account: Address
-  switchChain: (chainId: number) => Promise<unknown>
-  writeContract: (request: LaunchMultisigSetupRequest) => Promise<Hex>
   onProgress: (message: string) => void
   onSetup?: (setup: Setup) => void
   /**
@@ -202,82 +192,60 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
         throw new Error('The previously created Safe could not be verified. Check the original setup transaction before continuing.')
       }
       const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
-      // Held by the SDK's write hold from just before the wallet opens until it settles.
-      const hold = writeHolds.open({
-        chainId, account, safe, namespace: setupNamespace(chainId, account, salt),
-        call: { to: request.address, data: encodeFunctionData(request), value: request.value ?? 0n },
-      })
-      let walletInvoked = false
-      try {
-        onProgress('Review Safe creation')
-        hash = await hold.send<Hex>(client as unknown as WriteHoldClient, gate => submitReviewedContractWrite({
-          request,
-          expectedAccount: account,
-          // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-          review: reviewed => requireContractTransactionReview({ ...reviewed, account, ...(safe ? { safeTxGas: 0n } : {}) }, {
-            title: 'Review Safe creation',
-            label: `Create ${plan.flavor === 'revnet' ? 'Operator' : 'Owner'} Safe`,
-            description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
-            contractName: 'Multicall3',
-            ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-          }),
-          switchChain: options.switchChain,
-          currentAccount: () => getAccount(wagmiConfig).address,
-          reverify: async () => { read(); await checkLaunchMultisigs(client, plan) },
-          simulate: async reviewed => {
-            const data = encodeFunctionData(reviewed)
-            const result = await simulateStateChangingTransaction(client, {
-              from: account, to: reviewed.address, data, value: reviewed.value,
-            })
-            const calls = decodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', data: result })
-            if (calls.length !== plan.multisigs!.length) throw new Error('Safe setup simulation returned an unexpected result.')
-            for (const [index, call] of calls.entries()) {
-              if (call.success) {
-                if (call.returnData.length !== 66) throw new Error('Safe setup simulation returned an invalid address.')
-                const created = decodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', data: call.returnData })
-                if (!isAddressEqual(created, plan.multisigs![index].address)) throw new Error('Safe setup simulation returned a different Safe address.')
-              } else {
-                await verifySafeDeployments(client, [plan.multisigs![index]])
-              }
-            }
-            const estimate = await client.estimateGas({ account, to: reviewed.address, data, value: reviewed.value, gas: TRANSACTION_SIMULATION_GAS })
-            const gas = gasWithHeadroom(estimate)
-            return { ...reviewed, chainId, account, gas: safe ? 0n : gas > TRANSACTION_SIMULATION_GAS ? TRANSACTION_SIMULATION_GAS : gas }
-          },
-          beforeSend: () => {
-            assertWalletContext()
-            if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
-          },
-          beforeWrite: async () => {
-            await gate.beforeSend()
-            try {
-              read()
-              persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
-            } catch (error) {
-              gate.onRejected()
-              throw error
-            }
-          },
-          onWriteRejected: () => gate.onRejected(),
-          onBeforeWriteAborted: () => gate.onRejected(),
-          onWriteSubmitted: submitted => gate.afterSubmit(submitted),
-          write: simulated => {
-            // The shared synchronous guard runs after the durable marker and
-            // its callbacks, immediately before this wallet invocation.
-            walletInvoked = true
-            return options.writeContract(simulated)
-          },
-          accountChangedError: 'Connected account changed. Review Safe creation again.',
-        }))
-      } catch (error) {
-        if (!walletInvoked || isDefiniteWalletRejection(error)) persist({ phase: 'failed' })
-        throw error
+      // The simulation must create exactly the planned Safes, or show each already deployed.
+      const simulateSetup = async () => {
+        const data = encodeFunctionData(request)
+        const result = await simulateStateChangingTransaction(client, { from: account, to: request.address, data, value: request.value })
+        const calls = decodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', data: result })
+        if (calls.length !== plan.multisigs!.length) throw new Error('Safe setup simulation returned an unexpected result.')
+        for (const [index, call] of calls.entries()) {
+          if (call.success) {
+            if (call.returnData.length !== 66) throw new Error('Safe setup simulation returned an invalid address.')
+            const created = decodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', data: call.returnData })
+            if (!isAddressEqual(created, plan.multisigs![index].address)) throw new Error('Safe setup simulation returned a different Safe address.')
+          } else {
+            await verifySafeDeployments(client, [plan.multisigs![index]])
+          }
+        }
       }
+      onProgress('Review Safe creation')
+      // Core's write hold holds it from just before the wallet opens until it settles.
+      await sendReviewedWrite({
+        account,
+        calls: [{
+          ...reviewedCall({ ...request, chainId, label: `Create ${plan.flavor === 'revnet' ? 'Operator' : 'Owner'} Safe` }),
+          contractName: 'Multicall3',
+          intent: setupNamespace(chainId, account, salt),
+        }],
+        title: 'Review Safe creation',
+        description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
+        ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+        reverify: async () => { read(); await checkLaunchMultisigs(client, plan); await simulateSetup() },
+        assertWriteState: () => {
+          assertWalletContext()
+          if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
+        },
+        beforeWallet: () => {
+          read()
+          persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
+        },
+        onUnsent: () => persist({ phase: 'failed' }),
+        // Journaled as soon as it is out, while core waits for its receipt.
+        onSubmitted: (_call, _step, submitted) => {
+          hash = submitted
+          if (/^0x[0-9a-fA-F]{64}$/u.test(submitted)) {
+            persist({ phase: 'confirming', txHash: submitted, ...(safe ? { safe: true as const, safeProposalHash: submitted } : {}) })
+          }
+        },
+      }).catch((error: unknown) => {
+        // A mined revert is read from its receipt below; anything else stays as the hold left it.
+        if (!(hash && revertedReceipt(error))) throw error
+      })
+      if (!hash) throw new Error('The wallet returned no Safe setup hash. Check your wallet before trying again.')
       if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
         throw new Error('The wallet returned no valid Safe setup hash. Check your wallet before trying again.')
       }
       proposal = safe ? hash : undefined
-      persist({ phase: 'confirming', txHash: hash, ...(proposal ? { safe: true, safeProposalHash: proposal } : {}) })
     }
     if (proposal) {
       onProgress('Waiting for Safe owners to approve creation')

@@ -29,10 +29,11 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
@@ -69,7 +70,7 @@ type ReviewedBorrow = {
  * Accounts (YOU) card can render it inline. Borrow against your revnet tokens
  * (REVLoans.borrowFrom, tx #8) without selling: the tokens are held as
  * collateral and returned when you repay. Every write re-reads authoritative
- * on-chain state and goes through useSafeTx (simulate-first). Loans are locked
+ * on-chain state and goes through the reviewed send (simulate-first). Loans are locked
  * while a revnet's cash-out delay is active — borrowable reads 0 then, and the
  * flow aborts rather than send.
  *
@@ -111,10 +112,14 @@ export function GetLoanFlow({
   const [review, setReview] = useState<ReviewedBorrow | null>(null)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
-  const [awaitingBorrow, setAwaitingBorrow] = useState(false)
+  /** The dialog step the run is on: the permission (when it needs one), then the borrow. */
+  const [loanStep, setLoanStep] = useState(-1)
+  /** The run sent its borrow: a settled permission alone opens no loan. */
+  const [borrowSent, setBorrowSent] = useState(false)
+  /** Each run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
-  const permTx = useSafeTx(chainId)
-  const borrowTx = useSafeTx(chainId)
+  const borrowTx = useReviewedAction(chainId)
 
   const ctx =
     ctxs.find(c => c.token === ctxToken) ?? ctxs[0] ?? undefined
@@ -177,19 +182,57 @@ export function GetLoanFlow({
   })
   const borrowableNow = borrowable?.borrowableNow
 
-  const busy = quoting || permTx.busy || borrowTx.busy
+  const busy = quoting || borrowTx.busy
 
   const resetInputs = () => {
     setReview(null)
     setFlowError(null)
   }
 
-  // Send the borrow once permission is in place — always re-quoting the min
-  // against a FRESH borrowable read so a stale review can't underprice it.
-  const sendBorrow = async (r: ReviewedBorrow) => {
+  /** What the loan's review shows above its calls. */
+  const loanRows = (r: ReviewedBorrow): TxConfirmRow[] => [
+    {
+      label: 'Tokens locked for the loan',
+      value: `${formatTokenAmount(r.collateral)} ${collateralSymbol}`,
+    },
+    {
+      label: 'Loan',
+      value: `~${formatTokenAmount(r.quote, meta.decimals)} ${meta.symbol}`,
+    },
+    {
+      label: 'Fees',
+      value: `2.5% protocol + 1% revnet + ${(r.prepaid / 10).toString()}% prepaid`,
+    },
+    {
+      label: 'You receive',
+      value: `~${formatTokenAmount(
+        netLoanProceeds(r.quote, BigInt(r.prepaid)),
+        meta.decimals,
+      )} ${meta.symbol}`,
+      strong: true,
+    },
+    { label: 'On', value: chainName(chainId) },
+  ]
+
+  /**
+   * The permission (when missing) and the borrow are one review and one run:
+   * the borrow simulates where the permission landed. Its minimum re-quotes
+   * against a fresh borrowable read at every start, so a stale review can't
+   * underprice it.
+   */
+  const beginBorrow = async (r: ReviewedBorrow) => {
     if (!publicClient || !ctx) return
+    setFlowError(null)
     setQuoting(true)
+    setBorrowSent(false)
     try {
+      const has = await hasPermissions(publicClient, {
+        chainId,
+        operator: revLoansAddress(chainId),
+        account: r.account,
+        projectId: BigInt(projectId),
+        permissionIds: [BURN_TOKENS],
+      })
       const fresh = await getBorrowableAmount(publicClient, {
         chainId,
         revnetId: BigInt(projectId),
@@ -202,74 +245,53 @@ export function GetLoanFlow({
           'Loans are locked until this revnet’s cash-out delay passes — nothing was sent.',
         )
       }
-      const minBorrow = (fresh.borrowableNow * 99n) / 100n
-      const request = buildBorrowTx({
+      const borrow = reviewedCall(buildBorrowTx({
         chainId,
         revnetId: BigInt(projectId),
         token: r.ctxToken,
-        minBorrowAmount: minBorrow,
+        minBorrowAmount: (fresh.borrowableNow * 99n) / 100n,
         collateralCount: r.collateral,
         beneficiary: r.account,
         prepaidFeePercent: BigInt(r.prepaid),
         holder: r.account,
-      })
-      await borrowTx.send(request, {
-        reviewedAccount: r.account,
+      }), {
         // Its minimum re-quotes on retry: held as this holder's borrow from the project.
         intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
         legacy: legacyBorrowKeys({ chainId, projectId, token: r.ctxToken, collateral: amount, prepaid: r.prepaid, beneficiary: r.account }),
+        ...(has ? {} : { dependsOnPrior: true }),
       })
-    } catch (e) {
-      setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
-    } finally {
-      setQuoting(false)
-    }
-  }
-
-  // Step machine: check the collateral-burn permission, granting it first when
-  // missing (step 1 of 2), then borrow.
-  const beginBorrow = async (r: ReviewedBorrow) => {
-    if (!publicClient) return
-    setFlowError(null)
-    setQuoting(true)
-    try {
-      const has = await hasPermissions(publicClient, {
-        chainId,
-        operator: revLoansAddress(chainId),
-        account: r.account,
-        projectId: BigInt(projectId),
-        permissionIds: [BURN_TOKENS],
-      })
-      if (has) {
-        setQuoting(false)
-        await sendBorrow(r)
-        return
-      }
-      // Grant BURN_TOKENS to REVLoans so it can burn the collateral, then borrow.
-      const permReq = buildSetPermissionsTx({
+      // Grant BURN_TOKENS to REVLoans so it can burn the collateral.
+      const permission = reviewedCall(buildSetPermissionsTx({
         chainId,
         account: r.account,
         operator: revLoansAddress(chainId),
         projectId: BigInt(projectId),
         permissionIds: [BURN_TOKENS],
-      })
-      setAwaitingBorrow(true)
+      }))
+      const scope = `jbm:loan:${chainId}:${projectId}`
+      const { calls, saved, scope: runScope } = await sequenceCalls(scope, r.account, has ? [borrow] : [permission, borrow])
+      const borrowIndex = r.needsPermission ? 1 : 0
+      /** A run step's dialog step: the permission first when the run has one. */
+      const shown = (step: number) => calls.length > 1 && step === 0 ? 0 : borrowIndex
+      setLoanStep(shown(0))
+      setRunShown(calls.map((_, step) => shown(step)))
       setQuoting(false)
-      await permTx.send(permReq, { reviewedAccount: r.account })
+      const ended = await borrowTx.run({
+        account: r.account,
+        calls,
+        scope: runScope,
+        ...planShown(saved, { context: contextRows(loanRows(r)) }),
+        onSubmitted: (_call, step) => {
+          setLoanStep(shown(step))
+          if (shown(step) === borrowIndex) setBorrowSent(true)
+        },
+      })
+      if (reachedLastStep(ended, calls.length)) setBorrowSent(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)
     }
   }
-
-  // Once the approval lands, continue to the borrow (fresh min re-quoted).
-  useEffect(() => {
-    if (permTx.phase === 'success' && awaitingBorrow && review) {
-      setAwaitingBorrow(false)
-      sendBorrow(review)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [permTx.phase])
 
   const handleReview = async () => {
     if (!isConnected || !address) {
@@ -323,52 +345,26 @@ export function GetLoanFlow({
     beginBorrow(review)
   }
 
+  const opened = borrowTx.phase === 'success' && borrowSent
+  /** A Safe executed the permission it was proposed: the borrow is reviewed next. */
+  const permissionOnly = (borrowTx.phase === 'success' && !borrowSent) || borrowTx.settledStep != null
+
   const closeReview = () => {
     if (busy) return
     setReview(null)
     setFlowError(null)
-    setAwaitingBorrow(false)
-    permTx.dismiss()
-    if (borrowTx.phase !== 'success') borrowTx.dismiss()
+    setLoanStep(-1)
+    if (!opened) borrowTx.dismiss()
   }
-
-  const borrowStep = review?.needsPermission ? 1 : 0
-  const activeIndex =
-    borrowTx.phase !== 'idle' || permTx.phase === 'success'
-      ? borrowStep
-      : permTx.phase !== 'idle' || quoting
-        ? 0
-        : -1
-  const reviewError = flowError ?? permTx.error ?? borrowTx.error
+  const activeIndex = liveStep(borrowTx, runShown, loanStep >= 0 ? loanStep : quoting ? 0 : -1)
+  const reviewError = flowError ?? borrowTx.error
 
   const dialog = review || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!review}
-      title={borrowTx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
-      rows={review ? [
-        {
-          label: 'Tokens locked for the loan',
-          value: `${formatTokenAmount(review.collateral)} ${collateralSymbol}`,
-        },
-        {
-          label: 'Loan',
-          value: `~${formatTokenAmount(review.quote, meta.decimals)} ${meta.symbol}`,
-        },
-        {
-          label: 'Fees',
-          value: `2.5% protocol + 1% revnet + ${(review.prepaid / 10).toString()}% prepaid`,
-        },
-        {
-          label: 'You receive',
-          value: `~${formatTokenAmount(
-            netLoanProceeds(review.quote, BigInt(review.prepaid)),
-            meta.decimals,
-          )} ${meta.symbol}`,
-          strong: true,
-        },
-        { label: 'On', value: chainName(chainId) },
-      ] : []}
+      title={opened ? 'Loan opened' : 'Confirm loan'}
+      rows={review ? loanRows(review) : []}
       steps={review ? [
         ...(review.needsPermission
           ? [
@@ -383,46 +379,33 @@ export function GetLoanFlow({
         { key: 'borrow', title: 'Open the loan' },
       ] : []}
       activeIndex={activeIndex}
-      action={
-        quoting
-          ? 'Checking the live quote…'
-          : permTx.phase === 'simulating' || permTx.phase === 'signing'
-            ? 'Approve in your wallet…'
-            : permTx.phase === 'pending'
-              ? 'Approving…'
-              : txPhaseLabel(borrowTx.phase, {
-                  idle: reviewError ? 'Retry' : 'Confirm loan',
-                  pending: 'Opening your loan…',
-                  confirm: 'Confirm the loan in your wallet…',
-                })
-      }
-      onConfirm={handleConfirm}
       busy={busy}
-      complete={borrowTx.settled || permTx.phase === 'submitted'}
+      complete={borrowTx.settled && !permissionOnly}
       status={
         !review
           ? 'Getting a fresh loan quote…'
-          : (borrowTx.notice ??
-            permTx.notice ??
-            borrowTx.safeNonceGuidance ??
-            permTx.safeNonceGuidance)
+          : permissionOnly
+            ? 'Permission confirmed. Continue to the loan.'
+            : (borrowTx.notice ?? borrowTx.safeNonceGuidance)
       }
       error={reviewError}
       onClose={closeReview}
+      start={handleConfirm}
+      next={!busy && (reviewError || permissionOnly) ? { label: permissionOnly ? 'Continue' : 'Retry', onClick: handleConfirm } : null}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
         At least 99% of the live quote must be borrowed or the transaction
         fails. Repaying restores your {collateralSymbol}. After 10 years,
         any tokens backing an unpaid loan are lost.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   const borrowTxUrl = borrowTx.hash
     ? etherscanTxUrl(chainId, borrowTx.hash)
     : null
 
-  if (borrowTx.phase === 'success') {
+  if (opened) {
     return (
       <div className="rounded-xl border border-smoke-200 p-4">
         <p className="text-sm font-medium text-ink">
@@ -443,7 +426,6 @@ export function GetLoanFlow({
             onClick={() => {
               setAmount('')
               resetInputs()
-              permTx.reset()
               borrowTx.reset()
             }}
             className="text-smoke-700 hover:text-ink"

@@ -9,7 +9,7 @@ import type { Address, Hex } from 'viem'
 import { ChainIcon } from '@/components/ChainIcon'
 import type { ShopWriteTarget } from '@/components/project/AddShopItemsModal'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
@@ -259,7 +259,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
         </p>
       ) : null}
       {plan || phase === 'checking' ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!plan}
           title={phase === 'done' ? 'Media replaced' : 'Confirm media update'}
@@ -300,26 +300,15 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
                   : phase === 'writing' ? message : undefined
           }
           error={busy || discard.active ? undefined : message}
-          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={started ? 'Close' : 'Cancel'}
-          action={
-            phase === 'checking'
-              ? 'Checking permission…'
-              : phase === 'pinning'
-                ? 'Uploading…'
-                : phase === 'writing'
-                  ? 'Updating…'
-                  : started
-                    ? 'Continue saved update'
-                    : 'Confirm & replace media'
-          }
-          onConfirm={() => void handleSubmit()}
           onClose={batch || phase === 'done' ? onClose : () => setPlan(null)}
+          start={() => void handleSubmit()}
+          next={!busy && !!message && phase !== 'done' ? { label: started ? 'Continue saved update' : 'Try again', onClick: () => void handleSubmit(), disabled: discard.active } : null}
         >
           {discard.element}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </ModalShell>
   )

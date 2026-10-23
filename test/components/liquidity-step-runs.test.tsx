@@ -6,7 +6,7 @@
  *
  * - A run that stopped part way belongs to that plan only: after the account
  *   changes, its stopped step goes to the engine only as the old account's,
- *   which the engine refuses (useSafeTx and reviewed-account tests), and a
+ *   which the engine refuses (reviewed-action and reviewed-account tests), and a
  *   newly reviewed plan starts from its own first step for the new account,
  *   never from the old plan's stopped step (an approval for another account,
  *   or a write whose recipient is baked into its bytes).
@@ -28,16 +28,23 @@ const H1 = `0x${'a1'.repeat(32)}` as Hex
 const H2 = `0x${'a2'.repeat(32)}` as Hex
 const H3 = `0x${'a3'.repeat(32)}` as Hex
 
+const batch = vi.hoisted(() => ({ applies: false, propose: vi.fn() }))
+vi.mock('@/lib/liquidity-safe-batch', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/liquidity-safe-batch')>()),
+  liquidityBatchApplies: () => batch.applies,
+  proposeLiquidityBatch: (...args: unknown[]) => batch.propose(...args),
+}))
 const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 }, balance: 10n ** 30n, holding: { tokenHolding: 0n, pairHolding: 0n } }))
 
 /** The plan's own bytes name the account they were reviewed for. */
 const unlockDataFor = (account: string) => (account === ALICE ? '0xaa' : '0xbb') as Hex
 const ERC20 = [{ currency: TOKEN, max: 10n ** 18n }]
 
-vi.mock('@/hooks/useSafeTx', async () => {
+vi.mock('@/hooks/useReviewedAction', async () => {
   const { engine } = await import('../support/lp-flow-harness')
-  return { useSafeTx: () => engine.useSafeTx() }
+  return { ...(await import('@/lib/reviewed-call')), txPhaseLabel: (await import('@/hooks/useReviewedAction')).txPhaseLabel, useReviewedAction: () => engine.useReviewedAction() }
 })
+vi.mock('@/lib/reviewed-send', () => ({ SAVED_SEQUENCE_LINE: 'saved', planShown: (saved: boolean, shown: object) => (saved ? { description: 'saved' } : shown), sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls, saved: false, scope }) }))
 vi.mock('wagmi', async importOriginal => ({
   ...(await importOriginal<typeof import('wagmi')>()),
   usePublicClient: () => client,
@@ -277,7 +284,7 @@ async function typeInto(label: string, value: string) {
 }
 
 const sent = () => engine.send.mock.calls.map(([request]) => request as Record<string, unknown>)
-const sentAs = () => (engine.send.mock.calls.at(-1)![1] as { reviewedAccount?: string }).reviewedAccount
+const sentAs = () => (engine.send.mock.calls.at(-1)![1] as { account?: string }).account
 const CHANGED = 'The connected account changed. Review again.'
 
 /** Close the confirm dialog with its cancel control. */
@@ -292,12 +299,10 @@ async function replanAfterStop({
   reviewLabel,
   stoppedAction,
   stoppedError,
-  finalAction,
 }: {
   reviewLabel: string
   stoppedAction: string
   stoppedError: string
-  finalAction: string
 }) {
   expect(action().textContent).toBe(stoppedAction)
   expect(host.textContent).toContain(stoppedError)
@@ -314,10 +319,8 @@ async function replanAfterStop({
   expect(host.querySelector('[data-tx-confirm]')).toBeNull()
 
   await review(reviewLabel)
-  // The new plan's review shows nothing of the old run.
-  expect(action().textContent).toBe(finalAction)
+  // The new plan's review starts at once and shows nothing of the old run.
   expect(host.textContent).not.toContain(stoppedError)
-  await confirm()
   const first = sent().at(-1)!
   // The new plan's first step: the approval for Bob, never the old plan's stopped step.
   expect(first).toMatchObject({ address: TOKEN, functionName: 'approve' })
@@ -333,7 +336,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     await waitFor('input[aria-label="TKN amount"]')
     await typeInto('TKN amount', '1')
     await review('Add liquidity')
-    await confirm()
     await land(H1, H2)
     expect(sent().map(request => request.functionName)).toEqual(['approve', 'approve', 'modifyLiquidities'])
     // Alice rejects the mint in her wallet: the run stops at step 3.
@@ -347,7 +349,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       reviewLabel: 'Add liquidity',
       stoppedAction: 'Retry step 3 of 3',
       stoppedError: 'Transaction cancelled.',
-      finalAction: 'Confirm & add liquidity',
     })
   })
 
@@ -367,17 +368,15 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     ))
     await settle()
     await review('Edit position')
-    await confirm()
     await land(H1, H2)
-    // The edit itself fails for Alice: the run stops at step 3 with that error.
-    await act(async () => engine.answer(H3))
+    // The edit itself fails for Alice before it is sent: the run stops at step 3 with that error.
     await act(async () => engine.fail('Old failure'))
+    await act(async () => engine.answer(null))
 
     await replanAfterStop({
       reviewLabel: 'Edit position',
       stoppedAction: 'Retry step 3 of 3',
       stoppedError: 'Old failure',
-      finalAction: 'Increase the position',
     })
   })
 
@@ -397,7 +396,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     ))
     await settle()
     await review('Edit the market')
-    await confirm()
     await land(H1)
     // Alice rejects the position-manager authorization in her wallet: the run stops at step 2.
     await act(async () => engine.fail('Transaction cancelled.'))
@@ -407,19 +405,38 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       reviewLabel: 'Edit the market',
       stoppedAction: 'Retry step 2 of 3',
       stoppedError: 'Transaction cancelled.',
-      finalAction: 'Edit the market',
     })
     // Alice's stopped Permit2 authorization went back to the engine only as hers,
     // which it refuses while Bob is connected; Bob's plan starts with his own approval.
     const approvals = engine.send.mock.calls.filter(
       ([request]) => (request as { functionName?: string }).functionName === 'approve',
     )
-    expect(approvals.map(([, options]) => (options as { reviewedAccount?: string }).reviewedAccount)).toEqual([
+    expect(approvals.map(([, options]) => (options as { account?: string }).account)).toEqual([
       ALICE,
       ALICE,
       ALICE,
       BOB,
     ])
+  })
+})
+
+describe('a liquidity batch whose review was closed', () => {
+  afterEach(() => { batch.applies = false; batch.propose.mockReset() })
+
+  it('offers Retry at once, which reviews the same batch again', async () => {
+    batch.applies = true
+    batch.propose.mockRejectedValueOnce(new Error('Transaction review cancelled.')).mockResolvedValueOnce(H1)
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    await settle()
+    expect(batch.propose).toHaveBeenCalledTimes(1)
+    expect(action().textContent).toBe('Retry')
+    await confirm()
+    await settle()
+    expect(batch.propose).toHaveBeenCalledTimes(2)
+    expect(batch.propose.mock.calls[1][0]).toEqual(batch.propose.mock.calls[0][0])
   })
 })
 
@@ -430,7 +447,6 @@ describe('a liquidity run proposed to a Safe', () => {
     await waitFor('input[aria-label="TKN amount"]')
     await typeInto('TKN amount', '1')
     await review('Add liquidity')
-    await confirm()
     await act(async () => engine.answer(H1))
     await act(async () => engine.propose(PROPOSED))
 
@@ -454,8 +470,8 @@ describe('a liquidity run keeps its modal open while a send is in flight', () =>
     await waitFor('input[aria-label="TKN amount"]')
     await typeInto('TKN amount', '1')
     await review('Add liquidity')
-    await confirm()
     // The first approval waits on the wallet.
+    await waitFor('[data-tx-confirm] li[data-state="active"]')
     expect(engine.send).toHaveBeenCalledTimes(1)
     await tryToLeave()
     expect(hostClose).not.toHaveBeenCalled()
@@ -489,7 +505,6 @@ describe('a liquidity run keeps its modal open while a send is in flight', () =>
     ))
     await settle()
     await review('Edit position')
-    await confirm()
     expect(engine.send).toHaveBeenCalledTimes(1)
 
     await tryToLeave()
@@ -513,7 +528,6 @@ describe('a liquidity run keeps its modal open while a send is in flight', () =>
     ))
     await settle()
     await review('Edit the market')
-    await confirm()
     expect(engine.send).toHaveBeenCalledTimes(1)
 
     await tryToLeave()
@@ -545,7 +559,6 @@ describe('a liquidity run whose step could not be confirmed yet', () => {
     await waitFor('input[aria-label="TKN amount"]')
     await typeInto('TKN amount', '1')
     await review('Add liquidity')
-    await confirm()
     await land(H1, H2)
     await act(async () => engine.answer(H3))
     await act(async () => engine.unconfirm(LINE))
@@ -559,7 +572,6 @@ describe('a liquidity run whose step could not be confirmed yet', () => {
     ))
     await settle()
     await review('Edit position')
-    await confirm()
     await land(H1, H2)
     await act(async () => engine.answer(H3))
     await act(async () => engine.unconfirm(LINE))
@@ -573,7 +585,6 @@ describe('a liquidity run whose step could not be confirmed yet', () => {
     ))
     await settle()
     await review('Edit the market')
-    await confirm()
     await land(H1)
     await act(async () => engine.answer(H2))
     await act(async () => engine.unconfirm(LINE))
@@ -584,7 +595,6 @@ describe('a liquidity run whose step could not be confirmed yet', () => {
 describe("a liquidity write's hold key", () => {
   /** Confirm the reviewed plan, land each step before its final write, and read that write's intent; then stop it. */
   async function finalIntent(): Promise<string | undefined> {
-    await confirm()
     for (let step = 0; step < 5; step++) {
       const [request, options] = engine.send.mock.calls.at(-1)! as [{ functionName?: string }, { intent?: string }]
       if (request.functionName === 'modifyLiquidities') {
@@ -661,7 +671,6 @@ describe("a liquidity write's hold key", () => {
     await render(market(TOKEN_SIDE))
     await settle()
     await review('Edit the market')
-    await confirm()
     for (let step = 0; step < 5; step++) {
       const [request, options] = engine.send.mock.calls.at(-1)! as [{ functionName?: string }, { legacy?: string[] }]
       if (request.functionName === 'modifyLiquidities') {
@@ -681,7 +690,6 @@ describe("a liquidity write's hold key", () => {
     await render(addFlow)
     await typed('1')()
     await review('Add liquidity')
-    await confirm()
     const [, first] = engine.send.mock.calls.at(-1)! as [unknown, { intent?: string }]
     expect(first.intent).toBe(approvalIntent(liquidityIntent({ chainId: 1, pool, positions: [] }), {
       step: 'approve-erc20', token: TOKEN, spender: UNISWAP_PERMIT2_ADDRESS,

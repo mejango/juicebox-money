@@ -31,9 +31,9 @@ import { useConfig } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import {
   etherscanTxUrl,
@@ -118,7 +118,7 @@ export function RedeemShopItemsModal({
   const [preparing, setPreparing] = useState(false)
   const [prepareError, setPrepareError] = useState<string | null>(null)
   const [plan, setPlan] = useState<RedeemPlan | null>(null)
-  const tx = useSafeTx(selectedChainId)
+  const tx = useReviewedAction(selectedChainId)
 
   useEffect(() => {
     setSelected(new Set(target.items.map(item => item.tokenId)))
@@ -400,17 +400,19 @@ export function RedeemShopItemsModal({
     if (!plan || busy) return
     setPrepareError(null)
     try {
-      await tx.send(plan.request, {
-        reviewedAccount: plan.quote.holder,
-        reviewNotice: plan.reviewNotice,
-        // Its minimum re-quotes on retry: held by the items the user chose to redeem.
-        intent: redeemIntent({
-          chainId: plan.quote.chainId, project: target.projectId, hook: target.hook,
-          tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
-        }),
-        legacy: [legacyRedeemItemsKey({
-          chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook,
-          tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
+      await tx.run({
+        account: plan.quote.holder,
+        description: plan.reviewNotice,
+        calls: [reviewedCall(plan.request, {
+          // Its minimum re-quotes on retry: held by the items the user chose to redeem.
+          intent: redeemIntent({
+            chainId: plan.quote.chainId, project: target.projectId, hook: target.hook,
+            tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
+          }),
+          legacy: [legacyRedeemItemsKey({
+            chainId: plan.quote.chainId, projectId: target.projectId, hook: target.hook,
+            tokenIds: plan.quote.tokenIdsKey.split(',').map(BigInt), holder: plan.quote.holder,
+          })],
         })],
       })
     } catch (error) {
@@ -584,7 +586,7 @@ export function RedeemShopItemsModal({
       ) : null}
 
       {plan || preparing ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!plan}
           title={tx.phase === 'success' ? 'Items redeemed' : 'Confirm redemption'}
@@ -611,8 +613,6 @@ export function RedeemShopItemsModal({
             },
           ]}
           activeIndex={tx.busy || tx.phase === 'error' ? 0 : -1}
-          action={tx.phase === 'error' ? 'Retry' : 'Confirm & redeem'}
-          onConfirm={() => void redeem()}
           busy={busy}
           complete={tx.settled}
           status={!plan ? 'Getting a fresh redemption quote…' : (tx.notice ?? tx.safeNonceGuidance)}
@@ -622,6 +622,8 @@ export function RedeemShopItemsModal({
             setPrepareError(null)
             if (tx.phase !== 'success') tx.dismiss()
           }}
+          start={() => void redeem()}
+          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void redeem() } : null}
         />
       ) : null}
     </ModalShell>

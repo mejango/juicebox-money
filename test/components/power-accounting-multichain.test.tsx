@@ -14,8 +14,8 @@ vi.mock('@/lib/authority', () => ({
 vi.mock('@/components/ui/ChainPicker', () => ({ ChainPicker: () => null }))
 vi.mock('@/components/ui/PerChainAddressField', () => ({ PerChainAddressField: () => null }))
 vi.mock('@/components/ui/PerChainAddressListField', () => ({ PerChainAddressListField: () => null }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ children }: { children: ReactNode }) => children,
+vi.mock('@/components/ui/TxProgress', () => ({
+  TxProgress: ({ children }: { children: ReactNode }) => children,
 }))
 vi.mock('@/components/ui/TxError', () => ({ ErrorNote: ({ message }: { message: string }) => message }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
@@ -24,7 +24,7 @@ import { PowerActionForm } from '@/components/project/AuthorityPowersCard'
 import { POWERS } from '@/lib/projectPowers'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { RelayrDiscardError } from '@/lib/relayr'
 
@@ -65,7 +65,8 @@ async function submit() {
   await act(async () => {
     renderer!.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } })
   })
-  await act(async () => { await renderer!.root.findByType(TxConfirmDialog).props.onConfirm() })
+  // What the dialog does next: its first start, then its retry.
+  await act(async () => { const { next, start } = renderer!.root.findByType(TxProgress).props; await (next?.onClick ?? start)!() })
 }
 
 beforeEach(() => { mocks.runAuthorityCalls.mockReset().mockResolvedValue({}) })
@@ -80,7 +81,7 @@ describe('multichain accounting-token review', () => {
     await decimals('Ethereum', '6')
     await decimals('Optimism', '18')
     await review()
-    const summary = renderer!.root.findByType(TxConfirmDialog).props.rows
+    const summary = renderer!.root.findByType(TxProgress).props.rows
     expect(summary.find((row: { label: string }) => row.label === 'Ethereum').value).toContain('Decimals 6')
     expect(summary.find((row: { label: string }) => row.label === 'Optimism').value).toContain('Decimals 18')
     await submit()
@@ -93,6 +94,20 @@ describe('multichain accounting-token review', () => {
     }
   })
 
+  it('opens its review only once its acknowledgement is checked', async () => {
+    await renderForm()
+    await decimals('Ethereum', '6')
+    await decimals('Optimism', '18')
+    await review()
+    // Unchecked, the dialog has nothing to start: starting it would end silently.
+    expect(renderer!.root.findByType(TxProgress).props.start).toBeUndefined()
+    await act(async () => {
+      renderer!.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } })
+    })
+    await act(async () => { await renderer!.root.findByType(TxProgress).props.start() })
+    expect(mocks.runAuthorityCalls).toHaveBeenCalledOnce()
+  })
+
   it('shows the line and Discard, in place of the error, when its saved Relayr session can only be discarded', async () => {
     mocks.runAuthorityCalls.mockRejectedValue(new RelayrDiscardError('authority:0xabc', 'changed'))
     await renderForm()
@@ -100,16 +115,16 @@ describe('multichain accounting-token review', () => {
     await decimals('Optimism', '18')
     await review()
     await submit()
-    const dialog = renderer!.root.findByType(TxConfirmDialog)
+    const dialog = renderer!.root.findByType(TxProgress)
     expect(dialog.props.error).toBeNull()
-    expect(dialog.props.actionDisabled).toBe(true)
+    expect(!dialog.props.next || dialog.props.next.disabled || dialog.props.busy).toBe(true)
     expect(renderer!.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'authority:0xabc', reason: 'changed' })
     mocks.discard.mockResolvedValue(undefined)
     await act(async () => { await renderer!.root.findAllByType('button').find(button => button.props.children === 'Discard')!.props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith('authority:0xabc')
     expect(renderer!.root.findAllByType(RelayrDiscard)).toHaveLength(0)
     // The powers have no recheck of their own, so Discard closes the review: a fresh one sends again (ruling R114 (f)).
-    expect(renderer!.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(TxProgress)).toHaveLength(0)
   })
 
   it('blocks a destination without valid decimals before review or submission', async () => {
@@ -118,7 +133,7 @@ describe('multichain accounting-token review', () => {
     for (const value of ['', '1.5', '-1', '33']) {
       await decimals('Optimism', value)
       await review()
-      expect(renderer!.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+      expect(renderer!.root.findAllByType(TxProgress)).toHaveLength(0)
       expect(JSON.stringify(renderer!.toJSON())).toContain('Optimism: decimals must be a whole number between 0 and 32')
     }
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
@@ -129,9 +144,9 @@ describe('multichain accounting-token review', () => {
     await decimals('Ethereum', '6')
     await act(async () => { renderer!.root.findByType(ChainPicker).props.onChange(new Set([1])) })
     await review()
-    expect(renderer!.root.findByType(TxConfirmDialog).props.steps).toHaveLength(1)
+    expect(renderer!.root.findByType(TxProgress).props.steps).toHaveLength(1)
     await decimals('Ethereum', '8')
-    expect(renderer!.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+    expect(renderer!.root.findAllByType(TxProgress)).toHaveLength(0)
     await review()
     await submit()
     expect(mocks.runAuthorityCalls.mock.calls[0][0].calls[0].args[1][0].decimals).toBe(8)

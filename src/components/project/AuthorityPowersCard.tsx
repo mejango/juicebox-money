@@ -18,7 +18,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import {
@@ -506,8 +506,9 @@ export function PowerActionForm({
     onCancel()
   }
 
+  const acknowledged = ack && (!power.extreme || ackExtreme)
   const submit = async () => {
-    if (!review || !ack || (power.extreme && !ackExtreme) || busy) return
+    if (!review || !acknowledged || busy) return
     setBusy(true)
     setError(null)
     discard.capture(null)
@@ -700,7 +701,7 @@ export function PowerActionForm({
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={
             done ? `${power.label} complete` : `Confirm ${power.actionLabel.toLowerCase()}`
@@ -715,9 +716,9 @@ export function PowerActionForm({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : power.actionLabel}
-          actionDisabled={!ack || (power.extreme && !ackExtreme) || discard.active}
-          onConfirm={() => void submit()}
+          // The review opens once every acknowledgement is checked: checking them is the go-ahead.
+          start={acknowledged ? () => void submit() : undefined}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: !acknowledged || discard.active } : null}
           onClose={() => {
             if (done) {
               onCancel()
@@ -758,7 +759,7 @@ export function PowerActionForm({
               </span>
             </label>
           ) : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )

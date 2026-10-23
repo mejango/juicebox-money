@@ -1,5 +1,6 @@
 'use client'
 
+import { ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   getDefifaHoldings, prepareDefifaCashOut, prepareDefifaTransfer,
@@ -13,13 +14,13 @@ import { encodeFunctionData, isAddress, zeroAddress, type Address, type Hex, typ
 import { useConfig, usePublicClient } from 'wagmi'
 import { getAccount } from 'wagmi/actions'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX, type Shop } from '@/hooks/useShop721'
-import { clearDefifaWriteRecovery, readDefifaWriteRecovery, sendRecoverableDefifaWrite, DEFIFA_RECOVERY_QUERY_PREFIX } from '@/lib/defifa-write-recovery'
+import { clearDefifaWriteRecovery, readDefifaWriteRecovery, runRecoverableDefifaWrite, DEFIFA_RECOVERY_QUERY_PREFIX } from '@/lib/defifa-write-recovery'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 
 type CashOut = Awaited<ReturnType<typeof prepareDefifaCashOut>>
@@ -63,7 +64,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
-  const tx = useSafeTx(plan?.chainId ?? chainId)
+  const tx = useReviewedAction(plan?.chainId ?? chainId)
   const client = usePublicClient({ chainId: plan?.chainId ?? chainId }) as PublicClient | undefined
   const [proof, setProof] = useState<'idle' | 'checking' | 'verified' | 'reverted' | 'error'>('idle')
   const [failedTransaction, setFailedTransaction] = useState<{ hash: Hex; chainId: JBChainId }>()
@@ -161,12 +162,12 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     setError(null)
     try {
       const raw = [...selected, ...manual.split(/[\s,]+/).filter(Boolean)]
-      if (!raw.length || raw.some(value => !/^[1-9]\d{0,77}$/.test(value))) throw new Error('Select NFTs or enter valid positive token IDs.')
+      if (!raw.length || raw.some(value => !/^[1-9]\d{0,77}$/.test(value))) throw new ReviewLineError('Select NFTs or enter valid positive token IDs.')
       const tokenIds = [...new Set(raw)].map(BigInt)
-      if (tokenIds.length > MAX_DEFIFA_ACTION_NFTS) throw new Error(`Select at most ${MAX_DEFIFA_ACTION_NFTS} NFTs per action.`)
-      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new Error('NFT cash-out is not available in this phase.')
-      if (kind === 'transfer' && tokenIds.length !== 1) throw new Error('Select exactly one NFT to transfer.')
-      if (kind === 'transfer' && (!isAddress(recipient) || recipient === zeroAddress)) throw new Error('Enter a valid nonzero recipient address.')
+      if (tokenIds.length > MAX_DEFIFA_ACTION_NFTS) throw new ReviewLineError(`Select at most ${MAX_DEFIFA_ACTION_NFTS} NFTs per action.`)
+      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new ReviewLineError('NFT cash-out is not available in this phase.')
+      if (kind === 'transfer' && tokenIds.length !== 1) throw new ReviewLineError('Select exactly one NFT to transfer.')
+      if (kind === 'transfer' && (!isAddress(recipient) || recipient === zeroAddress)) throw new ReviewLineError('Enter a valid nonzero recipient address.')
       const to = kind === 'transfer' ? recipient as Address : address
       const context = { chainId, projectId: BigInt(projectId), account: address, expectedHook: shop.hook }
       let result: CashOut | Transfer
@@ -174,12 +175,12 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       if (kind === 'cash-out') {
         const quote = await prepareDefifaCashOut(client, { ...context, tokenIds })
         if (signal.aborted || actorContext.current.generation !== generation) return
-        if (quote.reclaimAmount === 0n && quote.protocolRewards.defifaAmount === 0n && quote.protocolRewards.baseProtocolAmount === 0n) throw new Error('These NFTs have nothing to claim right now.')
+        if (quote.reclaimAmount === 0n && quote.protocolRewards.defifaAmount === 0n && quote.protocolRewards.baseProtocolAmount === 0n) throw new ReviewLineError('These NFTs have nothing to claim right now.')
         minimum = quote.reclaimAmount > 0n ? slippageFloor(quote.reclaimAmount) : 0n
         result = minimum > 0n ? await prepareDefifaCashOut(client, { ...context, tokenIds, minimumReclaim: minimum }) : quote
       } else result = await prepareDefifaTransfer(client, { ...context, tokenId: tokenIds[0], recipient: to })
       if (signal.aborted || actorContext.current.generation !== generation) return
-      if (getAccount(config).address?.toLowerCase() !== address.toLowerCase()) throw new Error('Your account changed. Review again.')
+      if (getAccount(config).address?.toLowerCase() !== address.toLowerCase()) throw new ReviewLineError('Your account changed. Review again.')
       tx.reset()
       setProof('idle')
       markWrite(false)
@@ -196,25 +197,25 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     const generation = actorContext.current.generation
     const signal = flowSignal()
     const assertWriteState = () => {
-      if (signal.aborted) throw new Error('This NFT action closed before submission. Prepare it again.')
-      if (actorContext.current.generation !== generation) throw new Error('Your account or project changed before submission. Prepare this action again.')
+      if (signal.aborted) throw new ReviewLineError('This NFT action closed before submission. Prepare it again.')
+      if (actorContext.current.generation !== generation) throw new ReviewLineError('Your account or project changed before submission. Prepare this action again.')
     }
     sending.current = true
     setError(null)
     try {
-      const hash = await sendRecoverableDefifaWrite({
+      const result = await runRecoverableDefifaWrite({
         scope: { chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind },
-        request: plan.result.transaction, send: (request, options) => tx.send(request, options),
+        run: tx.run,
         onRecord: record => { recovery.current = record; markWrite(record !== null) },
-        options: {
-        reviewedAccount: plan.account,
+        action: {
+        account: plan.account,
+        calls: [reviewedCall(plan.result.transaction)],
         assertWriteState,
-        beforeWrite: () => {
+        beforeWallet: () => {
           assertWriteState()
           markWrite(true)
         },
-        onBeforeWriteAborted: () => markWrite(false),
-        onWriteRejected: () => markWrite(false),
+        onUnsent: () => markWrite(false),
         reverify: async () => {
           assertWriteState()
           const context = { chainId: plan.chainId, projectId: BigInt(plan.projectId), account: plan.account, expectedHook: plan.result.inventory.hook }
@@ -224,14 +225,14 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
           assertWriteState()
           if (requestKey(fresh) !== requestKey(plan.result) || fresh.inventory.implementation.toLowerCase() !== plan.result.inventory.implementation.toLowerCase() || fresh.inventory.phase !== plan.result.inventory.phase ||
             ('reclaimAmount' in fresh && 'reclaimAmount' in plan.result && (fresh.reclaimAmount !== plan.result.reclaimAmount || rewardsKey(fresh) !== rewardsKey(plan.result)))) {
-            throw new Error('The NFT action changed. Close this review and prepare it again.')
+            throw new ReviewLineError('The NFT action changed. Close this review and prepare it again.')
           }
         },
         },
       })
-      if (hash) {
+      if (result) {
         markWrite(true)
-        if (tx.isSafe) setProposalHash(hash)
+        if (result.status === 'proposed') setProposalHash(result.safeTxHash)
       }
     } catch (reason) { setError(message(reason)) } finally {
       sending.current = false
@@ -243,9 +244,9 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     // Dismiss the local review only after the SDK confirms its unresolved intent remains recoverable.
     if (proof !== 'verified' && proof !== 'reverted' && (tx.hash || tx.phase === 'submitted' || sent.current)) {
       try {
-        if (!plan || !recovery.current) throw new Error('The original action is not yet saved for recovery.')
+        if (!plan || !recovery.current) throw new ReviewLineError('The original action is not yet saved for recovery.')
         const retained = readDefifaWriteRecovery({ chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind })
-        if (!retained || retained.id !== recovery.current.id) throw new Error('The original action could not be confirmed in recovery storage.')
+        if (!retained || retained.id !== recovery.current.id) throw new ReviewLineError('The original action could not be confirmed in recovery storage.')
         void queries.invalidateQueries({ queryKey: DEFIFA_RECOVERY_QUERY_PREFIX })
       } catch (reason) { setError(message(reason)); return }
     }
@@ -283,12 +284,14 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     {proof === 'error' ? <button type="button" onClick={() => void verifyReceipt()}>Retry receipt verification</button> : null}
     {tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(plan?.chainId ?? chainId, tx.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View transaction</a> : null}
     {failedTransaction && failedTransaction.hash !== tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(failedTransaction.chainId, failedTransaction.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View previous failed transaction</a> : null}
-    {plan ? <TxConfirmDialog open title={plan.kind === 'cash-out' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT'} rows={[
+    {plan ? <TxProgress open title={plan.kind === 'cash-out' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT'} rows={[
       { label: 'Account', value: plan.account, mono: true }, { label: 'NFTs', value: plan.tokenIds.map(String).join(', ') },
       { label: 'Recipient', value: plan.recipient, mono: true },
       ...(cash ? [{ label: 'Reclaimed', value: `${formatTokenAmount(cash.reclaimAmount, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Minimum', value: `${formatTokenAmount(plan.minimum, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Protocol rewards', value: `${formatTokenAmount(cash.protocolRewards.defifaAmount, cash.protocolRewards.defifaDecimals)} at ${cash.protocolRewards.defifaToken}, ${formatTokenAmount(cash.protocolRewards.baseProtocolAmount, cash.protocolRewards.baseProtocolDecimals)} at ${cash.protocolRewards.baseProtocolToken}` }] : []),
-    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} action="Confirm NFT action" onConfirm={() => void confirm()} onClose={close} busy={tx.busy || proof === 'checking'} actionDisabled={held || proof !== 'idle'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}><WriteRecoveryInTabNote /></TxConfirmDialog> : null}
+    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} onClose={close} busy={tx.busy || proof === 'checking'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}
+    start={held || proof !== 'idle' ? undefined : () => void confirm()}
+    next={!held && proof === 'idle' ? { label: error ?? tx.error ? 'Try again' : 'Review again', onClick: () => void confirm() } : null}><WriteRecoveryInTabNote /></TxProgress> : null}
   </div></DefifaRecovery>
 }

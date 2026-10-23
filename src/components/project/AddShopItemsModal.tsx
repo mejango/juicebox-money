@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -244,7 +244,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       ) : null}
 
       {review || phase === 'checking' ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!review}
           title={phase === 'done' ? 'Items added' : 'Confirm items'}
@@ -293,30 +293,17 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                 : message
           }
           error={phase === 'failed' && !discard.active ? message : undefined}
-          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
-          action={
-            phase === 'checking'
-              ? 'Checking permissions…'
-              : phase === 'pinning'
-                ? 'Saving items…'
-                : phase === 'writing'
-                  ? 'Adding items…'
-                  : phase === 'failed'
-                    ? hasUncertainTransactions
-                      ? 'Continue saved update'
-                      : 'Continue update'
-                    : hasUncertainTransactions ? 'Continue saved update' : 'Add items for sale'
-          }
-          onConfirm={() => void handleConfirm()}
           onClose={
             phase === 'done' || hasSubmittedTransactions ? close : backToForm
           }
+          start={() => void handleConfirm()}
+          next={phase === 'failed' ? { label: hasUncertainTransactions ? 'Continue saved update' : 'Continue update', onClick: () => void handleConfirm(), disabled: discard.active } : null}
         >
           {discard.element}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </ModalShell>
   )

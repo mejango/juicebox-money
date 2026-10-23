@@ -31,6 +31,6 @@ for (const viewport of [
     await scroller.evaluate(node => { node.scrollTop = node.scrollHeight })
     const footer = await dialog.locator('footer').boundingBox()
     expect(footer!.y + footer!.height).toBeLessThanOrEqual(viewport.height)
-    await expect(dialog.getByRole('button', { name: 'Confirm' })).toBeInViewport()
+    await expect(dialog.getByRole('button', { name: 'Try again' })).toBeInViewport()
   })
 }

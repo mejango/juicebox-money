@@ -1,7 +1,7 @@
 'use client'
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { withFailedStep, withUnconfirmedStep } from '@/components/ui/TxSteps'
 import {
   JB_CHAINS,
@@ -33,8 +33,9 @@ import { FormCardSkeleton } from '@/components/LoadingSkeletons'
 import { useCashOutFloor } from '@/hooks/useCashOutFloor'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-import { useSafeTx } from '@/hooks/useSafeTx'
-import { useStepRun } from '@/hooks/useStepRun'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
+import type { ReviewedCall } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
 import {
   LIQUIDITY_BATCH_PROPOSED,
@@ -72,8 +73,8 @@ import { buildMarketMint, type MarketMint } from '@/lib/market-liquidity'
  * Difference from website (deliberate, and safer): where website folds a gasless
  * Permit2 signature into a PositionManager.multicall, this app authorizes Permit2
  * with an on-chain Permit2.approve — so EVERY step (ERC-20 → Permit2, Permit2 →
- * PositionManager, then the mint) is its own reviewed useSafeTx transaction that
- * is simulated before it is signed. No signature ever bypasses useSafeTx. The
+ * PositionManager, then the mint) is its own reviewed transaction (useReviewedAction) that
+ * is simulated before it is signed. No signature ever bypasses it. The
  * mint calldata (unlockData: MINT_POSITION + CLOSE + CLOSE [+ SWEEP]) and the
  * exact amounts sent are identical to website's.
  */
@@ -117,6 +118,30 @@ export type Step =
       label: string
     }
   | { kind: 'mint'; label: string }
+
+/** A liquidity plan's reviewed calls: each approval step held as a step of the action, then `last` (the mint or edit). */
+export function liquidityStepCalls(
+  steps: readonly Step[],
+  { chainId, positionManager, intent }: { chainId: JBChainId; positionManager: Address; intent: string },
+  last: ReviewedCall,
+): ReviewedCall[] {
+  return steps.map(step => {
+    if (step.kind === 'approve-erc20') {
+      // Its amount follows the live pool: held as a step of the liquidity action.
+      return reviewedCall(
+        buildErc20ApproveRequest({ chainId, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS, amount: step.amount }),
+        { intent: approvalIntent(intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
+      )
+    }
+    if (step.kind === 'permit2-approve') {
+      return reviewedCall(
+        buildPermit2ApproveRequest({ chainId, token: step.token, positionManager, amount: step.amount, expiration: step.expiration }),
+        { intent: approvalIntent(intent, { step: step.kind, token: step.token, spender: positionManager }) },
+      )
+    }
+    return last
+  })
+}
 
 type Plan = {
   account: Address
@@ -353,7 +378,7 @@ function AddLiquidityForm({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const chainMeta = JB_CHAINS[chainId]
 
   const pair = pool.pair
@@ -484,72 +509,41 @@ function AddLiquidityForm({
 
   const planRef = useRef<Plan | null>(null)
 
-  // ----- send one step -----------------------------------------------------
-  // `confirmedAt` is the block of the run's last confirmed approval. `useSafeTx` documents
-  // `simulationBlockNumber` as REQUIRED when a reviewed write immediately follows an ERC-20 or
-  // Permit2 approval: on a lagging load-balanced RPC the mint otherwise simulates against a
-  // pre-approval block and reverts on allowance — after the user has already paid for two
-  // approvals.
-  const sendStep = useCallback(
-    (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
-      const p = planRef.current
-      if (!p) return Promise.resolve(null)
-      // The mint recipient is baked into unlockData: every step, approvals
-      // included, sends only from the account the plan was reviewed for.
-      const reviewedAccount = p.account
-      if (step.kind === 'approve-erc20') {
-        return tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
-          // Its amount follows the live pool: held as a step of the liquidity action.
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
-        )
-      }
-      if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager: p.posm,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: p.posm }) },
-        )
-      }
-      // Deadline is set at send time — everything that touches funds is
-      // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
-      // gets 30 days (matching the Permit2 steps) because signature
-      // collection outlives 20 minutes and would strand the mint.
-      const deadline = swapDeadline(isSafeConnection(wagmiConfig))
-      return tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager: p.posm,
-          unlockData: p.mint.unlockData,
-          deadline,
-          value: p.mint.value,
-        }),
-        {
-          reviewedAccount,
-          simulationBlockNumber: confirmedAt,
-          // Its deadline restamps and a fresh plan re-prices it: held as a change to this pool.
-          intent: p.intent,
-          legacy: p.legacy,
-        },
-      )
-    },
-    [tx, chainId],
-  )
+  // ----- the run: its approvals, then the mint -------------------------------
+  // Read when the run starts, after this render's labels exist.
+  const runAction = (steps: readonly Step[]): StepRunAction | null => {
+    const p = planRef.current
+    if (!p) return null
+    // Deadline is set when the run starts; everything that touches funds is
+    // frozen inside unlockData. An EOA gets ~20 min like website; a Safe
+    // gets 30 days (matching the Permit2 steps) because signature
+    // collection outlives 20 minutes and would strand the mint.
+    const mint = reviewedCall(buildModifyLiquiditiesRequest({
+      chainId,
+      positionManager: p.posm,
+      unlockData: p.mint.unlockData,
+      deadline: swapDeadline(isSafeConnection(wagmiConfig)),
+      value: p.mint.value,
+    }), {
+      // Its deadline restamps and a fresh plan re-prices it: held as a change to this pool.
+      intent: p.intent,
+      legacy: p.legacy,
+    })
+    // The mint recipient is baked into unlockData: every step, approvals
+    // included, sends only from the account the plan was reviewed for.
+    return {
+      account: p.account,
+      scope: `jbm:liquidity:${p.intent}`,
+      calls: liquidityStepCalls(steps, { chainId, positionManager: p.posm, intent: p.intent }, mint),
+      context: contextRows(planRows(p)),
+    }
+  }
 
-  // ----- run the steps, each once the one before it confirms ---------------
+  // ----- one review, then each step once the one before it confirms -------
   const run = useStepRun<Step>({
     tx,
-    send: sendStep,
+    send: tx.run,
+    action: runAction,
     onFinish: hash => {
       setMintHash(hash)
       setDone(true)
@@ -868,79 +862,44 @@ function AddLiquidityForm({
 
   const disabledCol = (active: boolean) => (active ? '' : 'opacity-45')
 
-  const amount = (value: bigint, decimals: number, symbol: string) =>
-    `~${formatTokenAmount(value, decimals)} ${symbol}`
-  const band = (lo: number, hi: number) => (
-    <span className="block text-xs text-smoke-500">
-      {formatPrice(lo)} → {formatPrice(hi)} {pairSym} per {sym}
-    </span>
-  )
+  /** The plan's summary: shown on its progress, and in its one review. */
+  function planRows(plan: Plan): TxConfirmRow[] {
+    const d = plan.display
+    const amount = (value: bigint, decimals: number, symbol: string) =>
+      `~${formatTokenAmount(value, decimals)} ${symbol}`
+    const band = (lo: number, hi: number) => `${formatPrice(lo)} → ${formatPrice(hi)} ${pairSym} per ${sym}`
+    const rows: TxConfirmRow[] = []
+    if (plan.market) {
+      if (d.needTok > 0n) {
+        rows.push({ label: 'Sells above the price', value: `${amount(d.needTok, 18, sym)}, ${band(d.price, d.pb)}`, strong: true })
+      }
+      if (d.needPair > 0n) {
+        rows.push({ label: 'Buys below the price', value: `${amount(d.needPair, d.pairDecimals, d.pairSymbol)}, ${band(d.pa, d.price)}`, strong: true })
+      }
+    } else {
+      const adds = [
+        d.needTok > 0n ? amount(d.needTok, 18, sym) : null,
+        d.needPair > 0n ? amount(d.needPair, d.pairDecimals, d.pairSymbol) : null,
+      ].filter(Boolean).join(' + ')
+      rows.push({ label: 'Adds', value: `${adds}, ${band(d.pa, d.pb)}`, strong: true })
+    }
+    rows.push({ label: 'On', value: chainName })
+    rows.push({
+      label: 'Authorizes up to',
+      value: `${formatTokenAmount(d.maxTok, 18)} ${sym} and ${formatTokenAmount(d.maxPair, d.pairDecimals)} ${d.pairSymbol} (1% headroom${d.pairIsNative ? `; unused ${d.pairSymbol} is refunded` : ''})`,
+    })
+    rows.push({ label: 'Fee tier', value: `${(d.fee / 10000).toFixed(2)}%` })
+    rows.push({ label: 'Ticks', value: `${d.tickLower} to ${d.tickUpper}` })
+    return rows
+  }
 
   const confirmDialog = plan
     ? (() => {
         const d = plan.display
         const stopped = run.stoppedOn(plan.steps)
-        const rows: TxConfirmRow[] = []
-        if (plan.market) {
-          if (d.needTok > 0n) {
-            rows.push({
-              label: 'Sells above the price',
-              value: (
-                <>
-                  {amount(d.needTok, 18, sym)}
-                  {band(d.price, d.pb)}
-                </>
-              ),
-              strong: true,
-            })
-          }
-          if (d.needPair > 0n) {
-            rows.push({
-              label: 'Buys below the price',
-              value: (
-                <>
-                  {amount(d.needPair, d.pairDecimals, d.pairSymbol)}
-                  {band(d.pa, d.price)}
-                </>
-              ),
-              strong: true,
-            })
-          }
-        } else {
-          rows.push({
-            label: 'Adds',
-            value: (
-              <>
-                {[
-                  d.needTok > 0n ? amount(d.needTok, 18, sym) : null,
-                  d.needPair > 0n ? amount(d.needPair, d.pairDecimals, d.pairSymbol) : null,
-                ]
-                  .filter(Boolean)
-                  .join(' + ')}
-                {band(d.pa, d.pb)}
-              </>
-            ),
-            strong: true,
-          })
-        }
-        rows.push({ label: 'On', value: chainName })
-        rows.push({
-          label: 'Authorizes up to',
-          value: (
-            <>
-              {formatTokenAmount(d.maxTok, 18)} {sym} and{' '}
-              {formatTokenAmount(d.maxPair, d.pairDecimals)} {d.pairSymbol}
-              <span className="block text-xs text-smoke-500">
-                1% headroom
-                {d.pairIsNative ? `; unused ${d.pairSymbol} is refunded` : ''}
-              </span>
-            </>
-          ),
-        })
-        rows.push({ label: 'Fee tier', value: `${(d.fee / 10000).toFixed(2)}%` })
-        rows.push({ label: 'Ticks', value: `${d.tickLower} to ${d.tickUpper}` })
+        const rows = planRows(plan)
         return (
-          <TxConfirmDialog
+          <TxProgress
             open
             title={
               done || run.proposed
@@ -972,30 +931,17 @@ function AddLiquidityForm({
               liquidityBatchApplies(plan.steps)
                 ? liquidityBatchIntro(plan.steps.length)
                 : plan.steps.length > 1
-                  ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
+                  ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint, in one review. Each is simulated before you sign.`
                   : 'One transaction: the mint. It is reviewed and simulated before you sign.'
             }
-            action={
-              run.running
-                ? liquidityBatchApplies(plan.steps)
-                  ? 'Proposing to Safe…'
-                  : plan.market
-                    ? 'Making the market…'
-                    : 'Adding liquidity…'
-                : stopped
-                  ? `Retry step ${run.index + 1} of ${plan.steps.length}`
-                  : liquidityBatchApplies(plan.steps)
-                    ? 'Confirm & propose to Safe'
-                    : plan.market
-                      ? 'Confirm & make the market'
-                      : 'Confirm & add liquidity'
-            }
-            onConfirm={stopped ? resume : startRun}
             busy={run.running || tx.busy}
             complete={done || run.proposed || run.unconfirmed}
             status={batchStatus ?? tx.notice ?? tx.safeNonceGuidance}
             error={batchError ?? tx.error}
             onClose={closePlan}
+            start={startRun}
+            next={stopped ? { label: `Retry step ${run.index + 1} of ${plan.steps.length}`, onClick: resume }
+              : batchError && !run.running ? { label: 'Retry', onClick: startRun } : null}
           >
             {balances && (d.maxTok > balances.tok || d.maxPair > balances.pair) ? (
               <p className="text-sm text-orange-600">
@@ -1003,19 +949,17 @@ function AddLiquidityForm({
                 reverts if the price moves against it. Lower the amount to be safe.
               </p>
             ) : null}
-          </TxConfirmDialog>
+          </TxProgress>
         )
       })()
     : quoting
       ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing
           title={mode === 'market' ? 'Make the market' : 'Add liquidity'}
           steps={[]}
           activeIndex={-1}
-          action={mode === 'market' ? 'Confirm & make the market' : 'Confirm & add liquidity'}
-          onConfirm={() => undefined}
           busy
           status="Reading the pool and your balances…"
           onClose={closePlan}

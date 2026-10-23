@@ -29,6 +29,7 @@ npm run ts:check
 npm run env:check:all
 npm run protocol:check
 npm run transaction:check
+npm run wallet:check
 npm test
 npm run test:coverage
 npm run test:browser:install
@@ -83,26 +84,36 @@ enables the full artifact comparison; it does not trust the fixture alone.
   addresses, currency/decimal handling, rounding, and calldata round-trips.
 - `test/data/` treats Bendystraw payloads as hostile input and checks pagination,
   caps, chain/project identity, partial availability, and fail-closed behavior.
-- `test/transactions/` checks the review/signing boundary, the shared direct
-  write pipeline used by `useSafeTx`, project creation, and add-shop submission,
+- `test/transactions/` checks the review/signing boundary, core's reviewed send
+  as jbm wires it (`useReviewedAction`, `sendReviewedWrite`), project creation,
+  and add-shop submission,
   and the Safe/Relayr state machines. A submitted-but-unconfirmed transaction
   is not a safe retry.
 - `test/components/` exercises component orchestration around high-risk writes:
   frozen reviews, account drift, immediate onchain re-reads, debounced amounts,
   and exact requests passed into the safe transaction boundary. Every
-  `useSafeTx.send` names the account its request was reviewed for, and the
-  reviewed write (`src/lib/contract-write.ts`) refuses any other connected
-  account. The `reviewed-account-*` tests run the real engine over a fake
+  `useReviewedAction` run names the account its calls were built for, and
+  core's reviewed send refuses any other connected account. The `reviewed-account-*` tests run the real engine over a fake
   wallet (`test/support/fake-wallet.ts`) and switch accounts between review
   and confirm, or between steps: nothing reaches the wallet.
+- `test/one-confirmation.test.tsx` renders the site's own
+  `TransactionReviewProvider` over the same fake wallet and counts the review
+  dialogs each multi-step action opens: one per action (pay with approval,
+  cash out on the pool, loan, repayment, add liquidity, project batch), with
+  every step sent and no confirm button on the progress dialog.
 - [`test/TRANSACTION_COVERAGE.md`](test/TRANSACTION_COVERAGE.md) is the safety
   inventory. Every new wallet write must add or update a row and should have an
   exact ABI round-trip test before it is considered covered.
+- `wallet:check` runs the SDK's `nana-wallet-check` over `src`. Every raw
+  wallet API call, signing RPC string and `registerReviewHandler` call must
+  have a row in `wallet-boundaries.json` naming
+  its file, line, boundary and test; a new, moved or removed site fails the
+  gate. It also refuses imports of `@bananapus/nana-sdk-react`.
 - `transaction:check` parses every production TypeScript file and compares all
-  `useSafeTx`, authority, reviewed direct-write, and raw wallet API call sites
-  against `test/transaction-sites.json`. A new or moved write fails CI until its
+  `useReviewedAction` run, authority and `sendReviewedWrite` call sites against
+  `test/transaction-sites.json`. A new or moved write fails CI until its
   reviewed boundary and transaction-coverage action are explicitly inventoried.
-  Each of the 33 current `useSafeTx.send` sites has its own stable action record;
+  Each of the 34 current `useReviewedAction` runs has its own stable action record;
   the gate requires one record per send, exact request/calldata coverage, and a
   dedicated test reference beyond the shared wrapper test. Every test file an
   action lists must carry the action's marker in the title of an `it` or `test`

@@ -48,9 +48,9 @@ import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlo
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { FlowError, shortError } from '@/lib/errors'
@@ -819,7 +819,7 @@ function FundsTxFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
 
   const [open, setOpen] = useState(false)
   const [amount, setAmount] = useState('')
@@ -996,7 +996,7 @@ function FundsTxFlow({
   const handleConfirm = () => {
     if (!review || sending) return
     // The reviewed args embed the beneficiary: only that account may send them.
-    tx.send(review.request, { reviewedAccount: review.account, intent: review.intent, legacy: review.legacy })
+    void tx.run({ account: review.account, calls: [reviewedCall(review.request, { intent: review.intent, legacy: review.legacy })] })
   }
 
   const closeReview = () => {
@@ -1007,7 +1007,7 @@ function FundsTxFlow({
   if (!line) return null
 
   const dialog = review || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!review}
       onClose={closeReview}
@@ -1049,10 +1049,6 @@ function FundsTxFlow({
       activeIndex={sending ? 0 : -1}
       complete={tx.settled}
       busy={busy}
-      action={
-        tx.phase === 'error' ? 'Retry' : 'Confirm & withdraw'
-      }
-      onConfirm={handleConfirm}
       status={
         !review ? (
           'Checking what you can withdraw…'
@@ -1078,11 +1074,13 @@ function FundsTxFlow({
         ) : undefined
       }
       error={tx.error}
+      start={handleConfirm}
+      next={tx.phase === 'error' ? { label: 'Retry', onClick: handleConfirm } : null}
     >
       <p className="text-xs text-smoke-700">
         The amount you receive is shown after the 2.5% withdrawal fee.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   if (!open) {

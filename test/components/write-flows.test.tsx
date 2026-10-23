@@ -22,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   txBusy: false,
   txHash: null as string | null,
   txError: null as Error | null,
-  safeTxCall: 0,
   buildProjectDraftExport: vi.fn(),
   tokenSymbol: { address: '0x3333333333333333333333333333333333333333', symbol: 'JBT' } as { address: string; symbol: string } | undefined,
 }))
@@ -79,22 +78,20 @@ vi.mock('@tanstack/react-query', () => ({
             isRouter: false,
           },
         }
-      case 'cashOutQuote':
-        return {
-          data: {
-            route: 'treasury',
-            expectedReturn: 9_750n,
-            minimumReturn: 9_652n,
-            terminalMinimum: 9_652n,
-            metadata: '0x',
-            treasuryGross: 10_000n,
-            treasuryProtocolFee: 250n,
-            treasuryNet: 9_750n,
-            buyback: null,
-          },
-          isFetching: false,
-          isError: false,
+      case 'cashOutQuote': {
+        const data = {
+          route: 'treasury',
+          expectedReturn: 9_750n,
+          minimumReturn: 9_652n,
+          terminalMinimum: 9_652n,
+          metadata: '0x',
+          treasuryGross: 10_000n,
+          treasuryProtocolFee: 250n,
+          treasuryNet: 9_750n,
+          buyback: null,
         }
+        return { data, isFetching: false, isError: false, refetch: vi.fn(async () => ({ data, isError: false })) }
+      }
       case 'cashOutMarket':
         return {
           data: mocks.directSell
@@ -142,22 +139,30 @@ vi.mock('@/lib/payer-relayr', async importOriginal => {
     },
   }
 })
-vi.mock('@/hooks/useSafeTx', () => {
+vi.mock('@/hooks/useReviewedAction', async () => {
   return {
-    useSafeTx: () => {
-      const approval = mocks.safeTxCall % 2 === 1
-      mocks.safeTxCall += 1
-      return {
-        phase: approval ? 'idle' : mocks.txPhase,
-        busy: approval ? false : mocks.txBusy,
-        hash: approval ? null : mocks.txHash,
+    ...(await import('@/lib/reviewed-call')),
+    useReviewedAction: () => ({
+        phase: mocks.txPhase,
+        busy: mocks.txBusy,
+        hash: mocks.txHash,
         receipt: null,
-        error: approval ? null : mocks.txError,
+        error: mocks.txError,
         isSafe: false,
-        send: mocks.send,
+        // Each step's call as its builder made it, with the run's other options beside it; told as sent.
+        run: async (action: import('@/hooks/useReviewedAction').ReviewedRun) => {
+          const hashes: `0x${string}`[] = []
+          for (const [step, call] of action.calls.entries()) {
+            const { chainId, to, abi, functionName, args, value, intent, legacy, simulationBlockNumber } = call
+            const hash = await mocks.send({ chainId, address: to, abi, functionName, args, value }, { ...action, intent, legacy, simulationBlockNumber })
+            if (!hash) return null
+            hashes.push(hash)
+            await action.onSubmitted?.(call, step, hash, { safe: false, adopted: false })
+          }
+          return { status: 'done' as const, hashes, receipts: [] }
+        },
         reset: mocks.reset,
-      }
-    },
+      }),
     txPhaseLabel: (
       phase: string,
       labels: Record<string, string> = {},
@@ -192,9 +197,12 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
   return {
     ...original,
     prepareHookAwareCashOut: mocks.prepareCashOut,
+    // The pool still beats the treasury when the sale is built.
+    quoteUniswapV4ExactInputSingle: vi.fn(async () => 30_000n),
   }
 })
 
+import { jbMultiTerminalAbi } from '@bananapus/nana-sdk-core'
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
@@ -258,7 +266,6 @@ beforeEach(() => {
   mocks.txBusy = false
   mocks.txHash = null
   mocks.txError = null
-  mocks.safeTxCall = 0
   mocks.tokenSymbol = { address: '0x3333333333333333333333333333333333333333', symbol: 'JBT' }
   mocks.readAutoAllocation.mockResolvedValue(AUTO_ISSUE_CALL)
   mocks.runProjectBatch.mockImplementation(async ({ calls }) => ({ id: 'auto-batch', calls, status: 'complete' }))
@@ -277,7 +284,7 @@ beforeEach(() => {
     transaction: {
       chainId: 1,
       address: '0x5555555555555555555555555555555555555555',
-      abi: [],
+      abi: jbMultiTerminalAbi,
       functionName: 'cashOutTokensOf',
       args: [
         ALICE,
@@ -448,9 +455,6 @@ describe('project payer write flow', () => {
     })
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
-    expect(renderedText(renderer.root)).toContain('Confirm deploy')
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
-
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
       chainId: 1,
@@ -478,7 +482,7 @@ describe('project payer write flow', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
-  it('invalidates a reviewed write when the connected account changes', async () => {
+  it('closes the review and sends nothing more once the connected account changes', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
@@ -492,11 +496,10 @@ describe('project payer write flow', () => {
     await act(async () =>
       renderer.update(createElement(ExtrasTab, extrasProps)),
     )
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
-    expect(mocks.send).not.toHaveBeenCalled()
+    // Only the deploy the first account reviewed went out.
+    expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
-    expect(renderedText(renderer.root)).toMatch(/connected account changed/i)
   })
 })
 
@@ -518,13 +521,6 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.readAutoAllocation).toHaveBeenCalledWith(1, 42, '3', ALICE, ALICE)
-    expect(renderedText(renderer.root)).toContain('Confirm distribution')
-    expect(mocks.send).not.toHaveBeenCalled()
-
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & distribute').props.onClick(),
-    )
-
     expect(mocks.send).not.toHaveBeenCalled()
     expect(mocks.runProjectBatch).toHaveBeenCalledWith(expect.objectContaining({
       scope: 'auto-issuance:1:42', action: 'auto-issuance', account: ALICE,
@@ -600,11 +596,7 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
-    expect(mocks.send).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toContain('Confirm cash out')
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
-    )
 
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
@@ -638,7 +630,6 @@ describe('cash-out write flow', () => {
     await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
-    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
     const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { intent: string }]
     await act(async () => renderer.unmount())
     return options.intent
@@ -657,7 +648,6 @@ describe('cash-out write flow', () => {
     await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
-    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
     const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { legacy?: string[] }]
     expect(options.legacy).toEqual(legacyCashOutKeys({ chainId: 1, projectId: 42, amount: '2', beneficiary: ALICE }))
     await act(async () => renderer.unmount())
@@ -685,8 +675,7 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'MAX').props.onClick())
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Sell 5 JBT on the pool').props.onClick())
-    await act(async () => buttonWith(renderer, 'Approve tokens for this sale').props.onClick())
-    const [request, options] = mocks.send.mock.calls.at(-1)! as [{ functionName: string }, { intent?: string }]
+    const [request, options] = mocks.send.mock.calls[0] as [{ functionName: string }, { intent?: string }]
     expect(request.functionName).toBe('approve')
     const parent = cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE })
     const spender = (request as unknown as { args: readonly string[] }).args[0]
@@ -718,12 +707,14 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
 
+    // The first approval waits in the wallet.
+    mocks.send.mockReturnValueOnce(new Promise(() => {}))
     await act(async () =>
       buttonWith(renderer, 'Sell 2 JBT on the pool').props.onClick(),
     )
 
     // Both allowances are empty, so the queue is approve → authorize → sell,
-    // and the first step is the one awaiting a click.
+    // and the first step is the one under review.
     expect(renderedText(renderer.root)).toContain('Confirm pool sale')
     const steps = renderer.root.findAllByType('li').map(step => renderedText(step))
     expect(steps).toEqual([
@@ -736,8 +727,7 @@ describe('cash-out write flow', () => {
       .filter(step => step.props['aria-current'] === 'step')
     expect(current).toHaveLength(1)
     expect(renderedText(current[0])).toContain('Approve JBT for the swap router')
-    expect(buttonWith(renderer, 'Approve tokens for this sale')).toBeDefined()
-    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.send.mock.calls.map(([request]) => (request as { functionName: string }).functionName)).toEqual(['approve'])
   })
 
   it('uses the full balance, changes slippage, and rejects malformed amounts', async () => {
@@ -803,9 +793,6 @@ describe('cash-out write flow', () => {
     expect(mocks.prepareCashOut).toHaveBeenCalledWith(
       mocks.publicClient,
       expect.objectContaining({ slippageBps: 250n }),
-    )
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
     )
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })
@@ -894,8 +881,7 @@ describe('cash-out write flow', () => {
   })
 
   it('shows a confirmed cash-out, links its receipt, and resets for another', async () => {
-    mocks.txPhase = 'success'
-    mocks.txHash = `0x${'1'.repeat(64)}`
+    vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(
@@ -904,6 +890,16 @@ describe('cash-out write flow', () => {
           projectId: 42,
         }),
       )
+    })
+    const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
+    // The cash-out it sent confirms.
+    mocks.txPhase = 'success'
+    mocks.txHash = `0x${'1'.repeat(64)}`
+    await act(async () => {
+      renderer.update(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     })
 
     expect(renderedText(renderer.root)).toContain('Cashed out!')

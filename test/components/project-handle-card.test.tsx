@@ -79,7 +79,7 @@ async function flushQueries() {
   })
 }
 
-/** The TxConfirmDialog stacked on top of the editor's ModalShell. */
+/** The TxProgress stacked on top of the editor's ModalShell. */
 function confirmDialog(renderer: TestRenderer.ReactTestRenderer) {
   return renderer.root.findAllByType('dialog').at(-1)!
 }
@@ -251,7 +251,6 @@ describe('ProjectHandleCard', () => {
       'active',
       'pending',
     ])
-    clickButton(renderer, 'Confirm & set handle')
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 2; attempt += 1) {
       await flushQueries()
     }
@@ -367,7 +366,7 @@ describe('ProjectHandleCard', () => {
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
   })
 
-  it('shows completed ENS progress before the reverse claim without submitting', async () => {
+  it('resumes at the reverse claim, never sending the verified ENS step again', async () => {
     liveTextRecord = '1:42'
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -411,17 +410,11 @@ describe('ProjectHandleCard', () => {
     }
     expect(resume).toBeDefined()
     act(() => resume!.props.onClick())
-    const stepStates = confirmDialog(renderer)
-      .findAllByType('li')
-      .map(step => step.props['data-state'])
+    for (let attempt = 0; attempt < 10; attempt += 1) await flushQueries()
 
-    expect(stepStates).toEqual(['complete', 'active'])
-    expect(
-      renderer.root
-        .findAllByType('button')
-        .find(button => textOf(button) === 'Confirm & publish handle'),
-    ).toBeDefined()
-    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    // Resuming starts at the reverse claim: the verified ENS step is never sent again.
+    expect(mocks.runAuthorityCalls.mock.calls.map(([options]) => options.calls.map((call: { functionName: string }) => call.functionName))).toEqual([['setEnsNamePartsFor']])
+    expect(confirmDialog(renderer).findAllByType('li').map(step => step.props['data-state'])).toEqual(['complete', 'complete'])
   })
 
   it.each([
@@ -445,7 +438,6 @@ describe('ProjectHandleCard', () => {
       start = renderer.root.findAllByType('button').find(button => textOf(button) === open)
     }
     act(() => start!.props.onClick())
-    clickButton(renderer, action)
     for (let attempt = 0; attempt < 20 && !textOf(confirmDialog(renderer)).includes('may already have run'); attempt += 1) {
       await flushQueries()
     }
@@ -505,7 +497,6 @@ describe('ProjectHandleCard', () => {
     await flushQueries()
 
     clickButton(renderer, 'Set verified handle')
-    clickButton(renderer, 'Confirm & set handle')
     for (let attempt = 0; attempt < 20 && !releaseEns; attempt += 1) {
       await flushQueries()
     }
@@ -518,13 +509,9 @@ describe('ProjectHandleCard', () => {
     const cancelButtons = renderer.root
       .findAllByType('button')
       .filter(button => textOf(button) === 'Cancel')
-    expect(cancelButtons).toHaveLength(2)
+    // The running step's dialog shows no footer: only the editor's Cancel, locked.
+    expect(cancelButtons).toHaveLength(1)
     expect(cancelButtons.every(button => button.props.disabled)).toBe(true)
-    expect(
-      renderer.root
-        .findAllByType('button')
-        .find(button => textOf(button) === 'Confirm & set handle')!.props.disabled,
-    ).toBe(true)
     expect(
       renderer.root.findByProps({ placeholder: 'banny.eth' }).props.disabled,
     ).toBe(true)
@@ -597,7 +584,6 @@ describe('ProjectHandleCard', () => {
     )
     await flushQueries()
     clickButton(renderer, 'Set verified handle')
-    clickButton(renderer, 'Confirm & set handle')
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 2; attempt += 1) {
       await flushQueries()
     }
@@ -656,7 +642,6 @@ describe('ProjectHandleCard', () => {
     )
     await flushQueries()
     clickButton(renderer, 'Set verified handle')
-    clickButton(renderer, 'Confirm & set handle')
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 1; attempt += 1) {
       await flushQueries()
     }
@@ -738,7 +723,6 @@ describe('ProjectHandleCard', () => {
     expect(storage.values.get(draftKey)).toBe('banny.eth')
 
     clickButton(renderer, 'Set verified handle')
-    clickButton(renderer, 'Confirm & set handle')
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 1; attempt += 1) {
       await flushQueries()
     }
@@ -854,7 +838,6 @@ describe('ProjectHandleCard', () => {
     }
     expect(resume).toBeDefined()
     act(() => resume!.props.onClick())
-    clickButton(renderer, 'Confirm & publish handle')
     for (let attempt = 0; attempt < 20 && mocks.runAuthorityCalls.mock.calls.length < 1; attempt += 1) {
       await flushQueries()
     }

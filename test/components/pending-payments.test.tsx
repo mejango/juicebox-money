@@ -5,7 +5,7 @@ import { zeroHash, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewedPayment } from '@/lib/pending-payments'
 import type { ProjectBatch, ProjectBatchCall } from '@/lib/project-batch'
-import type { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import type { TxProgress } from '@/components/ui/TxProgress'
 
 type Row = { payment: ReviewedPayment['payment']; review: ReviewedPayment | null; error: string | null }
 const mocks = vi.hoisted(() => ({
@@ -40,7 +40,7 @@ vi.mock('@/lib/bendystraw', () => ({ getProjectsByRefs: mocks.projects }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (rows: unknown) => rows }))
 vi.mock('@/components/ui/LoadingText', () => ({ LoadingText: ({ text }: { text: string }) => text }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, isConnected: mocks.connected, openSignIn: mocks.openSignIn }) }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: ComponentProps<typeof TxConfirmDialog>) => props.open ? createElement('review-dialog', props) : null }))
+vi.mock('@/components/ui/TxProgress', () => ({ TxProgress: (props: ComponentProps<typeof TxProgress>) => props.open ? createElement('review-dialog', props) : null }))
 vi.mock('@/lib/pending-payments', () => ({
   PENDING_PAYMENT_ACTION: 'route-destination-payments',
   loadPendingPaymentBatch: mocks.load,
@@ -83,7 +83,9 @@ async function render(chains: [number, number][] = [[1, 17], [10, 42]]) {
 }
 const text = (node: ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : text(child)).join('')
 const button = (label: string) => tree!.root.findAllByType('button').find(item => text(item) === label)!
-const dialog = () => tree!.root.findByType('review-dialog' as never).props as ComponentProps<typeof TxConfirmDialog>
+const dialog = () => tree!.root.findByType('review-dialog' as never).props as ComponentProps<typeof TxProgress>
+/** What the open dialog does next: its retry once one is offered, else its first start. */
+const proceed = () => dialog().next ? dialog().next!.onClick() : dialog().start?.()
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -119,13 +121,13 @@ describe('pending payment review above activity', () => {
       if (outcome === 'uncertain') throw new Error('Payment was submitted; confirmation unavailable. Do not pay again.')
       return saved
     })
-    await act(async () => dialog().onConfirm())
-    expect(dialog().action).toBe('Resume saved batch')
+    await act(async () => proceed())
+    expect(dialog().next?.label).toBe('Resume saved batch')
     expect(dialog().complete).toBe(false)
-    expect(dialog().actionDisabled).toBe(false)
+    expect((dialog().next?.disabled ?? true)).toBe(false)
     if (outcome === 'uncertain') expect(dialog().error).toContain('Do not pay again')
     mocks.run.mockResolvedValue({ status: 'complete' })
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(mocks.run.mock.calls[1][0]).toMatchObject({ scope: 'route-destination-payments:1:17', expectedBatchId: 'submitted' })
     expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
   })
@@ -140,9 +142,9 @@ describe('pending payment review above activity', () => {
     expect(button('Resume saved batch')).toBeUndefined()
     await act(async () => button('Retry all').props.onClick())
     expect(dialog().steps).toHaveLength(2)
-    expect(dialog().action).toBe('Retry')
+    expect(dialog().next?.label).toBe('Retry')
     mocks.run.mockResolvedValue({ ...saved, status: 'complete' })
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({
       scope: 'route-destination-payments:1:17', action: 'route-destination-payments',
       expectedBatchId: undefined, replaceDraft: { id: 'draft', scope: saved.scope },
@@ -157,15 +159,15 @@ describe('pending payment review above activity', () => {
     await render()
     await act(async () => button('Retry').props.onClick())
     mocks.run.mockRejectedValue(new Error('preflight failed'))
-    await act(async () => dialog().onConfirm())
-    expect(dialog().actionDisabled).toBe(true)
+    await act(async () => proceed())
+    expect((dialog().next?.disabled ?? true)).toBe(true)
     expect(dialog().status ?? '').not.toContain('reopen')
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(mocks.run).toHaveBeenCalledTimes(1)
     mocks.load.mockReturnValue(null)
     await act(async () => button('Review again').props.onClick())
-    expect(dialog().actionDisabled).toBe(false)
-    await act(async () => dialog().onConfirm())
+    expect((dialog().next?.disabled ?? true)).toBe(false)
+    await act(async () => proceed())
     expect(mocks.run.mock.calls[1][0].replaceDraft).toBeUndefined()
   })
   it('keeps the reviewed recovery identity despite live progress discovering another journal', async () => {
@@ -180,8 +182,8 @@ describe('pending payment review above activity', () => {
       options.onProgress({ message: 'checking' })
       throw new Error('wait again')
     })
-    await act(async () => dialog().onConfirm())
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
+    await act(async () => proceed())
     expect(mocks.run.mock.calls[1][0]).toMatchObject({ scope: 'legacy', expectedBatchId: 'original' })
   })
   it('rechecks saved recovery without starting a payment and then offers the full live batch', async () => {
@@ -206,7 +208,7 @@ describe('pending payment review above activity', () => {
       await new Promise<void>(resolve => { release = resolve })
       return { status: 'complete' }
     })
-    await act(async () => { void dialog().onConfirm() })
+    await act(async () => { void proceed() })
     expect(dialog().onCancel).toBeTypeOf('function')
     expect(signal?.aborted).toBe(false)
     await act(async () => dialog().onCancel!())
@@ -227,7 +229,7 @@ describe('pending payment review above activity', () => {
       await new Promise<void>(resolve => { release = resolve })
       return { status: 'complete' }
     })
-    await act(async () => { void dialog().onConfirm() })
+    await act(async () => { void proceed() })
     expect(dialog().onCancel).toBeUndefined()
     await act(async () => { release() })
   })
@@ -243,7 +245,7 @@ describe('pending payment review above activity', () => {
       await new Promise<void>(resolve => { release = resolve })
       return { status: 'complete' }
     })
-    await act(async () => { void dialog().onConfirm() })
+    await act(async () => { void proceed() })
     expect(dialog().steps.map(step => [step.state, step.status])).toEqual([['complete', 'Confirmed'], ['failed', 'Reverted']])
     expect(dialog().status).toBe('2 of 2 attempts checked. 0 remaining. 1 reverted.')
     await act(async () => { release() })
@@ -423,7 +425,7 @@ describe('pending payment review above activity', () => {
       }
       return { status: 'complete' }
     })
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(mocks.run).toHaveBeenCalledTimes(1)
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ action: 'route-destination-payments', scope: 'route-destination-payments:1:17' })
     expect(dialog().complete).toBe(true)
@@ -455,7 +457,7 @@ describe('pending payment review above activity', () => {
       expect(await options.reconcileObsoleteSafe(options.calls[0], { nonce: 3, safeTxHash: zeroHash })).toBe(false)
       return { status: 'pending', calls: options.calls, completedIds: [] }
     })
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(dialog().complete).toBe(false)
     expect(dialog().rows?.some(item => item.label === 'Outcome')).toBe(false)
     if (state === 'unknown') expect(dialog().error).toBe('Commitment unavailable')
@@ -470,7 +472,7 @@ describe('pending payment review above activity', () => {
       expect(await options.reconcileObsoleteSafe(options.calls[0], { nonce: 3, safeTxHash: zeroHash })).toBe(true)
       return { status: 'complete' }
     })
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(dialog().rows?.find(item => item.label === 'Outcome')?.value).toContain(`obsolete, not executed. Cancel nonce 3 in Safe`)
     expect(dialog().rows?.find(item => item.label === 'Outcome')?.value).toContain(zeroHash)
     expect(mocks.outcome).not.toHaveBeenCalled()
@@ -494,9 +496,9 @@ describe('pending payment review above activity', () => {
     await render()
     await act(async () => button('Retry all').props.onClick())
     mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'changed'))
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(dialog().error).toBeNull()
-    expect(dialog().actionDisabled).toBe(true)
+    expect((dialog().next?.disabled ?? true)).toBe(true)
     const discard = tree!.root.findByType(RelayrDiscard)
     expect(discard.props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'changed' })
     expect(text(discard)).toContain('The project changed since this review.')
@@ -513,7 +515,7 @@ describe('pending payment review above activity', () => {
     await render()
     await act(async () => button('Retry all').props.onClick())
     mocks.run.mockRejectedValue(new RelayrDiscardError('project-batch:saved:0', 'ran'))
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(tree!.root.findAllByType(RelayrDiscard)).toHaveLength(1)
     await act(async () => dialog().onClose())
     expect(text(tree!.root)).not.toContain('may already have run')
@@ -534,7 +536,7 @@ describe('pending payment review above activity', () => {
     expect(dialog().rows?.find(item => item.label === 'Source')?.value).toBe('Saved source')
     expect(dialog().rows?.find(item => item.label === 'To')?.value).toBe('Saved destination')
     mocks.run.mockResolvedValue(saved)
-    await act(async () => dialog().onConfirm())
+    await act(async () => proceed())
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: 'route-pending-payments:1:6', action: 'route-pending-payments', expectedBatchId: 'original-batch', calls })
     expect(mocks.load).toHaveBeenCalledWith(expect.arrayContaining([[1, 17], [10, 42]]))
     expect(dialog().complete).toBe(false)

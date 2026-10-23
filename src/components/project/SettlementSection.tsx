@@ -20,6 +20,7 @@ import {
   buildToRemoteTx,
   classifySuckerTransport,
   findSuckerTransportValue,
+  getRegisteredSucker,
   getV6SuckerPairs,
   jbSuckerV6Abi,
   suckerBytes32ToAddress,
@@ -39,9 +40,9 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { MovementGroupsSkeleton } from '@/components/LoadingSkeletons'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { GossipCard } from '@/components/project/GossipCard'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import type { BridgeMovement } from '@/lib/suckers-queries'
 import { buildClaim } from '@/lib/sucker-claims'
@@ -131,6 +132,60 @@ export async function findToRemoteValue(
   return value
 }
 
+/** The project's id on `chainId` among its linked deployments (`[chainId, projectId]` pairs). */
+function projectOn(chains: [number, number][], chainId: number): bigint {
+  const projectId = chains.find(([candidate]) => candidate === chainId)?.[1]
+  if (projectId === undefined) throw new Error('The cross-chain project mapping is unavailable.')
+  return BigInt(projectId)
+}
+
+/**
+ * The `toRemote` that ships a queued group's outbox. The indexer only says which
+ * sucker holds the movements; it is sent to the project's sucker as the source
+ * chain's registry lists it, and throws `UnverifiedSuckerError` when it doesn't.
+ */
+export async function prepareQueuedExecute(
+  client: PublicClient,
+  group: { sourceChainId: number; destChainId: number; sucker: Address; token: Address; chains: [number, number][]; account: Address },
+) {
+  const chainId = group.sourceChainId as JBChainId
+  const sucker = await getRegisteredSucker(client, {
+    chainId,
+    projectId: projectOn(group.chains, chainId),
+    remoteChainId: group.destChainId as JBChainId,
+    sucker: group.sucker,
+  })
+  const infra = await classifyInfra(client, sucker)
+  const value = await findToRemoteValue(client, chainId, sucker, group.token, infra, group.account)
+  if (value === null) {
+    throw new Error('The bridge fee could not be determined yet — try again shortly.')
+  }
+  return { sucker, request: buildToRemoteTx({ chainId, sucker, token: group.token, value }) }
+}
+
+/**
+ * The claim of one move, read and sent only through the project's suckers as
+ * each chain's registry lists them: an indexer's addresses are never trusted.
+ * Throws `UnverifiedSuckerError` when either registry doesn't list its sucker.
+ */
+export async function prepareClaim(
+  sourceClient: PublicClient,
+  destClient: PublicClient,
+  m: BridgeMovement,
+  chains: [number, number][],
+) {
+  const sourceChainId = m.sourceChainId as JBChainId
+  const destChainId = m.destChainId as JBChainId
+  const sourceProjectId = projectOn(chains, sourceChainId)
+  const destinationProjectId = projectOn(chains, destChainId)
+  const [sourceSucker, destSucker] = await Promise.all([
+    getRegisteredSucker(sourceClient, { chainId: sourceChainId, projectId: sourceProjectId, remoteChainId: destChainId, sucker: m.sourceSucker as Address }),
+    getRegisteredSucker(destClient, { chainId: destChainId, projectId: destinationProjectId, remoteChainId: sourceChainId, sucker: m.destSucker as Address }),
+  ])
+  const claim = await buildClaim(sourceClient, destClient, { ...m, sourceSucker, destSucker }, { sourceProjectId, destinationProjectId })
+  return buildBridgeClaimTx({ chainId: destChainId, sucker: destSucker, claim })
+}
+
 export function unpackAddress(bytes32: string): Address {
   return suckerBytes32ToAddress(bytes32 as `0x${string}`)
 }
@@ -143,7 +198,7 @@ export function unpackAddress(bytes32: string): Address {
  * across chains, the bridges that link its deployments, the "move between
  * chains" flow, the queue of in-flight movements, and per-peer accounting
  * sync. Every fund-moving step fails closed on any unverified mapping,
- * unknown bridge infra, or missing proof, and never bypasses useSafeTx.
+ * unknown bridge infra, or missing proof, and never bypasses the reviewed send.
  */
 export function SettlementSection({
   chainId,
@@ -567,7 +622,7 @@ function MovementGroup({
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(group.sourceChainId)
+  const tx = useReviewedAction(group.sourceChainId)
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -601,29 +656,14 @@ function MovementGroup({
         chainId: group.sourceChainId as JBChainId,
       }) as PublicClient | undefined
       if (!client) throw new Error(`Unsupported chain ${group.sourceChainId}.`)
-      const infra = await classifyInfra(client, group.sucker)
-      const value = await findToRemoteValue(
-        client,
-        group.sourceChainId as JBChainId,
-        group.sucker,
-        group.token,
-        infra,
-        address,
-      )
-      if (value === null) {
-        throw new Error('The bridge fee could not be determined yet — try again shortly.')
-      }
-      const request = buildToRemoteTx({
-        chainId: group.sourceChainId as JBChainId,
-        sucker: group.sucker,
-        token: group.token,
-        value,
-      })
+      const { sucker, request } = await prepareQueuedExecute(client, { ...group, chains, account: address })
       // Sent by the account the bridge fee was estimated for; its fee requotes on retry.
-      await tx.send({ ...request, abi: request.abi as Abi }, {
-        reviewedAccount: address,
-        intent: bridgeIntent({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address }),
-        legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker: group.sucker, token: group.token, account: address })],
+      await tx.run({
+        account: address,
+        calls: [reviewedCall({ ...request, abi: request.abi as Abi }, {
+          intent: bridgeIntent({ chainId: group.sourceChainId, sucker, token: group.token, account: address }),
+          legacy: [legacyBridgeSendKey({ chainId: group.sourceChainId, sucker, token: group.token, account: address })],
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send.')
@@ -767,7 +807,7 @@ function MovementGroup({
         />
       ) : null}
 
-      <TxConfirmDialog
+      <TxProgress
         open={open}
         onClose={() => {
           setOpen(false)
@@ -785,12 +825,6 @@ function MovementGroup({
           },
         ]}
         activeIndex={busy ? 0 : -1}
-        action={
-          checking
-            ? 'Reading bridge fee…'
-            : txPhaseLabel(tx.phase, { pending: 'Sending…', idle: 'Confirm & send' })
-        }
-        onConfirm={() => void execute()}
         busy={busy}
         complete={tx.settled}
         status={
@@ -811,6 +845,8 @@ function MovementGroup({
           ) : null
         }
         error={flowError ?? tx.error}
+        start={() => void execute()}
+        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void execute() } : null}
       />
     </div>
   )
@@ -833,7 +869,7 @@ function ClaimButton({
 }) {
   const config = useConfig()
   const { isConnected, address, openSignIn } = useWallet()
-  const tx = useSafeTx(m.destChainId)
+  const tx = useReviewedAction(m.destChainId)
   const [building, setBuilding] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -869,26 +905,9 @@ function ClaimButton({
       if (!sourceClient || !destClient) {
         throw new Error('Unsupported chain.')
       }
-      const sourceProjectId = chains.find(
-        ([candidate]) => candidate === m.sourceChainId,
-      )?.[1]
-      const destinationProjectId = chains.find(
-        ([candidate]) => candidate === m.destChainId,
-      )?.[1]
-      if (sourceProjectId === undefined || destinationProjectId === undefined) {
-        throw new Error('The cross-chain project mapping is unavailable.')
-      }
-      const claimData = await buildClaim(sourceClient, destClient, m, {
-        sourceProjectId: BigInt(sourceProjectId),
-        destinationProjectId: BigInt(destinationProjectId),
-      })
-      const request = buildBridgeClaimTx({
-        chainId: m.destChainId as JBChainId,
-        sucker: m.destSucker as Address,
-        claim: claimData,
-      })
+      const request = await prepareClaim(sourceClient, destClient, m, chains)
       // Permissionless: the beneficiary is in the leaf, not the sender.
-      await tx.send({ ...request, abi: request.abi as Abi }, { reviewedAccount: address })
+      await tx.run({ account: address, calls: [reviewedCall({ ...request, abi: request.abi as Abi })] })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not claim.')
     } finally {
@@ -946,7 +965,7 @@ function ClaimButton({
           className="mt-1 max-w-[220px] text-right text-[11px] text-red-700"
         />
       ) : null}
-      <TxConfirmDialog
+      <TxProgress
         open={open}
         onClose={() => {
           setOpen(false)
@@ -964,12 +983,6 @@ function ClaimButton({
           },
         ]}
         activeIndex={busy ? 0 : -1}
-        action={
-          building
-            ? 'Building proof…'
-            : txPhaseLabel(tx.phase, { pending: 'Claiming…', idle: 'Confirm & claim' })
-        }
-        onConfirm={() => void claim()}
         busy={busy}
         complete={tx.settled}
         status={
@@ -990,6 +1003,8 @@ function ClaimButton({
           ) : null
         }
         error={flowError ?? tx.error}
+        start={() => void claim()}
+        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void claim() } : null}
       />
     </span>
   )

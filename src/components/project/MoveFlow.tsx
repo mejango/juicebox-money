@@ -36,9 +36,10 @@ import {
   SUCKER_EXTRA_ABI,
   type Infra,
 } from '@/components/project/SettlementSection'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -72,7 +73,7 @@ type ReviewedMove = {
  * SettlementSection so the Accounts (YOU) card can render it inline. Bridge
  * your deployed ERC-20 to another chain via the project's sucker. Every
  * fund-moving step fails closed on any unverified mapping, unknown bridge
- * infra, or missing proof, and never bypasses useSafeTx.
+ * infra, or missing proof, and never bypasses the reviewed send.
  *
  * Rendered bare (no card chrome): the caller wraps it.
  */
@@ -309,8 +310,9 @@ export function MoveCard({
   )
 }
 
-/** The three-step move: approve the sucker, prepare (queue the leaf), then
- *  send to the remote chain. Each step is its own reviewed useSafeTx send. */
+/** The move: approve the sucker and prepare (queue the leaf) as one reviewed
+ *  run, then send the queued outbox to the remote chain, reviewed once it is
+ *  queued (its fee is read from the queued outbox). */
 function MoveFlow({
   from,
   fromPid,
@@ -336,7 +338,7 @@ function MoveFlow({
   account: Address
 }) {
   const config = useConfig()
-  const tx = useSafeTx(from)
+  const tx = useReviewedAction(from)
 
   // step: 0 review, 1 approve (if needed), 2 prepare, 3 send, 4 done
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
@@ -348,7 +350,13 @@ function MoveFlow({
   // current step, so the form's button resumes exactly where it stopped.
   const [open, setOpen] = useState(false)
   const [sentHash, setSentHash] = useState<`0x${string}` | null>(null)
-  const advancedFor = useRef<number>(-1)
+  const advancedFor = useRef<string>('')
+  /** The approve-and-prepare run finished here; otherwise a settled step (a Safe's, a held one) runs the same calls again, which core continues. */
+  const ranDone = useRef(false)
+  /** Bumped to run the approve-and-prepare calls again after one of its steps settled. */
+  const [round, setRound] = useState(0)
+  /** Each approve-and-prepare run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
   const busy = checking || tx.busy
 
@@ -357,14 +365,18 @@ function MoveFlow({
 
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
-    if (tx.phase !== 'success') return
-    if (advancedFor.current === step) return
-    advancedFor.current = step
+    // An earlier step a Safe ran after its run ended settles it too.
+    if (tx.phase !== 'success' && tx.settledStep == null) return
+    if (advancedFor.current === `${step}:${round}`) return
+    advancedFor.current = `${step}:${round}`
     if (step === 3) setSentHash(tx.hash)
-    setStep(s => (s < 4 ? ((s + 1) as typeof s) : s))
+    if (step === 3) setStep(4)
+    // Only a run that finished here is known to have queued the move: a settled step continues its saved run, which ends it.
+    else if (ranDone.current) setStep(3)
+    else setRound(next => next + 1)
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase, step])
+  }, [tx.phase, tx.settledStep, step])
 
   /** Live re-reads + all fail-closed checks, then freeze the reviewed move. */
   const handleReview = async () => {
@@ -505,7 +517,8 @@ function MoveFlow({
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
-      advancedFor.current = -1
+      advancedFor.current = ''
+      ranDone.current = false
       setOpen(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
@@ -516,23 +529,8 @@ function MoveFlow({
 
   // Every step moves `review.account`'s tokens to it on the other chain: each
   // send refuses any other connected account.
-  const sendApprove = () => {
-    if (!review || busy) return
-    tx.send(
-      buildErc20ApproveRequest({
-        chainId: from as JBChainId,
-        token: review.projectToken,
-        spender: review.sucker,
-        amount: review.amount,
-      }),
-      {
-        reviewedAccount: review.account,
-        intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }),
-      },
-    )
-  }
-
-  const sendPrepare = () => {
+  /** The approval (when needed) and the prepare, in one review: the prepare simulates on the approval's receipt block. */
+  const sendPrepare = async () => {
     if (!review || busy) return
     const request = buildBridgePrepareTx({
       chainId: from,
@@ -542,12 +540,37 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    tx.send({ ...request, abi: request.abi as Abi }, {
-      reviewedAccount: review.account,
-      // Its minimum re-quotes on a fresh review: held by what the user chose to move.
+    // The same calls every time, so a stopped or settled run continues as saved.
+    const approve = needsApproval ? [reviewedCall(
+      buildErc20ApproveRequest({
+        chainId: from as JBChainId,
+        token: review.projectToken,
+        spender: review.sucker,
+        amount: review.amount,
+      }),
+      { intent: approvalIntent(review.intent, { step: 'approve', token: review.projectToken, spender: review.sucker }) },
+    )] : []
+    // Its minimum re-quotes on a fresh review: held by what the user chose to move.
+    const prepare = reviewedCall({ ...request, abi: request.abi as Abi }, {
       intent: review.intent,
       legacy: review.legacy,
+      ...(approve.length ? { dependsOnPrior: true } : {}),
     })
+    try {
+      const { calls, saved, scope } = await sequenceCalls(`jbm:move:${from}:${review.sucker}:${review.token}`, review.account, [...approve, prepare])
+      const offset = needsApproval ? 2 - calls.length : 0
+      setRunShown(calls.map((_, at) => offset + at))
+      const ended = await tx.run({
+        account: review.account,
+        calls,
+        scope,
+        ...planShown(saved, { context: contextRows(rows) }),
+      })
+      // A lone prepare saves no run to continue: once it settles, it is done.
+      if (ended) ranDone.current = ended.status === 'done' || calls.length === 1
+    } catch (e) {
+      setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
+    }
   }
 
   const sendToRemote = async () => {
@@ -578,11 +601,13 @@ function MoveFlow({
         token: review.token,
         value,
       })
-      await tx.send({ ...request, abi: request.abi as Abi }, {
-        reviewedAccount: review.account,
+      await tx.run({
+        account: review.account,
         // Its fee requotes on retry: held by the outbox send itself.
-        intent: bridgeIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
-        legacy: [legacyBridgeSendKey({ chainId: from, sucker: review.sucker, token: review.token, account: review.account })],
+        calls: [reviewedCall({ ...request, abi: request.abi as Abi }, {
+          intent: bridgeIntent({ chainId: from, sucker: review.sucker, token: review.token, account: review.account }),
+          legacy: [legacyBridgeSendKey({ chainId: from, sucker: review.sucker, token: review.token, account: review.account })],
+        })],
       })
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not send to the remote chain.')
@@ -655,8 +680,8 @@ function MoveFlow({
       ]
     : []
 
-  const stepIdle =
-    step === 1 ? 'Approve' : step === 2 ? 'Prepare' : `Send to ${chainName(to)}`
+  const stepRun = step === 1 || step === 2 ? () => void sendPrepare() : () => void sendToRemote()
+  const stepIdle = step === 1 || step === 2 ? 'Retry' : `Send to ${chainName(to)}`
 
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
@@ -714,7 +739,7 @@ function MoveFlow({
         />
       ) : null}
 
-      <TxConfirmDialog
+      <TxProgress
         open={dialogOpen}
         preparing={preparing}
         onClose={() => {
@@ -724,19 +749,11 @@ function MoveFlow({
         title={step === 4 ? 'Move sent' : 'Confirm move'}
         rows={rows}
         steps={steps}
-        activeIndex={needsApproval ? step - 1 : step - 2}
-        stepsIntro={
-          needsApproval
-            ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-            : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
-        }
-        action={txPhaseLabel(step === 3 && checking ? 'simulating' : tx.phase, {
-          pending: 'Submitting…',
-          idle: stepIdle,
-        })}
-        onConfirm={
-          step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
-        }
+        activeIndex={step === 3 ? steps.length - 1 : liveStep(tx, runShown, needsApproval ? step - 1 : step - 2)}
+        stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
+        start={step >= 1 && step <= 3 ? stepRun : undefined}
+        startKey={`${step}:${round}`}
+        next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
         complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
         status={

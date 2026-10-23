@@ -20,7 +20,6 @@ const mocks = vi.hoisted(() => ({
   wallet: { signTypedData: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
-  requireReview: vi.fn(),
   runAuthorityCalls: vi.fn(),
   readAuthorityIdentity: vi.fn(),
   readSafeNonce: vi.fn(),
@@ -44,10 +43,22 @@ vi.mock('@/lib/authority', () => ({
   clientFor: () => mocks.client,
   runAuthorityCalls: mocks.runAuthorityCalls,
 }))
-vi.mock('@/lib/transaction-review', () => ({
-  requireTransactionReview: mocks.requireReview,
-  requireContractTransactionReview: mocks.requireReview,
-}))
+/** Core's review and wallet over this test's doubles: a Safe app answers wallet_sendCalls with its proposal. */
+vi.mock('@/lib/reviewed-send', async () => {
+  const { testAdapter } = await import('../support/core-review')
+  const { writeHolds } = await import('@/lib/write-holds')
+  return {
+    reviewedSendDeps: {
+      adapter: testAdapter({
+        account: () => mocks.account, chainId: () => 1, isSafe: () => mocks.isSafeConnection(),
+        signTypedData: typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
+        sendCalls: async (chainId, calls) => (await mocks.sendCalls({ tag: 'config' }, { chainId, calls })).id,
+      }),
+      clientFor: () => mocks.client,
+      hold: writeHolds,
+    },
+  }
+})
 vi.mock('@bananapus/nana-sdk-core/safe', async original => ({
   ...(await original<typeof import('@bananapus/nana-sdk-core/safe')>()),
   readBoundedSafeNonce: mocks.readSafeNonce,
@@ -66,12 +77,13 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
 import {
   encodeMultiSend,
   MULTI_SEND_CALL_ONLY,
-  packMultiSend,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
 import { listedHeld } from '../support/held-chain'
 import { HELD_RELEASED_ELSEWHERE_LINE } from '@bananapus/nana-sdk-core/review'
 import { modelNode } from '../support/chain-node'
+import { coreReviews } from '../support/core-review'
+import { SAFE_BATCH_UNFOLLOWABLE_LINE, TransactionReviewCancelledError } from '@bananapus/nana-sdk-core/review'
 import {
   authorityCallForStep,
   batchActionLabel,
@@ -134,7 +146,7 @@ beforeEach(() => {
     wallet: mocks.wallet,
     account: mocks.account,
   }))
-  mocks.requireReview.mockResolvedValue(undefined)
+  coreReviews.reset()
   mocks.readAuthorityIdentity.mockResolvedValue(safeIdentity())
   mocks.readSafeNonce.mockResolvedValue(7n)
   mocks.isSafeConnection.mockReturnValue(false)
@@ -277,18 +289,16 @@ describe('Safe owner batch', () => {
         message: expect.objectContaining({ to: MULTI_SEND_CALL_ONLY, operation: 1, data }),
       }),
     )
-    expect(mocks.requireReview).toHaveBeenCalledWith(
+    expect(coreReviews.shown[0].signatures[0]).toEqual(
       expect.objectContaining({
+        kind: 'safe-tx',
         calls: [
           expect.objectContaining({
-            to: MULTI_SEND_CALL_ONLY,
-            data,
-            functionName: 'multiSend',
-            args: [packMultiSend(calls)],
-            label: 'Batch (3 calls)',
-            // The review expands the packed bytes into the decoded steps.
+            to: SAFE,
+            functionName: 'execTransaction',
+            // The review expands the SafeTx's packed MultiSend bytes into the decoded steps.
             calls: steps.map(step =>
-              expect.objectContaining({ to: step.to, data: step.data, functionName: step.functionName, label: step.label }),
+              expect.objectContaining({ from: SAFE, to: step.to, data: step.data, functionName: step.functionName }),
             ),
           }),
         ],
@@ -312,14 +322,14 @@ describe('Safe owner batch', () => {
       }),
     ).rejects.toThrow(/MultiSendCallOnly is not deployed on Ethereum/)
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
   })
 
   it('stops on a failing sequence simulation and names the step', async () => {
     mocks.client.simulateCalls.mockResolvedValue({
       results: [
         { status: 'success', data: '0x', gasUsed: 1n },
-        { status: 'failure', error: new Error('PoolAlreadySet()'), data: '0x', gasUsed: 1n },
+        { status: 'failure', error: Object.assign(new Error('execution reverted'), { code: 3 }), data: '0x', gasUsed: 1n },
         { status: 'success', data: '0x', gasUsed: 1n },
       ],
     })
@@ -331,8 +341,8 @@ describe('Safe owner batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-owner', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow(/Set buyback pool cannot run on Ethereum: PoolAlreadySet/)
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    ).rejects.toThrow(/^Set buyback pool cannot run on Ethereum: /)
+    expect(coreReviews.shown).toHaveLength(0)
   })
 
   it('falls back to per-call simulation, skipping steps that depend on an earlier one', async () => {
@@ -480,7 +490,7 @@ describe('Safe app batch', () => {
       onProposed,
     })
 
-    expect(mocks.requireReview).toHaveBeenCalledExactlyOnceWith(
+    expect(coreReviews.shown).toEqual([
       expect.objectContaining({
         title: 'Review batch on Ethereum',
         confirmLabel: 'Agree & propose to Safe',
@@ -494,8 +504,7 @@ describe('Safe app batch', () => {
           }),
         ),
       }),
-    )
-    expect(mocks.connectedWallet).toHaveBeenCalledWith(1, expect.objectContaining({ expected: SAFE }))
+    ])
     expect(mocks.sendCalls).toHaveBeenCalledExactlyOnceWith(
       { tag: 'config' },
       { chainId: 1, calls },
@@ -616,7 +625,7 @@ describe('Safe app batch', () => {
   it('does not send when the review is refused or the wallet returns no hash', async () => {
     mocks.account = SAFE
     mocks.isSafeConnection.mockReturnValue(true)
-    mocks.requireReview.mockRejectedValueOnce(new Error('Review cancelled.'))
+    coreReviews.answer.mockResolvedValueOnce(false)
     await expect(
       submitSafeBatch({
         signal: flow,
@@ -625,7 +634,7 @@ describe('Safe app batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow('Review cancelled.')
+    ).rejects.toThrow(TransactionReviewCancelledError)
     expect(mocks.sendCalls).not.toHaveBeenCalled()
 
     mocks.sendCalls.mockResolvedValueOnce({ id: 'not-a-hash' })
@@ -637,7 +646,7 @@ describe('Safe app batch', () => {
         steps: presetSteps(),
         route: { kind: 'safe-app', authorityKind: 'safe' },
       }),
-    ).rejects.toThrow('Check this proposal in your Safe before sending it again.')
+    ).rejects.toThrow(SAFE_BATCH_UNFOLLOWABLE_LINE)
     expect(mocks.waitForSafeExecutionHash).not.toHaveBeenCalled()
   })
 })

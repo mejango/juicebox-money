@@ -14,20 +14,30 @@ const m = vi.hoisted(() => ({
     getTransactionReceipt: async () => null,
     getBlock: async () => ({ number: 100n, hash: `0x${'aa'.repeat(32)}`, timestamp: 1n }),
     request: async () => null,
+    simulateCalls: async ({ calls }: { calls: unknown[] }) => ({ results: calls.map(() => ({ status: 'success' })) }),
   },
 }))
-vi.mock('wagmi/actions', () => ({ sendCalls: m.sendCalls }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: SAFE, chainId: 10 }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {}, SUPPORTED_CHAINS: [] }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: vi.fn(async () => undefined) }))
-vi.mock('@/lib/wallet-core', () => ({ publicClient: () => m.client, connectedWallet: vi.fn(async () => ({ account: SAFE })) }))
-vi.mock('@bananapus/nana-sdk-core/review', async original => ({
-  ...await original<typeof import('@bananapus/nana-sdk-core/review')>(),
-  simulateCallSequence: vi.fn(async () => undefined),
-}))
+vi.mock('@/lib/reviewed-send', async () => {
+  const { testAdapter } = await import('../support/core-review')
+  const { writeHolds } = await import('@/lib/write-holds')
+  return {
+    reviewedSendDeps: {
+      adapter: testAdapter({
+        account: () => SAFE, chainId: () => 10, isSafe: () => true,
+        // A Safe app answers wallet_sendCalls with the proposal's safeTxHash.
+        sendCalls: async (chainId, calls) => (await m.sendCalls(chainId, { calls })).id,
+      }),
+      clientFor: () => m.client,
+      hold: writeHolds,
+    },
+  }
+})
 
 import { proposeSafeBatch } from '@/lib/safe-batch-connector'
 import { listedHeld } from '../support/held-chain'
+import { coreReviews, reviewedCalls } from '../support/core-review'
 
 const batch = (deadline: number) => ({
   chainId: 10 as const, safe: SAFE, title: 'Add liquidity', intent: 'intent:add-liquidity:test',
@@ -37,7 +47,7 @@ const batch = (deadline: number) => ({
   ],
 })
 
-beforeEach(() => { m.sendCalls.mockReset() })
+beforeEach(() => { m.sendCalls.mockReset(); coreReviews.reset() })
 
 describe('a Safe batch held by its intent', () => {
   it('proposes nothing again after a lost reply, even with regenerated deadlines, until the exit', async () => {
@@ -83,5 +93,23 @@ describe('a Safe batch held by its intent', () => {
     m.sendCalls.mockResolvedValue({ id: PROPOSAL })
     await expect(proposeSafeBatch({ ...batch(9), intent: 'intent:liquidity:new', legacy: ['intent:add-liquidity:old'] })).rejects.toThrow()
     expect(m.sendCalls).not.toHaveBeenCalled()
+  })
+})
+
+describe('a Safe batch sends what it reviewed', () => {
+  it('proposes the reviewed calls even when the caller changes its array during the review', async () => {
+    const request = batch(5)
+    const calls = request.calls as { to: Address; data: Hex; value: bigint; label: string }[]
+    coreReviews.answer.mockImplementationOnce(async () => {
+      calls[1].data = '0xdead'
+      calls[1].value = 7n
+      calls.push({ to: SAFE, data: '0xbeef', value: 0n, label: 'Added' })
+      return true
+    })
+    m.sendCalls.mockResolvedValueOnce({ id: PROPOSAL })
+    await expect(proposeSafeBatch({ ...request, intent: 'intent:reviewed-bytes:test' })).resolves.toBe(PROPOSAL)
+    const reviewed = reviewedCalls(coreReviews.shown.at(-1)!).map(({ to, data, value }) => ({ to, data, value }))
+    expect(m.sendCalls.mock.calls[0][1].calls).toEqual(reviewed)
+    expect(reviewed[1]).toEqual({ to: TARGET, data: `0x5678${(5).toString(16).padStart(8, '0')}`, value: 0n })
   })
 })

@@ -24,8 +24,9 @@ vi.mock('wagmi/actions', () => ({
 vi.mock('@/hooks/useWallet', () => ({
   useWallet: () => ({ address: mocks.account, isConnected: true, openSignIn: vi.fn() }),
 }))
-vi.mock('@/hooks/useSafeTx', () => ({
-  useSafeTx: () => ({ phase: mocks.phase, busy: false, send: mocks.send, reset: mocks.reset }),
+vi.mock('@/hooks/useReviewedAction', async () => ({
+  ...(await import('@/lib/reviewed-call')),
+  useReviewedAction: () => ({ phase: mocks.phase, busy: false, run: mocks.send, reset: mocks.reset }),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
@@ -36,13 +37,15 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => createElement('div', null, children),
 }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ title, onConfirm, preparing }: {
+vi.mock('@/components/ui/TxProgress', () => ({
+  // Its one button is what the dialog does next: its first start, then its retry.
+  TxProgress: ({ title, start, next, preparing }: {
     title: string
-    onConfirm: () => void
+    start?: () => void
+    next?: { onClick: () => void } | null
     preparing: boolean
   }) => createElement('section', null, title,
-    createElement('button', { onClick: onConfirm, disabled: preparing }, 'Confirm & redeem')),
+    createElement('button', { onClick: next?.onClick ?? start, disabled: preparing }, 'Confirm & redeem')),
 }))
 
 import { RedeemShopItemsModal, type RedeemableShopTarget } from '@/components/project/RedeemShopItemsModal'
@@ -117,7 +120,7 @@ beforeEach(() => {
     if (functionName === 'feeFreeSurplusOf') return 0n
     throw new Error(`Unexpected contract read: ${functionName}`)
   })
-  mocks.send.mockReset().mockResolvedValue(undefined)
+  mocks.send.mockReset().mockResolvedValue(null)
 })
 
 afterEach(async () => {
@@ -172,7 +175,7 @@ describe('shop redemption preparation query', () => {
     expect(text(renderer!.root)).toContain('Confirm redemption')
     await click('Confirm & redeem')
     expect(mocks.send).toHaveBeenCalledTimes(1)
-    expect(mocks.send.mock.calls[0][1]).toMatchObject({ reviewedAccount: ALICE })
+    expect(mocks.send.mock.calls[0][0]).toMatchObject({ account: ALICE })
   })
 
   it('retries a failed quote on remount without granting it a freshness window', async () => {

@@ -6,7 +6,7 @@ import {
   type UniswapV4PoolKey,
 } from '@bananapus/nana-sdk-core/v6'
 import { decodeAbiParameters, type Address, type Hex } from 'viem'
-import type { TxRequest } from '@/hooks/useSafeTx'
+import type { TxRequest } from '@/lib/reviewed-call'
 import { buildCollectMarketFeesUnlockData } from '@/lib/market-liquidity'
 import {
   buildModifyLiquiditiesRequest,
@@ -15,7 +15,7 @@ import {
 } from '@/lib/transaction-builders'
 
 /**
- * Every call this app sends through useSafeTx with a field stamped at send
+ * Every call this app sends through a reviewed run with a field stamped at send
  * time, built as its site builds it. `build(stamp, other)` sends the stamp
  * (a deadline, or Permit2's expiration) and changes one other field when
  * `other` is not 0.

@@ -58,8 +58,14 @@ jobs:
         env:
           PROTOCOL_DEPLOYMENTS_DIR: ${{ github.workspace }}/.contract-source/deploy-all-v6
         run: npm run protocol:check
+      - name: Check source invariants
+        run: npm run source:check
+      - name: Check for unused files, exports and dependencies
+        run: npm run dead-code:check
       - name: Check reviewed transaction inventory
         run: npm run transaction:check
+      - name: Check raw wallet boundaries
+        run: npm run wallet:check
       # Local hash comparison only. A browser query whose document is missing from the
       # persisted registry is rejected by the proxy (bendystraw-proxy.ts), so drift here
       # silently breaks a feature — this catches it. The live-schema half of the same

@@ -6,10 +6,10 @@
  * recovery rule), never sent again, and never a dead end.
  */
 
-import { act, type ReactNode } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const DEPLOYER = '0x2222222222222222222222222222222222222222' as Address
@@ -45,6 +45,10 @@ vi.mock('wagmi/actions', async original => ({
 vi.mock('@wagmi/core', async original => ({
   ...(await original<typeof import('@wagmi/core')>()),
   getAccount: () => ({ address: ALICE, chainId: 1, connector: { uid: 'reviewed-wallet' } }),
+  getPublicClient: () => m.client,
+  // Core's reviewed send: what reaches the wallet is `m.writeContract`.
+  getWalletClient: async () => ({ chain: { id: 1 }, sendTransaction: (tx: unknown) => m.writeContract(tx) }),
+  switchChain: async () => undefined,
 }))
 vi.mock('@/lib/wallet-core', async original => ({
   ...(await original<typeof import('@/lib/wallet-core')>()),
@@ -68,27 +72,27 @@ vi.mock('@/lib/launch', async original => ({
     chainId: 1, address: DEPLOYER, abi: parseAbi(['function launch(uint256 salt)']), functionName: 'launch', args: [1n], value: 0n,
   }),
 }))
-vi.mock('@/lib/transaction-review', async original => ({
-  ...(await original<typeof import('@/lib/transaction-review')>()),
-  requireContractTransactionReview: m.review,
-}))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, error, children }: {
-    open: boolean; action: string; onConfirm: () => void; error?: ReactNode; children?: ReactNode
-  }) => open ? (
-    <section data-tx-confirm>
-      <p data-error>{error}</p>
-      {children}
-      <button type="button" onClick={onConfirm}>{action}</button>
-    </section>
-  ) : null,
-}))
+vi.mock('@/components/ui/TxProgress', async original =>
+  (await import('../support/tx-progress')).testTxProgress(await original<typeof import('@/components/ui/TxProgress')>()))
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'
 import { LAUNCH_SESSION_KEY, loadLaunchSession } from '@/lib/launch-session'
 import { writeHolds } from '@/lib/write-holds'
 import { launchNamespace } from '@/lib/launch-attempt'
+import { registerReviewHandler } from '@bananapus/nana-sdk-core/review'
+
+// The app's review, as core's reviewed send asks it: `m.review` rejecting is a cancel.
+beforeAll(() => {
+  registerReviewHandler(async prompt => {
+    try {
+      await m.review(prompt.model)
+      return prompt.confirmation
+    } catch {
+      return null
+    }
+  })
+})
 
 /** The launch's SDK hold, as a fresh send opens it. */
 const launchHold = () => writeHolds.open({ chainId: 1, account: ALICE, safe: false, namespace: launchNamespace({ chainId: 1, account: ALICE, salt: SALT, projectUri: 'ipfs://launch' }), call: LAUNCH_CALL })
@@ -204,7 +208,7 @@ describe('a saved launch restored on the create page', () => {
 
     // Past the hold's window with the hash never found, its warned exit appears.
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
-    await settle()
+    for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     await act(async () => exit!.click())
@@ -239,7 +243,7 @@ describe('a saved launch restored on the create page', () => {
     await mount()
     await resume()
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
-    await settle()
+    for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     // The launch mines just as the user takes the exit: the exit's own check settles it.
@@ -401,7 +405,6 @@ describe('a saved launch restored on the create page', () => {
     await act(async () => anyway!.click())
     await settle()
     vi.mocked(Storage.prototype.getItem).mockRestore()
-    console.log('DBG', host.textContent!.slice(-500))
     expect(loadLaunchSession()).toBeNull()
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(m.writeContract).not.toHaveBeenCalled()
@@ -414,8 +417,11 @@ describe('the normal path, click for click as main', () => {
     m.review.mockReset().mockResolvedValue(undefined)
     m.writeContract.mockResolvedValue(HASH)
     Object.assign(m.client, {
-      simulateContract: async (request: Record<string, unknown>) => ({ request }),
-      estimateContractGas: async () => 100_000n,
+      // Core's simulation: the launch's eth_call returns.
+      request: async ({ method }: { method: string }) => method === 'eth_call' ? '0x' : null,
+      estimateGas: async () => 100_000n,
+      // Core's own receipt wait; the form's domain checks then wait on `m.waitReceipt`.
+      waitForTransactionReceipt: async () => ({ transactionHash: HASH, status: 'success', blockHash: BLOCK, blockNumber: 1n, transactionIndex: 0, from: ALICE, to: DEPLOYER, logs: [] }),
     })
     await mount()
     await resume()

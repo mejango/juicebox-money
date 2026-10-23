@@ -267,12 +267,16 @@ describe('payer deploy input validation', () => {
         target: { value: ADMIN },
       }),
     )
+    // The review stays open in the wallet layer, beside the dialog's rows.
+    mocks.runPayerDeployments.mockImplementationOnce(async (review: PayerDeploymentSession) => {
+      mocks.send(payerDeploymentRequest(review.calls[0]))
+      return new Promise(() => {})
+    })
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
     expect(renderedText(renderer.root)).toContain(
       `${ADMIN.slice(0, 6)}…${ADMIN.slice(-4)} can change these settings later.`,
     )
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
@@ -378,9 +382,10 @@ describe('payer deployment recovery', () => {
       renderer.root.findAllByType('input').find(input => input.props.type === 'checkbox')!.props.onChange({ target: { checked: true } })
     })
     await act(async () => inputLabelled(renderer, 'Address admin').props.onChange({ target: { value: ADMIN } }))
+    // The review stays open in the wallet layer, beside the dialog's rows.
+    mocks.runPayerDeployments.mockReturnValueOnce(new Promise(() => {}))
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
     expect(renderedText(renderer.root)).toContain('Project #84')
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
     expect(mocks.runPayerDeployments.mock.calls[0][0]).toMatchObject({
       transport: 'relayr', calls: [
         { chainId: 1, projectId: 42, owner: ADMIN, beneficiary: ADMIN },
@@ -417,7 +422,6 @@ describe('payer deployment recovery', () => {
     await act(async () => { renderer = TestRenderer.create(createElement(ExtrasTab, { ...props, chains: [[1, 999], [10, 84]] })) })
     await act(async () => buttonWith(renderer, 'Create payer address').props.onClick())
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
     expect(mocks.runPayerDeployments.mock.calls[0][0].calls[0].projectId).toBe(42)
     expect(mocks.getProjectPayers).toHaveBeenCalledWith([[1, 42], [10, 84]], { signal: mocks.query.signal })
   })

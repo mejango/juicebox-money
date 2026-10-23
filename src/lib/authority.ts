@@ -20,16 +20,16 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
-import { requireTransactionReview } from '@/lib/transaction-review'
-import { connectedWallet } from '@/lib/wallet-core'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { requireHeldSettlement, reviewDescription, safeWriteHold, writeHolds } from '@/lib/write-holds'
+import { requireHeldSettlement, reviewDescription, safeHoldNamespace, safeProposalKey, safeWriteHold } from '@/lib/write-holds'
 import {
   gasWithinCap,
   simulateStateChangingTransaction,
   waitForTrackedReceipt,
-  isDefiniteWalletRejection,
+  type ReviewedPlan,
   type WriteHoldClient,
 } from '@bananapus/nana-sdk-core/review'
 import {
@@ -288,7 +288,7 @@ export async function runAuthorityCalls({
   calls,
   onProgress,
   paymentChainId,
-  reviewedInParent = false,
+  plan,
   signal,
 }: {
   calls: AuthorityCall[]
@@ -301,11 +301,11 @@ export async function runAuthorityCalls({
   /** Omit to ask the user to choose from the authenticated quote options. */
   paymentChainId?: number
   /**
-   * One safety-check review already showed these exact calls, with
-   * safeTxGas 0 under a Safe app. This skips only the per-call direct and
-   * Safe-app reviews; relay and Safe signatures are still reviewed.
+   * A plan one review already showed these exact calls in (`reviewPlan`):
+   * the direct and Safe-app sends spend it instead of asking again. Relay
+   * and Safe signatures are still reviewed.
    */
-  reviewedInParent?: boolean
+  plan?: ReviewedPlan
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
@@ -694,69 +694,42 @@ export async function runAuthorityCalls({
         })
         continue
       }
-      if (!reviewedInParent) await requireTransactionReview({
-        title: 'Review Safe transaction',
-        description: reviewDescription(`This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`),
-        calls: [
-          {
-            chainId: call.chainId,
-            from: call.authority,
-            to: call.target,
-            data: call.data,
-            value: call.value ?? 0n,
-            // The Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-            safeTxGas: 0n,
-            label: call.label,
-            abi: call.abi,
-            functionName: call.functionName,
-            args: call.args,
-            contractName: call.contractName,
-          },
-        ],
-      })
-      const { wallet, account } = await connectedWallet(call.chainId, {
-        expected: call.authority,
-        requireUnchanged: true,
-        changedError: 'Safe connection changed. Review this project action again.',
-      })
-      await call.reverifyAuthority?.()
       onProgress?.({
         kind: 'safe',
         message: 'Continue in Safe, then execute the proposal…',
       })
-      // Held by the SDK's write hold from just before the wallet opens: a lost
-      // reply or an unproven execution is never proposed again without the exit.
+      // Core reviews (or spends the parent plan) and proposes the exact call
+      // under the same hold the tracking below reads.
       const sentCall = { to: call.target, data: call.data, value: call.value ?? 0n }
-      const hold = safeWriteHold(call.chainId, call.authority, sentCall)
-      const holdClient = clientFor(call.chainId) as unknown as WriteHoldClient
-      const safeTxHash = await hold.send<Hex>(holdClient, async gate => {
-        await gate.beforeSend()
-        await call.onSending?.('safe-connector')
-        try {
+      const { sendReviewed } = await loadReviewEngine()
+      const proposed = await sendReviewed({
+        account: call.authority,
+        calls: [{
+          chainId: call.chainId, ...sentCall,
+          label: call.label, abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
+          intent: safeHoldNamespace(safeProposalKey(call.chainId, call.authority, sentCall)),
+        }],
+        title: 'Review Safe transaction',
+        description: reviewDescription(`This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`),
+        confirmLabel: 'Agree & continue to Safe',
+        ...(plan ? { plan } : {}),
+        guard: assertNoViewAs,
+        reverify: async () => {
+          await call.reverifyAuthority?.()
           walletGuards.get(call)!()
           if (!isSafeConnection(wagmiConfig)) throw new Error('Safe connection changed. Review this project action again.')
-        } catch (error) {
-          gate.onRejected()
-          await call.onBeforeSubmissionAborted?.()
-          throw error
-        }
-        let sent: Hex
-        try {
-          sent = await wallet.sendTransaction({
-            chain: wallet.chain,
-            account,
-            to: call.target,
-            data: call.data,
-            value: call.value ?? 0n,
-            gas: 0n,
-          })
-        } catch (error) {
-          if (isDefiniteWalletRejection(error)) gate.onRejected()
-          throw error
-        }
-        gate.afterSubmit(sent)
-        return sent
-      })
+        },
+        assertWriteState: () => {
+          walletGuards.get(call)!()
+          if (!isSafeConnection(wagmiConfig)) throw new Error('Safe connection changed. Review this project action again.')
+        },
+        beforeWallet: () => call.onSending?.('safe-connector'),
+        onUnsent: () => call.onBeforeSubmissionAborted?.(),
+      }, reviewedSendDeps)
+      if (proposed.status !== 'proposed') throw new Error('Safe connection changed. Review this project action again.')
+      const safeTxHash = proposed.safeTxHash
+      const hold = safeWriteHold(call.chainId, call.authority, sentCall)
+      const holdClient = clientFor(call.chainId) as unknown as WriteHoldClient
       await call.onSubmitted?.(safeTxHash, 'safe-connector')
       let executionHash: Hex
       try {
@@ -822,99 +795,47 @@ export async function runAuthorityCalls({
     }
 
     if (reviewed.mode === 'direct') {
-      if (!reviewedInParent) await requireTransactionReview({
+      // Core reviews the group once (or spends the parent plan), then sends,
+      // simulates, holds and waits on each call in order.
+      const { sendReviewed } = await loadReviewEngine()
+      const exactOf = (call: AuthorityCall) => ({ to: call.target, data: call.data, value: call.value ?? 0n })
+      /** The call core is sending now, for the final gate. */
+      let current = group[0]
+      const assertDirect = () => {
+        walletGuards.get(current)!()
+        if (isSafeConnection(wagmiConfig)) throw new Error('Connected wallet changed. Review this project action again.')
+      }
+      const result = await sendReviewed({
+        account: group[0].authority,
+        calls: group.map(call => ({
+          chainId: call.chainId, ...exactOf(call),
+          // ponytail: under a parent plan the reviewed calls carry no gas, so
+          // core estimates at send; the cap-bounded measure applies to a direct review.
+          ...(plan ? {} : { gas: call.gas }),
+          label: call.label, abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
+          ...(call.holdNamespace ? { intent: call.holdNamespace, legacy: [{ call: exactOf(call) }] } : {}),
+        })),
         title: group.length === 1 ? 'Review transaction' : 'Review transactions',
         description: reviewDescription('Confirm each transaction on its destination chain. Calls are sent in the displayed order.'),
-        calls: group.map(call => ({
-          chainId: call.chainId,
-          from: call.authority,
-          to: call.target,
-          data: call.data,
-          value: call.value ?? 0n,
-          gas: call.gas,
-          label: call.label,
-          abi: call.abi,
-          functionName: call.functionName,
-          args: call.args,
-          contractName: call.contractName,
-        })),
-      })
-
-      for (let index = 0; index < group.length; index++) {
-        const call = group[index]
-        await call.reverifyAuthority?.()
-        const { wallet, account } = await connectedWallet(call.chainId, {
-          expected: call.authority,
-          requireUnchanged: true,
-          changedError:
-            'Connected account changed. Review this project action again.',
-        })
-        const client = clientFor(call.chainId)
-        onProgress?.({
-          kind: 'direct',
-          message: `Confirming ${index + 1}/${group.length} directly on ${
-            chainName(call.chainId)
-          }…`,
-        })
-        await simulateStateChangingTransaction(client, {
-          from: account,
-          to: call.target,
-          data: call.data,
-          value: call.value ?? 0n,
-          gas: call.gas,
-        })
-        await call.reverifyAuthority?.()
-        walletGuards.get(call)!()
-        // Held by the SDK's write hold from just before the wallet opens: a lost
-        // reply or an unread receipt is never sent again without the exit.
-        const exact = { to: call.target, data: call.data, value: call.value ?? 0n }
-        const hold = call.holdNamespace
-          ? writeHolds.open({ chainId: call.chainId, account, safe: false, namespace: call.holdNamespace, call: exact }, { legacy: [{ call: exact }] })
-          : writeHolds.open({ chainId: call.chainId, account, safe: false, call: exact })
-        const holdClient = client as unknown as WriteHoldClient
-        const hash = await hold.send<Hex>(holdClient, async gate => {
-          await gate.beforeSend()
-          await call.onSending?.('direct')
-          try {
-            walletGuards.get(call)!()
-            if (isSafeConnection(wagmiConfig)) throw new Error('Connected wallet changed. Review this project action again.')
-          } catch (error) {
-            gate.onRejected()
-            await call.onBeforeSubmissionAborted?.()
-            throw error
-          }
-          let sent: Hex
-          try {
-            sent = await wallet.sendTransaction({
-              chain: wallet.chain,
-              account,
-              to: call.target,
-              data: call.data,
-              value: call.value ?? 0n,
-              gas: call.gas,
-            })
-          } catch (error) {
-            if (isDefiniteWalletRejection(error)) gate.onRejected()
-            throw error
-          }
-          gate.afterSubmit(sent)
-          return sent
-        })
-        await call.onSubmitted?.(hash, 'direct')
-        // A receipt that can't be read leaves it held (HeldWritesNotice lists it) until the chain says.
-        const receipt = await waitForTrackedReceipt(client, hash)
-        if (receipt.status !== 'success') {
-          // The hold keeps a revert until it is final, so a retry can't double it.
-          void hold.onReceipt(receipt, holdClient).catch(() => {})
-          throw new Error(
-            `${call.label ?? 'Project action'} reverted on ${
-              chainName(call.chainId)
-            }.`,
-          )
-        }
-        await requireHeldSettlement(hold, holdClient, receipt)
-        directResults.push(hash)
-      }
+        ...(plan ? { plan } : {}),
+        guard: assertNoViewAs,
+        reverify: async (_sent, step) => {
+          const call = group[step]
+          onProgress?.({
+            kind: 'direct',
+            message: `Confirming ${step + 1}/${group.length} directly on ${chainName(call.chainId)}…`,
+          })
+          current = call
+          await call.reverifyAuthority?.()
+          assertDirect()
+        },
+        assertWriteState: assertDirect,
+        beforeWallet: (_sent, step) => group[step].onSending?.('direct'),
+        onUnsent: (_sent, step) => group[step].onBeforeSubmissionAborted?.(),
+        onSubmitted: (_sent, step, hash) => group[step].onSubmitted?.(hash, 'direct'),
+      }, reviewedSendDeps)
+      if (result.status !== 'done') throw new Error('Connected wallet changed. Review this project action again.')
+      directResults.push(...result.hashes)
       continue
     }
 

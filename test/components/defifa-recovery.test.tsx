@@ -9,7 +9,7 @@ import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { defifaWriteNamespace, readDefifaWriteRecovery, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 import { writeHolds } from '@/lib/write-holds'
 import { encodeFunctionData } from 'viem'
-import type { TxRequest } from '@/hooks/useSafeTx'
+import type { TxRequest } from '@/lib/reviewed-call'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const HOOK = '0x2222222222222222222222222222222222222222' as Address
@@ -43,7 +43,7 @@ const render = async (account = ACCOUNT, action: DefifaWriteAction = 'transfer')
   await act(async () => root!.render(<QueryClientProvider client={queries}><DefifaRecovery chainId={8453} projectId={27} account={account} hook={HOOK} actions={[action]} active={false}><p>Fresh NFT controls</p></DefifaRecovery></QueryClientProvider>))
   await settle()
 }
-/** A Defifa write as useSafeTx sends it: under the SDK hold of its namespace, its wallet reply saved when it returned one. */
+/** A Defifa write as a reviewed run sends it: under the SDK hold of its namespace, its wallet reply saved when it returned one. */
 const save = async (known = true, safe = false, action: DefifaWriteAction = 'transfer', client: Record<string, unknown> = {}) => {
   const sent = action === 'pay' ? { ...request, abi: erc20Abi, functionName: 'approve', args: [RECIPIENT, 7n] } as TxRequest : request
   const hold = writeHolds.open({ chainId: 8453, account: ACCOUNT, safe, namespace: defifaWriteNamespace({ ...scope, action }),

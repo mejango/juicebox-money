@@ -12,9 +12,9 @@ import { useMemo, useState } from 'react'
 import { burnIntent } from '@bananapus/nana-sdk-core/review'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { buildBurnTokensRequest } from '@/lib/burnTokens'
 import { formatTokenAmount } from '@/lib/format'
@@ -33,7 +33,7 @@ export function BurnTokensFlow({
   showHeading?: boolean
 }) {
   const { address, isConnected, openSignIn } = useWallet()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -107,38 +107,40 @@ export function BurnTokensFlow({
     if (!plan || sending) return
     setError(null)
     try {
-      await tx.send(
-        {
-          ...plan,
-          label: `Permanently burn ${formatTokenAmount(tokenCount, 18)} ${tokenSymbol}`,
-        },
-        {
-          // The holder whose tokens the reviewed request burns.
-          reviewedAccount: plan.args[0],
-          // The holder's burn of the project's token, no amount.
-          intent: burnIntent({ chainId: plan.chainId, project: plan.args[1], holder: plan.args[0] }),
-          legacy: [
-            legacyBurnKey({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1] }),
-            ...legacyBurnKeys({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1], amount }),
-          ],
-          reverify: async reviewed => {
-            const [latestBalanceResult, latestControllerResult] =
-              await Promise.all([refetch(), refetchController()])
-            const latestBalance = latestBalanceResult.data
-            const latestController = latestControllerResult.data
-            if (latestBalance === undefined || tokenCount > latestBalance) {
-              throw new Error('Your token balance changed. Review the amount.')
-            }
-            if (
-              !latestController ||
-              latestController === zeroAddress ||
-              latestController.toLowerCase() !== reviewed.address.toLowerCase()
-            ) {
-              throw new Error('The project controller changed. Review again.')
-            }
+      await tx.run({
+        // The holder whose tokens the reviewed request burns.
+        account: plan.args[0],
+        calls: [reviewedCall(
+          {
+            ...plan,
+            label: `Permanently burn ${formatTokenAmount(tokenCount, 18)} ${tokenSymbol}`,
           },
+          {
+            // The holder's burn of the project's token, no amount.
+            intent: burnIntent({ chainId: plan.chainId, project: plan.args[1], holder: plan.args[0] }),
+            legacy: [
+              legacyBurnKey({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1] }),
+              ...legacyBurnKeys({ chainId: plan.chainId, holder: plan.args[0], project: plan.args[1], amount }),
+            ],
+          },
+        )],
+        reverify: async reviewed => {
+          const [latestBalanceResult, latestControllerResult] =
+            await Promise.all([refetch(), refetchController()])
+          const latestBalance = latestBalanceResult.data
+          const latestController = latestControllerResult.data
+          if (latestBalance === undefined || tokenCount > latestBalance) {
+            throw new Error('Your token balance changed. Review the amount.')
+          }
+          if (
+            !latestController ||
+            latestController === zeroAddress ||
+            latestController.toLowerCase() !== reviewed.to.toLowerCase()
+          ) {
+            throw new Error('The project controller changed. Review again.')
+          }
         },
-      )
+      })
       await refetch()
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'Burn failed.')
@@ -211,7 +213,7 @@ export function BurnTokensFlow({
         </button>
       </div>
       {plan || preparing ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!plan}
           onClose={closeReview}
@@ -234,8 +236,6 @@ export function BurnTokensFlow({
           activeIndex={sending ? 0 : -1}
           complete={tx.settled}
           busy={sending || preparing}
-          action={tx.phase === 'error' || error ? 'Retry' : 'Confirm & burn'}
-          onConfirm={() => void burn()}
           status={
             !plan
               ? 'Reading your balance and the controller…'
@@ -243,6 +243,8 @@ export function BurnTokensFlow({
                 (tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined))
           }
           error={error ?? tx.error}
+          start={() => void burn()}
+          next={(tx.phase === 'error' || !!error) && !sending ? { label: 'Retry', onClick: () => void burn() } : null}
         />
       ) : null}
     </div>

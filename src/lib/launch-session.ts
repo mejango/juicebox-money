@@ -394,3 +394,19 @@ export function abandonLaunchSession(expectedSalt?: `0x${string}`, { retired = f
     return false
   }
 }
+
+/**
+ * Runs `fn` under the cross-tab "jbm-launch" Web Lock, or directly in a browser
+ * without Web Locks. With `busy`, it doesn't wait for another tab: it throws
+ * `busy` and leaves `fn` unrun.
+ */
+export async function withLaunchLock(fn: () => unknown, busy?: string): Promise<void> {
+  if (!navigator.locks) {
+    fn()
+    return
+  }
+  await navigator.locks.request('jbm-launch', { ifAvailable: busy !== undefined }, lock => {
+    if (!lock) throw new Error(busy)
+    fn()
+  })
+}

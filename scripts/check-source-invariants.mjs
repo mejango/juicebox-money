@@ -76,10 +76,10 @@ if (!/^export \{ transactionMessage \} from ["']@bananapus\/nana-sdk-core\/revie
   failures.push("Transaction presentation must re-export the shared SDK owner");
 }
 
-const safeTx = read("src/hooks/useSafeTx.ts");
-const reviewedWrite = read("src/lib/contract-write.ts");
-if (!reviewedWrite.includes("beforeSend: () => {") || !reviewedWrite.includes("captureWalletContext") || !safeTx.includes("chainId: reviewed.chainId")) {
-  failures.push("Safe transaction writes must use the SDK final guard and send the reviewed chain explicitly");
+const reviewedSend = read("src/lib/reviewed-send.ts");
+const reviewedAction = read("src/hooks/useReviewedAction.ts");
+if (!reviewedSend.includes("guard: assertNoViewAs") || !reviewedAction.includes("...reviewedSendDeps") || !reviewedAction.includes("useReviewedRun(")) {
+  failures.push("Wallet writes must go through core's reviewed send with jbm's deps and view-as guard");
 }
 
 if (failures.length > 0) {

@@ -9,12 +9,13 @@ vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined }) }))
 vi.mock('@/providers/ProjectRouteContext', () => ({ useProjectReviewScope: () => mocks.scope }))
 vi.mock('@/providers/ProjectRouteBlockedContext', () => ({ useProjectRouteBlocked: () => mocks.blocked }))
 vi.mock('@/components/TransactionReviewDialog', () => ({ TransactionReviewDialog: ({ pending, onFinish }: TransactionReviewDialogProps) => <div>
-  <p>{pending.kind === 'review' ? pending.request.title : 'Funding'}</p>
+  <p>{pending.kind === 'review' ? pending.model.title : 'Funding'}</p>
   <button onClick={() => onFinish(pending.kind === 'review' ? true : 8453)}>Approve</button>
   <button onClick={() => onFinish(null)}>Cancel</button>
 </div> }))
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireFundingChainSelection, requireTransactionReview } from '@/lib/transaction-review'
+import { requireFundingChainSelection } from '@/lib/transaction-review'
+import { requireReview } from '../support/prompt-review'
 let root: Root
 let host: HTMLDivElement
 beforeEach(async () => {
@@ -27,7 +28,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove() })
 const click = async (text: string) => act(async () => { [...host.querySelectorAll('button')].find(button => button.textContent === text)!.click() })
 async function request(title = 'Review') {
   let promise!: Promise<unknown>
-  await act(async () => { promise = requireTransactionReview({ title, calls: [{ chainId: 8453, to: `0x${'12'.repeat(20)}`, data: '0x' }] }).then(() => true, error => error) })
+  await act(async () => { promise = requireReview({ title, calls: [{ chainId: 8453, to: `0x${'12'.repeat(20)}`, data: '0x' }] }).then(() => true, error => error) })
   await act(async () => { await vi.dynamicImportSettled() })
   return { promise }
 }

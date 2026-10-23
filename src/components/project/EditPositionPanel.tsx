@@ -1,18 +1,17 @@
 'use client'
 
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { withFailedStep, withUnconfirmedStep } from '@/components/ui/TxSteps'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
-import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { erc20Abi, formatUnits, parseUnits, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { TxError } from '@/components/ui/TxError'
-import { useSafeTx } from '@/hooks/useSafeTx'
-import { approvalIntent, liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyEditPositionKeys } from '@/lib/legacy-intents'
-import { useStepRun } from '@/hooks/useStepRun'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import {
   bandPrices,
@@ -31,14 +30,12 @@ import {
 } from '@/lib/liquidity-safe-batch'
 import { isSafeConnection, swapDeadline } from '@/lib/safe-connector'
 import {
-  buildErc20ApproveRequest,
   buildModifyLiquiditiesRequest,
-  buildPermit2ApproveRequest,
 } from '@/lib/transaction-builders'
 import { wagmiConfig } from '@/providers/Providers'
 import { chainName } from '@/lib/urn'
 import { solveRangeFromAmounts } from '@/lib/uniswap-v4'
-import { buildPlan, type Step } from './AddLiquidityFlow'
+import { buildPlan, liquidityStepCalls, type Step } from './AddLiquidityFlow'
 import { formatPrice } from './chartUtils'
 import { LiquidityRangePreview } from './LiquidityRangePreview'
 import {
@@ -150,7 +147,7 @@ export function EditPositionPanel({
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { connectedAddress, isViewAs } = useViewedAccount()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const queryClient = useQueryClient()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
   const pairSym = pool.pair.symbol
@@ -338,79 +335,55 @@ export function EditPositionPanel({
     }
   }
 
-  // `confirmedAt` is the block of the run's last confirmed approval: the edit
-  // must simulate at or after it, or a lagging RPC rejects it on allowance.
-  const sendStep = useCallback(
-    (step: Step, confirmedAt: bigint | undefined): Promise<`0x${string}` | null> => {
+  // The run: its approvals, then the edit. The edit simulates on the block
+  // the last approval landed in, or a lagging RPC rejects it on allowance.
+  const runAction = useCallback(
+    (steps: readonly Step[]): StepRunAction | null => {
       const p = planRef.current
-      if (!p) return Promise.resolve(null)
+      if (!p) return null
+      // Everything that touches funds is frozen inside unlockData; only the
+      // deadline is stamped when the run starts.
+      const edit = reviewedCall(buildModifyLiquiditiesRequest({
+        chainId,
+        positionManager,
+        unlockData: p.plan.unlockData,
+        deadline: swapDeadline(isSafeConnection(wagmiConfig)),
+        value: p.plan.value,
+      }), {
+        // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
+        intent: p.intent,
+        legacy: p.legacy,
+      })
       // The recipient is baked into unlockData: every step, approvals
       // included, sends only from the account the plan was reviewed for.
-      const reviewedAccount = p.account
-      if (step.kind === 'approve-erc20') {
-        return tx.send(
-          buildErc20ApproveRequest({
-            chainId,
-            token: step.token,
-            spender: UNISWAP_PERMIT2_ADDRESS,
-            amount: step.amount,
-          }),
-          // Its amount follows the live pool: held as a step of the liquidity action.
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: UNISWAP_PERMIT2_ADDRESS }) },
-        )
-      }
-      if (step.kind === 'permit2-approve') {
-        return tx.send(
-          buildPermit2ApproveRequest({
-            chainId,
-            token: step.token,
-            positionManager,
-            amount: step.amount,
-            expiration: step.expiration,
-          }),
-          { reviewedAccount, intent: approvalIntent(p.intent, { step: step.kind, token: step.token, spender: positionManager }) },
-        )
-      }
-      // Everything that touches funds is frozen inside unlockData; only the
-      // deadline is stamped at send time.
-      return tx.send(
-        buildModifyLiquiditiesRequest({
-          chainId,
-          positionManager,
-          unlockData: p.plan.unlockData,
-          deadline: swapDeadline(isSafeConnection(wagmiConfig)),
-          value: p.plan.value,
-        }),
-        {
-          reviewedAccount,
-          simulationBlockNumber: confirmedAt,
-          // Its deadline restamps and a fresh plan re-prices it: held as a change to these positions.
-          intent: p.intent,
-          legacy: p.legacy,
-          reviewNotice: `${p.copy.lead} ${p.copy.detail}`,
-          // Runs after the review, so however long it sat open, a changed
-          // position or drift beyond the reviewed maxima still aborts first.
-          reverify: async () => {
-            if (!client) return
-            const { market, fresh } = await readLive(p.account)
-            const problem = editLiquidityStillFits(p.plan, {
-              sqrtP: market.sqrtP,
-              liquidity: fresh.liquidity,
-            })
-            if (problem) throw new FlowError(problem)
-          },
+      return {
+        account: p.account,
+        scope: `jbm:liquidity:${p.intent}`,
+        calls: liquidityStepCalls(steps, { chainId, positionManager, intent: p.intent }, edit),
+        description: `${p.copy.lead} ${p.copy.detail}`,
+        // Runs after the review, so however long it sat open, a changed
+        // position or drift beyond the reviewed maxima still aborts first.
+        reverify: async () => {
+          if (!client) return
+          const { market, fresh } = await readLive(p.account)
+          const problem = editLiquidityStillFits(p.plan, {
+            sqrtP: market.sqrtP,
+            liquidity: fresh.liquidity,
+          })
+          if (problem) throw new FlowError(problem)
         },
-      )
+      }
     },
     // readLive closes over stable props; the plan itself is read from the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tx, chainId, positionManager, client],
+    [chainId, positionManager, client],
   )
 
   // Each step once the one before it confirms.
   const run = useStepRun<Step>({
     tx,
-    send: sendStep,
+    send: tx.run,
+    action: runAction,
     onFinish: hash => {
       setDone(hash)
       void queryClient.invalidateQueries({ queryKey: ['userLpPositions'] })
@@ -547,7 +520,7 @@ export function EditPositionPanel({
 
   const stopped = run.stoppedOn(reviewed?.steps)
   const dialog = reviewed || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!reviewed}
       title={batchProposed || run.proposed ? 'Proposed to Safe' : done ? 'Position updated' : 'Confirm edit'}
@@ -570,21 +543,14 @@ export function EditPositionPanel({
           ? liquidityBatchIntro(reviewed.steps.length)
           : undefined
       }
-      action={
-        !reviewed
-          ? 'Edit position'
-          : run.running
-            ? 'Editing position…'
-            : stopped
-              ? `Retry step ${run.index + 1} of ${reviewed.steps.length}`
-              : FINAL_STEP[reviewed.plan.kind]
-      }
-      onConfirm={stopped ? resume : startRun}
       busy={busy}
       complete={done !== null || batchProposed || run.proposed || run.unconfirmed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your position…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}
+      start={startRun}
+      next={stopped ? { label: `Retry step ${run.index + 1} of ${reviewed?.steps.length ?? 0}`, onClick: resume }
+        : batchError && !run.running ? { label: 'Retry', onClick: startRun } : null}
     >
       {reviewed &&
       balances.data &&
@@ -595,7 +561,7 @@ export function EditPositionPanel({
           the price moves against it. Lower the amount to be safe.
         </p>
       ) : null}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   if (done) {
@@ -641,7 +607,7 @@ export function EditPositionPanel({
           editing
             ? undefined
             : (edge, value) => {
-                ;(edge === 'min' ? setMinText : setMaxText)(String(value))
+               (edge === 'min' ? setMinText : setMaxText)(String(value))
                 setRangeTouched(true)
               }
         }

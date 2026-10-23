@@ -35,7 +35,7 @@ import {
   splitOk,
   type DraftSplit,
 } from '@/components/create/SplitsEditor'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -1073,7 +1073,7 @@ function EditSplitsModal({
           )}
 
           {plan || busy ? (
-            <TxConfirmDialog
+            <TxProgress
               open
               preparing={!plan}
               title={success ? 'Splits saved' : 'Confirm splits'}
@@ -1084,8 +1084,8 @@ function EditSplitsModal({
               error={flowError}
               busy={busy}
               complete={success}
-              action={flowError ? 'Retry' : 'Confirm and save'}
-              onConfirm={() => void submit()}
+              start={() => void submit()}
+              next={flowError ? { label: 'Retry', onClick: () => void submit() } : null}
               onClose={() => {
                 if (busy) return
                 setPlan(null)

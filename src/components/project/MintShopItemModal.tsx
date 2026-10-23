@@ -1,5 +1,6 @@
 'use client'
 
+import { ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { shop721QueryKey } from '@/hooks/useShop721'
 
 import {
@@ -13,41 +14,22 @@ import {
   JBPermissionIdsV6,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import {
-  encodeFunctionData,
   isAddress,
   zeroAddress,
   type Address,
   type PublicClient,
 } from 'viem'
-import { useConfig, useSwitchChain, useWriteContract } from 'wagmi'
-import {
-  getAccount,
-  getPublicClient,
-} from 'wagmi/actions'
+import { useConfig } from 'wagmi'
+import { getPublicClient } from 'wagmi/actions'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { useWallet } from '@/hooks/useWallet'
-import { submitReviewedContractWrite } from '@/lib/contract-write'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { captureWalletContext } from '@/lib/wallet-context'
-import {
-  gasWithHeadroom,
-  settledLine,
-  WriteHeldError,
-  type WriteHoldClient,
-} from '@bananapus/nana-sdk-core/review'
-import { useHeldWrite } from '@bananapus/nana-sdk-core/review/react'
-import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
-import { reviewDescription, writeHolds } from '@/lib/write-holds'
 import { shortError } from '@/lib/errors'
-import {
-  isSafeConnection,
-  SAFE_NONCE_GUIDANCE,
-  useSafeConnection,
-} from '@/lib/safe-connector'
 import { buildMint721TierRequest } from '@/lib/transaction-builders'
-import { requireContractTransactionReview } from '@/lib/transaction-review'
 import { chainName } from '@/lib/urn'
 import { SUPPORTED_CHAINS } from '@/providers/Providers'
 
@@ -80,59 +62,15 @@ export function MintShopItemModal({
 }) {
   const config = useConfig()
   const queryClient = useQueryClient()
-  const { switchChainAsync } = useSwitchChain()
-  const { writeContractAsync } = useWriteContract()
   const { isConnected, address, openSignIn } = useWallet()
   const [beneficiary, setBeneficiary] = useState(address ?? '')
   const [quantity, setQuantity] = useState('1')
   const [review, setReview] = useState<MintReview | null>(null)
-  const [phase, setPhase] = useState<
-    'form' | 'checking' | 'review' | 'sending' | 'confirming' | 'uncertain' | 'held' | 'done'
-  >('form')
+  const [phase, setPhase] = useState<'form' | 'checking' | 'review'>('form')
   const [message, setMessage] = useState<string | null>(null)
-  const [hash, setHash] = useState<`0x${string}` | null>(null)
-
-  /** The mint is the hold's verified settlement: refresh the shop and say so. */
-  const finishMint = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: shop721QueryKey(chainId, projectId, isRevnet) }),
-      queryClient.invalidateQueries({ queryKey: ['shopTierSupply'] }),
-    ])
-    setPhase('done')
-  }
-
-  // The SDK's held write of this exact mint: held from just before the wallet opens, across
-  // closing this modal and reloading, until the hold settles it. Its view follows the
-  // transaction or Safe proposal and owns the line, the exit and "Send it again".
-  const viaSafe = useSafeConnection(config)
-  const request = useMemo(() => review ? buildMint721TierRequest({
-    chainId, hook, tierIds: Array.from({ length: review.quantity }, () => tierId), beneficiary: review.beneficiary,
-  }) : null, [review, chainId, hook, tierId])
-  const call = useMemo(() => request ? { to: request.address, data: encodeFunctionData(request), value: 0n } : undefined, [request])
-  const held = useHeldWrite({
-    hold: writeHolds,
-    chainId,
-    account: review?.account ?? zeroAddress,
-    safe: viaSafe,
-    call,
-    client: getPublicClient(config, { chainId: chainId as SupportedChainId }) as WriteHoldClient | undefined,
-    onSettled: settled => {
-      if (settled.result === 'success') void finishMint()
-      else {
-        setMessage(settledLine(settled))
-        setPhase('uncertain')
-      }
-    },
-    // The user checked their wallet: the same mint is reviewed and sent again.
-    onReleased: by => { if (by === 'user') void handleConfirm() },
-  })
-  // Held, confirming, or a success that went through while away: the view's line, and its action.
-  const heldShown = phase === 'confirming' || phase === 'held'
-  const shownPhase = heldShown && (held.phase === 'held' || held.phase === 'succeeded') ? 'held' : phase
-
-  // A direct mint is in flight while it confirms; a Safe proposal is with its signers, and the modal may close.
-  const confirmingDirect = phase === 'confirming' && held.phase === 'confirming' && !viaSafe
-  const busy = ['checking', 'sending'].includes(phase) || confirmingDirect
+  const tx = useReviewedAction(chainId)
+  const busy = phase === 'checking' || tx.busy
+  const settled = tx.settled
   const maxQuantity = Math.max(0, Math.min(50, remaining))
 
   const handleReview = async () => {
@@ -164,7 +102,7 @@ export function MintShopItemModal({
       const client = getPublicClient(config, {
         chainId: chainId as SupportedChainId,
       }) as PublicClient | undefined
-      if (!client) throw new Error(`${chainName(chainId)} is unavailable.`)
+      if (!client) throw new ReviewLineError(`${chainName(chainId)} is unavailable.`)
       await assertMintReady(client, {
         chainId,
         projectId,
@@ -194,113 +132,39 @@ export function MintShopItemModal({
       setMessage('Your connected account changed. Review the mint again.')
       return
     }
-
     setMessage(null)
-    try {
-      setPhase('checking')
-      const assertOriginalWallet = captureWalletContext(config, { account: address, chainId })
-      const client = getPublicClient(config, {
-        chainId: chainId as SupportedChainId,
-      }) as PublicClient | undefined
-      if (!client || !request) throw new Error(`${chainName(chainId)} is unavailable.`)
-      await assertMintReady(client, {
-        chainId,
-        projectId,
-        hook,
-        account: address,
-        tierId,
-        quantity: review.quantity,
-        isRevnet,
-      })
-      setPhase('sending')
-      const submitted = await held.send(gate => submitReviewedContractWrite({
-        request,
-        expectedAccount: address,
-        review: reviewed =>
-          requireContractTransactionReview(
-            {
-              ...reviewed,
-              account: address,
-              // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-              ...(viaSafe ? { safeTxGas: 0n } : {}),
-            },
-            {
-              title: `Review free mint on ${chainName(chainId)}`,
-              label: `Mint ${review.quantity} × ${itemName}`,
-              contractName: 'JB721TiersHook',
-              description: reviewDescription(viaSafe
-                ? SAFE_NONCE_GUIDANCE
-                : 'This consumes shop inventory and collects no payment. It cannot be undone.'),
-              ...(viaSafe
-                ? { confirmLabel: 'Agree & continue to Safe' }
-                : {}),
-            },
-          ),
-        switchChain: reviewedChainId =>
-          switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
-        currentAccount: () => getAccount(config).address,
-        reverify: () =>
-          assertMintReady(client, {
-            chainId,
-            projectId,
-            hook,
-            account: address,
-            tierId,
-            quantity: review.quantity,
-            isRevnet,
-          }),
-        simulate: async reviewed => {
-          const simulationRequest = {
-            ...reviewed,
-            account: address,
-          }
-          const [{ request: simulated }, estimate] = await Promise.all([
-            client.simulateContract(simulationRequest),
-            client.estimateContractGas(simulationRequest),
-          ])
-          return {
-            ...simulated,
-            chainId: reviewed.chainId,
-            gas: viaSafe ? 0n : gasWithHeadroom(estimate),
-          }
-        },
-        beforeSend: () => {
-          assertOriginalWallet()
-          if (isSafeConnection(config) !== viaSafe) {
-            throw new Error('Wallet connection changed. Review the transaction again.')
-          }
-        },
-        write: simulated => writeContractAsync(
-          simulated as Parameters<typeof writeContractAsync>[0],
-        ),
-        accountChangedError:
-          'Connected account changed. Review the free mint again.',
-        beforeWrite: () => gate.beforeSend(),
-        onWriteSubmitted: hash => gate.afterSubmit(hash),
-        onWriteRejected: () => gate.onRejected(),
-        onBeforeWriteAborted: () => gate.onRejected(),
-      }))
-      setHash(submitted)
-      // The view follows it until the hold settles it (onSettled).
-      setPhase('confirming')
-    } catch (error) {
-      // Held already, or a success that went through while away: the view shows it with its action.
-      if (error instanceof WriteHeldError || held.phase === 'succeeded') {
-        setPhase('held')
-        return
-      }
-      // The wallet may have sent it without saying so: the hold says what is held.
-      const now = await held.check().catch(() => null)
-      if (now && now.phase !== 'clear' && now.phase !== 'settled' && now.phase !== 'released') {
-        setPhase('held')
-        return
-      }
-      setMessage(shortError(error, 'Could not mint this item.'))
-      setPhase(review ? 'review' : 'form')
+    const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as PublicClient | undefined
+    if (!client) {
+      setMessage(`${chainName(chainId)} is unavailable.`)
+      return
+    }
+    const request = buildMint721TierRequest({
+      chainId, hook, tierIds: Array.from({ length: review.quantity }, () => tierId), beneficiary: review.beneficiary,
+    })
+    const result = await tx.run({
+      account: review.account,
+      calls: [{ ...reviewedCall({ ...request, label: `Mint ${review.quantity} × ${itemName}` }), contractName: 'JB721TiersHook' }],
+      title: `Review free mint on ${chainName(chainId)}`,
+      context: [
+        { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
+        { label: 'Beneficiary', value: review.beneficiary, mono: true },
+        { label: 'On', value: chainName(chainId) },
+      ],
+      description: 'This consumes shop inventory and collects no payment. It cannot be undone.',
+      // The wallet that reviewed it, on the mint's chain, right before it opens.
+      assertWriteState: captureWalletContext(config, { account: review.account, chainId }),
+      reverify: () => assertMintReady(client, {
+        chainId, projectId, hook, account: review.account, tierId, quantity: review.quantity, isRevnet,
+      }),
+    })
+    if (result?.status === 'done') {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: shop721QueryKey(chainId, projectId, isRevnet) }),
+        queryClient.invalidateQueries({ queryKey: ['shopTierSupply'] }),
+      ])
     }
   }
 
-  const settled = shownPhase === 'done' || shownPhase === 'uncertain' || shownPhase === 'held' || (phase === 'confirming' && !confirmingDirect)
   const footer = (
     <div className="flex justify-end gap-2">
       <button type="button" onClick={onClose} disabled={busy} className="btn-secondary min-h-[44px] px-5 text-sm">
@@ -358,36 +222,28 @@ export function MintShopItemModal({
       </div>
       {message && !review ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}
       {review || phase === 'checking' ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!review}
-          title={phase === 'done' ? 'Items minted' : shownPhase === 'uncertain' || shownPhase === 'held' || (phase === 'confirming' && !confirmingDirect) ? 'Mint submitted' : 'Confirm mint'}
+          title={tx.phase === 'success' ? 'Items minted' : settled ? 'Mint submitted' : 'Confirm mint'}
           rows={
             review
               ? [
                   { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
                   { label: 'Beneficiary', value: review.beneficiary, mono: true },
                   { label: 'On', value: chainName(chainId) },
-                  ...(hash ? [{ label: 'Transaction', value: hash, mono: true }] : []),
+                  ...(tx.hash ? [{ label: 'Transaction', value: tx.hash, mono: true }] : []),
                 ]
               : []
           }
           steps={review ? [{ title: `Mint ${review.quantity} × ${itemName}` }] : []}
           activeIndex={busy ? 0 : -1}
-          action={busy ? 'Checking & minting…' : 'Mint without payment'}
-          onConfirm={() => void handleConfirm()}
+          start={() => void handleConfirm()}
+          next={review && !busy && !settled && (tx.error || message) ? { label: 'Try again', onClick: () => void handleConfirm() } : null}
           busy={busy}
           complete={settled}
-          status={
-            !review
-              ? 'Checking your mint permission…'
-              : phase === 'uncertain'
-                ? (message ?? 'The mint was submitted. Its confirmation could not be read, so this form will not submit it again. Check the transaction before minting more inventory.')
-                : phase === 'confirming' && !held.exitAction ? (held.line ?? undefined) : undefined
-          }
-          error={shownPhase === 'held' || (phase === 'confirming' && held.exitAction)
-            ? <WriteHeldNotice chainId={chainId} view={held} action={held.exitAction ?? (held.sendAgainAction ? { label: held.sendAgainAction.label, run: () => held.sendAgainAction!.run().then(() => setPhase('review')) } : null)} />
-            : phase === 'uncertain' ? undefined : message}
+          status={!review ? 'Checking your mint permission…' : tx.notice ?? undefined}
+          error={tx.error ?? message}
           onClose={() => {
             if (settled) {
               onClose()
@@ -396,6 +252,7 @@ export function MintShopItemModal({
             setReview(null)
             setPhase('form')
             setMessage(null)
+            tx.reset()
           }}
         >
           {settled || !review ? null : (
@@ -403,7 +260,7 @@ export function MintShopItemModal({
               This free mint consumes {review.quantity} item{review.quantity === 1 ? '' : 's'} of inventory, collects no payment, and cannot be undone.
             </div>
           )}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </ModalShell>
   )
@@ -435,9 +292,9 @@ async function assertMintReady(
     isRevnet,
     tierLimit: 1,
   })
-  if (liveShop?.protocol === 'defifa') throw new Error('Use the collection’s native NFT checkout.')
+  if (liveShop?.protocol === 'defifa') throw new ReviewLineError('Use the collection’s native NFT checkout.')
   if (!liveShop || liveShop.hook.toLowerCase() !== hook.toLowerCase()) {
-    throw new Error('The project’s live shop hook changed. Review the mint again.')
+    throw new ReviewLineError('The project’s live shop hook changed. Review the mint again.')
   }
 
   const owner = await client.readContract({
@@ -454,7 +311,7 @@ async function assertMintReady(
       permissionIds: [JBPermissionIdsV6.MINT_721],
     })
     if (!allowed) {
-      throw new Error(
+      throw new ReviewLineError(
         `This wallet cannot mint shop items on ${chainName(chainId)}.`,
       )
     }
@@ -472,10 +329,10 @@ async function assertMintReady(
     args: [hook, BigInt(tierId), false],
   })
   if (Number(liveTier.id) !== tierId || !liveTier.flags.allowOwnerMint) {
-    throw new Error('This item does not allow owner/operator free mints.')
+    throw new ReviewLineError('This item does not allow owner/operator free mints.')
   }
   if (Number(liveTier.remainingSupply) < quantity) {
-    throw new Error(
+    throw new ReviewLineError(
       `Only ${liveTier.remainingSupply.toString()} item${liveTier.remainingSupply === 1 ? '' : 's'} remain on ${chainName(chainId)}.`,
     )
   }

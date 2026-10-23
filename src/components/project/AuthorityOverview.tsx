@@ -21,7 +21,7 @@ import {
 } from "@/components/project/SafeQueueCard";
 import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
-import { TxConfirmDialog } from "@/components/ui/TxConfirmDialog";
+import { TxProgress } from "@/components/ui/TxProgress";
 import { ErrorNote } from "@/components/ui/TxError";
 import { useRelayrDiscard } from "@/components/RelayrDiscard";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
@@ -706,7 +706,7 @@ export function TransferAuthorityFlow({
 
   const relinquish = isRevnet && plan?.to === zeroAddress;
   const dialog = plan ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       title={
         done
@@ -737,13 +737,12 @@ export function TransferAuthorityFlow({
       error={discard.active ? null : error}
       busy={busy}
       complete={done}
-      action={error ? "Retry" : `Confirm & ${isRevnet ? "set operator" : "transfer"}`}
-      actionDisabled={discard.active}
-      onConfirm={() => void submit()}
+      start={() => void submit()}
+      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
       {discard.element}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null;
 
   if (!open) {
@@ -1266,7 +1265,7 @@ export function PermissionEditor({
   };
 
   const dialog = plan || checking ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!plan}
       title={
@@ -1306,13 +1305,12 @@ export function PermissionEditor({
       error={discard.active ? null : error}
       busy={checking || busy}
       complete={done}
-      action={error ? "Retry" : grant ? "Confirm & update" : "Confirm & add"}
-      actionDisabled={discard.active}
-      onConfirm={() => void submit()}
+      start={() => void submit()}
+      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
       {discard.element}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null;
 
   return (

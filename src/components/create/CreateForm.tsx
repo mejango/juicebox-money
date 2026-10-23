@@ -15,11 +15,12 @@ import createIllustration from "@/assets/illustrations/create.png";
 import {
   encodeFunctionData,
   parseUnits,
+  type Abi,
   type Address,
   type Hex,
   type PublicClient,
 } from "viem";
-import { useConfig, useSwitchChain, useWriteContract } from "wagmi";
+import { useConfig } from "wagmi";
 import {
   getAccount,
   getPublicClient,
@@ -30,10 +31,9 @@ import { ProjectLink } from "@/components/ProjectLink";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { friendlyError } from "@/lib/errors";
-import { submitReviewedContractWrite } from "@/lib/contract-write";
 import { captureWalletContext } from "@/lib/wallet-context";
+import { revertedReceipt } from "@/lib/reviewed-call";
 import {
-  gasWithHeadroom,
   isDefiniteWalletRejection,
   type SavedAttempt,
   type WriteHoldHandle,
@@ -74,6 +74,7 @@ import {
   recordLaunchChainStatus,
   remainingLaunchChains,
   saveLaunchSession,
+  withLaunchLock,
   type LaunchChainStatus,
   type LaunchSession,
 } from "@/lib/launch-session";
@@ -130,14 +131,13 @@ import {
 } from "./ui";
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
-import type { TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import type { TxConfirmRow } from "@/components/ui/TxProgress";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
   type FeedReachability,
 } from "@/lib/feed-reachability";
 import { chainName, toUrn } from "@/lib/urn";
-import { requireContractTransactionReview } from "@/lib/transaction-review";
 import { OPERATOR_LIMITS, OPERATOR_POWERS } from "@/lib/protocol-concepts";
 import {
   SPLIT_SALES_TOKEN_CREDIT_DESCRIPTION,
@@ -162,8 +162,8 @@ const AuthoritySafeEditor = dynamic(
 );
 // Mounts only when open: client-side, with its own empty boundary so a first
 // open never falls through to the route skeleton.
-const TxConfirmDialog = dynamic(
-  () => import("@/components/ui/TxConfirmDialog").then(module => module.TxConfirmDialog),
+const TxProgress = dynamic(
+  () => import("@/components/ui/TxProgress").then(module => module.TxProgress),
   { ssr: false },
 );
 const IssuanceLadder = dynamic(
@@ -322,8 +322,6 @@ export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
   const safeConnection = useSafeConnection(config);
-  const { switchChainAsync } = useSwitchChain();
-  const { writeContractAsync } = useWriteContract();
   // Leaving the page ends a launch's waits for a Safe to execute what it
   // proposed; the saved launch keeps each proposal for a later visit.
   const pageSignal = useUnmountSignal();
@@ -1618,8 +1616,6 @@ export function CreateForm() {
               salt: pinned.salt,
               plan: pinned.plans[chainId],
               account: address!,
-              switchChain: reviewedChainId => switchChainAsync({ chainId: reviewedChainId as SupportedChainId }),
-              writeContract: request => writeContractAsync(request as unknown as Parameters<typeof writeContractAsync>[0]),
               onProgress: setRelayrProgress,
               onSetup: multisigSetup => updateStatus(chainId, { multisigSetup }),
               signal,
@@ -1649,108 +1645,61 @@ export function CreateForm() {
             salt: pinned.salt,
           });
           directSafeCall = viaSafe ? { safe: address!, to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n } : undefined;
+          const launchCall = { to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n };
           // The fresh send's hold, on its exact call: the same launch key, so it is the one recovery reads.
-          const hold = writeHolds.open({
-            chainId, account: address!, safe: viaSafe, namespace: launchNamespace(launch),
-            call: { to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: request.value ?? 0n },
+          launchHoldRef.current = writeHolds.open({
+            chainId, account: address!, safe: viaSafe, namespace: launchNamespace(launch), call: launchCall,
           });
-          launchHoldRef.current = hold;
-          hash = await hold.send<Hex>(client as never, gate => submitReviewedContractWrite({
-            request,
-            expectedAccount: address,
-            review: (reviewed) =>
-              requireContractTransactionReview(
-                {
-                  ...reviewed,
-                  account: address,
-                  // A Safe app signs the sent gas as safeTxGas; 0 makes a failed call revert.
-                  ...(viaSafe ? { safeTxGas: 0n } : {}),
-                },
-                {
-                  title: `Review launch on ${chainName(chainId)}`,
-                  label: "Launch project",
-                  ...(viaSafe
-                    ? {
-                        description: SAFE_NONCE_GUIDANCE,
-                        confirmLabel: "Agree & continue to Safe",
-                      }
-                    : {}),
-                },
-              ),
-            switchChain: (reviewedChainId) =>
-              switchChainAsync({
-                chainId: reviewedChainId as SupportedChainId,
-              }),
-            currentAccount: () => getAccount(config).address,
-            // `buildLaunchRequest` is a union of deployer ABIs; viem cannot
-            // infer its tuple branch after runtime chain selection.
-            simulate: async (reviewed) => {
-              const simulationRequest = {
-                ...reviewed,
-                account: address,
-              };
-              const [{ request: simulated }, estimate] = await Promise.all([
-                client.simulateContract(
-                  simulationRequest as unknown as Parameters<
-                    typeof client.simulateContract
-                  >[0],
-                ),
-                client.estimateContractGas(
-                  simulationRequest as unknown as Parameters<
-                    typeof client.estimateContractGas
-                  >[0],
-                ),
-              ]);
-              return {
-                ...simulated,
-                chainId,
-                gas: viaSafe ? 0n : gasWithHeadroom(estimate),
-              };
-            },
-            beforeSend: () => {
+          const { sendReviewedWrite } = await import("@/lib/reviewed-send");
+          await sendReviewedWrite({
+            account: address!,
+            calls: [{
+              chainId, ...launchCall,
+              // `buildLaunchRequest` is a union of deployer ABIs; the review decodes the call it sends.
+              abi: request.abi as Abi, functionName: request.functionName, args: request.args as readonly unknown[],
+              label: "Launch project",
+              intent: launchNamespace(launch),
+            }],
+            title: `Review launch on ${chainName(chainId)}`,
+            ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: "Agree & continue to Safe" } : {}),
+            assertWriteState: () => {
               assertWalletContext();
               if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
             },
-            beforeWrite: async () => {
-              // The SDK's atomic reservation, under its lock: another tab resuming this
-              // launch is refused here, before its wallet opens.
-              await gate.beforeSend();
-              try {
-                const saved = loadLaunchSession({ strict: true });
-                const status = saved?.statuses[chainId];
-                if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
-                    status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
-                    ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
-                  throw new Error("The saved launch changed. Recover the original launch before continuing.");
-                }
-                const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
-                if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0])) {
-                  throw new Error("The saved launch changed. Review the original launch before continuing.");
-                }
-                updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
-              } catch (error) {
-                gate.onRejected();
-                throw error;
+            // Under the hold's reservation: another tab resuming this launch is refused before its wallet opens.
+            beforeWallet: () => {
+              const saved = loadLaunchSession({ strict: true });
+              const status = saved?.statuses[chainId];
+              if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
+                  status?.unverifiedSend || status?.txHash || status?.safeProposalHash ||
+                  ["confirming", "uncertain", "done"].includes(status?.phase ?? "")) {
+                throw new Error("The saved launch changed. Recover the original launch before continuing.");
               }
+              const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
+              if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== launchCall.data) {
+                throw new Error("The saved launch changed. Review the original launch before continuing.");
+              }
+              updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
+              walletInvoked = true;
             },
-            onWriteRejected: () => gate.onRejected(),
-            onWriteSubmitted: submitted => gate.afterSubmit(submitted),
-            onBeforeWriteAborted: () => {
+            onUnsent: () => {
+              walletInvoked = false;
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
               if (saved?.salt === pinned.salt && status?.unverifiedSend && !status.txHash && !status.safeProposalHash) {
                 updateStatus(chainId, { phase: "failed", unverifiedSend: undefined });
               }
             },
-            write: (simulated) => {
-              walletInvoked = true;
-              return writeContractAsync(
-                simulated as Parameters<typeof writeContractAsync>[0],
-              );
+            // Journaled as soon as it is out, while core waits for its receipt.
+            onSubmitted: (_call, _step, submitted) => {
+              hash = submitted;
+              if (/^0x[0-9a-fA-F]{64}$/u.test(submitted)) {
+                updateStatus(chainId, { phase: "confirming", txHash: submitted, safeProposalHash: viaSafe ? submitted : undefined });
+              }
             },
-            accountChangedError:
-              "Connected account changed. Review the launch again.",
-          })).catch((error: unknown) => {
+          }).catch((error: unknown) => {
+            // A mined revert is read from its receipt below.
+            if (hash && revertedReceipt(error)) return;
             // Another attempt holds this launch (another tab's, or one still out): its state and exit, never a send.
             // By name: the hold's module loads with the launch, not with the form.
             if (error instanceof Error && error.name === "WriteHeldError") {
@@ -1759,6 +1708,7 @@ export function CreateForm() {
             }
             throw error;
           });
+          if (!hash) throw new Error("The wallet returned no launch hash. Recover the original wallet request before trying again.");
           if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
             hash = undefined;
             throw new Error("The wallet returned no valid launch hash. Recover the original wallet request before trying again.");
@@ -1903,12 +1853,7 @@ export function CreateForm() {
       // Nothing left to resume: drop the persisted progress record and the
       // saved draft it was built from.
       const salt = pinnedRef.current?.salt ?? restoredSessionRef.current?.salt;
-      const clear = () => completeLaunchSession(salt);
-      if (navigator.locks) {
-        await navigator.locks.request("jbm-launch", clear);
-      } else {
-        clear();
-      }
+      await withLaunchLock(() => completeLaunchSession(salt));
       restoredSessionRef.current = null;
       setPhase("done");
     }
@@ -1920,7 +1865,8 @@ export function CreateForm() {
    */
   const recoverUnreadable = async (pinned: NonNullable<typeof pinnedRef.current>, chainId: number) => {
     const [{ launchAttemptOf }, { SAVED_ATTEMPT_UNREADABLE_LINE }] = await Promise.all([
-      import("@/lib/launch-attempt"), import("@bananapus/nana-sdk-core/review"),
+      import("@/lib/launch-attempt"),
+      import(/* webpackExports: ["SAVED_ATTEMPT_UNREADABLE_LINE"] */ "@bananapus/nana-sdk-core/review"),
     ]);
     const client = getPublicClient(config, { chainId: chainId as SupportedChainId }) as PublicClient;
     setLaunchError(SAVED_ATTEMPT_UNREADABLE_LINE);
@@ -2073,14 +2019,7 @@ export function CreateForm() {
               throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
             }
           };
-          if (navigator.locks) {
-            await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
-              if (!lock) throw new Error("Another tab is processing a launch. Return to that tab to continue.");
-              save();
-            });
-          } else {
-            save();
-          }
+          await withLaunchLock(save, "Another tab is processing a launch. Return to that tab to continue.");
         }
         restoredSessionRef.current = session;
       }
@@ -2186,14 +2125,7 @@ export function CreateForm() {
       setConfirmOpen(false);
     };
     try {
-      if (navigator.locks) {
-        await navigator.locks.request("jbm-launch", { ifAvailable: true }, (lock) => {
-          if (!lock) throw new Error("Another tab is processing this launch. Return to that tab to continue.");
-          abandon();
-        });
-      } else {
-        abandon();
-      }
+      await withLaunchLock(abandon, "Another tab is processing this launch. Return to that tab to continue.");
     } catch (error) {
       // Keep local recovery errors intact, including the word "cancel".
       setLaunchError(error instanceof Error ? error.message : "Could not cancel this deployment. Please try again.");
@@ -2378,11 +2310,7 @@ export function CreateForm() {
     setStatuses(session.statuses);
     setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
     if (remainingLaunchChains(session).length === 0) {
-      if (navigator.locks) {
-        void navigator.locks.request("jbm-launch", () => completeLaunchSession(session.salt));
-      } else {
-        completeLaunchSession(session.salt);
-      }
+      void withLaunchLock(() => completeLaunchSession(session.salt));
       restoredSessionRef.current = null;
       setPhase("done");
     } else {
@@ -2686,7 +2614,7 @@ export function CreateForm() {
     </>
   );
   const launchDialog = confirmOpen ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       eyebrow="Launch"
       title={phase === "done" ? `${name.trim()} is live` : "Confirm launch"}
@@ -2702,19 +2630,13 @@ export function CreateForm() {
       error={launchError ?? stalledChain?.error ?? null}
       busy={launchLocked}
       complete={phase === "done"}
-      action={
-        phase === "failed"
-          ? usesRelayr || stalledChain?.phase === "uncertain"
-            ? "Check again"
-            : "Try again"
-          : "Confirm & launch"
-      }
-      onConfirm={() => (phase === "failed" ? retry() : void launch())}
       onClose={() => {
         if (launchLocked) return;
         setConfirmOpen(false);
         if (phase === "form") setLaunchError(null);
       }}
+      start={phase === "form" && !launchRecovery ? () => void launch() : undefined}
+      next={phase === "failed" ? { label: usesRelayr || stalledChain?.phase === "uncertain" ? "Check again" : "Try again", onClick: () => retry() } : null}
     >
       {launchRecovery ? (
         <SavedAttemptRecovery key={launchRecovery.chainId} attempt={launchRecovery.attempt} checkNext="Launch again" onRetired={onLaunchRetired} onFollow={onLaunchFollow} />
@@ -2741,7 +2663,7 @@ export function CreateForm() {
         </ul>
       ) : null}
       {launchCancellation}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null;
 
   // ---- Success view ----

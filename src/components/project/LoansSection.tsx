@@ -21,10 +21,11 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { txPhaseLabel, useSafeTx } from '@/hooks/useSafeTx'
+import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { contextRows, TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
@@ -79,7 +80,7 @@ export function tokenMeta(
  * the connected holder's own loans (with per-loan repay) and every loan against
  * the revnet. Opening a loan now lives in the Accounts (YOU) card
  * (GetLoanFlow). Repaying re-reads authoritative on-chain state and goes
- * through useSafeTx (simulate-first).
+ * through the reviewed send (simulate-first).
  */
 export function LoansSection({
   chainId,
@@ -355,8 +356,12 @@ function RepayFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
-  const approveTx = useSafeTx(chainId)
-  const repayTx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
+  /** The repayment reached the wallet: only then does a settled run mean the loan is repaid, not just approved. */
+  const [repaySent, setRepaySent] = useState(false)
+  const [runStep, setRunStep] = useState(0)
+  /** Each run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -365,24 +370,19 @@ function RepayFlow({
   const loans = revLoansAddress(chainId)
   const meta = tokenMeta(contexts, loan.token, chainId, symbols)
 
-  const busy = approveTx.busy || repayTx.busy
+  const busy = tx.busy
+  const repaid = tx.phase === 'success' && repaySent
+  /** A Safe executed the approval alone: the repayment is next. */
+  const approvalOnly = (tx.phase === 'success' && !repaySent) || tx.settledStep != null
 
-  const repayTxUrl = repayTx.hash
-    ? etherscanTxUrl(chainId, repayTx.hash)
+  const repayTxUrl = repaid && tx.hash
+    ? etherscanTxUrl(chainId, tx.hash)
     : null
 
   useEffect(() => {
-    if (repayTx.phase === 'success') onRepaid?.()
+    if (repaid) onRepaid?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [repayTx.phase])
-
-  // Once the ERC-20 approval lands, send the repayment held in the plan.
-  useEffect(() => {
-    if (approveTx.phase === 'success' && plan?.approve) {
-      repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [approveTx.phase])
+  }, [repaid])
 
   const handleRepay = async () => {
     if (!publicClient || checking || busy) return
@@ -428,8 +428,8 @@ function RepayFlow({
         value: isNative ? maxRepay : 0n,
       })
 
-      // ERC-20 source: approve REVLoans for the cap first (its own reviewed
-      // step), then repay. Skip when the allowance already covers it.
+      // ERC-20 source: approve REVLoans for the cap first (a step of the one
+      // review), then repay. Skip when the allowance already covers it.
       const allowance = isNative
         ? maxRepay
         : ((await publicClient.readContract({
@@ -470,58 +470,64 @@ function RepayFlow({
     }
   }
 
+  /** The plan's summary: shown on its progress, and in its one review. */
+  const repayRows = (current: RepayPlan) => [
+    { label: 'Loan', value: `${formatTokenAmount(current.amount, meta.decimals)} ${meta.symbol}` },
+    { label: 'Repay up to', value: `${formatTokenAmount(current.maxRepay, meta.decimals)} ${meta.symbol}`, strong: true },
+    { label: 'Collateral returned', value: `${formatTokenAmount(current.collateral)} ${collateralSymbol}` },
+    { label: 'On', value: chainName(chainId) },
+  ]
+
+  // One review: the approval when one is needed, then the repayment on the block it landed in.
   const handleConfirm = async () => {
     if (!plan || busy) return
     setFlowError(null)
-    if (plan.isNative) {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
-      return
-    }
-    if (!plan.approve || approveTx.phase === 'success') {
-      await repayTx.send(plan.request, { reviewedAccount: plan.account, intent: plan.intents.repay, legacy: plan.legacy.repay })
-      return
-    }
-    await approveTx.send(plan.approve, { reviewedAccount: plan.account, intent: plan.intents.approve })
+    // After an approval a Safe executed alone, the repayment follows on its block.
+    const approved = approvalOnly ? tx.receipt?.blockNumber : undefined
+    const approve = plan.approve && approved === undefined ? plan.approve : null
+    const repay = reviewedCall(plan.request, {
+      intent: plan.intents.repay,
+      legacy: plan.legacy.repay,
+      ...(approve ? { dependsOnPrior: true } : approved !== undefined ? { simulationBlockNumber: approved } : {}),
+    })
+    const fresh = approve ? [reviewedCall(approve, { intent: plan.intents.approve }), repay] : [repay]
+    const scope = `jbm:repay:${chainId}:${loan.id}`
+    const { calls, saved, scope: runScope } = await sequenceCalls(scope, plan.account, fresh)
+    // The dialog's steps: a held sequence resumes as saved, and a continued one is the repayment alone.
+    const total = plan.approve ? 2 : 1
+    const shown = (step: number) => Math.max(0, total - calls.length + step)
+    setRepaySent(false)
+    setRunStep(shown(0))
+    setRunShown(calls.map((_, step) => shown(step)))
+    const ended = await tx.run({
+      account: plan.account,
+      scope: runScope,
+      calls,
+      ...planShown(saved, { context: contextRows(repayRows(plan)) }),
+      onSubmitted: (_call, step) => {
+        setRunStep(shown(step))
+        if (shown(step) === total - 1) setRepaySent(true)
+      },
+    })
+    if (reachedLastStep(ended, calls.length)) setRepaySent(true)
   }
 
   const closeDialog = () => {
     if (busy) return
     setPlan(null)
     setFlowError(null)
-    approveTx.dismiss()
-    if (repayTx.phase !== 'success') repayTx.dismiss()
+    if (!repaid) tx.dismiss()
   }
 
-  const repayStep = plan?.approve ? 1 : 0
-  const activeIndex =
-    repayTx.phase !== 'idle' || approveTx.phase === 'success'
-      ? repayStep
-      : approveTx.phase !== 'idle'
-        ? 0
-        : -1
-  const error = flowError ?? approveTx.error ?? repayTx.error
+  const activeIndex = tx.phase !== 'idle' ? liveStep(tx, runShown, runStep) : -1
+  const error = flowError ?? tx.error
 
   const dialog = plan || checking ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!plan}
-      title={repayTx.phase === 'success' ? 'Loan repaid' : 'Confirm repayment'}
-      rows={plan ? [
-        {
-          label: 'Loan',
-          value: `${formatTokenAmount(plan.amount, meta.decimals)} ${meta.symbol}`,
-        },
-        {
-          label: 'Repay up to',
-          value: `${formatTokenAmount(plan.maxRepay, meta.decimals)} ${meta.symbol}`,
-          strong: true,
-        },
-        {
-          label: 'Collateral returned',
-          value: `${formatTokenAmount(plan.collateral)} ${collateralSymbol}`,
-        },
-        { label: 'On', value: chainName(chainId) },
-      ] : []}
+      title={repaid ? 'Loan repaid' : 'Confirm repayment'}
+      rows={plan ? repayRows(plan) : []}
       steps={plan ? [
         ...(plan.approve
           ? [
@@ -535,40 +541,28 @@ function RepayFlow({
         { key: 'repay', title: 'Repay and reclaim your collateral' },
       ] : []}
       activeIndex={activeIndex}
-      action={
-        approveTx.phase === 'simulating' || approveTx.phase === 'signing'
-          ? 'Approve the repayment…'
-          : approveTx.phase === 'pending'
-            ? 'Approving…'
-            : repayTx.phase === 'simulating'
-              ? 'Double-checking…'
-              : txPhaseLabel(repayTx.phase, {
-                  idle: error ? 'Retry' : 'Confirm repayment',
-                  pending: 'Repaying…',
-                })
-      }
-      onConfirm={() => void handleConfirm()}
       busy={checking || busy}
-      complete={repayTx.settled || approveTx.phase === 'submitted'}
+      complete={tx.settled && !approvalOnly}
       status={
         !plan
           ? 'Reading the loan and its current fee…'
-          : (repayTx.notice ??
-            approveTx.notice ??
-            repayTx.safeNonceGuidance ??
-            approveTx.safeNonceGuidance)
+          : approvalOnly
+            ? 'Approval confirmed. Continue to the repayment.'
+            : (tx.notice ?? tx.safeNonceGuidance)
       }
       error={error}
       onClose={closeDialog}
+      start={() => void handleConfirm()}
+      next={(!!error || approvalOnly) && !busy ? { label: approvalOnly ? 'Continue' : 'Retry', onClick: () => void handleConfirm() } : null}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
         The limit covers the amount borrowed plus the current repayment cost in {meta.symbol},
         with room for changes before confirmation. Anything unused is refunded.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
-  if (repayTx.phase === 'success') {
+  if (repaid) {
     return (
       <>
         <span className="text-xs text-smoke-700">

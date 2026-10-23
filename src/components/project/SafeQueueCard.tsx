@@ -1219,7 +1219,7 @@ export function SafeQueueCard({
         safe,
         fresh,
         address,
-        queuedSafeReviewCall(chain.chainId, fresh),
+        queuedSafeReviewCall(chain.chainId, fresh).label,
         reverifyAuthority,
       );
       setNotice(`Signed transaction #${tx.nonce} on ${chain.name}.`);

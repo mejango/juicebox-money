@@ -2,8 +2,8 @@
  * Cash out, burn and borrow freeze the holder (and the beneficiary of what
  * comes back) at review, from the connected account. When the wallet switches
  * to another account before the confirm, or between a loan's permission and
- * its borrow, nothing more reaches the wallet: the real useSafeTx and the
- * SDK's reviewed write refuse the send, and the dialog says why.
+ * its borrow, nothing more reaches the wallet: the real reviewed run
+ * refuses the send, and the dialog says why.
  */
 
 import { QueryClient } from '@tanstack/react-query'
@@ -33,9 +33,10 @@ const m = vi.hoisted(() => ({
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', async importOriginal => {
-  const { wallet } = await import('../support/fake-wallet')
+  const { wallet, walletActions } = await import('../support/fake-wallet')
   return {
     ...(await importOriginal<typeof import('@wagmi/core')>()),
+    ...walletActions,
     getAccount: () => ({ address: wallet.account, chainId: 1 }),
   }
 })
@@ -82,6 +83,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   prepareHookAwareCashOut: m.prepareCashOut,
   getBorrowableAmount: m.borrowable,
   hasPermissions: m.hasPermissions,
+  // The pool still beats the treasury when the sale is built.
+  quoteUniswapV4ExactInputSingle: vi.fn(async () => 30_000n),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -94,16 +97,13 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
         return { data: { token: RECLAIM_TOKEN, decimals: 6, currency: 2 } }
       case 'cashOutTerminal':
         return { data: { address: TERMINAL, isRouter: false } }
-      case 'cashOutQuote':
-        return {
-          data: {
-            route: 'treasury', expectedReturn: 9_750n, minimumReturn: 9_652n, terminalMinimum: 9_652n,
-            metadata: '0x', treasuryGross: 10_000n, treasuryProtocolFee: 250n, treasuryNet: 9_750n, buyback: null,
-          },
-          isFetching: false,
-          isError: false,
-          refetch: vi.fn(),
+      case 'cashOutQuote': {
+        const data = {
+          route: 'treasury', expectedReturn: 9_750n, minimumReturn: 9_652n, terminalMinimum: 9_652n,
+          metadata: '0x', treasuryGross: 10_000n, treasuryProtocolFee: 250n, treasuryNet: 9_750n, buyback: null,
         }
+        return { data, isFetching: false, isError: false, refetch: vi.fn(async () => ({ data, isError: false })) }
+      }
       case 'cashOutMarket':
         return {
           data: m.directSell
@@ -223,6 +223,7 @@ const amountInput = (input: ReactTestInstance) => String(input.props['aria-label
 describe('a cash out reviewed for one account', () => {
   it('wallet-action:cash-out-project-tokens never sends from an account switched to before confirming', async () => {
     vi.useFakeTimers()
+    wallet.holdReviews()
     const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
     await type(renderer, amountInput, '2')
     await act(async () => {
@@ -230,18 +231,20 @@ describe('a cash out reviewed for one account', () => {
     })
     await click(renderer, 'Cash out 2 JBT')
     expect(text(renderer.root)).toContain('Confirm cash out')
+    expect(wallet.openReviews).toBe(1)
 
     await switchTo(BOB)
-    await click(renderer, 'Confirm & cash out')
+    await act(async () => wallet.answerReview(true))
+    await act(async () => { await vi.advanceTimersByTimeAsync(50) })
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(text(renderer.root)).toContain(CHANGED)
   })
 
   it('wallet-action:approve-an-erc-20 never approves a pool sale from an account switched to before confirming', async () => {
     vi.useFakeTimers()
     m.directSell = true
+    wallet.holdReviews()
     const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
     await type(renderer, amountInput, '2')
     await act(async () => {
@@ -250,8 +253,10 @@ describe('a cash out reviewed for one account', () => {
     await click(renderer, 'Sell 2 JBT on the pool')
     expect(text(renderer.root)).toContain('Confirm pool sale')
 
+    expect(wallet.openReviews).toBe(1)
     await switchTo(BOB)
-    await click(renderer, 'Approve tokens for this sale')
+    await act(async () => wallet.answerReview(true))
+    await act(async () => { await vi.advanceTimersByTimeAsync(50) })
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
     expect(text(renderer.root)).toContain(CHANGED)
@@ -265,7 +270,6 @@ describe('a cash out reviewed for one account', () => {
       vi.advanceTimersByTime(400)
     })
     await click(renderer, 'Cash out 2 JBT')
-    await click(renderer, 'Confirm & cash out')
 
     expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }])
   })
@@ -275,16 +279,18 @@ describe('a burn reviewed for one account', () => {
   const props = { chainId: 1 as const, projectId: 42, tokenSymbol: 'JBT' }
 
   it('wallet-action:burn-project-tokens never burns from an account switched to before confirming', async () => {
+    wallet.holdReviews()
     const renderer = await render(createElement(BurnTokensFlow, props))
     await type(renderer, input => input.props.inputMode === 'decimal', '1')
     await click(renderer, 'Burn tokens permanently')
     expect(text(renderer.root)).toContain('Confirm burn')
+    expect(wallet.openReviews).toBe(1)
 
     await switchTo(BOB)
-    await click(renderer, 'Confirm & burn')
+    await act(async () => wallet.answerReview(true))
+    await settle()
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(text(renderer.root)).toContain(CHANGED)
   })
 
@@ -292,7 +298,6 @@ describe('a burn reviewed for one account', () => {
     const renderer = await render(createElement(BurnTokensFlow, props))
     await type(renderer, input => input.props.inputMode === 'decimal', '1')
     await click(renderer, 'Burn tokens permanently')
-    await click(renderer, 'Confirm & burn')
 
     expect(wallet.writes()).toEqual([{ functionName: 'burnTokensOf', account: ALICE }])
   })
@@ -307,25 +312,29 @@ describe('a loan reviewed for one account', () => {
     await type(renderer, collateral, '1')
     await click(renderer, 'Open the loan')
     expect(text(renderer.root)).toContain('Confirm loan')
-    await click(renderer, 'Confirm loan')
     // Alice's permission for REVLoans to burn her collateral reached her wallet.
     expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
 
     await switchTo(BOB)
     await act(async () => wallet.confirm(sentHash(1)))
-    await settle()
+    // The run's next step reads the permission's receipt, then refuses Bob.
+    for (let attempt = 0; attempt < 40 && !text(renderer.root).includes(CHANGED); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+    }
 
     expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
     expect(text(renderer.root)).toContain(CHANGED)
   })
 
   it('never asks for the permission from an account switched to before confirming', async () => {
+    wallet.holdReviews()
     const renderer = await render(createElement(GetLoanFlow, props))
     await type(renderer, collateral, '1')
     await click(renderer, 'Open the loan')
+    expect(wallet.openReviews).toBe(1)
 
     await switchTo(BOB)
-    await click(renderer, 'Confirm loan')
+    await act(async () => wallet.answerReview(true))
     await settle()
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -336,7 +345,6 @@ describe('a loan reviewed for one account', () => {
     const renderer = await render(createElement(GetLoanFlow, props))
     await type(renderer, collateral, '1')
     await click(renderer, 'Open the loan')
-    await click(renderer, 'Confirm loan')
     await act(async () => wallet.confirm(sentHash(1)))
     await settle()
 
@@ -348,7 +356,7 @@ describe('a loan reviewed for one account', () => {
 })
 
 describe('the normal path, click for click as main', () => {
-  it('cashes out with the amount, Cash out, then Confirm & cash out: one review, one wallet prompt, and no hold or recovery notice, twice in a row', async () => {
+  it('cashes out with the amount, then Cash out: one review, one wallet prompt, and no hold or recovery notice, twice in a row', async () => {
     vi.useFakeTimers()
     const HOLD_COPY = [HELD_CONFIRMING_LINE, HELD_AWAY_SUCCESS_LINE, HELD_EXIT_LABEL, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, WRITE_HOLD_PENDING_LINE]
     for (const round of [1, 2]) {
@@ -356,7 +364,6 @@ describe('the normal path, click for click as main', () => {
       await type(renderer, amountInput, '2')
       await act(async () => { vi.advanceTimersByTime(400) })
       await click(renderer, 'Cash out 2 JBT')
-      await click(renderer, 'Confirm & cash out')
       expect(wallet.requestReview).toHaveBeenCalledTimes(round)
       expect(wallet.writeContract).toHaveBeenCalledTimes(round)
       expect(HOLD_COPY.filter(line => text(renderer.root).includes(line))).toEqual([])

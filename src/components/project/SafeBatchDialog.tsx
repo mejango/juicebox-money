@@ -7,7 +7,7 @@ import { type Abi, type AbiFunction, type Hex } from 'viem'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { withFailedStep } from '@/components/ui/TxSteps'
 import { clientFor, readAuthorityOf } from '@/lib/authority'
 import { truncateAddress } from '@/lib/format'
@@ -245,7 +245,7 @@ export function SafeBatchDialog({
   }
 
   return (
-    <TxConfirmDialog
+    <TxProgress
       open
       eyebrow="Batch"
       title={complete ? `Batch on ${chainName(chainId)} submitted` : `Batch on ${chainName(chainId)}`}
@@ -271,10 +271,8 @@ export function SafeBatchDialog({
       }
       busy={locked}
       complete={complete}
-      action={route ? batchActionLabel(route, count, chainId) : 'Submit batch'}
-      actionDisabled={!route || route.kind === 'unavailable' || !order.ok || !count}
-      onConfirm={() => void submit()}
       onClose={close}
+      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count }}
     >
       {count ? (
         <ol className="space-y-2" aria-label="Batch steps">
@@ -346,6 +344,6 @@ export function SafeBatchDialog({
       ) : (
         <p className="text-sm text-smoke-600">Nothing is queued on this chain.</p>
       )}
-    </TxConfirmDialog>
+    </TxProgress>
   )
 }

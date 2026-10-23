@@ -5,7 +5,7 @@ import { type JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { formatUnits, isAddressEqual, type Address } from 'viem'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
@@ -261,7 +261,7 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
       </ul>
       {error && !open ? <p className="mt-2 text-sm text-red-600">{transactionMessage(error)}</p> : null}
     </details>
-    <TxConfirmDialog open={open} title={complete ? 'Payments finished' : 'Retry payments'} rows={reviewedRows}
+    <TxProgress open={open} title={complete ? 'Payments finished' : 'Retry payments'} rows={reviewedRows}
       steps={(calls ?? []).map(call => {
         const attempt = attempts[call.id]
         return { key: call.id, title: `${chainName(call.chainId)}: ${call.label}`,
@@ -269,11 +269,12 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
       })}
       stepsIntro="Pay network fees only. Each payment has its own result."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
-      action={savedSelection ? 'Resume saved batch' : 'Retry'} actionDisabled={needsReview || !calls?.length || discard.active}
-      onConfirm={() => void submit()} onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
-      onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>
+      onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
+      onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}
+      start={!needsReview && calls?.length ? () => void submit() : undefined}
+      next={!complete && !busy ? { label: savedSelection ? 'Resume saved batch' : 'Retry', onClick: () => void submit(), disabled: needsReview || !calls?.length || discard.active } : null}>
       {needsReview && !complete && !busy ? <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" onClick={() => { setOpen(false); discard.reset(); begin(available) }}>Review again</button> : null}
       {discard.element}
-    </TxConfirmDialog>
+    </TxProgress>
   </section>
 }

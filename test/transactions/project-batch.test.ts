@@ -8,6 +8,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
+  walletChainId: undefined as number | undefined,
   safe: false,
   relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
   releaseRaw: vi.fn(), reportedExecution: vi.fn(), beforeLock: vi.fn(),
@@ -16,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   pending: new Map<string, unknown>(),
   rawPending: new Map<string, unknown>(),
 }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account, chainId: mocks.walletChainId }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/authority', () => ({ clientFor: () => mocks.client, runAuthorityCalls: mocks.authority }))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
@@ -30,7 +31,9 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   waitForSafeExecutionHash: mocks.waitForExecution,
   reportedSafeExecution: mocks.reportedExecution,
 }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: mocks.review }))
+vi.mock('@/lib/reviewed-send', () => ({ reviewedSendDeps: {} }))
+/** The batch's one review is core's plan review; its plan stands in as a token. */
+vi.mock('@/lib/preload-review', () => ({ loadReviewEngine: async () => ({ reviewPlan: mocks.review }) }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: () => {} }))
 vi.mock('@/lib/relayr', () => ({
   hasRelayrPendingEvidence: (scope: string) => mocks.pending.has(scope) || window.localStorage.getItem(`jb-relayr-pending-v1:${scope}`) !== null,
@@ -56,6 +59,8 @@ const flow = new AbortController().signal
 
 const ACCOUNT = mocks.account as Address
 const TARGET = '0x2222222222222222222222222222222222222222' as Address
+/** The plan core's review returns, as the batch hands it on. */
+const PLAN = { account: ACCOUNT, calls: [], expiresAt: Number.MAX_SAFE_INTEGER }
 const HASH = `0x${'ab'.repeat(32)}` as Hex
 const BLOCK = `0x${'cd'.repeat(32)}` as Hex
 const SUCCESS_TOPIC = toEventSelector('ExecutionSuccess(bytes32,uint256)')
@@ -82,11 +87,13 @@ const call = (chainId = 1, suffix = ''): ProjectBatchCall => ({
 const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ signal: flow, scope, action, account: ACCOUNT, calls, reverify: async () => {}, ...extra })
 
 beforeEach(() => {
+  mocks.walletChainId = undefined
   vi.resetAllMocks()
   mocks.pending.clear()
   mocks.rawPending.clear()
   mocks.account = ACCOUNT
   mocks.safe = false
+  mocks.review.mockResolvedValue(PLAN)
   const storage = new Map<string, string>()
   vi.stubGlobal('window', { localStorage: {
     get length() { return storage.size },
@@ -144,6 +151,16 @@ describe('durable project batches', () => {
     expect(loadProjectBatch(projectBatchScope(action, 10, 7))?.id).toBe(saved.id)
   })
 
+  it('reviews permissionless calls a Safe sends as the Safe, the sender that spends the plan', async () => {
+    mocks.safe = true
+    const calls = [call(1, 'a'), call(10, 'b')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    // Only the review matters here; this harness can't prove a Safe's receipt.
+    await run(calls).catch(() => {})
+    expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({
+      calls: calls.map(item => expect.objectContaining({ from: item.authority })),
+    }), expect.anything())
+    expect(mocks.rawRelayr).not.toHaveBeenCalled()
+  })
   it('finishes a recovered journal whose calls were already marked complete', async () => {
     const batch = await run([call()])
     const key = `jb-project-batch:v1:journal:${batch.id}`
@@ -163,13 +180,26 @@ describe('durable project batches', () => {
     expect(batch.status).toBe('complete')
     expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({
       description: 'Pay network fees once for this batch. Each payment has its own result.',
-    }))
+      // Relayr's own account runs each permissionless call.
+      calls: calls.map(() => expect.objectContaining({ from: 'relayr' })),
+    }), expect.anything())
     expect(mocks.rawRelayr).toHaveBeenCalledTimes(1)
     expect(mocks.rawRelayr.mock.calls[0][0].calls).toEqual(calls)
     expect(verify.mock.calls.map(([item]) => item.id)).toEqual(calls.map(item => item.id))
     expect(mocks.relayr).not.toHaveBeenCalled()
     expect(mocks.authority).not.toHaveBeenCalled()
     expect(mocks.identity).not.toHaveBeenCalled()
+  })
+
+  it('shows a raw round in the batch review as one Relayr round paid on the wallet chain', async () => {
+    mocks.walletChainId = 10
+    const calls = [call(1, 'a'), call(10, 'c')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    expect((await run(calls)).status).toBe('complete')
+    const [review] = mocks.review.mock.calls[0]
+    const round = review.calls[0].relayrRound
+    expect(review.calls.map((item: { chainId: number; relayrRound?: string }) => [item.chainId, item.relayrRound])).toEqual([[1, round], [10, round]])
+    expect(review.relayrRounds).toEqual({ [round]: { paymentChainId: 10 } })
+    expect(mocks.rawRelayr.mock.calls[0][0].planned).toEqual({ plan: expect.anything(), round, chainId: 10 })
   })
 
   it('resumes the original raw payment bundle after completion proof fails', async () => {
@@ -903,7 +933,7 @@ describe('durable project batches', () => {
     expect(mocks.review.mock.calls[0][0].calls).toEqual(calls.map(() => expect.not.objectContaining({ gas: expect.anything() })))
     expect((await run()).status).toBe('complete')
     expect(mocks.review).toHaveBeenCalledTimes(1)
-    expect(mocks.authority.mock.calls.map(([options]) => [options.calls[0].id, options.reviewedInParent]))
+    expect(mocks.authority.mock.calls.map(([options]) => [options.calls[0].id, options.plan === PLAN]))
       .toEqual([['1:first', true], ['1:second', true], ['1:second', false]])
   })
 
@@ -911,19 +941,19 @@ describe('durable project batches', () => {
     mocks.safe = true
     expect((await run([call()], { title: 'Distribute' })).status).toBe('complete')
     expect(mocks.review).toHaveBeenCalledExactlyOnceWith({
+      account: ACCOUNT,
       title: 'Distribute',
       description: 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish. Choose the Safe nonce.',
       confirmLabel: 'Agree & continue to Safe',
-      calls: [expect.objectContaining({ chainId: 1, from: ACCOUNT, to: TARGET, data: '0x1234', value: 3n, safeTxGas: 0n })],
-    })
-    expect(mocks.authority.mock.calls[0][0].reviewedInParent).toBe(true)
+      calls: [expect.objectContaining({ chainId: 1, from: ACCOUNT, to: TARGET, data: '0x1234', value: 3n })],
+    }, expect.anything())
+    expect(mocks.authority.mock.calls[0][0].plan).toBe(PLAN)
   })
 
   it('reviews a send again when the connection changed after the batch review', async () => {
-    mocks.review.mockImplementationOnce(async () => { mocks.safe = true })
+    mocks.review.mockImplementationOnce(async () => { mocks.safe = true; return PLAN })
     await run([call()])
-    expect(mocks.review.mock.calls[0][0].calls[0]).not.toHaveProperty('safeTxGas')
-    expect(mocks.authority.mock.calls[0][0].reviewedInParent).toBe(false)
+    expect(mocks.authority.mock.calls[0][0].plan).toBeUndefined()
   })
 
   it('fails before wallet review when browser locking or durable storage is unavailable', async () => {

@@ -29,7 +29,7 @@ import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   clientFor,
@@ -672,6 +672,8 @@ export function MetadataEditor({
   const [customTouched, setCustomTouched] = useState(false)
   const [frozen, setFrozen] = useState<MetadataReview | null>(() => readMetadataReview(rows))
   const [reviewed, setReviewed] = useState(!!frozen)
+  // A review restored on opening the page waits for its button; one the payer asked for starts at once.
+  const [autoStart, setAutoStart] = useState(!frozen)
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -758,6 +760,7 @@ export function MetadataEditor({
     if (busy) return
     setError(null)
     setStatus(null)
+    setAutoStart(true)
     if (frozen) { setReviewed(true); return }
     if (!name.trim()) { setError('Give the project a name.'); return }
     if (!chosen.length) { setError('Choose at least one chain.'); return }
@@ -1096,7 +1099,7 @@ export function MetadataEditor({
       {error && !reviewed ? <ErrorNote message={error} /> : null}
 
       {reviewed ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={done ? 'Project metadata updated' : 'Confirm project metadata'}
           rows={frozen?.rows ?? []}
@@ -1109,13 +1112,13 @@ export function MetadataEditor({
           error={discardable ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : 'Confirm & save'}
-          onConfirm={() => void submit()}
+          start={autoStart ? () => void submit() : undefined}
+          next={!busy && !done ? { label: error ? 'Retry' : autoStart ? 'Review again' : 'Continue saved update', onClick: () => void submit() } : null}
           onClose={closeReview}
         >
           {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
           {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} paymentUnmatched={discardSession?.paymentUnmatched} onDiscarded={discarded} /> : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )
@@ -1334,7 +1337,7 @@ export function TokenEditor({
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={done ? 'Token metadata updated' : 'Confirm token metadata'}
           rows={[
@@ -1370,9 +1373,8 @@ export function TokenEditor({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : 'Confirm & save'}
-          actionDisabled={discard.active}
-          onConfirm={() => void submit()}
+          start={() => void submit()}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
           onClose={invalidate}
         >
           {discard.element}
@@ -1382,7 +1384,7 @@ export function TokenEditor({
               ? ' Every deploy uses the same salt, so the ERC-20 lands on one address across the chains you sign from this account.'
               : ''}
           </p>
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )

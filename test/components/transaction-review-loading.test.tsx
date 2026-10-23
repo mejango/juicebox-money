@@ -14,6 +14,7 @@ let download: ReturnType<typeof vi.fn<() => Promise<DialogModule>>>
 let root: Root
 let container: HTMLDivElement
 let api: typeof import('@/lib/transaction-review')
+let requireReview: typeof import('../support/prompt-review').requireReview
 const mounted = vi.fn()
 const unmounted = vi.fn()
 const finishes = new Map<number, TransactionReviewDialogProps['onFinish']>()
@@ -25,7 +26,7 @@ function ControlledDialog({ pending, onFinish }: TransactionReviewDialogProps) {
     return () => { unmounted(pending.id) }
   }, [pending, onFinish])
   return createElement('div', { 'data-loaded-review': pending.id },
-    createElement('p', null, pending.kind === 'review' ? pending.request.title : 'Funding choice'),
+    createElement('p', null, pending.kind === 'review' ? pending.model.title : 'Funding choice'),
     createElement('button', { onClick: () => onFinish(pending.kind === 'review' ? true : 8453) },
       pending.kind === 'review' ? 'Approve review' : 'Choose Base'),
     createElement('button', { onClick: () => onFinish(null) }, 'Cancel loaded review'),
@@ -43,6 +44,7 @@ beforeEach(async () => {
   vi.doMock('@/components/TransactionReviewDialog', download)
   const { TransactionReviewProvider } = await import('@/components/TransactionReviewProvider')
   api = await import('@/lib/transaction-review')
+  ;({ requireReview } = await import('../support/prompt-review'))
   container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
@@ -60,7 +62,7 @@ afterEach(async () => {
 })
 
 function requestReview(title: string) {
-  return api.requireTransactionReview({ title,
+  return requireReview({ title,
     calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x' }],
   })
 }

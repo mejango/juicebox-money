@@ -249,27 +249,17 @@ describe('write seams refuse while view-as is active', () => {
     expect(viewAs.VIEW_AS_WRITE_BLOCKED).toBe("You're viewing the site as another account. Exit View as to transact.")
   })
 
-  it('submitReviewedContractWrite rejects before review', async () => {
+  it('a reviewed write outside a component rejects before its wallet or review', async () => {
     const { window } = fakeWindow()
     vi.stubGlobal('window', window)
     const viewAs = await loadViewAs()
-    const { submitReviewedContractWrite } = await import('@/lib/contract-write')
+    const { reviewedSendDeps, sendReviewedWrite } = await import('@/lib/reviewed-send')
     viewAs.setViewAs(BOB)
 
-    const review = vi.fn()
-    const write = vi.fn()
+    const account = vi.spyOn(reviewedSendDeps.adapter, 'account')
     await expect(
-      submitReviewedContractWrite({
-        request: { chainId: 1 },
-        expectedAccount: ALICE,
-        review,
-        switchChain: vi.fn(),
-        currentAccount: () => ALICE,
-        simulate: vi.fn(),
-        write,
-      }),
+      sendReviewedWrite({ account: ALICE, calls: [{ chainId: 1, to: ALICE, data: '0x', value: 0n }] }),
     ).rejects.toThrow(viewAs.VIEW_AS_WRITE_BLOCKED)
-    expect(review).not.toHaveBeenCalled()
-    expect(write).not.toHaveBeenCalled()
+    expect(account).not.toHaveBeenCalled()
   })
 })

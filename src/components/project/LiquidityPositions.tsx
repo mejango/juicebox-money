@@ -18,8 +18,8 @@ import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { chainName } from '@/lib/urn'
 import { ErrorNote } from '@/components/ui/TxError'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
-import { useSafeTx } from '@/hooks/useSafeTx'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
 import { POSITION_MANAGER_BY_CHAIN } from '@/lib/uniswap-v4'
@@ -282,7 +282,7 @@ function ChainLpRows({
 }) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address, connectedAddress, isViewAs } = useViewedAccount()
-  const tx = useSafeTx(chainId)
+  const tx = useReviewedAction(chainId)
   const [error, setError] = useState<string | null>(null)
   const [reviewing, setReviewing] = useState<bigint | null>(null)
   // The write frozen for the confirm dialog: fee claim for one or both sides,
@@ -353,21 +353,23 @@ function ChainLpRows({
             positions.map(position => position.tokenId),
             account,
           )
-    tx.send(
-      buildModifyLiquiditiesRequest({
-        chainId,
-        positionManager,
-        unlockData,
-        deadline: swapDeadline(tx.isSafe),
-        value: 0n,
-      }),
-      {
-        reviewedAccount: account,
-        // Its deadline restamps on retry: held as a change to these positions.
-        intent: liquidityIntent({ chainId, pool: pool.poolId, positions: positions.map(position => position.tokenId) }),
-        legacy: [legacyClaimFeesKey({ chainId, positionManager, account, positions: positions.map(position => position.tokenId) })],
-      },
-    )
+    void tx.run({
+      account,
+      calls: [reviewedCall(
+        buildModifyLiquiditiesRequest({
+          chainId,
+          positionManager,
+          unlockData,
+          deadline: swapDeadline(tx.isSafe),
+          value: 0n,
+        }),
+        {
+          // Its deadline restamps on retry: held as a change to these positions.
+          intent: liquidityIntent({ chainId, pool: pool.poolId, positions: positions.map(position => position.tokenId) }),
+          legacy: [legacyClaimFeesKey({ chainId, positionManager, account, positions: positions.map(position => position.tokenId) })],
+        },
+      )],
+    })
     refresh()
   }
 
@@ -417,7 +419,7 @@ function ChainLpRows({
   const runRemove = (frozen: Extract<NonNullable<typeof pending>, { kind: 'remove' }>) => {
     if (!pool || !positionManager) return
     setStarted(true)
-    tx.send(
+    void tx.run({ account: frozen.account, calls: [reviewedCall(
       buildModifyLiquiditiesRequest({
         chainId,
         positionManager,
@@ -433,12 +435,11 @@ function ChainLpRows({
         value: 0n,
       }),
       {
-        reviewedAccount: frozen.account,
         // Its deadline restamps and its minimums re-read on retry: held as a change to this position.
         intent: liquidityIntent({ chainId, pool: pool.poolId, positions: [frozen.position.tokenId] }),
         legacy: [legacyRemoveLpKey({ chainId, positionManager, tokenId: frozen.position.tokenId, account: frozen.account })],
       },
-    )
+    )] })
     refresh()
   }
 
@@ -812,7 +813,7 @@ function ChainLpRows({
               rows.push({ label: 'To', value: pending.account, mono: true })
               rows.push({ label: 'On', value: chainName(chainId) })
               return (
-                <TxConfirmDialog
+                <TxProgress
                   open
                   title={
                     pending.kind === 'claim'
@@ -838,23 +839,13 @@ function ChainLpRows({
                     },
                   ]}
                   activeIndex={started ? 0 : -1}
-                  action={
-                    tx.phase === 'error'
-                      ? 'Retry'
-                      : pending.kind === 'claim'
-                        ? 'Confirm & claim fees'
-                        : 'Confirm & remove liquidity'
-                  }
-                  onConfirm={() => {
-                    if (tx.phase === 'error') tx.reset()
-                    if (pending.kind === 'claim') runClaim(pending)
-                    else runRemove(pending)
-                  }}
                   busy={tx.busy}
                   complete={complete}
                   status={tx.notice ?? tx.safeNonceGuidance}
                   error={tx.error}
                   onClose={closePending}
+                  start={() => { if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) }}
+                  next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) } } : null}
                 />
               )
             })(),
@@ -863,14 +854,12 @@ function ChainLpRows({
         : null}
       {panelHost && !pending && reviewing !== null
         ? ReactDOM.createPortal(
-            <TxConfirmDialog
+            <TxProgress
               open
               preparing
               title="Remove liquidity"
               steps={[]}
               activeIndex={-1}
-              action="Confirm & remove liquidity"
-              onConfirm={() => undefined}
               busy
               status="Reading the pool and your position…"
               onClose={() => undefined}

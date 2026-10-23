@@ -9,7 +9,6 @@ const SAFE = '0x1111111111111111111111111111111111111111' as Address
 const SCOPE = `safe-queue:${SAFE}`
 const BUNDLE = '12345678-1234-1234-1234-123456789abc'
 const HASH = `0x${'ab'.repeat(32)}` as Hex
-const REPLACEMENT = `0x${'cd'.repeat(32)}` as Hex
 
 const mocks = vi.hoisted(() => ({
   saved: null as RelayrPendingSession | null,
@@ -17,16 +16,20 @@ const mocks = vi.hoisted(() => ({
   options: null as SafeRelayrOptions | null,
   save: vi.fn(),
   pay: vi.fn(),
+  review: vi.fn(),
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: OWNER }) }))
-vi.mock('@/lib/transaction-review', () => ({ requireTransactionReview: vi.fn() }))
+vi.mock('@/lib/reviewed-send', () => ({ reviewedSendDeps: {} }))
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()),
+  safeRelayrWalletDeps: () => ({ review: mocks.review, sendPayment: mocks.pay }),
+}))
 vi.mock('@/lib/relayr', () => ({
   hasRelayrPendingEvidence: () => mocks.evidence,
   loadRelayrPendingSession: () => mocks.saved,
   relayrChainClient: vi.fn(),
-  relayrPay: mocks.pay,
   saveRelayrPendingSessionDurably: mocks.save,
   withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
 }))
@@ -196,25 +199,29 @@ describe('Safe Relayr journal adapter', () => {
     expect(mocks.save).not.toHaveBeenCalled()
   })
 
-  it('retains the original and replacement payment hashes when the wallet reports only its latest result', async () => {
-    const original = payment(HASH)
-    const replacement = payment(REPLACEMENT)
-    mocks.pay.mockImplementation(async ({ onSending, onSent }) => {
+  it('reviews and pays through core, saving the funding chain only once the wallet is about to open', async () => {
+    const paid = payment(HASH)
+    let chainBeforeWallet: number | null | undefined
+    mocks.pay.mockImplementation(async ({ session, onSending }) => {
+      await mocks.options!.store.save({ ...session, paymentStatus: 'unfunded' })
+      chainBeforeWallet = mocks.saved?.paymentChainId
       await onSending()
-      await onSent([original])
-      await onSent([replacement])
-      return { hash: REPLACEMENT, payments: [replacement] }
+      await mocks.options!.store.save({ ...session, paymentStatus: 'sending' })
+      return { hash: HASH, payments: [paid] }
     })
     const { options } = adapter()
-    const onSent = vi.fn()
+    const executions = [] as unknown as Parameters<typeof options.review>[0]
+    await options.review(executions, { resumed: false })
+    expect(mocks.review).toHaveBeenCalledWith(executions, { resumed: false })
     const onSending = vi.fn()
     const result = await options.sendPayment({
-      session: session(),
-      payment: { chain: 1, target: RELAYR_PAYMENT_ADDRESS, amount: '1000', calldata: original.calldata },
-      beforeSend: vi.fn(), onSending, onSent,
+      session: { ...session(), paymentStatus: 'unfunded', reservationKeys: [`1:${SAFE}:1`] },
+      payment: { chain: 1, target: RELAYR_PAYMENT_ADDRESS, amount: '1000', calldata: paid.calldata },
+      beforeSend: vi.fn(), onSending, onSent: vi.fn(),
     })
     expect(onSending).toHaveBeenCalledOnce()
-    expect(onSent).toHaveBeenLastCalledWith([original, replacement])
-    expect(result).toEqual({ hash: REPLACEMENT, payments: [original, replacement] })
+    expect(result).toEqual({ hash: HASH, payments: [paid] })
+    expect(chainBeforeWallet).toBeNull()
+    expect(mocks.saved?.paymentChainId).toBe(1)
   })
 })

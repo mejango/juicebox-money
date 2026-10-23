@@ -1,0 +1,40 @@
+{
+  "format": "juice-sdk-wallet-boundaries-1",
+  "sites": [
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 110,
+      "api": "registerReviewHandler",
+      "boundary": "The app's one review dialog answers core's prompts: core mints the model and the confirmation, and nothing is sent unless the dialog returns it.",
+      "test": "test/components/transaction-review-project-scope.test.tsx"
+    },
+    {
+      "file": "src/components/project/EditSplitsFlow.tsx",
+      "line": 411,
+      "api": "request",
+      "boundary": "navigator.locks.request over each destination's split journal key: cross-tab coordination, never a wallet RPC.",
+      "test": "test/components/edit-splits-multichain.test.tsx"
+    },
+    {
+      "file": "src/components/project/QueueRulesetFlow.tsx",
+      "line": 705,
+      "api": "request",
+      "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
+      "test": "test/components/queue-ruleset-multichain.test.tsx"
+    },
+    {
+      "file": "src/lib/forwarder-authorization.ts",
+      "line": 91,
+      "api": "request",
+      "boundary": "navigator.locks.request on the per-account forwarder authorization lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/forwarder-authorization.test.ts"
+    },
+    {
+      "file": "src/lib/relayr.ts",
+      "line": 118,
+      "api": "request",
+      "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
+      "test": "test/transactions/relayr-orchestration.test.ts"
+    }
+  ]
+}

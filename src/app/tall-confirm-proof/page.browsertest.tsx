@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 
 export default function TallConfirmProofPage() {
   const [ready, setReady] = useState(false)
@@ -18,13 +18,12 @@ export default function TallConfirmProofPage() {
   return (
     <main data-ready={ready ? 'true' : 'false'}>
       {ready ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title="Tall review"
           steps={[{ title: 'First' }, { title: 'Second' }]}
           activeIndex={-1}
-          action="Confirm"
-          onConfirm={() => {}}
+          next={{ label: 'Try again', onClick: () => {} }}
           onClose={() => {}}
           rows={Array.from({ length: 30 }, (_, index) => ({ label: `Row ${index + 1}`, value: `Value ${index + 1}` }))}
         />
