@@ -16,6 +16,7 @@ import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
 import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 import { clearDefifaWriteRecovery, defifaWriteNamespace, PendingDefifaWriteError, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
 import { TxProgress } from '@/components/ui/TxProgress'
@@ -118,7 +119,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       const token = prepared.inventory.pricing.token
       const allowance = token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? prepared.amount : await client.readContract({ address: token, abi: erc20Abi, functionName: 'allowance', args: [address, prepared.transaction.address] })
       if (flowSignal().aborted || generation.current !== attempt) return
-      setReview({ generation: attempt, chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { chainId, address: token, abi: erc20Abi, functionName: 'approve', args: [prepared.transaction.address, prepared.amount], value: 0n, label: 'Approve Defifa mint payment' } : null })
+      setReview({ generation: attempt, chainId, projectId, account: address, client, hook: shop.hook, tierIds, delegate: (delegate || zeroAddress) as Address, prepared, symbol: shop.pricing.symbol, selection: shop.tiers.filter(tier => quantities[tier.id]).map(tier => ({ id: tier.id, name: tier.name ?? `Tier #${tier.id}` })), approval: allowance < prepared.amount ? { ...buildErc20ApproveRequest({ chainId, token, spender: prepared.transaction.address, amount: prepared.amount }), value: 0n, label: 'Approve Defifa mint payment' } : null })
       setStep('review')
       setSubmitted(null)
       submissionStarted.current = false
@@ -323,6 +324,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       { label: 'NFT collection', value: review.hook, mono: true },
       ...review.prepared.selectedTiers.map(tier => ({ label: `Tier ${tier.tierId}: ${review.selection.find(selected => BigInt(selected.id) === tier.tierId)?.name ?? 'NFT'}`, value: `${tier.count} NFTs × ${formatUnits(tier.unitPrice, review.prepared.inventory.pricing.decimals)} ${review.symbol}` })),
       { label: 'Payment', value: frozenAmount, strong: true },
+      ...(review.approval ? [{ label: 'Payment approval spender', value: review.prepared.transaction.address, mono: true }] : []),
       ...review.prepared.effectiveDelegates.map(effect => ({ label: `Tier ${effect.tierId} voting delegate`, value: effect.delegate, mono: true })),
     ] : []} steps={[...(review?.approval ? [{ title: 'Approve Defifa mint payment' }] : []), { title: 'Mint Defifa NFTs' }]} activeIndex={liveStep(tx, review?.approval ? [0, 1] : [0], review?.approval && step !== 'mint' && approvalBlock === undefined ? 0 : review?.approval ? 1 : 0)} start={!submitted && !submissionUnknown && step !== 'failed' ? () => void confirm() : undefined} startKey={approvalBlock} next={step === 'failed' ? { label: 'Close review', onClick: closeReview } : submitted ? { label: 'Recheck confirmation', onClick: () => void verify(), disabled: submissionUnknown || !active.receipt } : (error || tx.error) && !submissionUnknown ? { label: 'Try again', onClick: () => void confirm() } : null} busy={busy} complete={step === 'verified'} status={submissionUnknown ? 'The wallet submission is unconfirmed. Check your wallet before taking further action. This mint has not been verified.' : step === 'verified' ? 'NFT mint verified onchain.' : submitted ? active.notice ?? `${submitted.safe ? 'Safe proposal' : 'Submitted transaction'} ${active.hash ?? submitted.hash}` : approvalBlock !== undefined ? 'Payment approval verified. Confirm the NFT mint.' : undefined} error={error ?? tx.error}>
       <p className="text-sm text-smoke-600">Minting to your account updates voting delegation for all your NFTs in each selected tier, including NFTs you already hold. A blank delegate preserves the native contract default.</p>

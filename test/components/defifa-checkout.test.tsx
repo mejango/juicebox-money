@@ -39,6 +39,7 @@ import { DefifaNftTransactionRevertedError, buildDefifaPayMetadata, buildPayTx }
 import { wallet, sentHash } from '../support/fake-wallet'
 import { DefifaCheckout } from '@/components/project/DefifaCheckout'
 import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
+import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
 
 const shop = {
   protocol: 'defifa', hook: HOOK, phase: 1,
@@ -261,10 +262,14 @@ describe('native Defifa checkout through the reviewed engine', () => {
   it('wallet-action:approve-defifa-mint-payment approves the exact amount and mints in one review, the mint simulated no earlier than the approval block', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockImplementation(async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => functionName === 'allowance' ? blockNumber === undefined ? 0n : 100n : Promise.reject(new Error('Unexpected read')))
-    await openReview(); await answer()
+    await openReview()
+    expect(text(renderer.root)).toContain(`Payment approval spender${TERMINAL}`)
+    await answer()
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
-    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[] }])[0]
+    const call = (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: unknown[]; abi: unknown }])[0]
     expect(call.address).toBe(TOKEN); expect(call.args).toEqual([TERMINAL, 100n])
+    // The shared no-return approve ABI, so a token like mainnet USDT that returns nothing still simulates and decodes.
+    expect(call.abi).toEqual(buildErc20ApproveRequest({ chainId: 1, token: TOKEN, spender: TERMINAL, amount: 100n }).abi)
     await confirmed(sentHash(1), 77n)
     for (let tries = 0; tries < 40 && wallet.writeContract.mock.calls.length < 2; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
     // No second review: the mint goes to the wallet once the approval confirms.
