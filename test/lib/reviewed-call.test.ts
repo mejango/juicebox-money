@@ -1,6 +1,6 @@
 import { encodeFunctionData, erc20Abi, parseAbi, type Hex } from 'viem'
 import { describe, expect, it } from 'vitest'
-import { hashOf, reviewedCall } from '@/lib/reviewed-call'
+import { hashOf, revertedReceipt, reviewedCall } from '@/lib/reviewed-call'
 
 const TOKEN = '0x4444444444444444444444444444444444444444'
 const SPENDER = '0x5555555555555555555555555555555555555555'
@@ -44,5 +44,18 @@ describe('hashOf', () => {
     expect(hashOf({ status: 'done', hashes: [A, B], receipts: [] })).toBe(B)
     expect(hashOf({ status: 'done', hashes: [], receipts: [] })).toBeNull()
     expect(hashOf({ status: 'proposed', step: 0, safeTxHash: A } as never)).toBe(A)
+  })
+})
+
+describe('revertedReceipt', () => {
+  const reverted = (receipt?: unknown) => Object.assign(new Error('reverted'), { name: 'ReviewedCallRevertedError', receipt })
+
+  it("is the receipt of a mined revert, and null for any other failure or one without its receipt", () => {
+    const receipt = { status: 'reverted', blockNumber: 1n }
+    expect(revertedReceipt(reverted(receipt))).toBe(receipt)
+    expect(revertedReceipt(reverted())).toBeNull()
+    expect(revertedReceipt(new Error('network'))).toBeNull()
+    expect(revertedReceipt({ name: 'ReviewedCallRevertedError', receipt })).toBeNull()
+    expect(revertedReceipt(null)).toBeNull()
   })
 })
