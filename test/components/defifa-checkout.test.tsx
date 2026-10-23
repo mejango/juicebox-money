@@ -2,7 +2,7 @@
 import { QueryClient } from '@tanstack/react-query'
 import { createElement, type ReactNode } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
-import { UserRejectedRequestError, zeroAddress, type Address, type Hex } from 'viem'
+import { UserRejectedRequestError, encodeFunctionData, parseAbi, toEventSelector, zeroAddress, type Address, type Hex } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PreparedDefifaPay } from '@bananapus/nana-sdk-core/v6'
 import type { Shop } from '@/hooks/useShop721'
@@ -14,7 +14,7 @@ const TERMINAL = '0x4444444444444444444444444444444444444444' as Address
 const TOKEN = '0x5555555555555555555555555555555555555555' as Address
 const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const queries = new QueryClient()
-const controls = vi.hoisted(() => ({ prepare: vi.fn(), verify: vi.fn(), approvalProof: vi.fn(), media: undefined as Record<number, { image: string }> | undefined }))
+const controls = vi.hoisted(() => ({ prepare: vi.fn(), verify: vi.fn(), approvalProof: vi.fn(), safe: false, media: undefined as Record<number, { image: string }> | undefined }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...(await original<typeof import('@bananapus/nana-sdk-core/v6')>()), prepareDefifaPay: controls.prepare, verifyDefifaNftTransaction: controls.verify }))
 vi.mock('@bananapus/nana-sdk-core/review', async original => ({ ...(await original<typeof import('@bananapus/nana-sdk-core/review')>()), verifyReviewedWriteReceipt: controls.approvalProof }))
 vi.mock('@/hooks/useShop721', async original => ({ ...(await original<typeof import('@/hooks/useShop721')>()), useShop721Media: () => ({ data: controls.media }) }))
@@ -27,7 +27,7 @@ vi.mock('@wagmi/core', async original => {
 vi.mock('wagmi', async () => ({ ...(await import('../support/fake-wallet')).walletHooks }))
 vi.mock('@/hooks/useWallet', async () => ({ useWallet: (await import('../support/fake-wallet')).useFakeWallet }))
 vi.mock('@/lib/transaction-review', async original => ({ ...(await original<typeof import('@/lib/transaction-review')>()), requestContractTransactionReview: (await import('../support/fake-wallet')).wallet.requestReview }))
-vi.mock('@/lib/safe-connector', async original => ({ ...(await original<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => false, useSafeConnection: () => false }))
+vi.mock('@/lib/safe-connector', async original => ({ ...(await original<typeof import('@/lib/safe-connector')>()), isSafeConnection: () => controls.safe, useSafeConnection: () => controls.safe, findPendingSafeAppProposal: async () => null, atOnceExecution: async () => null }))
 vi.mock('@tanstack/react-query', async original => ({ ...(await original<typeof import('@tanstack/react-query')>()), useQueryClient: () => queries }))
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalDialog: ({ children }: { children: ReactNode }) => createElement('div', null, children),
@@ -87,6 +87,7 @@ beforeEach(async () => {
   vi.stubGlobal('navigator', { locks: { request: async (name: string, _: unknown, run: (lock: object) => Promise<unknown>) => run({ name }) } })
   wallet.reset(); wallet.holdReviews(); wallet.connect(ALICE)
   controls.media = undefined
+  controls.safe = false
   controls.prepare.mockReset().mockResolvedValue(prepared())
   controls.verify.mockReset().mockResolvedValue(undefined)
   controls.approvalProof.mockReset().mockResolvedValue('success')
@@ -279,8 +280,9 @@ describe('native Defifa checkout through the reviewed engine', () => {
   it('reviews a new cart afresh after its mint was refused in the wallet, its approval already through', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'allowance' ? 100n * BigInt(wallet.writeContract.mock.calls.length ? 1 : 0) : Promise.reject(new Error('Unexpected read')))
+    // The mint, the second send, is refused; the wallet's own sends stay for later tests.
     const send = wallet.writeContract.getMockImplementation()!
-    wallet.writeContract.mockImplementation(async (...args: Parameters<typeof send>) => wallet.writeContract.mock.calls.length === 2 ? Promise.reject(new UserRejectedRequestError(new Error('User rejected'))) : send(...args))
+    wallet.writeContract.mockImplementationOnce(send).mockImplementationOnce(async () => Promise.reject(new UserRejectedRequestError(new Error('User rejected'))))
     await openReview(); await answer()
     await confirmed(sentHash(1), 77n)
     for (let tries = 0; tries < 40 && wallet.writeContract.mock.calls.length < 2; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
@@ -290,6 +292,55 @@ describe('native Defifa checkout through the reviewed engine', () => {
     await openReview(); await answer()
     const third = (wallet.writeContract.mock.calls[2] as unknown as [{ functionName: string; args: unknown[] }])[0]
     expect(third).toMatchObject({ functionName: 'approve', args: [TERMINAL, 200n] })
+  })
+  it('drops the saved approval-and-mint run once a Safe mint is verified', async () => {
+    controls.safe = true
+    // Safe's service queues nothing before a proposal.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ count: 0, next: null, previous: null, results: [] }))))
+    controls.prepare.mockResolvedValue(prepared(TOKEN))
+    wallet.client.readContract.mockImplementation(async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => functionName === 'allowance' ? blockNumber === undefined ? 0n : 100n : Promise.reject(new Error('Unexpected read')))
+    const { writeHolds } = await import('@/lib/write-holds')
+    const { findReviewedSequence } = await import('@bananapus/nana-sdk-core/review')
+    const { defifaWriteNamespace } = await import('@/lib/defifa-write-recovery')
+    const namespace = defifaWriteNamespace({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })
+    /** The Safe runs each held proposal: its execution mines, and the hold settles on it. */
+    const SAFE_EXEC_ABI = parseAbi(['function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures) payable returns (bool)'])
+    const readReceipt = wallet.client.getTransactionReceipt.getMockImplementation()!
+    const readTransaction = wallet.client.getTransaction.getMockImplementation()!
+    /** The Safe runs the held proposal as `execution`, with its ExecutionSuccess, and the hold settles on it. */
+    const execute = async (execution: Hex, blockNumber: bigint) => {
+      const proposed = () => writeHolds.list({ account: ALICE, chainId: 1 }).filter(({ record }) => record.hash)
+      for (let tries = 0; tries < 40 && !proposed().length; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+      const [{ handle, record }] = proposed()
+      const input = encodeFunctionData({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: [record.call.to, BigInt(record.call.value), record.call.data, 0, 0n, 0n, 0n, zeroAddress, zeroAddress, '0x'] })
+      await act(async () => wallet.confirm(execution, blockNumber))
+      wallet.client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => {
+        const receipt = await readReceipt({ hash })
+        return hash !== execution ? receipt : { ...receipt, to: ALICE, logs: [{ address: ALICE, topics: [toEventSelector('ExecutionSuccess(bytes32,uint256)'), record.hash!], data: `0x${'00'.repeat(32)}`,
+          removed: false, transactionHash: execution, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }] }
+      })
+      wallet.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
+        const transaction = await readTransaction({ hash })
+        return hash !== execution ? transaction : { ...transaction, to: ALICE, input }
+      })
+      await act(async () => { await handle.onExecuted(wallet.client as never, execution) })
+      // The page reads the hold again as it regains focus.
+      await act(async () => { window.dispatchEvent(new Event('focus')) })
+      for (let tries = 0; tries < 20; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    await openReview(); await answer()
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(findReviewedSequence(namespace, ALICE)).not.toBeNull()
+    await execute(`0x${"e1".repeat(32)}`, 77n)
+    // The approval ran: the saved run continues at the mint, reviewed again for its own proposal.
+    expect(text(renderer.root)).toContain('Payment approval verified. Confirm the NFT mint.')
+    await answer()
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'pay', account: ALICE }])
+    expect(findReviewedSequence(namespace, ALICE)).not.toBeNull()
+    await execute(`0x${'e2'.repeat(32)}`, 78n)
+    expect(text(renderer.root)).toContain('NFT mint verified onchain.')
+    // The mint is proven: nothing of the run is left to continue.
+    expect(findReviewedSequence(namespace, ALICE)).toBeNull()
   })
   it('stops at an approval that reverts onchain and never sends the mint', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
