@@ -295,9 +295,9 @@ describe('zod GHSA-mrhx-c7xc-m3w5 exception', () => {
     expect(result.output).toContain('GHSA-mrhx-c7xc-m3w5')
   })
 
-  it('rejects a zod copy another production package depends on, such as Para', () => {
+  it('rejects a zod copy another production package depends on, outside Reown, Coinbase and Para', () => {
     const result = audit(report(findings()), 1,
-      { project: zodProject({ ...reachedThrough, 'node_modules/@getpara/shared': { zod: '^3.22.4' } }) })
+      { project: zodProject({ ...reachedThrough, 'node_modules/some-wallet-sdk': { zod: '^3.22.4' } }) })
     expect(result.status).toBe(1)
     expect(result.output).toContain('zod: high')
   })
