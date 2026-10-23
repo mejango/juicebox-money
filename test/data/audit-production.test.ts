@@ -110,7 +110,7 @@ describe('production audit gate', () => {
       '@getpara/core-sdk': { severity: 'low', via: ['elliptic'] },
     }), 1)
     expect(result.status).toBe(0)
-    expect(result.output).toContain('fail-closed Para exceptions')
+    expect(result.output).toContain('fail-closed exceptions')
     expect(result.output).toContain('GHSA-848j-6mx2-7j84')
     expect(result.output).not.toContain('GHSA-86w9-cpqp-85rv')
   })
@@ -252,5 +252,63 @@ describe("Para's audited node-forge usage", () => {
     const result = audit(null, 1, { missingNpm: true, sourceOnly: true, project })
     expect(result.status).toBe(0)
     expect(result.output).toContain('usage invariants verified')
+  })
+})
+
+describe('zod GHSA-mrhx-c7xc-m3w5 exception', () => {
+  const ZOD = 'https://github.com/advisories/GHSA-mrhx-c7xc-m3w5'
+  const zodNodes = ['node_modules/zod', 'node_modules/@reown/appkit-wallet/node_modules/zod']
+  const zod = (nodes: string[] | null = zodNodes, severity = 'high') =>
+    ({ severity, via: [{ severity, url: ZOD }], ...(nodes ? { nodes } : {}) }) as Finding
+  const findings = (finding = zod()): Record<string, Finding> => ({
+    zod: finding,
+    '@reown/appkit-wallet': { severity: 'high', via: ['zod'] },
+    '@reown/appkit': { severity: 'high', via: ['@reown/appkit-wallet'] },
+    '@coinbase/cdp-sdk': { severity: 'high', via: ['zod'] },
+  })
+
+  /** A copy whose lockfile has the zod 3 copies and these production dependents of them, and no others. */
+  function zodProject(dependents: Record<string, Record<string, string>>) {
+    const project = paraProject()
+    const path = join(project, 'package-lock.json')
+    const lockfile = JSON.parse(readFileSync(path, 'utf8'))
+    for (const [name, entry] of Object.entries<Record<string, unknown>>(lockfile.packages)) {
+      if (!entry.dev) delete (entry.dependencies as Record<string, string> | undefined)?.zod
+      if (name.endsWith('node_modules/zod')) delete lockfile.packages[name]
+    }
+    lockfile.packages['node_modules/zod'] = { version: '3.25.76' }
+    lockfile.packages['node_modules/@reown/appkit-wallet/node_modules/zod'] = { version: '3.22.4' }
+    for (const [name, dependencies] of Object.entries(dependents)) {
+      lockfile.packages[name] = { ...lockfile.packages[name], dependencies }
+    }
+    writeFileSync(path, JSON.stringify(lockfile))
+    return project
+  }
+  const reachedThrough = {
+    'node_modules/@coinbase/cdp-sdk': { zod: '^3.25.76' },
+    'node_modules/@reown/appkit-wallet': { zod: '3.22.4' },
+  }
+
+  it('accepts zod reached only through @reown/appkit-wallet and @coinbase/cdp-sdk', () => {
+    const result = audit(report(findings()), 1, { project: zodProject(reachedThrough) })
+    expect(result.status).toBe(0)
+    expect(result.output).toContain('GHSA-mrhx-c7xc-m3w5')
+  })
+
+  it('rejects a zod copy another production package depends on, such as Para', () => {
+    const result = audit(report(findings()), 1,
+      { project: zodProject({ ...reachedThrough, 'node_modules/@getpara/shared': { zod: '^3.22.4' } }) })
+    expect(result.status).toBe(1)
+    expect(result.output).toContain('zod: high')
+  })
+
+  it.each([
+    ['reports no installed copy', zod(null)],
+    ['reports a copy nothing depends on', zod(['node_modules/orphan/node_modules/zod'])],
+    ['is rated at another severity', zod(zodNodes, 'critical')],
+  ])('rejects a zod finding that %s', (_name, finding) => {
+    const result = audit(report(findings(finding)), 1, { project: zodProject(reachedThrough) })
+    expect(result.status).toBe(1)
+    expect(result.output).toContain('Unexpected production vulnerabilities')
   })
 })
