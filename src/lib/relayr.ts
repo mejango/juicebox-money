@@ -25,6 +25,7 @@ import {
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection } from '@/lib/transaction-review'
 import { loadReviewEngine } from '@/lib/preload-review'
+import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import {
   isDefiniteWalletRejection,
@@ -921,7 +922,7 @@ async function signForwardedRequest(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
-  context?: { description: string },
+  context?: { description: string; rows?: readonly ReviewContextRow[] },
 ): Promise<{ entry: RelayrEntry; nonce: bigint }> {
   const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -964,6 +965,7 @@ async function signForwardedRequest(
       context?.description,
       'Your signature authorizes submission of this exact destination call onchain. The separate payment is reviewed before it is sent.',
     ].filter(Boolean).join('\n\n'),
+    ...(context?.rows ? { context: context.rows } : {}),
     reverify: async () => assertWallet(),
   }, reviewedSendDeps)
 

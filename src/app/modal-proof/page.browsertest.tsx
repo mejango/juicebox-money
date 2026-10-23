@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from 'react'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { promptReviewForTests } from '@bananapus/nana-sdk-core/testing'
 
 /**
  * Two ways a third-party overlay can mount itself while an app modal is open.
@@ -134,7 +134,7 @@ export default function ModalProofPage() {
               data-testid="open-review"
               onClick={() => {
                 setReview('open')
-                requireTransactionReview({
+                promptReviewForTests({
                   title: 'Stacked review dialog',
                   calls: [
                     {
@@ -143,8 +143,8 @@ export default function ModalProofPage() {
                       data: '0x',
                     },
                   ],
-                }).then(
-                  () => setReview('approved'),
+                }).outcome.then(
+                  outcome => setReview(outcome === 'confirmed' ? 'approved' : 'cancelled'),
                   () => setReview('cancelled'),
                 )
               }}

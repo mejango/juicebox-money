@@ -14,10 +14,8 @@ vi.mock('next/image', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import {
-  requireTransactionReview,
-  type TransactionReviewCall,
-} from '@/lib/transaction-review'
+import type { TransactionReviewCall } from '@/lib/transaction-review'
+import { requireReview } from '../support/prompt-review'
 import '../dialog-shim'
 import { jbBuybackHookRegistryAbi } from '@bananapus/nana-sdk-core'
 import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
@@ -76,7 +74,7 @@ function execTransaction(calls: readonly TransactionReviewCall[]): TransactionRe
 async function review(call: TransactionReviewCall) {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
-    requireTransactionReview({ calls: [call] }).catch(() => {})
+    requireReview({ calls: [call] }).catch(() => {})
   })
   await act(async () => { await vi.dynamicImportSettled() })
   return document.querySelector('dialog')!.textContent ?? ''

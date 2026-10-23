@@ -23,7 +23,8 @@ vi.mock('next/image', () => ({
 
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, buildTransactionReviewPrompt, type TransactionReviewRequest } from '@/lib/transaction-review'
+import { buildTransactionReviewPrompt, type TransactionReviewRequest } from '@/lib/transaction-review'
+import { requireReview } from '../support/prompt-review'
 import '../dialog-shim'
 
 const TOKEN = '0x3333333333333333333333333333333333333333'
@@ -47,7 +48,7 @@ async function review(request: TransactionReviewRequest): Promise<string> {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
     // Swallow the cancellation thrown when the modal unmounts after the test.
-    requireTransactionReview(request).catch(() => {})
+    requireReview(request).catch(() => {})
   })
   await act(async () => {
     await vi.dynamicImportSettled()
@@ -157,8 +158,8 @@ describe('decoded transaction review', () => {
     )
   })
 
-  it('shows the connected wallet as the sender of a transaction, and no sender it was not given for an authorization', async () => {
-    let text = await review({ calls: [{ chainId: 1, to: TARGET, data: '0xdeadbeef' as Hex }] })
+  it('shows the sender a transaction names, and no sender it was not given for an authorization', async () => {
+    let text = await review({ calls: [{ chainId: 1, from: ACCOUNT, to: TARGET, data: '0xdeadbeef' as Hex }] })
     expect(text).toContain(`From${ACCOUNT}`)
     act(() => root.unmount())
     root = createRoot(container)

@@ -24,8 +24,10 @@ vi.mock('@/lib/fee-buyback-client', () => ({
 }))
 
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
-import { requireTransactionReview, type TransactionReviewRequest } from '@/lib/transaction-review'
+import type { TransactionReviewRequest } from '@/lib/transaction-review'
+import { requireReview } from './support/prompt-review'
 import { REVIEW_REQUESTS } from '@bananapus/nana-sdk-core/testing'
+import { buildReviewModel } from '@bananapus/nana-sdk-core/review'
 import './dialog-shim'
 
 let container: HTMLDivElement
@@ -45,8 +47,11 @@ afterEach(() => {
 async function renderedDialog(request: (typeof REVIEW_REQUESTS)[keyof typeof REVIEW_REQUESTS]): Promise<string> {
   act(() => root.render(<TransactionReviewProvider>{null}</TransactionReviewProvider>))
   await act(async () => {
-    // The modal unmounts after the test, which cancels the review.
-    requireTransactionReview(request).catch(() => {})
+    // The modal unmounts after the test, which cancels the review. A send names its sender, the connected
+    // account; an authorization is sent by someone else.
+    const sent = request.kind === 'authorization' ? request
+      : { ...request, calls: request.calls.map(call => ({ from: '0x1111111111111111111111111111111111111111' as const, ...call })) }
+    requireReview(sent as TransactionReviewRequest).catch(() => {})
   })
   await act(async () => {
     await vi.dynamicImportSettled()
@@ -80,7 +85,7 @@ describe('transaction review dialog', () => {
       ],
     }
     act(() => root.render(
-      <TransactionReviewDialog pending={{ kind: 'review', id: 1, request, resolve: () => {} }} onFinish={() => {}} />,
+      <TransactionReviewDialog pending={{ kind: 'review', id: 1, model: buildReviewModel(request as unknown as TransactionReviewRequest), resolve: () => {} }} onFinish={() => {}} />,
     ))
     const text = document.querySelector('dialog')?.textContent ?? ''
     expect(text).toContain('Signature 1 of 3')
@@ -98,7 +103,7 @@ describe('transaction review dialog', () => {
     const { TransactionReviewDialog } = await import('@/components/TransactionReviewDialog')
     const request = { calls: [payment], authorization: { kind: 'message', message: 'hello' } }
     act(() => root.render(
-      <TransactionReviewDialog pending={{ kind: 'review', id: 1, request, resolve: () => {} }} onFinish={() => {}} />,
+      <TransactionReviewDialog pending={{ kind: 'review', id: 1, model: buildReviewModel(request as unknown as TransactionReviewRequest), resolve: () => {} }} onFinish={() => {}} />,
     ))
     const text = document.querySelector('dialog')?.textContent ?? ''
     expect(text).toContain('plus the exact message your signature commits to')
@@ -112,7 +117,7 @@ describe('transaction review dialog', () => {
     const request = { calls: [payment], authorization: { amount: Number.NaN } }
     act(() => root.render(
       <TransactionReviewDialog
-        pending={{ kind: 'review', id: 1, request, resolve: () => {} }}
+        pending={{ kind: 'review', id: 1, model: buildReviewModel(request as unknown as TransactionReviewRequest), resolve: () => {} }}
         onFinish={approved => finished.push(approved)}
       />,
     ))
