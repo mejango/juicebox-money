@@ -36,22 +36,26 @@ const RENDER_ERROR = '$RX('
 // Next 16.4.2 (security fix for GHSA-2464-fhr4-w9xw) adds 0.3 to 1.2 KiB to every route's framework chunks.
 // /learn, /build and /build/first-payment +1: the shared wallet chunk reads core's review lines (SDK 4 reviewed send).
 const routes = [
-  { route: '/', path: '/', kib: 342, text: 'Fund your' },
+  // 342 -> 344: core's reviewed run and Relayr round plan (SDK 4.0.0).
+  { route: '/', path: '/', kib: 344, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 226, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 228, text: 'Build on Juicebox' },
   { route: '/build/first-payment', path: '/build/first-payment', kib: 226, text: 'Your first Juicebox payment.' },
   { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox.' },
   // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
-  { route: '/create', path: '/create', kib: 397, text: 'Start a project' },
+  // 397 -> 398: SDK 4.0.0 Relayr round plan.
+  { route: '/create', path: '/create', kib: 398, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
   // 517 -> 513: SDK 4 local.4 and Next 16.4.2.
   // 513 -> 519: every project write runs through core's useReviewedRun (its send engine stays lazy).
-  { route: '/[urn]', path: '/eth:1', kib: 519, text: 'Browser Fixture Project' },
+  // 519 -> 520: SDK 4.0.0 Relayr round plan and late-settle handling.
+  { route: '/[urn]', path: '/eth:1', kib: 520, text: 'Browser Fixture Project' },
   // 406 -> 407: the SDK 4 wallet check.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 407, text: 'Holdings' },
+  // 407 -> 410: SDK 4.0.0 reviewed Safe and Relayr sends.
+  { route: '/account/[address]', path: `/account/${account}`, kib: 410, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -65,7 +69,8 @@ const budgets = {
   // of strictly lazy vendor SDK; the route ceilings and the lazy-load
   // assertions below are what protect first paint. History: git log -p.
   // 2621 -> 2648: core's reviewed send, its hook and held view, in lazy chunks of their own.
-  allScripts: 2648 * KIB,
+  // 2648 -> 2669: SDK 4.0.0 review plan, Relayr rounds and late-settle handling.
+  allScripts: 2669 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
