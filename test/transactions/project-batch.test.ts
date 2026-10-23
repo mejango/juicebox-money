@@ -8,6 +8,7 @@ import {
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
+  walletChainId: undefined as number | undefined,
   safe: false,
   relayr: vi.fn(), rawRelayr: vi.fn(), authority: vi.fn(), identity: vi.fn(), review: vi.fn(), waitForExecution: vi.fn(),
   releaseRaw: vi.fn(), reportedExecution: vi.fn(), beforeLock: vi.fn(),
@@ -16,7 +17,7 @@ const mocks = vi.hoisted(() => ({
   pending: new Map<string, unknown>(),
   rawPending: new Map<string, unknown>(),
 }))
-vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account }) }))
+vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.account, chainId: mocks.walletChainId }) }))
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/authority', () => ({ clientFor: () => mocks.client, runAuthorityCalls: mocks.authority }))
 vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
@@ -86,6 +87,7 @@ const call = (chainId = 1, suffix = ''): ProjectBatchCall => ({
 const run = (calls?: ProjectBatchCall[], extra = {}) => runProjectBatch({ signal: flow, scope, action, account: ACCOUNT, calls, reverify: async () => {}, ...extra })
 
 beforeEach(() => {
+  mocks.walletChainId = undefined
   vi.resetAllMocks()
   mocks.pending.clear()
   mocks.rawPending.clear()
@@ -187,6 +189,16 @@ describe('durable project batches', () => {
     expect(mocks.relayr).not.toHaveBeenCalled()
     expect(mocks.authority).not.toHaveBeenCalled()
     expect(mocks.identity).not.toHaveBeenCalled()
+  })
+
+  it('shows a raw round in the batch review as one Relayr round led by the wallet chain', async () => {
+    mocks.walletChainId = 10
+    const calls = [call(1, 'a'), call(10, 'c')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    expect((await run(calls)).status).toBe('complete')
+    const [review] = mocks.review.mock.calls[0]
+    const round = review.calls[0].relayrRound
+    expect(review.calls.map((item: { chainId: number; relayrRound?: string }) => [item.chainId, item.relayrRound])).toEqual([[10, round], [1, round]])
+    expect(mocks.rawRelayr.mock.calls[0][0].planned).toEqual({ plan: expect.anything(), round, chainId: 10 })
   })
 
   it('resumes the original raw payment bundle after completion proof fails', async () => {

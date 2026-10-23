@@ -124,8 +124,8 @@ export async function withRelayrScopeLock<T>(scope: string, execute: () => Promi
   } finally { activeRelayrScopes.delete(scope) }
 }
 
-/** The gas a forward request signs when its call measured none. */
-const RELAYR_FORWARD_GAS = 500_000n
+/** The gas a call's forward request signs: its measured gas, or 500k when it measured none. */
+export const relayrForwardGas = (call: { gas?: bigint }): bigint => call.gas ?? 500_000n
 
 export type RelayrCall = {
   chainId: JBChainId
@@ -955,7 +955,7 @@ async function signForwardedRequest(
     from: expectedAccount,
     to: call.target,
     value,
-    gas: call.gas ?? RELAYR_FORWARD_GAS,
+    gas: relayrForwardGas(call),
     nonce,
     deadline: relayrForwarderDeadline(),
     data: call.data,
@@ -1664,6 +1664,7 @@ async function executeRelayrCalls({
   onProgress,
   reverify,
   onComplete,
+  parent,
 }: {
   calls: RelayrCall[]
   account: Address
@@ -1676,6 +1677,11 @@ async function executeRelayrCalls({
   reverify?: () => Promise<void>
   /** Commit application completion before removing the original payment journal. */
   onComplete?: (records: RelayrTransactionRecord[]) => Promise<void>
+  /**
+   * A parent review that already showed these calls as its Relayr round
+   * `round`, with the fee bound on `chainId`: a fresh run asks no review of its own.
+   */
+  parent?: { plan: ReviewedPlan; round: string; chainId: number }
 }, assertAuthorizationAvailable: () => void): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
@@ -1782,7 +1788,14 @@ async function executeRelayrCalls({
   /** A fresh run's one review of every request, with the fee bound when the fee is paid on one of their chains. */
   let plan: ReviewedPlan | undefined
   let planned: { plan: ReviewedPlan; round: string; chainId: number } | undefined
-  if (!saved) {
+  // Only a parent plan holding every request exactly is spent; otherwise the run reviews its own.
+  const inParent = parent && calls.every(call => parent.plan.calls.some(item => item.chainId === call.chainId &&
+    item.from !== 'relayr' && isAddressEqual(item.from, account) && isAddressEqual(item.to, call.target) &&
+    item.data.toLowerCase() === call.data.toLowerCase() && item.value === (call.value ?? 0n) && item.gas === relayrForwardGas(call)))
+  if (!saved && parent && inParent) {
+    plan = parent.plan
+    planned = parent
+  } else if (!saved) {
     // Core bounds a round's fee on its first call's chain: the funding chain, when it is a destination.
     const first = calls.find(call => call.chainId === (paymentChainId ?? preferredPaymentChainId))
     const round = first ? pendingScope ?? relayrCallsScope(calls) : undefined
@@ -1794,7 +1807,7 @@ async function executeRelayrCalls({
       description: 'Your signatures authorize submission of these exact destination calls onchain. Relayr runs them once the network fee is paid.',
       calls: ordered.map(call => ({
         chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value ?? 0n,
-        gas: call.gas ?? RELAYR_FORWARD_GAS, ...(round ? { relayrRound: round } : {}),
+        gas: relayrForwardGas(call), ...(round ? { relayrRound: round } : {}),
         label: call.label, abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
       })),
     }, await loadReviewedSendDeps())

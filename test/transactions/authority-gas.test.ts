@@ -1262,7 +1262,23 @@ describe('One safety-check review per project batch', () => {
     )
   })
 
-  it('reviews the relayed requests and their fee bound once after the batch review', async () => {
+  it('shows a relayed round in the batch review and pays it within that review', async () => {
+    const batch = await run([
+      batchCall(1, '0x1234', { relayr: undefined }),
+      batchCall(10, '0x5678', { relayr: undefined }),
+    ])
+
+    expect(batch.status).toBe('complete')
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    const [review] = mocks.requireReview.mock.calls[0]
+    expect(review.title).toBe('Review project actions')
+    expect(review.calls.map((call: { chainId: number; from: Address }) => [call.chainId, call.from])).toEqual([[1, ALICE], [10, ALICE]])
+    expect(mocks.wallet.signTypedData.mock.calls.map(([{ message }]) => message.gas)).toEqual([1_000_000n, 1_000_000n])
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.chain.id)).toEqual([1])
+  })
+
+  it('reviews the relayed requests and their payment when the wallet is on no chain of the round', async () => {
+    mocks.chainId = 8453
     const batch = await run([
       batchCall(1, '0x1234', { relayr: undefined }),
       batchCall(10, '0x5678', { relayr: undefined }),
@@ -1272,8 +1288,25 @@ describe('One safety-check review per project batch', () => {
     expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
       'Review project actions',
       'Review relayed transactions',
+      'Review execution payment',
     ])
-    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
+  })
+
+  it('reviews relayed calls a parent review never showed as its round', async () => {
+    const { runRelayrCalls } = await import('@/lib/relayr')
+    const plan = await (await loadReviewEngine()).reviewPlan({ account: ALICE, calls: [
+      { chainId: 1, from: ALICE, to: TARGET, data: '0x1234', value: 0n, gas: 1_000_000n, relayrRound: 'other' },
+      { chainId: 10, from: ALICE, to: TARGET, data: '0x9999', value: 0n, gas: 1_000_000n, relayrRound: 'other' },
+    ] }, reviewedSendDeps)
+    mocks.requireReview.mockClear()
+
+    await runRelayrCalls({ account: ALICE, pendingScope: 'parent-mismatch', preferredPaymentChainId: 1, parent: { plan, round: 'other', chainId: 1 },
+      calls: [
+        { chainId: 1, target: TARGET, data: '0x1234', gas: 1_000_000n },
+        { chainId: 10, target: TARGET, data: '0x5678', gas: 1_000_000n },
+      ] })
+
+    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual(['Review relayed transactions'])
   })
 })
 
