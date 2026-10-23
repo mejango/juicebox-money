@@ -522,31 +522,25 @@ export async function runProjectBatch({
       const viaSafe = isSafeConnection(wagmiConfig)
       const { reviewPlan } = await loadReviewEngine()
       const planned = batch
-      // Core bounds a round's fee on its first call's chain, so a round is
-      // shown as one only when the wallet's chain is in it, that call first.
+      // A round is shown as one Relayr round, its fee bound on the wallet's
+      // chain, when Relayr takes payment there.
       const relayed = new Map<number, RelayedRound>()
       if (!viaSafe && startChainId !== undefined) await Promise.all(planned.rounds.map(async (ids, index) => {
         const calls = ids.map(id => planned.calls.find(item => item.id === id)!)
         const raw = relayrRuns(calls)
         const group = raw ? calls : await relayGroupOf(planned, calls, account)
-        if (group.some(call => call.chainId === startChainId)) {
+        if (group.length && relayrPaymentChains(group.map(call => call.chainId)).includes(startChainId)) {
           relayed.set(index, { round: relayrScopeOf(planned, index), chainId: startChainId, ids: group.map(call => call.id), raw })
         }
       }))
-      const shown = [...batch.calls]
-      for (const { ids, chainId } of relayed.values()) {
-        // Calls of one round are on distinct chains, so the lead moves ahead of no call on its own chain.
-        const lead = shown.findIndex(call => ids.includes(call.id) && call.chainId === chainId)
-        const [call] = shown.splice(lead, 1)
-        shown.splice(shown.findIndex(item => ids.includes(item.id)), 0, call)
-      }
       const relayedOf = (call: ProjectBatchCall) => [...relayed.values()].find(({ ids }) => ids.includes(call.id))
       const plan = await reviewPlan({ account, title,
         description: `${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Pay network fees once for this batch. Each payment has its own result.' : 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         // A round Relayr runs goes from its own account; every other call from its authority.
         // A forwarded round's requests show with the gas each signs, as the account's own.
-        calls: shown.map(call => { const tag = relayedOf(call); return { chainId: call.chainId,
+        ...(relayed.size ? { relayrRounds: Object.fromEntries([...relayed.values()].map(({ round, chainId }) => [round, { paymentChainId: chainId }])) } : {}),
+        calls: batch.calls.map(call => { const tag = relayedOf(call); return { chainId: call.chainId,
           from: relayrRuns(planned.rounds.find(ids => ids.includes(call.id))!.map(id => planned.calls.find(item => item.id === id)!)) ? 'relayr' as const : tag ? account : call.authority,
           ...(tag && !tag.raw ? { gas: relayrForwardGas(call) } : {}), ...(tag ? { relayrRound: tag.round } : {}),
           to: call.target, data: call.data, value: call.value ?? 0n, label: call.label, abi: call.abi,

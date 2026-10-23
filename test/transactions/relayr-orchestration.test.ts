@@ -1546,6 +1546,29 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ chain: { id: 1 }, value: 100n }))
   })
 
+  it('reports a planned payment that reverted onchain as reverted, not as uncertain', async () => {
+    installSuccessfulBundle([payment])
+    mocks.paymentStatus = 'reverted'
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'planned-reverted' }))
+      .rejects.toMatchObject({ name: 'RelayrPaymentRevertedError', hash: HASH, chainId: 1 })
+    expect(coreReviews.shown).toHaveLength(1)
+  })
+
+  it('pays a fresh run on the wallet\'s funding chain when it is not a destination, with no funding choice', async () => {
+    installSuccessfulBundle([payment, paymentFor({ chain: 8453, amount: '200' })])
+    let connectedChain = 8453
+    mocks.getAccount.mockImplementation(() => ({ address: mocks.account, chainId: connectedChain }))
+    mocks.connectedWallet.mockImplementation(async (chainId: number) => {
+      connectedChain = chainId
+      return { wallet: mocks.wallet, account: ALICE }
+    })
+    await expect(runRelayrCalls({ calls, account: ALICE, pendingScope: 'funding-chain-round', preferredPaymentChainId: 8453 }))
+      .resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.requireFundingChainSelection).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(1)
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(expect.objectContaining({ chain: { id: 8453 }, value: 200n }))
+  })
+
   it('preselects the chain the wallet started on, not the chain signing switched to', async () => {
     installSuccessfulBundle([payment, paymentFor({ chain: 10, amount: '200' })])
     let connectedChain = 10

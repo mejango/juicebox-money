@@ -238,6 +238,15 @@ describe('payer deployment review and raw Relayr execution', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
+  it('pays on the wallet\'s funding chain within the review when it deploys on no chain there', async () => {
+    review = makeReview([1, 10])
+    mocks.chainId = 8453
+    const result = await runPayerDeployments(review, vi.fn(), flow)
+    expect(result.phase).toBe('complete')
+    expect(mocks.funding).not.toHaveBeenCalled()
+    expect(mocks.pay.mock.calls[0][0]).toMatchObject({ payment: { chain: 8453 }, planned: { round: review.id } })
+  })
+
   /** Relayr reports the bundle as `body` says, by default unpaid with every call pending. */
   function relayrReports(body: Record<string, unknown> = {}) {
     vi.mocked(fetch).mockImplementation(async () => new Response(JSON.stringify({ bundle_uuid: BUNDLE, payment_received: false,
