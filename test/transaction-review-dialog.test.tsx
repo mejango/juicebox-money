@@ -49,7 +49,7 @@ async function renderedDialog(request: (typeof REVIEW_REQUESTS)[keyof typeof REV
   await act(async () => {
     // The modal unmounts after the test, which cancels the review. A send names its sender, the connected
     // account; an authorization is sent by someone else.
-    const sent = request.kind === 'authorization' ? request
+    const sent = 'kind' in request && request.kind === 'authorization' ? request
       : { ...request, calls: request.calls.map(call => ({ from: '0x1111111111111111111111111111111111111111' as const, ...call })) }
     requireReview(sent as TransactionReviewRequest).catch(() => {})
   })

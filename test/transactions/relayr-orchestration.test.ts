@@ -424,9 +424,7 @@ describe('Relayr quote and payment boundaries', () => {
     expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
   })
-  it('reviews prerequisite deployment calls alongside the exact forwarded authorization without adding a wallet prompt', async () => {
-    const prerequisite = { chainId: 1, to: BOB, data: '0xabcd' as Hex, value: 0n,
-      label: 'Create owner multisig' }
+  it('reviews prerequisite deployment rows alongside the exact forwarded authorization without adding a wallet prompt', async () => {
     const call = { chainId: 1 as JBChainId, target: TARGET, data: '0x1234' as Hex, value: 5n,
       gas: 700_000n, label: 'Launch project' }
     const rows = [{ label: 'Create owner multisig', value: BOB, mono: true, lines: ['saltNonce 1'] }]

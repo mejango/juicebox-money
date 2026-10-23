@@ -77,7 +77,6 @@ vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => ({
 import {
   encodeMultiSend,
   MULTI_SEND_CALL_ONLY,
-  packMultiSend,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
 import { listedHeld } from '../support/held-chain'
