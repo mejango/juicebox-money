@@ -22,6 +22,7 @@ import {
   gasWithinCap,
   simulateStateChangingTransaction,
   TRANSACTION_SIMULATION_GAS,
+  type ReviewContextRow,
 } from '@bananapus/nana-sdk-core/review'
 import {
   MULTI_SEND_CALL_ONLY,
@@ -519,6 +520,23 @@ async function verifySafeWriteContext(
   return state
 }
 
+/** The queued Safe transaction a Safe write executes or approves, as the review shows it. */
+function safeContextRows(chainId: JBChainId, safe: Address, context: SafeWriteContext): ReviewContextRow[] {
+  const { tx } = context
+  return [{
+    label: `Safe transaction #${tx.nonce}`,
+    value: canonicalSafeTxHash(chainId, safe, tx),
+    mono: true,
+    lines: [
+      `To ${tx.to}`,
+      `Value ${tx.value} wei`,
+      `Operation ${Number(tx.operation) === 1 ? 'delegatecall' : 'call'}`,
+      `Data ${tx.data ?? '0x'}`,
+    ],
+    note: context.mode === 'approve' ? 'Approving does not execute it yet.' : undefined,
+  }]
+}
+
 function safeWriteGas(functionName: string): bigint {
   if (functionName === 'approveHash') return SAFE_APPROVAL_WRITE_GAS
   if (functionName === 'createProxyWithNonce') return SAFE_DEPLOY_WRITE_GAS
@@ -596,13 +614,12 @@ async function sendContractAndConfirm({
         ...(gas === undefined ? {} : { gas }),
       }],
       title: review?.title ?? 'Review onchain transaction',
+      confirmLabel: viaSafe ? 'Agree & continue to Safe' : review?.confirmLabel,
+      context: safeContext ? safeContextRows(chainId, address, safeContext) : undefined,
       description: [review?.description, viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join(' ') || undefined,
       guard: assertNoViewAs,
+      // The slow checks run first, so the Safe policy and wallet are read last before the send.
       reverify: async () => {
-        await reverifyAuthority?.()
-        if (safeContext && before) {
-          assertSafeStateUnchanged(before, await verifySafeWriteContext(chainId, address, expectedAccount, safeContext))
-        }
         if (functionName === 'execTransaction') {
           const simulation = await simulateStateChangingTransaction(client, { from: expectedAccount, to: address, data, gas: gasCap })
           let succeeds = false
@@ -612,6 +629,10 @@ async function sendContractAndConfirm({
             // Handled by the fail-closed result check below.
           }
           if (succeeds !== true) throw new Error('Safe simulation reported that the transaction would fail.')
+        }
+        await reverifyAuthority?.()
+        if (safeContext && before) {
+          assertSafeStateUnchanged(before, await verifySafeWriteContext(chainId, address, expectedAccount, safeContext))
         }
         assertWallet()
         if (isSafeConnection(wagmiConfig) !== viaSafe) {
@@ -708,20 +729,8 @@ export async function executeSafeTx(
       kind: 'transaction',
       title: 'Review Safe execution',
       description:
-        'Your wallet will send the outer Safe execTransaction call below. The raw context also contains the exact inner destination call the Safe will execute.',
+        'Your wallet will send the outer Safe execTransaction call below. The row above it is the exact inner call the Safe will execute.',
       confirmLabel: 'Agree & execute Safe transaction',
-      authorization: {
-        type: 'Safe execution context',
-        safe,
-        safeTxHash: canonicalSafeTxHash(chainId, safe, verifiedTx),
-        nonce: verifiedTx.nonce,
-        destinationCall: {
-          to: tx.to,
-          value: tx.value,
-          data: tx.data ?? '0x',
-          operation: tx.operation,
-        },
-      },
       calls: [
         {
           chainId,
@@ -907,20 +916,8 @@ async function approveSafeHashOnChain(
       kind: 'transaction',
       title: 'Review Safe hash approval',
       description:
-        'Your wallet will send approveHash to the Safe. The raw context identifies the exact queued destination call this digest authorizes; approval does not execute it yet.',
+        'Your wallet will send approveHash to the Safe. The row above it is the exact queued call this digest authorizes; approval does not execute it yet.',
       confirmLabel: 'Agree & approve Safe hash',
-      authorization: {
-        type: 'Safe approveHash context',
-        safe,
-        safeTxHash: hash,
-        nonce: tx.nonce,
-        destinationCall: {
-          to: tx.to,
-          value: tx.value,
-          data: tx.data ?? '0x',
-          operation: tx.operation,
-        },
-      },
       calls: [
         {
           chainId,

@@ -44,17 +44,20 @@ type Engine = typeof import('@bananapus/nana-sdk-core/review')
 
 /**
  * Core's send and sign as a lib test needs them, over its own wallet doubles:
- * one prompt of core's model (`coreReviews`), then for each call `reverify`,
+ * one prompt of core's model (`coreReviews`), then for each call the chain
+ * switch, `reverify`,
  * the final gate, `beforeWallet`, the send and its receipt, telling the
  * action's callbacks as core does. A Safe app's first send is its proposal.
  * Core's own tests cover its holds, journals and simulations; this keeps a
  * jbm test on jbm's checks around them.
  */
-export async function fakeEngine({ send, receipt, sign, safe = () => false }: {
+export async function fakeEngine({ send, receipt, sign, safe = () => false, switchChain = async () => {} }: {
   send: (call: import('@bananapus/nana-sdk-core/review').ReviewedCall) => Promise<Hex>
   receipt?: (hash: Hex, chainId: number) => Promise<import('viem').TransactionReceipt>
   sign?: (typedData: import('viem').TypedDataDefinition) => Promise<Hex>
   safe?: () => boolean
+  /** Core moves the wallet to the call's chain before `reverify`. */
+  switchChain?: (chainId: number) => Promise<void>
 }): Promise<Engine> {
   const core = await vi.importActual<Engine>('@bananapus/nana-sdk-core/review')
   const prompt = async (request: Parameters<Engine['buildReviewModel']>[0]) => {
@@ -65,16 +68,18 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false }: {
   const sendReviewed: Engine['sendReviewed'] = async action => {
     action.guard?.()
     await prompt({ title: action.title, description: action.description ?? '', confirmLabel: action.confirmLabel,
-      calls: action.calls.map(call => ({ ...call, from: action.account })) })
+      context: action.context, calls: action.calls.map(call => ({ ...call, from: action.account })) })
     const hashes: Hex[] = []
     const receipts: import('viem').TransactionReceipt[] = []
     for (const [step, call] of action.calls.entries()) {
+      await switchChain(call.chainId)
       await action.reverify?.(call, step, undefined)
       action.assertWriteState?.()
       await action.beforeWallet?.(call, step)
       let hash: Hex
       try {
-        hash = await send(call)
+        // A Safe app proposes with safeTxGas 0, whatever gas the call names.
+        hash = await send(safe() ? { ...call, gas: 0n } : call)
       } catch (error) {
         if (core.isDefiniteWalletRejection(error)) await action.onUnsent?.(call, step)
         throw error
@@ -114,7 +119,9 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false }: {
       context: action.context, signatures: signatures.map((signature, index) => ({
         kind: signature.kind, chainId: 'chainId' in signature ? signature.chainId : 0, typedData: typed[index] })) })
     const signed: Hex[] = []
-    for (const typedData of typed) {
+    for (const [index, typedData] of typed.entries()) {
+      const signature = signatures[index]
+      if ('chainId' in signature) await switchChain(signature.chainId)
       await action.reverify?.()
       signed.push(await sign!(typedData))
     }
