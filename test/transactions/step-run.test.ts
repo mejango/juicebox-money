@@ -161,6 +161,20 @@ describe('useStepRun', () => {
     expect(t.run).toHaveBeenCalledOnce()
   })
 
+  it('stops at the next step once an earlier step confirms after its run ended', async () => {
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.submitted(0, H1)
+    await t.engine({ phase: 'unconfirmed' })
+    await t.runs[0].end(null)
+    // Core ends an earlier step's late settle as idle, with the step it settled.
+    await t.engine({ phase: 'idle', settledStep: 0, hash: H1 })
+    expect(t.ref.current).toMatchObject({ unconfirmed: false, index: 1 })
+    expect(t.ref.current!.stoppedOn(plan)).toBe(true)
+    expect(t.onFinish).not.toHaveBeenCalled()
+  })
+
   it('continues a saved sequence as it was reviewed, never under the new plan\'s summary or checks', async () => {
     saved.calls = [call('mint')]
     const t = await renderRun()

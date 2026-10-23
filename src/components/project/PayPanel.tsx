@@ -1087,7 +1087,8 @@ export function PayPanel({
       setSequenceError(typeof sequenceSafeError === "string" ? sequenceSafeError : "The Safe action could not be completed.");
       return;
     }
-    if (sequenceSafePhase !== "success") return;
+    // An approval a Safe ran after its run ended settles as the run's earlier step.
+    if (sequenceSafePhase !== "success" && sequenceSafeTx.settledStep == null) return;
     setSequenceCompletedKinds(current =>
       current.includes(sequenceSafeStage)
         ? current
@@ -1120,6 +1121,7 @@ export function PayPanel({
     refetchAllowance,
     sequenceSafeError,
     sequenceSafePhase,
+    sequenceSafeTx.settledStep,
     sequenceSafeStage,
     sequenceActions,
   ]);
