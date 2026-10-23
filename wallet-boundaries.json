@@ -31,7 +31,7 @@
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 119,
+      "line": 118,
       "api": "request",
       "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
       "test": "test/transactions/relayr-orchestration.test.ts"
