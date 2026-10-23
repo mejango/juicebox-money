@@ -236,8 +236,6 @@ export function BurnTokensFlow({
           activeIndex={sending ? 0 : -1}
           complete={tx.settled}
           busy={sending || preparing}
-          action={tx.phase === 'error' || error ? 'Retry' : 'Confirm & burn'}
-          onConfirm={() => void burn()}
           status={
             !plan
               ? 'Reading your balance and the controller…'
@@ -245,6 +243,8 @@ export function BurnTokensFlow({
                 (tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined))
           }
           error={error ?? tx.error}
+          start={() => void burn()}
+          next={(tx.phase === 'error' || !!error) && !sending ? { label: 'Retry', onClick: () => void burn() } : null}
         />
       ) : null}
     </div>

@@ -613,8 +613,6 @@ export function RedeemShopItemsModal({
             },
           ]}
           activeIndex={tx.busy || tx.phase === 'error' ? 0 : -1}
-          action={tx.phase === 'error' ? 'Retry' : 'Confirm & redeem'}
-          onConfirm={() => void redeem()}
           busy={busy}
           complete={tx.settled}
           status={!plan ? 'Getting a fresh redemption quote…' : (tx.notice ?? tx.safeNonceGuidance)}
@@ -624,6 +622,8 @@ export function RedeemShopItemsModal({
             setPrepareError(null)
             if (tx.phase !== 'success') tx.dismiss()
           }}
+          start={() => void redeem()}
+          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void redeem() } : null}
         />
       ) : null}
     </ModalShell>

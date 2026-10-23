@@ -73,7 +73,8 @@ async function clickReview(renderer: ReactTestRenderer) {
   await act(async () => { button.props.onClick(); await Promise.resolve() })
 }
 async function confirm(renderer: ReactTestRenderer) {
-  await act(async () => { renderer.root.findByType(TxProgress).props.onConfirm(); await Promise.resolve() })
+  // What the dialog does next: its first start, then its retry.
+  await act(async () => { const { next, start } = renderer.root.findByType(TxProgress).props; (next?.onClick ?? start)!(); await Promise.resolve() })
 }
 
 describe('shop batch component journeys', () => {
@@ -117,7 +118,9 @@ describe('shop batch component journeys', () => {
     const calls = buildShopAddCalls(targets.map(target => snapshot(target, 'shop-add-items')), ACCOUNT, [{ draft: { ...newDraftItem(), name: 'Original', price: '1' }, encodedIpfsUri: URI }])
     mocks.saved = journal('shop-add-items', calls)
     const renderer = await addModal()
-    expect(renderer.root.findByType(TxProgress).props.action).toBe('Continue saved update')
+    // The saved update opens ready to continue: its review starts with no click.
+    expect(renderer.root.findByType(TxProgress).props.preparing).toBe(false)
+    expect(renderer.root.findByType(TxProgress).props.start).toBeTypeOf('function')
     await confirm(renderer)
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: mocks.saved.scope, account: ACCOUNT, calls: mocks.saved.calls, expectedBatchId: mocks.saved.id })
     expect(mocks.pinItems).not.toHaveBeenCalled()
@@ -164,7 +167,7 @@ describe('shop batch component journeys', () => {
     await confirm(renderer)
     const dialog = renderer.root.findByType(TxProgress)
     expect(dialog.props.error).toBeFalsy()
-    expect(dialog.props.actionDisabled).toBe(true)
+    expect(!dialog.props.next || dialog.props.next.disabled || dialog.props.busy).toBe(true)
     expect(renderer.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'ran' })
     // Discard abandons the saved batch and closes its review: a fresh one sends again (ruling R114 (f)).
     mocks.discard.mockImplementation(async () => { mocks.saved = null })

@@ -978,27 +978,13 @@ function AddLiquidityForm({
                   ? `${plan.steps.length} transactions: ${plan.steps.length - 1} approval${plan.steps.length - 1 > 1 ? 's' : ''} then the mint. Each is reviewed and simulated before you sign.`
                   : 'One transaction: the mint. It is reviewed and simulated before you sign.'
             }
-            action={
-              run.running
-                ? liquidityBatchApplies(plan.steps)
-                  ? 'Proposing to Safe…'
-                  : plan.market
-                    ? 'Making the market…'
-                    : 'Adding liquidity…'
-                : stopped
-                  ? `Retry step ${run.index + 1} of ${plan.steps.length}`
-                  : liquidityBatchApplies(plan.steps)
-                    ? 'Confirm & propose to Safe'
-                    : plan.market
-                      ? 'Confirm & make the market'
-                      : 'Confirm & add liquidity'
-            }
-            onConfirm={stopped ? resume : startRun}
             busy={run.running || tx.busy}
             complete={done || run.proposed || run.unconfirmed}
             status={batchStatus ?? tx.notice ?? tx.safeNonceGuidance}
             error={batchError ?? tx.error}
             onClose={closePlan}
+            start={startRun}
+            next={stopped ? { label: `Retry step ${run.index + 1} of ${plan.steps.length}`, onClick: resume } : null}
           >
             {balances && (d.maxTok > balances.tok || d.maxPair > balances.pair) ? (
               <p className="text-sm text-orange-600">
@@ -1017,8 +1003,6 @@ function AddLiquidityForm({
           title={mode === 'market' ? 'Make the market' : 'Add liquidity'}
           steps={[]}
           activeIndex={-1}
-          action={mode === 'market' ? 'Confirm & make the market' : 'Confirm & add liquidity'}
-          onConfirm={() => undefined}
           busy
           status="Reading the pool and your balances…"
           onClose={closePlan}

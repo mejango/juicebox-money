@@ -455,9 +455,6 @@ describe('project payer write flow', () => {
     })
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 
-    expect(renderedText(renderer.root)).toContain('Confirm deploy')
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
-
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
       chainId: 1,
@@ -485,7 +482,7 @@ describe('project payer write flow', () => {
     expect(mocks.send).not.toHaveBeenCalled()
   })
 
-  it('invalidates a reviewed write when the connected account changes', async () => {
+  it('closes the review and sends nothing more once the connected account changes', async () => {
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
       renderer = TestRenderer.create(createElement(ExtrasTab, extrasProps))
@@ -499,11 +496,10 @@ describe('project payer write flow', () => {
     await act(async () =>
       renderer.update(createElement(ExtrasTab, extrasProps)),
     )
-    await act(async () => buttonWith(renderer, 'Confirm deploy').props.onClick())
 
-    expect(mocks.send).not.toHaveBeenCalled()
+    // Only the deploy the first account reviewed went out.
+    expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(renderedText(renderer.root)).not.toContain('Confirm deploy')
-    expect(renderedText(renderer.root)).toMatch(/connected account changed/i)
   })
 })
 
@@ -525,13 +521,6 @@ describe('auto-issuance write flow', () => {
     await act(async () => buttonWith(renderer, 'Distribute').props.onClick())
 
     expect(mocks.readAutoAllocation).toHaveBeenCalledWith(1, 42, '3', ALICE, ALICE)
-    expect(renderedText(renderer.root)).toContain('Confirm distribution')
-    expect(mocks.send).not.toHaveBeenCalled()
-
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & distribute').props.onClick(),
-    )
-
     expect(mocks.send).not.toHaveBeenCalled()
     expect(mocks.runProjectBatch).toHaveBeenCalledWith(expect.objectContaining({
       scope: 'auto-issuance:1:42', action: 'auto-issuance', account: ALICE,
@@ -607,11 +596,7 @@ describe('cash-out write flow', () => {
       vi.advanceTimersByTime(400)
     })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
-    expect(mocks.send).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toContain('Confirm cash out')
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
-    )
 
     expect(mocks.send).toHaveBeenCalledTimes(1)
     expect(mocks.send.mock.calls[0][0]).toMatchObject({
@@ -645,7 +630,6 @@ describe('cash-out write flow', () => {
     await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
-    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
     const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { intent: string }]
     await act(async () => renderer.unmount())
     return options.intent
@@ -664,7 +648,6 @@ describe('cash-out write flow', () => {
     await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2').props.onClick())
-    await act(async () => buttonWith(renderer, 'Confirm & cash out').props.onClick())
     const [, options] = mocks.send.mock.calls.at(-1)! as [unknown, { legacy?: string[] }]
     expect(options.legacy).toEqual(legacyCashOutKeys({ chainId: 1, projectId: 42, amount: '2', beneficiary: ALICE }))
     await act(async () => renderer.unmount())
@@ -692,7 +675,6 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'MAX').props.onClick())
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Sell 5 JBT on the pool').props.onClick())
-    await act(async () => buttonWith(renderer, 'Approve tokens for this sale').props.onClick())
     const [request, options] = mocks.send.mock.calls.at(-1)! as [{ functionName: string }, { intent?: string }]
     expect(request.functionName).toBe('approve')
     const parent = cashOutIntent({ chainId: 1, project: 42, holder: ALICE, beneficiary: ALICE })
@@ -730,7 +712,7 @@ describe('cash-out write flow', () => {
     )
 
     // Both allowances are empty, so the queue is approve → authorize → sell,
-    // and the first step is the one awaiting a click.
+    // and the first step is the one under review.
     expect(renderedText(renderer.root)).toContain('Confirm pool sale')
     const steps = renderer.root.findAllByType('li').map(step => renderedText(step))
     expect(steps).toEqual([
@@ -743,8 +725,7 @@ describe('cash-out write flow', () => {
       .filter(step => step.props['aria-current'] === 'step')
     expect(current).toHaveLength(1)
     expect(renderedText(current[0])).toContain('Approve JBT for the swap router')
-    expect(buttonWith(renderer, 'Approve tokens for this sale')).toBeDefined()
-    expect(mocks.send).not.toHaveBeenCalled()
+    expect(mocks.send.mock.calls.map(([request]) => (request as { functionName: string }).functionName)).toEqual(['approve'])
   })
 
   it('uses the full balance, changes slippage, and rejects malformed amounts', async () => {
@@ -810,9 +791,6 @@ describe('cash-out write flow', () => {
     expect(mocks.prepareCashOut).toHaveBeenCalledWith(
       mocks.publicClient,
       expect.objectContaining({ slippageBps: 250n }),
-    )
-    await act(async () =>
-      buttonWith(renderer, 'Confirm & cash out').props.onClick(),
     )
     expect(mocks.send).toHaveBeenCalledTimes(1)
   })

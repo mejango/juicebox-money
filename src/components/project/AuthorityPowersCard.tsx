@@ -715,9 +715,8 @@ export function PowerActionForm({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : power.actionLabel}
-          actionDisabled={!ack || (power.extreme && !ackExtreme) || discard.active}
-          onConfirm={() => void submit()}
+          start={() => void submit()}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: !ack || (power.extreme && !ackExtreme) || discard.active } : null}
           onClose={() => {
             if (done) {
               onCancel()

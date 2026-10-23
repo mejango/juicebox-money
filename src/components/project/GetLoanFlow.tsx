@@ -29,7 +29,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { TxProgress } from '@/components/ui/TxProgress'
@@ -387,20 +387,6 @@ export function GetLoanFlow({
         { key: 'borrow', title: 'Open the loan' },
       ] : []}
       activeIndex={activeIndex}
-      action={
-        quoting
-          ? 'Checking the live quote…'
-          : permTx.phase === 'simulating' || permTx.phase === 'signing'
-            ? 'Approve in your wallet…'
-            : permTx.phase === 'pending'
-              ? 'Approving…'
-              : txPhaseLabel(borrowTx.phase, {
-                  idle: reviewError ? 'Retry' : 'Confirm loan',
-                  pending: 'Opening your loan…',
-                  confirm: 'Confirm the loan in your wallet…',
-                })
-      }
-      onConfirm={handleConfirm}
       busy={busy}
       complete={borrowTx.settled || permTx.phase === 'submitted'}
       status={
@@ -413,6 +399,8 @@ export function GetLoanFlow({
       }
       error={reviewError}
       onClose={closeReview}
+      start={handleConfirm}
+      next={!!reviewError && !busy ? { label: 'Retry', onClick: handleConfirm } : null}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
         At least 99% of the live quote must be borrowed or the transaction

@@ -44,15 +44,15 @@ vi.mock('@/components/ui/ModalShell', () => ({
 }))
 vi.mock('@/components/ui/TxProgress', () => ({
   // Once complete, the confirm offers only Done.
-  TxProgress: ({ onConfirm, onClose, title, error, complete }: {
-    onConfirm: () => void; onClose: () => void; title: string; error?: ReactNode; complete?: boolean
+  TxProgress: ({ start, next, onClose, title, error, complete }: {
+    start?: () => void; next?: { onClick: () => void } | null; onClose: () => void; title: string; error?: ReactNode; complete?: boolean
   }) => (
     <div>
       <p>{title}</p>
       {error ? <div>{error}</div> : null}
       {complete
         ? <button type="button" onClick={onClose}>Done</button>
-        : <button type="button" onClick={onConfirm}>Confirm mint</button>}
+        : <button type="button" onClick={next?.onClick ?? start}>Confirm mint</button>}
     </div>
   ),
 }))

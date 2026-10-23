@@ -64,8 +64,12 @@ function createFakeWallet() {
       writeContract({ address: tx.to, data: tx.data, value: tx.value ?? 0n, ...decoded(tx.data), account }),
     ),
   }
+  /** Reviews left open for the test to answer, once `holdReviews` is called; otherwise each is confirmed at once. */
+  let openReviews: ((confirmed: boolean) => void)[] | null = null
+  const answerAtOnce = async (..._args: unknown[]) =>
+    openReviews ? new Promise<boolean>(resolve => openReviews!.push(resolve)) : true
   /** The app's review: true confirms it. Core's reviewed run asks it through the registered handler. */
-  const requestReview = vi.fn(async (..._args: unknown[]) => true)
+  const requestReview = vi.fn(answerAtOnce)
   const switchChain = vi.fn(async (_args?: { chainId: number }) => undefined)
   /** One RPC for every chain: simulations pass and receipts are what `confirm` set. */
   const client = {
@@ -161,6 +165,20 @@ function createFakeWallet() {
         return { functionName: request.functionName, account: request.account }
       })
     },
+    /** Leave each review open until the test answers it, as a person reading it would. */
+    holdReviews() {
+      openReviews = []
+    },
+    /** How many reviews are open now. */
+    get openReviews() {
+      return openReviews?.length ?? 0
+    },
+    /** Answer the oldest open review: confirm it, or cancel it. */
+    answerReview(confirmed = true) {
+      const next = openReviews?.shift()
+      if (!next) throw new Error('No review is open')
+      next(confirmed)
+    },
     /** Every receipt watch still waiting times out, as viem's does. */
     giveUp() {
       for (const [hash, waiters] of awaiting) {
@@ -176,7 +194,10 @@ function createFakeWallet() {
       awaiting.clear()
       writeContract.mockClear()
       requestReview.mockClear()
-      requestReview.mockImplementation(async () => true)
+      // A review an earlier test left open is cancelled, so its run ends with nothing sent.
+      for (const answer of openReviews?.splice(0) ?? []) answer(false)
+      openReviews = null
+      requestReview.mockImplementation(answerAtOnce)
       switchChain.mockClear()
       client.simulateContract.mockReset()
       client.simulateContract.mockImplementation(async request => ({ request: { ...request } }))

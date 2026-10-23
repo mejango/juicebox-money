@@ -38,7 +38,7 @@ import {
 } from '@/components/project/SettlementSection'
 import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -734,7 +734,7 @@ function MoveFlow({
         }
         start={step >= 1 && step <= 3 ? stepRun : undefined}
         startKey={step}
-        retry={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
+        next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
         complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
         status={

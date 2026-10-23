@@ -1674,8 +1674,8 @@ function RulesetEditorForm({
           error={flowError}
           busy={busy}
           complete={success}
-          action={flowError ? "Retry" : "Confirm and queue"}
-          onConfirm={() => void handleConfirm()}
+          start={() => void handleConfirm()}
+          next={flowError ? { label: 'Retry', onClick: () => void handleConfirm() } : null}
           onClose={() => {
             if (busy) return;
             setReview(null);

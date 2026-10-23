@@ -501,19 +501,13 @@ export function MarketEditPanel({
           ? liquidityBatchIntro(reviewed.steps.length)
           : undefined
       }
-      action={
-        run.running
-          ? 'Editing the market…'
-          : reviewed && stopped
-            ? `Retry step ${run.index + 1} of ${reviewed.steps.length}`
-            : 'Edit the market'
-      }
-      onConfirm={stopped ? resume : startRun}
       busy={busy}
       complete={done !== null || batchProposed || run.proposed || run.unconfirmed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your positions…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}
+      start={startRun}
+      next={stopped ? { label: `Retry step ${run.index + 1} of ${reviewed?.steps.length ?? 0}`, onClick: resume } : null}
     >
       {reviewed &&
       balances.data &&

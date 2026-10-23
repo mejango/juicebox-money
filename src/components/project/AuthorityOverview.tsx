@@ -737,9 +737,8 @@ export function TransferAuthorityFlow({
       error={discard.active ? null : error}
       busy={busy}
       complete={done}
-      action={error ? "Retry" : `Confirm & ${isRevnet ? "set operator" : "transfer"}`}
-      actionDisabled={discard.active}
-      onConfirm={() => void submit()}
+      start={() => void submit()}
+      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
       {discard.element}
@@ -1306,9 +1305,8 @@ export function PermissionEditor({
       error={discard.active ? null : error}
       busy={checking || busy}
       complete={done}
-      action={error ? "Retry" : grant ? "Confirm & update" : "Confirm & add"}
-      actionDisabled={discard.active}
-      onConfirm={() => void submit()}
+      start={() => void submit()}
+      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
       {discard.element}

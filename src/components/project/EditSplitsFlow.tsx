@@ -1084,8 +1084,8 @@ function EditSplitsModal({
               error={flowError}
               busy={busy}
               complete={success}
-              action={flowError ? 'Retry' : 'Confirm and save'}
-              onConfirm={() => void submit()}
+              start={() => void submit()}
+              next={flowError ? { label: 'Retry', onClick: () => void submit() } : null}
               onClose={() => {
                 if (busy) return
                 setPlan(null)

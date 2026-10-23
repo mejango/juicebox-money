@@ -692,16 +692,6 @@ export function CashOutPanel({
       })()}
       steps={cashOutSteps}
       activeIndex={cashOutActiveIndex}
-      action={
-        needsTokenApproval
-          ? 'Approve tokens for this sale'
-          : needsRouterApproval
-            ? 'Authorize the swap router'
-            : plan.kind === 'pool'
-              ? 'Confirm & sell'
-              : 'Confirm & cash out'
-      }
-      onConfirm={() => void cashOut()}
       busy={busy}
       complete={success || tx.phase === 'submitted' || approveTx.phase === 'submitted' || tx.phase === 'unconfirmed' || approveTx.phase === 'unconfirmed'}
       status={
@@ -723,6 +713,9 @@ export function CashOutPanel({
       }
       error={errorMsg ?? tx.error ?? approveTx.error}
       onClose={closeReview}
+      start={() => void cashOut()}
+      startKey={`${needsTokenApproval}:${needsRouterApproval}`}
+      next={!busy && !success && !!(errorMsg ?? tx.error ?? approveTx.error) ? { label: 'Try again', onClick: () => void cashOut() } : null}
     />
   ) : preparing ? (
     <TxProgress
@@ -731,8 +724,6 @@ export function CashOutPanel({
       title="Confirm cash out"
       steps={[]}
       activeIndex={-1}
-      action="Confirm & cash out"
-      onConfirm={() => undefined}
       busy
       status="Getting a fresh cash-out quote…"
       onClose={closeReview}

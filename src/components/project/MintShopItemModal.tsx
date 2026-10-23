@@ -145,6 +145,11 @@ export function MintShopItemModal({
       account: review.account,
       calls: [{ ...reviewedCall({ ...request, label: `Mint ${review.quantity} × ${itemName}` }), contractName: 'JB721TiersHook' }],
       title: `Review free mint on ${chainName(chainId)}`,
+      context: [
+        { label: 'Item', value: `${review.quantity} × ${itemName}`, strong: true },
+        { label: 'Beneficiary', value: review.beneficiary, mono: true },
+        { label: 'On', value: chainName(chainId) },
+      ],
       description: 'This consumes shop inventory and collects no payment. It cannot be undone.',
       // The wallet that reviewed it, on the mint's chain, right before it opens.
       assertWriteState: captureWalletContext(config, { account: review.account, chainId }),
@@ -233,8 +238,8 @@ export function MintShopItemModal({
           }
           steps={review ? [{ title: `Mint ${review.quantity} × ${itemName}` }] : []}
           activeIndex={busy ? 0 : -1}
-          action={busy ? 'Checking & minting…' : 'Mint without payment'}
-          onConfirm={() => void handleConfirm()}
+          start={() => void handleConfirm()}
+          next={review && !busy && !settled && (tx.error || message) ? { label: 'Try again', onClick: () => void handleConfirm() } : null}
           busy={busy}
           complete={settled}
           status={!review ? 'Checking your mint permission…' : tx.notice ?? undefined}

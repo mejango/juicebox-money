@@ -79,8 +79,6 @@ describe('aggregate token action reviews', () => {
     expect(mocks.claim).toHaveBeenCalledWith([[10, 84]], ACCOUNT)
     expect(text(renderer.root)).toContain('Project 84')
     expect(text(renderer.root)).toContain('2 TWO')
-    expect(mocks.run).not.toHaveBeenCalled()
-    await click(renderer, 'Confirm claims')
     expect(mocks.run).toHaveBeenCalledWith(expect.objectContaining({
       action: 'claim-credits', account: ACCOUNT, calls: [call(10, 84, 2)], reverify: mocks.reverifyClaim,
     }))
@@ -131,9 +129,8 @@ describe('aggregate token action reviews', () => {
   it('does not label a still-pending batch complete', async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')
-    await click(renderer, 'Review selected chains')
     mocks.run.mockImplementation(async ({ calls }) => ({ id: 'batch-1', status: 'pending', account: ACCOUNT, calls }))
-    await click(renderer, 'Confirm claims')
+    await click(renderer, 'Review selected chains')
     expect(text(renderer.root)).toContain('remaining calls')
     expect(text(renderer.root)).not.toContain('All selected credits are now ERC-20')
     expect(mocks.invalidate).not.toHaveBeenCalled()
@@ -142,13 +139,12 @@ describe('aggregate token action reviews', () => {
   it("keeps the batch's own line when it comes back pending, so a scan still reading says so", async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')
-    await click(renderer, 'Review selected chains')
     const line = "This Safe proposal's history is still being read. Check this batch again to continue."
     mocks.run.mockImplementation(async ({ calls, onProgress }) => {
       onProgress({ message: line, completed: 0, total: 2, round: 1, rounds: 1 })
       return { id: 'batch-1', status: 'pending', account: ACCOUNT, calls }
     })
-    await click(renderer, 'Confirm claims')
+    await click(renderer, 'Review selected chains')
     expect(text(renderer.root)).toContain(line)
     expect(text(renderer.root)).not.toContain('remaining calls')
   })
@@ -156,9 +152,14 @@ describe('aggregate token action reviews', () => {
   it('shows a different batch saved by another tab before allowing its recovery', async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')
+    // Another tab saves its batch while this review is prepared: the review's start finds it.
+    mocks.claim.mockImplementationOnce(async () => {
+      mocks.saved = { id: 'batch-2', status: 'pending', account: ACCOUNT, calls: [call(10, 84, 9)] }
+      return [call(1, 42)]
+    })
     await click(renderer, 'Review selected chains')
-    mocks.saved = { id: 'batch-2', status: 'pending', account: ACCOUNT, calls: [call(10, 84, 9)] }
-    await click(renderer, 'Confirm claims')
+    // The saved batch is never started for it: its own button shows it first.
+    await click(renderer, 'Resume original batch')
     expect(mocks.run).not.toHaveBeenCalled()
     expect(text(renderer.root)).toContain('9 TWO')
     expect(text(renderer.root)).toContain('different calls')
@@ -187,7 +188,6 @@ describe('aggregate token action reviews', () => {
     expect(mocks.auto).toHaveBeenCalledWith(chains, ACCOUNT)
     expect(text(renderer.root)).toContain(BENEFICIARY)
     expect(text(renderer.root)).toContain(OTHER)
-    await click(renderer, 'Confirm & distribute')
     expect(mocks.run.mock.calls[0][0].calls).toHaveLength(3)
     expect(mocks.run.mock.calls[0][0].calls.map((item: { chainId: number }) => item.chainId)).toEqual([1, 1, 10])
     expect(mocks.run.mock.calls[0][0].reverify).toBe(mocks.reverifyAuto)
@@ -213,14 +213,12 @@ describe('aggregate token action reviews', () => {
   it('clears an abandoned local review so live amounts can be prepared again', async () => {
     const renderer = await render()
     await click(renderer, 'Claim credits as ERC-20')
-    await click(renderer, 'Review selected chains')
     mocks.run.mockRejectedValueOnce(new Error('Wallet rejected before submission.'))
-    await click(renderer, 'Confirm claims')
+    await click(renderer, 'Review selected chains')
     expect(text(renderer.root)).toContain('Review selected chains')
     expect(text(renderer.root)).not.toContain('Resume original batch')
     mocks.claim.mockResolvedValueOnce([call(1, 42, 8)])
     await click(renderer, 'Review selected chains')
-    await click(renderer, 'Confirm claims')
     expect(mocks.run.mock.calls[1][0].calls).toEqual([call(1, 42, 8)])
     expect(mocks.run.mock.calls[1][0].expectedBatchId).toBeUndefined()
   })

@@ -260,8 +260,6 @@ async function typeCustom(
 
 async function saveAndReadPin(renderer: TestRenderer.ReactTestRenderer) {
   await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
-  expect(renderedText(renderer.root)).toContain('Confirm project metadata')
-  await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
   const pinCall = mocks.pinJson.mock.calls.at(-1)
   expect(pinCall, 'expected a Juicebox Center pin').toBeTruthy()
   return pinCall![0] as Record<string, unknown>
@@ -393,7 +391,7 @@ describe('metadata editor custom properties', () => {
     await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
 
     expect(renderedText(renderer.root)).toMatch(/valid JSON/i)
-    expect(buttonWith(renderer, 'Confirm & save')).toBeUndefined()
+    expect(renderedText(renderer.root)).not.toContain('Confirm project metadata')
     expect(
       mocks.pinJson.mock.calls,
     ).toHaveLength(0)
@@ -619,10 +617,11 @@ describe('metadata editor per-chain review and recovery', () => {
     // Either deployment opens the same saved action, even after the route's
     // indexed profile changes or another chain has already executed.
     const renderer = await renderEditor([{ ...PEER, uri: 'ipfs://QmAlreadyExecuted' }], onDone)
+    // The saved review opens as it was, and continues on its button.
     expect(renderedText(renderer.root)).toContain('Confirm project metadata')
-    const resume = buttonWith(renderer, 'Retry') ?? buttonWith(renderer, 'Confirm & save')
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
     mocks.runAuthorityCalls.mockResolvedValueOnce({ directResults: [], relayrGroups: 1, relayrResults: [], safeResults: [] })
-    await act(async () => resume.props.onClick())
+    await act(async () => buttonWith(renderer, 'Continue saved update').props.onClick())
 
     // The router resumes a paid bundle before any live read; its action can sign the
     // calls again once every request expired unused (amended ruling R114).
@@ -657,7 +656,7 @@ describe('metadata editor per-chain review and recovery', () => {
 
     const onDone = vi.fn()
     const renderer = await renderEditor([PEER], onDone)
-    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    await act(async () => buttonWith(renderer, 'Continue saved update').props.onClick())
 
     expect(submittedCalls().map(call => call.data)).toEqual(originalData)
     expect(renderedText(renderer.root)).toMatch(/changed after review/i)
@@ -683,7 +682,7 @@ describe('metadata editor per-chain review and recovery', () => {
     await act(async () => first.unmount())
 
     const renderer = await renderEditor([PEER])
-    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    await act(async () => buttonWith(renderer, 'Continue saved update').props.onClick())
     expect(submittedCalls().map(call => call.data)).toEqual(originalData)
     expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
     expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
@@ -722,14 +721,14 @@ describe('metadata editor per-chain review and recovery', () => {
     const text = renderedText(renderer.root)
     expect(text.match(/may already have run/g)).toHaveLength(1)
     // Its retry stays beside Discard: the editor's recheck refuses calls that already ran, and a paid bundle that ran completes.
-    expect(buttonWith(renderer, 'Confirm & save')?.props.disabled ?? buttonWith(renderer, 'Retry')?.props.disabled).toBeFalsy()
+    expect(buttonWith(renderer, 'Retry').props.disabled).toBeFalsy()
     await act(async () => buttonWith(renderer, 'Discard').props.onClick())
     expect(loadRelayrPendingSession(scope)).toBeNull()
     // The saved review is the draft: confirmed again, it signs afresh.
     expect(storage.has('jb-metadata-review-v1:1:42')).toBe(true)
     expect(renderedText(renderer.root)).not.toContain('may already have run')
-    expect(buttonWith(renderer, 'Confirm & save').props.disabled).toBeFalsy()
-    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    expect(buttonWith(renderer, 'Review again').props.disabled).toBeFalsy()
+    await act(async () => buttonWith(renderer, 'Review again').props.onClick())
     expect(mocks.runAuthorityCalls).toHaveBeenCalledTimes(2)
     expect(submittedCalls().map(call => call.data)).toEqual(originalData)
     await act(async () => renderer.unmount())
@@ -778,7 +777,7 @@ describe('metadata editor per-chain review and recovery', () => {
 
     const onDone = vi.fn()
     const renderer = await renderEditor(ROWS, onDone)
-    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
+    await act(async () => buttonWith(renderer, 'Continue saved update').props.onClick())
 
     expect(renderedText(renderer.root)).toMatch(/wallet that reviewed/i)
     expect(mocks.resumeRelayrSession).not.toHaveBeenCalled()
@@ -923,8 +922,6 @@ describe('metadata editor permission scope and submission locks', () => {
     )
     const renderer = await renderEditor([...ROWS, peer])
     await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
-    const confirm = buttonWith(renderer, 'Confirm & save')
-    if (confirm) await act(async () => confirm.props.onClick())
 
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toMatch(/same owner\/operator|different.*authorit|one.*authority|authority.*group/i)
@@ -933,9 +930,9 @@ describe('metadata editor permission scope and submission locks', () => {
 
   it('refuses submission when another tab holds a project lock and keeps the saved review', async () => {
     const renderer = await renderEditor()
+    // Another tab holds the project once the review is saved: the review's own start is refused.
+    mocks.requestLock.mockImplementation(async (_name, _options, callback) => callback(storage.has('jb-metadata-review-v1:1:42') ? null : {}))
     await act(async () => buttonWith(renderer, 'Save project details').props.onClick())
-    mocks.requestLock.mockImplementationOnce(async (_name, _options, callback) => callback(null))
-    await act(async () => buttonWith(renderer, 'Confirm & save').props.onClick())
 
     expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toMatch(/already.*another tab/i)

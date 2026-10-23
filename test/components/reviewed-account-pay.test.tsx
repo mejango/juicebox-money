@@ -160,35 +160,8 @@ vi.mock('@/components/project/Tabs', () => ({ replaceProjectTabHash: () => {} })
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
-vi.mock('@/components/ui/TxProgress', () => ({
-  TxProgress: ({ open, action, onConfirm, onClose, complete, error, status, notice, rows, children }: {
-    open: boolean
-    action: string
-    onConfirm: () => void
-    onClose: () => void
-    complete?: boolean
-    error?: ReactNode
-    status?: ReactNode
-    notice?: ReactNode
-    rows?: { label: ReactNode; value: ReactNode }[]
-    children?: ReactNode
-  }) =>
-    open ? (
-      <section data-tx-confirm>
-        {rows?.map((row, index) => <p key={index} data-row={String(row.label)}>{row.value}</p>)}
-        <p data-status>{status}</p>
-        <p data-error>{error}</p>
-        {children}
-        {notice}
-        {!complete ? <button type="button" onClick={onClose}>Close review</button> : null}
-        {complete ? (
-          <button type="button" onClick={onClose}>Done</button>
-        ) : (
-          <button type="button" onClick={onConfirm}>{action}</button>
-        )}
-      </section>
-    ) : null,
-}))
+vi.mock('@/components/ui/TxProgress', async original =>
+  (await import('../support/tx-progress')).testTxProgress(await original<typeof import('@/components/ui/TxProgress')>()))
 
 const contextFor = (token: 'native' | 'erc20') =>
   token === 'native'
@@ -206,7 +179,7 @@ function query(key: string) {
         isError: false,
       }
     case 'payAllowance':
-      return { data: 0n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+      return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
     case 'payShopCredits':
       return { data: 0n, isLoading: false }
     default:
@@ -226,6 +199,7 @@ let root: Root
 
 beforeEach(() => {
   wallet.reset()
+  wallet.holdReviews()
   wallet.connect(ALICE)
   m.token = 'native'
   m.safe = false
@@ -273,6 +247,16 @@ async function click(label: string) {
   await act(async () => button(label).click())
 }
 
+const followUp = () => [...host.querySelectorAll('button')].find(item => ['Try again', 'Continue'].includes(item.textContent ?? '') && !item.disabled)
+
+/** Confirm (or cancel) the payment's review, as the payer does: the one confirmation. After an ended run, Try again opens it. */
+async function confirmReview(confirmed = true) {
+  await waitUntil(() => wallet.openReviews > 0 || !!followUp())
+  if (!wallet.openReviews && followUp()) await act(async () => followUp()!.click())
+  await waitUntil(() => wallet.openReviews > 0)
+  if (wallet.openReviews) await act(async () => wallet.answerReview(confirmed))
+}
+
 /**
  * Review a payment of `amount` as Alice: the sequence dialog opens on its
  * frozen actions. Proposals stay with the Safe for the page, so each Safe test
@@ -318,7 +302,7 @@ describe('a payment reviewed for one account', () => {
   it('wallet-action:pay-a-project never pays from an account switched to before confirming', async () => {
     await reviewPayment()
     await act(async () => wallet.connect(BOB))
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError() || wallet.writeContract.mock.calls.length > 0)
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -330,7 +314,7 @@ describe('a payment reviewed for one account', () => {
     m.token = 'erc20'
     await reviewPayment()
     await act(async () => wallet.connect(BOB))
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError() || wallet.writeContract.mock.calls.length > 0)
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -341,39 +325,35 @@ describe('a payment reviewed for one account', () => {
   it('stops after an approval when the account switches before the payment, and says why', async () => {
     m.token = 'erc20'
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.awaits(sentHash(1)))
     // Alice's approval reached her wallet and is confirming.
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
 
     await act(async () => wallet.connect(BOB))
     await act(async () => wallet.confirm(sentHash(1)))
-    await waitUntil(() => !!dialogError())
+    await waitUntil(() => dialogError() === CHANGED)
 
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     expect(dialogError()).toBe(CHANGED)
   })
 
-  it('moves the project notice from the form into the payment confirmation', async () => {
+  it('moves the project notice from the form into the payment review, first and emphasized', async () => {
     const notice = 'Project terms.\n\nContact the project after paying.'
     await reviewPayment('1', notice)
-    const disclosure = host.querySelector('[data-tx-confirm] details')!
-    expect(disclosure).not.toBeNull()
-    expect(disclosure.querySelector('p')?.textContent).toBe(notice)
+    await waitUntil(() => wallet.openReviews > 0)
+    const [model] = wallet.requestReview.mock.calls[0] as unknown as [{ context: { label: string; value: string; strong?: boolean }[] }]
+    expect(model.context).toContainEqual({ label: 'Project notice', value: notice, strong: true })
+    expect(model.context[0]).toMatchObject({ label: 'Send', strong: true })
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
   it.each(['native', 'erc20'] as const)('clears progress when the %s wallet review is cancelled', async token => {
     m.token = token
-    let answerReview!: (answer: boolean) => void
-    wallet.requestReview.mockImplementationOnce(() => new Promise<boolean>(resolve => { answerReview = resolve }))
     await reviewPayment()
-    await click('Confirm & Pay')
-    await waitUntil(() => wallet.requestReview.mock.calls.length === 1)
-    expect(host.querySelector('[data-status]')?.textContent).toBe(
-      token === 'native' ? 'Review and execute the payment.' : 'Review and approve USDC access.',
-    )
-    await act(async () => answerReview(false))
+    await waitUntil(() => wallet.openReviews === 1)
+    expect(host.querySelector('[data-status]')?.textContent).toBe('Review the payment.')
+    await confirmReview(false)
     await waitUntil(() => !!host.querySelector('[data-error]')?.textContent?.includes('cancelled'))
     expect(host.querySelector('[data-status]')?.textContent).toBe('')
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -381,7 +361,7 @@ describe('a payment reviewed for one account', () => {
 
   it("pays from the account that reviewed it, as its beneficiary, with prepareUserPay's metadata and minimum", async () => {
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
 
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
@@ -413,7 +393,7 @@ describe('a payment prepareUserPay prepares', () => {
   it('approves the terminal entry for exactly the amount', async () => {
     m.token = 'erc20'
     await reviewPayment('7')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ functionName: string; address: Address; args: readonly unknown[] }]
     expect(request.functionName).toBe('approve')
@@ -471,7 +451,7 @@ describe('a payment prepareUserPay prepares', () => {
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     await act(async () => release(PREPARED))
     await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[]; value: bigint }]
     expect(request.args[2]).toBe(10n ** 18n)
@@ -488,7 +468,7 @@ const surfaceWith = (patch: Record<string, unknown>) => ({
 async function confirmAndSend() {
   await click('Pay')
   await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
-  await click('Confirm & Pay')
+  await confirmReview()
   await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
   return (wallet.writeContract.mock.calls[0] as unknown as [{ address: Address; args: readonly unknown[] }])[0]
 }
@@ -570,11 +550,8 @@ describe('a reviewed payment whose form changes before the wallet', () => {
     }],
   ]
   const waits: [string, () => () => void, () => boolean][] = [
-    ['review', () => {
-      let answer!: (value: boolean) => void
-      wallet.requestReview.mockImplementationOnce(() => new Promise<boolean>(resolve => { answer = resolve }))
-      return () => answer(true)
-    }, () => wallet.requestReview.mock.calls.length === 1],
+    // The review is open until the payer confirms it.
+    ['review', () => () => wallet.answerReview(true), () => wallet.openReviews === 1],
     ['simulation', () => {
       // Core simulates at review and again before the wallet: both wait for the release.
       let finish!: () => void
@@ -587,7 +564,6 @@ describe('a reviewed payment whose form changes before the wallet', () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     await reviewPayment('1')
     const release = waits[0][1]()
-    await click('Confirm & Pay')
     await waitUntil(waits[0][2])
     vi.setSystemTime(Date.now() + 5 * 60_000)
     await renderPanel()
@@ -600,8 +576,7 @@ describe('a reviewed payment whose form changes before the wallet', () => {
 
   it('says a wallet cancel with nothing changed is a cancel', async () => {
     await reviewPayment('1')
-    wallet.requestReview.mockImplementationOnce(async () => false)
-    await click('Confirm & Pay')
+    await confirmReview(false)
     await waitUntil(() => !!dialogError())
     expect(dialogError()).toBe('Payment was cancelled.')
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -612,7 +587,7 @@ describe('a reviewed payment whose form changes before the wallet', () => {
       it(`sends nothing when ${name} during ${wait}`, async () => {
         await reviewPayment('1')
         const release = hold()
-        await click('Confirm & Pay')
+        if (wait !== 'review') await confirmReview()
         await waitUntil(held)
         expect(held()).toBe(true)
         await change()
@@ -628,7 +603,7 @@ describe('a reviewed payment whose form changes before the wallet', () => {
 describe('a payment whose receipt watch gives up', () => {
   it("shows the hold's line on the panel, and a second pay sends nothing until the payment settles", async () => {
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => host.textContent?.includes('Confirming your transaction.') ?? false)
     // The watch times out and core's receipt polls find nothing either.
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
@@ -656,7 +631,7 @@ describe('an approval whose receipt watch gives up', () => {
   it('counts the approval once it confirms later, and pays without approving again', async () => {
     m.token = 'erc20'
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => host.textContent?.includes('Confirming your transaction.') ?? false)
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
     wallet.giveUp()
@@ -665,10 +640,10 @@ describe('an approval whose receipt watch gives up', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     // The approval lands after the watch ended; the hold's follower sees it as the page regains focus.
     await act(async () => wallet.confirm(sentHash(1)))
+    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
     await act(async () => { window.dispatchEvent(new Event('focus')) })
-    await waitUntil(() => !(host.textContent?.includes('Token approval was cancelled.') ?? false))
-    // The open review continues to the payment; its confirmation sends it.
-    await click('Confirm & Pay')
+    // Trying again reads the allowance the approval set, and reviews only the payment.
+    await confirmReview()
     await waitUntil(() => wallet.writes().length === 2)
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'pay', account: ALICE }])
   })
@@ -678,7 +653,7 @@ describe('a held payment whose token the app switched', () => {
   it('refuses the same typed amount in the currency the app fell back to, before the wallet', async () => {
     m.safe = true
     await reviewPayment('7')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
     await click('Done')
     await loseService()
@@ -689,7 +664,7 @@ describe('a held payment whose token the app switched', () => {
     m.token = 'erc20'
     m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
     await reviewPayment('7')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 1 || (host.textContent?.includes(UNPROVEN) ?? false))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
   })
@@ -705,7 +680,7 @@ describe('a payment the last release left unresolved', () => {
       call: { to: TERMINAL, data: '0x1234', value: 10n ** 18n } })
     await old.send(wallet.client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
     await reviewPayment('1')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || (host.textContent?.includes('I checked my wallet') ?? false))
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
@@ -867,7 +842,7 @@ describe('a payment from a Safe', () => {
   it("keeps a proposed payment's line on the panel after Done, and once it can't be proven shows the hold's line, where only the exit pays again", async () => {
     m.safe = true
     await reviewPayment('2')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     // The dialog says what the panel will.
@@ -891,14 +866,14 @@ describe('a payment from a Safe', () => {
     await click('Dismiss')
     expect(button('Pay').disabled).toBe(false)
     await click('Pay')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     await click(EXIT)
     await waitUntil(() => !panelSays(UNPROVEN))
     await click(button('Done', false) ? 'Done' : 'Close review')
     await click('Pay')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
   })
@@ -907,13 +882,13 @@ describe('a payment from a Safe', () => {
     m.safe = true
     await reviewInTwoPanels()
     await clickIn('first', 'Pay')
-    await clickIn('first', 'Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!panelButton('first', 'Done'))
     await clickIn('first', 'Done')
 
     // The second panel's same payment is the first's proposal, never a second one.
     await clickIn('second', 'Pay')
-    await clickIn('second', 'Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!panelButton('second', 'Done'))
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
     await loseService()
@@ -933,7 +908,7 @@ describe('a payment from a Safe', () => {
     m.safe = true
     m.token = 'erc20'
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
     // Safe's service is lost before the approval's execution can be read.
     await loseService()
@@ -946,7 +921,7 @@ describe('a payment from a Safe', () => {
 
     // The write hold still holds the same approval: it is not proposed again.
     await click('Pay')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
   })
@@ -1057,7 +1032,9 @@ describe('compatible basic funding', () => {
     await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
     await waitUntil(() => !!host.querySelector('[title="Add Home team to cart"]'))
     await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
-    await click('Review mint'); await click(leg === 'native mint' ? 'Confirm mint' : 'Approve payment')
+    await click('Review mint')
+    await waitUntil(() => wallet.openReviews > 0)
+    await act(async () => wallet.answerReview(true))
     await waitUntil(() => wallet.client.simulateContract.mock.calls.length > 0)
     await click('Add to balance')
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
@@ -1087,7 +1064,7 @@ describe('compatible basic funding', () => {
     await act(async () => host.querySelector<HTMLButtonElement>('[title="Add Home team to cart"]')!.click())
     await click('Review mint')
     wallet.writeContract.mockRejectedValueOnce(new Error('Wallet connection dropped after invocation'))
-    await click('Confirm mint')
+    await confirmReview()
     await waitUntil(() => !!host.textContent?.includes('wallet submission is unconfirmed'))
     const scope = { chainId: 1, projectId: 42, account: ALICE, action: 'pay' as const }
     const original = readDefifaWriteRecovery(scope)!
@@ -1161,7 +1138,7 @@ describe('compatible basic funding', () => {
       expect(host.textContent).not.toContain('Starts in')
       await click('Add')
       expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
-      await click('Confirm & Add')
+      await confirmReview()
       await waitUntil(() => wallet.writeContract.mock.calls.length > 0 || !!dialogError())
       expect(dialogError()).toBe('')
       expect(wallet.writes()).toEqual([{ functionName: 'addToBalanceOf', account: ALICE }])
@@ -1184,7 +1161,7 @@ describe('the normal path, click for click as main', () => {
     for (const round of [1, 2]) {
       const clicksBefore = wallet.requestReview.mock.calls.length
       await reviewPayment(String(round))
-      await click('Confirm & Pay')
+      await confirmReview()
       await waitUntil(() => wallet.writeContract.mock.calls.length === round)
       expect(wallet.requestReview.mock.calls.length - clicksBefore).toBe(1)
       expect(holdCopyShown()).toEqual([])
@@ -1220,7 +1197,7 @@ describe('a payment that falls short of its minimum', () => {
     await reviewPayment()
     // The default preparation takes the SDK's own tolerance.
     expect('slippageBps' in preparedArgs(0)).toBe(false)
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => dialogError() === UNDER_MIN_LINE)
 
     expect(dialogError()).toBe(UNDER_MIN_LINE)
@@ -1228,14 +1205,14 @@ describe('a payment that falls short of its minimum', () => {
     // 1% plus the 6.5% shortfall, rounded up to a half percent.
     expect(allowedDecrease()?.value).toBe('7.5')
     await click('Review again')
-    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+    await waitUntil(() => wallet.openReviews > 0)
 
     const calls = vi.mocked(m.prepareUserPay).mock.calls
     expect(preparedArgs(calls.length - 1).slippageBps).toBe(750n)
     // The review shows the minimum it sends.
     expect(host.querySelector('[data-row="You get at least"]')?.textContent).toBe('600 TKN')
     expect(allowedDecrease()).toBeNull()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[4]).toBe(LOOSER.minReturnedTokens)
@@ -1244,7 +1221,7 @@ describe('a payment that falls short of its minimum', () => {
   it('takes the allowed decrease the payer types, below half', async () => {
     simulationsReject(shortfall('0xe2d708a9', 90n, 100n))
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!allowedDecrease())
     const input = allowedDecrease()!
     const type = (typed: string) => act(async () => {
@@ -1259,7 +1236,7 @@ describe('a payment that falls short of its minimum', () => {
     await type('3')
     expect(allowedDecrease()?.value).toBe('3')
     await click('Review again')
-    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+    await waitUntil(() => wallet.openReviews > 0)
     const calls = vi.mocked(m.prepareUserPay).mock.calls
     expect(preparedArgs(calls.length - 1).slippageBps).toBe(300n)
   })
@@ -1270,16 +1247,17 @@ describe('a payment that falls short of its minimum', () => {
     m.prepareUserPay = vi.fn(async (_client: unknown, args: { slippageBps?: bigint }) =>
       args.slippageBps === undefined ? PREPARED : LOOSER) as never
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!allowedDecrease())
     await click('Review again')
     await waitUntil(() => host.querySelector('[data-row="You get at least"]')?.textContent === '600 TKN')
+    await confirmReview(false)
     await click('Close review')
     await click('Pay')
     await waitUntil(() => !!host.querySelector('[data-tx-confirm]'))
     // Closed without paying: the next review is the default one again.
     expect(host.querySelector('[data-row="You get at least"]')?.textContent).toBe('700 TKN')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[4]).toBe(PREPARED.minReturnedTokens)
@@ -1287,7 +1265,7 @@ describe('a payment that falls short of its minimum', () => {
 
   it('says an onchain revert reverted, and reviews it again from a fresh quote and simulation', async () => {
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.awaits(sentHash(1)))
     const simulations = wallet.client.simulateContract.mock.calls.length
     await act(async () => wallet.confirm(sentHash(1), 12n, 'reverted'))
@@ -1298,10 +1276,10 @@ describe('a payment that falls short of its minimum', () => {
     expect(wallet.client.simulateContract.mock.calls.length).toBe(simulations)
     expect(allowedDecrease()).toBeNull()
     await click('Review again')
-    await waitUntil(() => button('Confirm & Pay', false) !== undefined)
+    await waitUntil(() => wallet.openReviews > 0)
     expect(dialogError()).toBe('')
     // The hold lets a canonical revert go: the fresh review sends at once, simulated at the latest block.
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 1)
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }, { functionName: 'pay', account: ALICE }])
     const simulated = wallet.client.simulateContract.mock.calls.at(-1)![0] as { blockNumber?: bigint }
@@ -1315,27 +1293,27 @@ describe('a payment that falls short of its minimum', () => {
       data: `0xe490a239${encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [1n, 2n]).slice(2)}`,
     }))
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError())
     expect(dialogError()).toBe("The token's price moved too fast to buy safely, so wait a few minutes and try again.")
     expect(allowedDecrease()).toBeNull()
-    expect(button('Confirm & Pay')).toBeDefined()
+    expect(button('Try again')).toBeDefined()
   })
 
   it('says a payment that would return no tokens, with no looser minimum to try', async () => {
     simulationsReject(shortfall('0x6b2bb382', 0n, 100n))
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError())
     expect(dialogError()).toBe('This payment would return no tokens.')
     expect(allowedDecrease()).toBeNull()
-    expect(button('Confirm & Pay')).toBeDefined()
+    expect(button('Try again')).toBeDefined()
   })
 
   it("shows the network line for a failure it cannot read, never its text or a cancel", async () => {
     simulationsReject(new Error('header not found'))
     await reviewPayment()
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError())
     expect(dialogError()).toBe("The network returned an error. Check your wallet's activity before you try again.")
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -1347,18 +1325,21 @@ describe("a payment whose pool price couldn't be read", () => {
   const FAILED = { ...PREPARED, minReturnedTokens: 5n * 10n ** 20n, quoteFailed: true }
   const panelNotice = () => [...host.querySelectorAll('p')].some(p =>
     !p.closest('[data-tx-confirm]') && p.textContent?.includes(PAY_QUOTE_FAILED_MESSAGE))
-  const reviewNotice = () => !!host.querySelector('[data-tx-confirm]')?.textContent?.includes(PAY_QUOTE_FAILED_MESSAGE)
+  /** The open review says so, beside the minimum it sends. */
+  const reviewNotice = () => wallet.openReviews > 0 &&
+    (wallet.requestReview.mock.calls.at(-1)?.[0] as { context: { value: string }[] }).context.some(row => row.value === PAY_QUOTE_FAILED_MESSAGE)
 
   it('says so in the review it signs, beside the minimum it sends, and stops saying so once sent', async () => {
     m.prepareUserPay = vi.fn(async () => FAILED)
     await enterAmount()
     expect(panelNotice()).toBe(true)
     await click('Pay')
+    await waitUntil(() => wallet.openReviews > 0)
 
     expect(reviewNotice()).toBe(true)
     expect(panelNotice()).toBe(false)
     expect(host.querySelector('[data-row="You get at least"]')?.textContent).toBe('500 TKN')
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 0)
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[4]).toBe(FAILED.minReturnedTokens)
@@ -1368,6 +1349,8 @@ describe("a payment whose pool price couldn't be read", () => {
 
   it('says nothing in the review of a payment its pool priced', async () => {
     await reviewPayment()
+    await waitUntil(() => wallet.openReviews > 0)
+    expect(wallet.openReviews).toBe(1)
     expect(reviewNotice()).toBe(false)
   })
 
@@ -1447,9 +1430,10 @@ describe("a payment whose pool price couldn't be read", () => {
   it('drops the review warning beside an error the review shows', async () => {
     m.prepareUserPay = vi.fn(async () => FAILED)
     await reviewPayment()
+    await waitUntil(() => wallet.openReviews > 0)
     expect(reviewNotice()).toBe(true)
     await act(async () => wallet.connect(BOB))
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => !!dialogError())
 
     expect(dialogError()).toBe(CHANGED)
@@ -1493,7 +1477,7 @@ describe("paying another chain's deployment", () => {
     expect(m.resolveSuckers).toHaveBeenCalledWith(expect.objectContaining({ chainId: 1, projectId: 42n, version: 6 }))
     await click('Pay')
     const reviews = wallet.requestReview.mock.calls.length
-    await click('Confirm & Pay')
+    await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length === 1)
     expect(wallet.requestReview.mock.calls.length - reviews).toBe(1)
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ functionName: string; args: readonly unknown[] }]

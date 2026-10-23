@@ -839,23 +839,13 @@ function ChainLpRows({
                     },
                   ]}
                   activeIndex={started ? 0 : -1}
-                  action={
-                    tx.phase === 'error'
-                      ? 'Retry'
-                      : pending.kind === 'claim'
-                        ? 'Confirm & claim fees'
-                        : 'Confirm & remove liquidity'
-                  }
-                  onConfirm={() => {
-                    if (tx.phase === 'error') tx.reset()
-                    if (pending.kind === 'claim') runClaim(pending)
-                    else runRemove(pending)
-                  }}
                   busy={tx.busy}
                   complete={complete}
                   status={tx.notice ?? tx.safeNonceGuidance}
                   error={tx.error}
                   onClose={closePending}
+                  start={() => { if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) }}
+                  next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) } } : null}
                 />
               )
             })(),
@@ -870,8 +860,6 @@ function ChainLpRows({
               title="Remove liquidity"
               steps={[]}
               activeIndex={-1}
-              action="Confirm & remove liquidity"
-              onConfirm={() => undefined}
               busy
               status="Reading the pool and your position…"
               onClose={() => undefined}

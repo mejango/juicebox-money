@@ -20,11 +20,12 @@ vi.mock('@/lib/authority', async original => ({
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/components/project/SafeBatchProvider', () => ({ useSafeBatch: () => null }))
 vi.mock('@/components/ui/TxProgress', () => ({
-  TxProgress: (props: { error?: ReactNode; children?: ReactNode; actionDisabled?: boolean; onConfirm: () => void }) => (
+  // Its one button is what the dialog does next: its first start, then its retry.
+  TxProgress: (props: { error?: ReactNode; children?: ReactNode; next?: { onClick: () => void; disabled?: boolean } | null; start?: () => void; busy?: boolean }) => (
     <div>
       {props.error ? <p>{props.error}</p> : null}
       {props.children}
-      <button disabled={props.actionDisabled} onClick={props.onConfirm}>Confirm dialog</button>
+      <button disabled={props.busy || !!props.next?.disabled || !(props.next ?? props.start)} onClick={props.next?.onClick ?? props.start}>Confirm dialog</button>
     </div>
   ),
 }))

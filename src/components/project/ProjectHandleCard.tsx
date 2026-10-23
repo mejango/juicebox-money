@@ -1246,21 +1246,14 @@ export function ProjectHandleCard({
               busy={dialogLocked}
               complete={alreadyVerified}
               cancelLabel={pendingSafeUrl ? 'Close' : 'Cancel'}
-              actionDisabled={setupDisabled || discard.active}
-              action={
-                error
-                  ? 'Retry'
-                  : setupPhase === 'authority-claim'
-                    ? 'Confirm & publish handle'
-                    : 'Confirm & set handle'
-              }
-              onConfirm={() => void saveHandle()}
               onClose={() => {
                 if (dialogLocked) return
                 setConfirming(false)
                 discard.reset()
                 if (alreadyVerified) setEditing(false)
               }}
+              start={() => void saveHandle()}
+              next={!dialogLocked && !alreadyVerified ? { label: error ? 'Retry' : 'Review again', onClick: () => void saveHandle(), disabled: setupDisabled || discard.active } : null}
             >
               {discard.element}
               {pendingSafeUrl ? (

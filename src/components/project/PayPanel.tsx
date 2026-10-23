@@ -85,6 +85,7 @@ import { assertReviewedAccountConnected } from "@/lib/wallet-context";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
+import { loadReviewEngine, preloadReview } from "@/lib/preload-review";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { useShop721 } from '@/hooks/useShop721'
@@ -295,6 +296,9 @@ export function PayPanel({
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
   // backend that still sees the old allowance.
   const [approvalBlock, setApprovalBlock] = useState<bigint | undefined>(undefined);
+  /** The payment step reached the wallet: only then does a settled run mean the payment confirmed, not just its approval. */
+  const [paymentSubmitted, setPaymentSubmitted] = useState(false);
+  const paid = tx.phase === "success" && paymentSubmitted;
 
   const [mode, setMode] = useState<"pay" | "addbalance">("pay");
   const [amount, setAmount] = useState("");
@@ -1394,18 +1398,36 @@ export function PayPanel({
       setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === steps[0].kind));
       await nextUiPaint();
       setSequenceStatus(mode === "pay" ? "Review the payment." : "Review adding to the balance.");
+      // An approval and its payment resume as one action after a reload.
+      const scope = `jbm:pay:${chainId}:${projectId}:${reviewed.terminal}:${reviewed.token}`;
       // The approval and the payment are one review: the payment simulates on the approval's receipt block.
+      let calls = steps.map((action, index) => reviewedCall(action.request, {
+        intent: action.intent,
+        legacy: action.legacy,
+        ...(index > 0 ? { dependsOnPrior: true } : { simulationBlockNumber: approvalBlock }),
+      }));
+      let kinds = steps.map(step => step.kind);
+      // Every step above is read again from the chain, so an earlier run's unsent rest starts over.
+      const engine = await loadReviewEngine();
+      const unfinished = engine.findReviewedSequence(scope, account);
+      if (unfinished) {
+        try {
+          await engine.discardReviewedSequence(unfinished);
+        } catch {
+          // A held step decides first: the saved run resumes, with its hold's line and exit.
+          calls = unfinished.calls;
+          kinds = calls.length > 1 ? ["token-approval", "payment"] : ["payment"];
+        }
+      }
       const paid = await tx.run({
         account,
-        calls: steps.map((action, index) => reviewedCall(action.request, {
-          intent: action.intent,
-          legacy: action.legacy,
-          ...(index > 0 ? { dependsOnPrior: true } : { simulationBlockNumber: approvalBlock }),
-        })),
+        calls,
         context: sequenceContext,
+        scope,
         assertWriteState: () => writeState.current(reviewed),
         onSubmitted: (_call, step) => {
-          setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === steps[step]?.kind));
+          setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === kinds[step]));
+          if (kinds[step] === "payment") setPaymentSubmitted(true);
         },
       });
       if (!paid) {
@@ -1417,18 +1439,15 @@ export function PayPanel({
       }
       if (paid.status === "proposed") {
         // A Safe executes each step as its own proposal: an approval first, then the payment.
-        const stage = steps[paid.step]?.kind ?? "payment";
+        const stage = kinds[paid.step] ?? "payment";
         setSequenceSafeStage(stage);
         setSequenceStatus(stage === "token-approval"
           ? "Approval proposed to your Safe. Execute it there before continuing."
           : "Payment proposed to your Safe. Execute it there to finish.");
         return;
       }
-      if (tokenApproval) setApprovalBlock(paid.receipts[0]?.blockNumber);
-      setSequenceCompletedKinds(current => [
-        ...current.filter(kind => !steps.some(step => step.kind === kind)),
-        ...steps.map(step => step.kind),
-      ]);
+      if (kinds.length > 1 && paid.receipts.length > 1) setApprovalBlock(paid.receipts[0]?.blockNumber);
+      setSequenceCompletedKinds(current => [...current.filter(kind => !kinds.includes(kind)), ...kinds]);
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
@@ -1453,6 +1472,7 @@ export function PayPanel({
     // Every review again quotes afresh, even at a tolerance quoted moments ago.
     void queryClient.invalidateQueries({ queryKey: ["prepareUserPay"] });
     tx.reset();
+    setPaymentSubmitted(false);
     setRetrySlippageBps(null);
     setPaymentRunEnded(false);
     setSequenceOpen(false);
@@ -1467,6 +1487,7 @@ export function PayPanel({
   const reset = () => {
     tx.reset();
     setApprovalBlock(undefined);
+    setPaymentSubmitted(false);
     setSequenceOpen(false);
     setSequenceStarted(false);
     setSequenceComplete(false);
@@ -1487,11 +1508,20 @@ export function PayPanel({
   };
 
   useEffect(() => {
-    if (tx.phase === "success" && cartCount > 0) clearCart();
-  }, [tx.phase, cartCount, clearCart]);
+    if (paid && cartCount > 0) clearCart();
+  }, [paid, cartCount, clearCart]);
+
+  // An approval whose run ended before it settled can confirm later: it counts as done, and the payment continues.
+  useEffect(() => {
+    if (!paymentRunEnded || tx.phase !== "success" || paymentSubmitted) return;
+    setPaymentRunEnded(false);
+    setSequenceCompletedKinds(current => current.includes("token-approval") ? current : [...current, "token-approval"]);
+    setSequenceStatus("Approval confirmed. Continue to the payment.");
+    void refetchAllowance();
+  }, [paymentRunEnded, tx.phase, paymentSubmitted, refetchAllowance]);
 
   // ---- Success view ----
-  if (tx.phase === "success") {
+  if (paid) {
     return (
       <div className="flex flex-col items-center py-4 text-center">
         <span className="flex h-14 w-14 items-center justify-center rounded-full bg-melon-400">
@@ -1747,10 +1777,11 @@ export function PayPanel({
         </>} action={
           <button
             onClick={submit}
-            // When disconnected this button reads "Sign in", so warm Para's
-            // runtime on approach rather than making the click wait for it.
-            onMouseEnter={isConnected ? undefined : preloadParaHost}
-            onFocus={isConnected ? undefined : preloadParaHost}
+            // Warm what the click opens on approach, so it never waits for a download:
+            // the review when connected, Para's runtime when this reads "Sign in".
+            onPointerEnter={isConnected ? preloadReview : preloadParaHost}
+            onFocus={isConnected ? preloadReview : preloadParaHost}
+            onPointerDown={isConnected ? preloadReview : preloadParaHost}
             onTouchStart={isConnected ? undefined : preloadParaHost}
             disabled={
               formBlocked ||
@@ -2112,7 +2143,7 @@ export function PayPanel({
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
           start={sequenceError ? undefined : () => void runPaymentSequence()}
-          retry={
+          next={
             retryBps !== null || reviewAfterRevert
               ? { label: "Review again", onClick: () => reviewAgain(retryBps) }
               : !sequenceComplete && !sequenceSafeStage && !sequencePending && !sequenceStarted && sequenceActions.length &&
@@ -2136,10 +2167,6 @@ export function PayPanel({
             setPayerSlippage(null);
           }}
         >
-          {mode === "pay" && sequenceSummary?.quoteFailed && !sequenceStarted && !sequenceComplete && !sequenceSafeStage &&
-          !sequenceError && !sequenceSafeHeld && !endedLine ? (
-            <p className="text-sm text-smoke-700">{PAY_QUOTE_FAILED_MESSAGE}</p>
-          ) : null}
           {retryBps !== null ? (
             <AllowedDecreaseField bps={retryBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}

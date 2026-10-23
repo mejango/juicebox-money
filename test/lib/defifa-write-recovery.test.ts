@@ -81,6 +81,31 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
     expect(onRecord).toHaveBeenLastCalledWith(null)
   })
 
+  it('keeps a sent action pending after the hold settles it, until its effects are verified', async () => {
+    let held: ReturnType<typeof createBrowserWriteRecovery> | undefined
+    const result = await runRecoverableDefifaWrite({
+      scope,
+      action: { account: ACCOUNT, calls: [reviewedCall(request)] },
+      run: async action => {
+        // The hold reserves the write before the wallet, then settles it with its receipt.
+        held = createBrowserWriteRecovery({ chainId: 8453, account: ACCOUNT, safe: false, namespace: 'defifa:pay:27', call }, { storage: createHeldWriteStorage() })
+        await held.withLock(async () => { held!.reserve() })
+        await action.beforeWallet?.(action.calls[0], 0)
+        await action.onSubmitted?.(action.calls[0], 0, HASH, { safe: false, adopted: false })
+        await held.withLock(async () => { held!.clear(held!.read()!) })
+        return { status: 'done' as const, hashes: [HASH], receipts: [] }
+      },
+    })
+    expect(result?.status).toBe('done')
+    // A reload before the NFT check: the action is still pending, with its hash to re-check.
+    const pending = readDefifaWriteRecovery(scope)
+    expect(pending?.hash).toBe(HASH)
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: [reviewedCall(request)] }, run: vi.fn() })).rejects.toThrow()
+    // Verified: nothing is pending.
+    await clearDefifaWriteRecovery(scope, pending!)
+    expect(readDefifaWriteRecovery(scope)).toBeNull()
+  })
+
   it('clears only the exact retained record, and nothing once the hold settled it', async () => {
     const original = await saved()
     await clearDefifaWriteRecovery(scope, { ...original, id: 'another-record' })

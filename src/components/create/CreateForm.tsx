@@ -2630,19 +2630,13 @@ export function CreateForm() {
       error={launchError ?? stalledChain?.error ?? null}
       busy={launchLocked}
       complete={phase === "done"}
-      action={
-        phase === "failed"
-          ? usesRelayr || stalledChain?.phase === "uncertain"
-            ? "Check again"
-            : "Try again"
-          : "Confirm & launch"
-      }
-      onConfirm={() => (phase === "failed" ? retry() : void launch())}
       onClose={() => {
         if (launchLocked) return;
         setConfirmOpen(false);
         if (phase === "form") setLaunchError(null);
       }}
+      start={phase === "form" && !launchRecovery ? () => void launch() : undefined}
+      next={phase === "failed" ? { label: usesRelayr || stalledChain?.phase === "uncertain" ? "Check again" : "Try again", onClick: () => retry() } : null}
     >
       {launchRecovery ? (
         <SavedAttemptRecovery key={launchRecovery.chainId} attempt={launchRecovery.attempt} checkNext="Launch again" onRetired={onLaunchRetired} onFollow={onLaunchFollow} />

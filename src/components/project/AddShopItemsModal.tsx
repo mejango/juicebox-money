@@ -293,27 +293,14 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                 : message
           }
           error={phase === 'failed' && !discard.active ? message : undefined}
-          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={hasSubmittedTransactions ? 'Close' : 'Cancel'}
-          action={
-            phase === 'checking'
-              ? 'Checking permissions…'
-              : phase === 'pinning'
-                ? 'Saving items…'
-                : phase === 'writing'
-                  ? 'Adding items…'
-                  : phase === 'failed'
-                    ? hasUncertainTransactions
-                      ? 'Continue saved update'
-                      : 'Continue update'
-                    : hasUncertainTransactions ? 'Continue saved update' : 'Add items for sale'
-          }
-          onConfirm={() => void handleConfirm()}
           onClose={
             phase === 'done' || hasSubmittedTransactions ? close : backToForm
           }
+          start={() => void handleConfirm()}
+          next={phase === 'failed' ? { label: hasUncertainTransactions ? 'Continue saved update' : 'Continue update', onClick: () => void handleConfirm(), disabled: discard.active } : null}
         >
           {discard.element}
         </TxProgress>

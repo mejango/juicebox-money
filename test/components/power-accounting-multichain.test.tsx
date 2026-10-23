@@ -65,7 +65,8 @@ async function submit() {
   await act(async () => {
     renderer!.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } })
   })
-  await act(async () => { await renderer!.root.findByType(TxProgress).props.onConfirm() })
+  // What the dialog does next: its first start, then its retry.
+  await act(async () => { const { next, start } = renderer!.root.findByType(TxProgress).props; await (next?.onClick ?? start)!() })
 }
 
 beforeEach(() => { mocks.runAuthorityCalls.mockReset().mockResolvedValue({}) })
@@ -102,7 +103,7 @@ describe('multichain accounting-token review', () => {
     await submit()
     const dialog = renderer!.root.findByType(TxProgress)
     expect(dialog.props.error).toBeNull()
-    expect(dialog.props.actionDisabled).toBe(true)
+    expect(!dialog.props.next || dialog.props.next.disabled || dialog.props.busy).toBe(true)
     expect(renderer!.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'authority:0xabc', reason: 'changed' })
     mocks.discard.mockResolvedValue(undefined)
     await act(async () => { await renderer!.root.findAllByType('button').find(button => button.props.children === 'Discard')!.props.onClick() })

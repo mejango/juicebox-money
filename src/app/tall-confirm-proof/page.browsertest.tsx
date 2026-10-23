@@ -23,8 +23,7 @@ export default function TallConfirmProofPage() {
           title="Tall review"
           steps={[{ title: 'First' }, { title: 'Second' }]}
           activeIndex={-1}
-          action="Confirm"
-          onConfirm={() => {}}
+          next={{ label: 'Try again', onClick: () => {} }}
           onClose={() => {}}
           rows={Array.from({ length: 30 }, (_, index) => ({ label: `Row ${index + 1}`, value: `Value ${index + 1}` }))}
         />

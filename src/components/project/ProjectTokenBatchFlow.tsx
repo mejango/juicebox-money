@@ -205,9 +205,6 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
         rows={confirmation}
         steps={(review ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
         activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
-        action={review ? error || savedForDisplay ? 'Resume original batch' : isClaim ? 'Confirm claims' : 'Confirm & distribute' : allocation ? 'Review allocation' : 'Review selected chains'}
-        actionDisabled={discard.active}
-        onConfirm={() => void (review ? submit() : prepare())}
         onClose={() => {
           if (busy) return
           setOpen(false)
@@ -216,6 +213,12 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
             if (!loadProjectBatch(scope)) { setReview(null); setReviewBatchId(undefined) }
           } catch { /* Keep the original review recoverable. */ }
         }}
+        // A saved batch resumes only on its button: opening the page never starts it.
+        start={review && !savedForDisplay ? () => void submit() : undefined}
+        startKey={review}
+        next={!review
+          ? { label: allocation ? 'Review allocation' : 'Review selected chains', onClick: () => void prepare(), disabled: discard.active }
+          : error || savedForDisplay ? { label: 'Resume original batch', onClick: () => void submit(), disabled: discard.active } : null}
       >
         {!review && !allocation ? <ChainPicker label="Apply on" rows={chains.map(([chainId, projectId]) => ({ chainId, name: `${chainName(chainId)} · Project ${projectId}` }))}
           selected={selected} onChange={setSelected} disabled={busy} /> : null}

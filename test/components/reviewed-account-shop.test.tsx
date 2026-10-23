@@ -131,20 +131,21 @@ afterEach(async () => {
 
 describe('a shop redemption reviewed for one account', () => {
   it('wallet-action:redeem-shop-nfts never redeems from an account switched to before confirming', async () => {
+    wallet.holdReviews()
     await click(renderer, 'Redeem 1 item')
     expect(text(renderer.root)).toContain('Confirm redemption')
+    expect(wallet.openReviews).toBe(1)
 
     await act(async () => wallet.connect(BOB))
-    await click(renderer, 'Confirm & redeem')
+    await act(async () => wallet.answerReview(true))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
 
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(wallet.requestReview).not.toHaveBeenCalled()
     expect(text(renderer.root)).toContain(CHANGED)
   })
 
   it('redeems from the account that reviewed it, to that account', async () => {
     await click(renderer, 'Redeem 1 item')
-    await click(renderer, 'Confirm & redeem')
 
     expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }])
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]

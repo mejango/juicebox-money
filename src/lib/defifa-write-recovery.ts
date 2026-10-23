@@ -22,9 +22,33 @@ export const notifyRecovery = () => { globalThis.dispatchEvent?.(new Event(DEFIF
 /** Approval and mint are successive legs of one pay intent, never two holds. */
 export const defifaWriteNamespace = (scope: DefifaRecoveryScope) => `defifa:${scope.action}:${scope.projectId}`
 
-/** The SDK hold's saved record of a Defifa action, if one is held. */
+/**
+ * The site's copy of a sent Defifa action's record, kept until its NFT effects
+ * are verified. The hold clears its own record once the transaction settles,
+ * which is before that check: a reload in between still shows the action as
+ * pending, with a re-check, never a second send.
+ */
+const unverifiedKey = (scope: DefifaRecoveryScope) =>
+  `jbm:defifa-unverified:${defifaWriteNamespace(scope)}:${scope.chainId}:${scope.account.toLowerCase()}`
+function readUnverified(scope: DefifaRecoveryScope): ReviewedWriteRecoveryRecord | null {
+  try {
+    const saved = storage.getItem(unverifiedKey(scope))
+    return saved ? JSON.parse(saved) as ReviewedWriteRecoveryRecord : null
+  } catch {
+    return null
+  }
+}
+function keepUnverified(scope: DefifaRecoveryScope, record: ReviewedWriteRecoveryRecord | null) {
+  try {
+    if (record) storage.setItem(unverifiedKey(scope), JSON.stringify(record))
+    else storage.removeItem(unverifiedKey(scope))
+  } catch { /* The hold's own record still guards this tab. */ }
+}
+
+/** The saved record of a Defifa action until its effects are verified: the hold's, or the site's copy once the hold settled it. */
 export function readDefifaWriteRecovery(scope: DefifaRecoveryScope) {
   return readBrowserWriteRecovery({ chainId: scope.chainId, account: scope.account, namespace: defifaWriteNamespace(scope) }, { storage })
+    ?? readUnverified(scope)
 }
 
 export class PendingDefifaWriteError extends Error {
@@ -54,6 +78,7 @@ export async function runRecoverableDefifaWrite({ scope, action, run, onRecord }
     throw new PendingDefifaWriteError(previous)
   }
   const told = (record: ReviewedWriteRecoveryRecord | null) => {
+    keepUnverified(scope, record)
     onRecord?.(record)
     notifyRecovery()
   }
@@ -65,13 +90,20 @@ export async function runRecoverableDefifaWrite({ scope, action, run, onRecord }
       told(readDefifaWriteRecovery(scope))
       await action.beforeWallet?.(reviewed, step)
     },
+    onSubmitted: async (reviewed, step, hash, sent) => {
+      // The copy carries the hash, so a reload after the hold settles can still re-check it.
+      const record = readBrowserWriteRecovery({ chainId: scope.chainId, account: scope.account, namespace: defifaWriteNamespace(scope) }, { storage })
+        ?? readUnverified(scope)
+      if (record) told({ ...record, hash: record.hash ?? hash })
+      await action.onSubmitted?.(reviewed, step, hash, sent)
+    },
     onUnsent: async (reviewed, step) => {
       told(null)
       await action.onUnsent?.(reviewed, step)
     },
   })
   if (result) {
-    // A receipt the hold already settled leaves no record: the card keeps the one it was told.
+    // A receipt the hold already settled leaves the site's copy until the effects are verified.
     const record = readDefifaWriteRecovery(scope)
     if (record) told(record)
     else notifyRecovery()
@@ -90,5 +122,6 @@ export async function clearDefifaWriteRecovery(scope: DefifaRecoveryScope, recor
     const current = journal.read()
     if (current?.id === record.id) journal.clear(current)
   })
+  if (readUnverified(scope)?.id === record.id) keepUnverified(scope, null)
   notifyRecovery()
 }

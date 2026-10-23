@@ -38,12 +38,14 @@ vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => createElement('div', null, children),
 }))
 vi.mock('@/components/ui/TxProgress', () => ({
-  TxProgress: ({ title, onConfirm, preparing }: {
+  // Its one button is what the dialog does next: its first start, then its retry.
+  TxProgress: ({ title, start, next, preparing }: {
     title: string
-    onConfirm: () => void
+    start?: () => void
+    next?: { onClick: () => void } | null
     preparing: boolean
   }) => createElement('section', null, title,
-    createElement('button', { onClick: onConfirm, disabled: preparing }, 'Confirm & redeem')),
+    createElement('button', { onClick: next?.onClick ?? start, disabled: preparing }, 'Confirm & redeem')),
 }))
 
 import { RedeemShopItemsModal, type RedeemableShopTarget } from '@/components/project/RedeemShopItemsModal'

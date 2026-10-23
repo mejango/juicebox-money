@@ -931,8 +931,6 @@ function GossipRow({
             },
           ]}
           activeIndex={busy ? 0 : -1}
-          action={phaseLabel ?? 'Confirm & sync'}
-          onConfirm={() => void sync()}
           busy={busy}
           complete={tx.settled}
           status={
@@ -953,6 +951,8 @@ function GossipRow({
             ) : null
           }
           error={flowError ?? tx.error}
+          start={() => void sync()}
+          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void sync() } : null}
         />
       </td>
       <td className="whitespace-nowrap py-1.5 text-right tabular-nums">

@@ -573,21 +573,13 @@ export function EditPositionPanel({
           ? liquidityBatchIntro(reviewed.steps.length)
           : undefined
       }
-      action={
-        !reviewed
-          ? 'Edit position'
-          : run.running
-            ? 'Editing position…'
-            : stopped
-              ? `Retry step ${run.index + 1} of ${reviewed.steps.length}`
-              : FINAL_STEP[reviewed.plan.kind]
-      }
-      onConfirm={stopped ? resume : startRun}
       busy={busy}
       complete={done !== null || batchProposed || run.proposed || run.unconfirmed}
       status={batchProposed ? LIQUIDITY_BATCH_PROPOSED : !reviewed ? 'Reading the pool and your position…' : (tx.notice ?? tx.safeNonceGuidance)}
       error={batchError ?? tx.error}
       onClose={back}
+      start={startRun}
+      next={stopped ? { label: `Retry step ${run.index + 1} of ${reviewed?.steps.length ?? 0}`, onClick: resume } : null}
     >
       {reviewed &&
       balances.data &&

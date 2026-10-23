@@ -269,9 +269,10 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
       })}
       stepsIntro="Pay network fees only. Each payment has its own result."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
-      action={savedSelection ? 'Resume saved batch' : 'Retry'} actionDisabled={needsReview || !calls?.length || discard.active}
-      onConfirm={() => void submit()} onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
-      onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}>
+      onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
+      onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}
+      start={!needsReview && calls?.length ? () => void submit() : undefined}
+      next={!complete && !busy ? { label: savedSelection ? 'Resume saved batch' : 'Retry', onClick: () => void submit(), disabled: needsReview || !calls?.length || discard.active } : null}>
       {needsReview && !complete && !busy ? <button type="button" className="btn-secondary min-h-[40px] px-3 text-sm" onClick={() => { setOpen(false); discard.reset(); begin(available) }}>Review again</button> : null}
       {discard.element}
     </TxProgress>

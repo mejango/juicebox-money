@@ -271,10 +271,8 @@ export function SafeBatchDialog({
       }
       busy={locked}
       complete={complete}
-      action={route ? batchActionLabel(route, count, chainId) : 'Submit batch'}
-      actionDisabled={!route || route.kind === 'unavailable' || !order.ok || !count}
-      onConfirm={() => void submit()}
       onClose={close}
+      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count }}
     >
       {count ? (
         <ol className="space-y-2" aria-label="Batch steps">

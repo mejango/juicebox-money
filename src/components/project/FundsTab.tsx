@@ -1049,10 +1049,6 @@ function FundsTxFlow({
       activeIndex={sending ? 0 : -1}
       complete={tx.settled}
       busy={busy}
-      action={
-        tx.phase === 'error' ? 'Retry' : 'Confirm & withdraw'
-      }
-      onConfirm={handleConfirm}
       status={
         !review ? (
           'Checking what you can withdraw…'
@@ -1078,6 +1074,8 @@ function FundsTxFlow({
         ) : undefined
       }
       error={tx.error}
+      start={handleConfirm}
+      next={tx.phase === 'error' ? { label: 'Retry', onClick: handleConfirm } : null}
     >
       <p className="text-xs text-smoke-700">
         The amount you receive is shown after the 2.5% withdrawal fee.

@@ -3,16 +3,21 @@
 /** The send engine; one stable loader so core's mount preload runs once per page. */
 export const loadReviewEngine = () => import('@bananapus/nana-sdk-core/review')
 
+/** Fetch the send engine and the review dialog now; the import cache dedupes repeats. A failure loads again on the click. */
+export function preloadReview() {
+  void loadReviewEngine().catch(() => {})
+  void import('@/components/TransactionReviewDialog').catch(() => {})
+}
+
 /**
- * Fetch the review dialog once the page is idle, so a first click opens the
- * review without waiting for its download. The import cache dedupes repeats.
+ * Fetch the review once the page is idle, so a first click opens it without
+ * waiting for its download. Actions also call `preloadReview` on approach.
  */
 export function preloadReviewDialog(): () => void {
-  const load = () => { void import('@/components/TransactionReviewDialog').catch(() => {}) }
   if (typeof requestIdleCallback === 'function') {
-    const id = requestIdleCallback(load, { timeout: 2000 })
+    const id = requestIdleCallback(preloadReview, { timeout: 2000 })
     return () => cancelIdleCallback(id)
   }
-  const id = setTimeout(load, 1)
+  const id = setTimeout(preloadReview, 1)
   return () => clearTimeout(id)
 }

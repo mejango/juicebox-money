@@ -21,7 +21,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { TxProgress } from '@/components/ui/TxProgress'
@@ -543,19 +543,6 @@ function RepayFlow({
         { key: 'repay', title: 'Repay and reclaim your collateral' },
       ] : []}
       activeIndex={activeIndex}
-      action={
-        approveTx.phase === 'simulating' || approveTx.phase === 'signing'
-          ? 'Approve the repayment…'
-          : approveTx.phase === 'pending'
-            ? 'Approving…'
-            : repayTx.phase === 'simulating'
-              ? 'Double-checking…'
-              : txPhaseLabel(repayTx.phase, {
-                  idle: error ? 'Retry' : 'Confirm repayment',
-                  pending: 'Repaying…',
-                })
-      }
-      onConfirm={() => void handleConfirm()}
       busy={checking || busy}
       complete={repayTx.settled || approveTx.phase === 'submitted'}
       status={
@@ -568,6 +555,8 @@ function RepayFlow({
       }
       error={error}
       onClose={closeDialog}
+      start={() => void handleConfirm()}
+      next={!!error && !busy ? { label: 'Retry', onClick: () => void handleConfirm() } : null}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
         The limit covers the amount borrowed plus the current repayment cost in {meta.symbol},

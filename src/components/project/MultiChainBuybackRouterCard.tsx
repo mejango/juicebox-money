@@ -997,9 +997,8 @@ export function BuybackActionForm({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : action.title}
-          actionDisabled={discard.active}
-          onConfirm={() => void submit()}
+          start={() => void submit()}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
           onClose={closeReview}
         >
           {discard.element}

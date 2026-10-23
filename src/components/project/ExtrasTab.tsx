@@ -348,8 +348,10 @@ function PayerAddressCard({ chainId, projectId, chains }: {
       ) : null}
       {review ? <TxProgress open title="Confirm deploy" rows={payerReviewRows(review)}
         steps={[{ title: `Deploy ${review.calls.length} payer address${review.calls.length === 1 ? '' : 'es'}` }]}
-        activeIndex={busy ? 0 : -1} action="Confirm deploy" onConfirm={() => void run(review)} busy={busy} complete={false}
-        error={flowError} onClose={() => { if (!busy) setReview(null) }}>
+        activeIndex={busy ? 0 : -1} busy={busy} complete={false}
+        error={flowError} onClose={() => { if (!busy) setReview(null) }}
+        start={() => void run(review)}
+        next={!!flowError && !busy ? { label: 'Retry', onClick: () => void run(review) } : null}>
         <p className="text-xs text-smoke-700">{review.calls[0].owner === zeroAddress ? 'These settings can never be changed.' : `${truncateAddress(review.calls[0].owner)} can change these settings later.`}</p>
       </TxProgress> : null}
       <PayerAddressList rows={payerRows} isLoading={payersLoading} isError={payersError} isFetching={payersFetching} />

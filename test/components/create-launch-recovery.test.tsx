@@ -72,17 +72,8 @@ vi.mock('@/lib/launch', async original => ({
     chainId: 1, address: DEPLOYER, abi: parseAbi(['function launch(uint256 salt)']), functionName: 'launch', args: [1n], value: 0n,
   }),
 }))
-vi.mock('@/components/ui/TxProgress', () => ({
-  TxProgress: ({ open, action, onConfirm, error, children }: {
-    open: boolean; action: string; onConfirm: () => void; error?: ReactNode; children?: ReactNode
-  }) => open ? (
-    <section data-tx-confirm>
-      <p data-error>{error}</p>
-      {children}
-      <button type="button" onClick={onConfirm}>{action}</button>
-    </section>
-  ) : null,
-}))
+vi.mock('@/components/ui/TxProgress', async original =>
+  (await import('../support/tx-progress')).testTxProgress(await original<typeof import('@/components/ui/TxProgress')>()))
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { CreateForm } from '@/components/create/CreateForm'

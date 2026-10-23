@@ -300,23 +300,12 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
                   : phase === 'writing' ? message : undefined
           }
           error={busy || discard.active ? undefined : message}
-          actionDisabled={discard.active}
           busy={busy}
           complete={phase === 'done'}
           cancelLabel={started ? 'Close' : 'Cancel'}
-          action={
-            phase === 'checking'
-              ? 'Checking permission…'
-              : phase === 'pinning'
-                ? 'Uploading…'
-                : phase === 'writing'
-                  ? 'Updating…'
-                  : started
-                    ? 'Continue saved update'
-                    : 'Confirm & replace media'
-          }
-          onConfirm={() => void handleSubmit()}
           onClose={batch || phase === 'done' ? onClose : () => setPlan(null)}
+          start={() => void handleSubmit()}
+          next={!busy && !!message && phase !== 'done' ? { label: started ? 'Continue saved update' : 'Try again', onClick: () => void handleSubmit(), disabled: discard.active } : null}
         >
           {discard.element}
         </TxProgress>

@@ -672,6 +672,8 @@ export function MetadataEditor({
   const [customTouched, setCustomTouched] = useState(false)
   const [frozen, setFrozen] = useState<MetadataReview | null>(() => readMetadataReview(rows))
   const [reviewed, setReviewed] = useState(!!frozen)
+  // A review restored on opening the page waits for its button; one the payer asked for starts at once.
+  const [autoStart, setAutoStart] = useState(!frozen)
   const [done, setDone] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
@@ -758,6 +760,7 @@ export function MetadataEditor({
     if (busy) return
     setError(null)
     setStatus(null)
+    setAutoStart(true)
     if (frozen) { setReviewed(true); return }
     if (!name.trim()) { setError('Give the project a name.'); return }
     if (!chosen.length) { setError('Choose at least one chain.'); return }
@@ -1109,8 +1112,8 @@ export function MetadataEditor({
           error={discardable ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : 'Confirm & save'}
-          onConfirm={() => void submit()}
+          start={autoStart ? () => void submit() : undefined}
+          next={!busy && !done ? { label: error ? 'Retry' : autoStart ? 'Review again' : 'Continue saved update', onClick: () => void submit() } : null}
           onClose={closeReview}
         >
           {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
@@ -1370,9 +1373,8 @@ export function TokenEditor({
           error={discard.active ? null : error}
           busy={busy}
           complete={done}
-          action={error ? 'Retry' : 'Confirm & save'}
-          actionDisabled={discard.active}
-          onConfirm={() => void submit()}
+          start={() => void submit()}
+          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
           onClose={invalidate}
         >
           {discard.element}

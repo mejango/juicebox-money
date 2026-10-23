@@ -825,12 +825,6 @@ function MovementGroup({
           },
         ]}
         activeIndex={busy ? 0 : -1}
-        action={
-          checking
-            ? 'Reading bridge fee…'
-            : txPhaseLabel(tx.phase, { pending: 'Sending…', idle: 'Confirm & send' })
-        }
-        onConfirm={() => void execute()}
         busy={busy}
         complete={tx.settled}
         status={
@@ -851,6 +845,8 @@ function MovementGroup({
           ) : null
         }
         error={flowError ?? tx.error}
+        start={() => void execute()}
+        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void execute() } : null}
       />
     </div>
   )
@@ -987,12 +983,6 @@ function ClaimButton({
           },
         ]}
         activeIndex={busy ? 0 : -1}
-        action={
-          building
-            ? 'Building proof…'
-            : txPhaseLabel(tx.phase, { pending: 'Claiming…', idle: 'Confirm & claim' })
-        }
-        onConfirm={() => void claim()}
         busy={busy}
         complete={tx.settled}
         status={
@@ -1013,6 +1003,8 @@ function ClaimButton({
           ) : null
         }
         error={flowError ?? tx.error}
+        start={() => void claim()}
+        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void claim() } : null}
       />
     </span>
   )

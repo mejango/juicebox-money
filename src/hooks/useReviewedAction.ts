@@ -6,6 +6,7 @@ import type { Address, TransactionReceipt } from 'viem'
 import { ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
+import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { invalidateProjectDisplayQueries } from '@/lib/project-display-cache'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, useSafeConnection } from '@/lib/safe-connector'
@@ -76,12 +77,14 @@ export function useReviewedAction(chainId?: number) {
     },
   })
   useEffect(preloadReviewDialog, [])
+  const unmounted = useUnmountSignal()
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
   const inFlight = useRef(false)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
-    if (inFlight.current) return null
+    // A flow whose page closed opens no review.
+    if (inFlight.current || unmounted().aborted) return null
     inFlight.current = true
     setResult(null)
     setSentOn(action.calls[0]?.chainId)
