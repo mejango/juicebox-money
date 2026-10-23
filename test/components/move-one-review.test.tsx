@@ -19,6 +19,8 @@ const m = vi.hoisted(() => ({
   /** How each run ends, in order; a run past the list confirms. */
   ends: [] as (ReviewedResult | null)[],
   allowance: 0n,
+  /** Settles the step a run left with a Safe, as its hold does. */
+  settle: () => {},
 }))
 
 vi.mock('@bananapus/nana-sdk-core', async original => ({
@@ -65,6 +67,7 @@ vi.mock('@/hooks/useReviewedAction', async () => {
     txPhaseLabel: () => '',
     useReviewedAction: () => {
       const [phase, setPhase] = useState('idle')
+      m.settle = () => setPhase('success')
       return {
         phase, busy: false, step: 0, error: null, notice: null, failure: null, hash: phase === 'success' ? HASH : null,
         reset: () => setPhase('idle'), dismiss: () => setPhase('idle'),
@@ -136,10 +139,14 @@ describe('moving tokens', () => {
     expect(m.runs[0].scope).toBeUndefined()
   })
 
-  it('sends nothing more while the approval waits in a Safe', async () => {
+  it('sends nothing more while the approval waits in a Safe, then runs the same calls again once it executes', async () => {
     m.ends = [{ status: 'proposed', step: 0, safeTxHash: HASH }]
     await startMove()
     expect(m.runs.map(names)).toEqual([['approve', 'prepare']])
-    expect(host.textContent).toContain('Approve the bridge')
+    // The Safe executes the approval: core continues the saved run at the prepare, and only a finished run moves on to the send.
+    await act(async () => m.settle())
+    for (let attempt = 0; attempt < 20; attempt++) await tick()
+    expect(m.runs.map(names)).toEqual([['approve', 'prepare'], ['approve', 'prepare'], ['toRemote']])
+    expect(m.runs[1].calls).toEqual(m.runs[0].calls)
   })
 })

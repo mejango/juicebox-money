@@ -276,6 +276,21 @@ describe('native Defifa checkout through the reviewed engine', () => {
     await confirmed(sentHash(2))
     expect(text(renderer.root)).toContain('NFT mint verified onchain.')
   })
+  it('reviews a new cart afresh after its mint was refused in the wallet, its approval already through', async () => {
+    controls.prepare.mockResolvedValue(prepared(TOKEN))
+    wallet.client.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => functionName === 'allowance' ? 100n * BigInt(wallet.writeContract.mock.calls.length ? 1 : 0) : Promise.reject(new Error('Unexpected read')))
+    const send = wallet.writeContract.getMockImplementation()!
+    wallet.writeContract.mockImplementation(async (...args: Parameters<typeof send>) => wallet.writeContract.mock.calls.length === 2 ? Promise.reject(new UserRejectedRequestError(new Error('User rejected'))) : send(...args))
+    await openReview(); await answer()
+    await confirmed(sentHash(1), 77n)
+    for (let tries = 0; tries < 40 && wallet.writeContract.mock.calls.length < 2; tries++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    await click('Cancel')
+    // A bigger cart: its approval and mint are a new plan, never the refused one's continuation.
+    controls.prepare.mockResolvedValue(prepared(TOKEN, 200n))
+    await openReview(); await answer()
+    const third = (wallet.writeContract.mock.calls[2] as unknown as [{ functionName: string; args: unknown[] }])[0]
+    expect(third).toMatchObject({ functionName: 'approve', args: [TERMINAL, 200n] })
+  })
   it('stops at an approval that reverts onchain and never sends the mint', async () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockResolvedValue(0n)

@@ -350,9 +350,11 @@ function MoveFlow({
   // current step, so the form's button resumes exactly where it stopped.
   const [open, setOpen] = useState(false)
   const [sentHash, setSentHash] = useState<`0x${string}` | null>(null)
-  const advancedFor = useRef<number>(-1)
-  /** The approve-and-prepare run ended with only its approval at a Safe: once it settles, the prepare is next. */
-  const approvalOnly = useRef(false)
+  const advancedFor = useRef<string>('')
+  /** The approve-and-prepare run finished here; otherwise a settled step (a Safe's, a held one) runs the same calls again, which core continues. */
+  const ranDone = useRef(false)
+  /** Bumped to run the approve-and-prepare calls again after one of its steps settled. */
+  const [round, setRound] = useState(0)
   /** Each approve-and-prepare run call's dialog step. */
   const [runShown, setRunShown] = useState<number[] | null>(null)
 
@@ -364,11 +366,13 @@ function MoveFlow({
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
     if (tx.phase !== 'success') return
-    if (advancedFor.current === step) return
-    advancedFor.current = step
+    if (advancedFor.current === `${step}:${round}`) return
+    advancedFor.current = `${step}:${round}`
     if (step === 3) setSentHash(tx.hash)
-    setStep(step === 3 ? 4 : approvalOnly.current ? 2 : 3)
-    approvalOnly.current = false
+    if (step === 3) setStep(4)
+    // Only a run that finished here is known to have queued the move: a settled step continues its saved run, which ends it.
+    else if (ranDone.current) setStep(3)
+    else setRound(next => next + 1)
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase, step])
@@ -512,7 +516,8 @@ function MoveFlow({
       })
       setStep(allowance < amount ? 1 : 2)
       setSentHash(null)
-      advancedFor.current = -1
+      advancedFor.current = ''
+      ranDone.current = false
       setOpen(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
@@ -534,7 +539,8 @@ function MoveFlow({
       minTokensReclaimed: review.minReclaimed,
       token: review.token,
     })
-    const approve = step === 1 ? [reviewedCall(
+    // The same calls every time, so a stopped or settled run continues as saved.
+    const approve = needsApproval ? [reviewedCall(
       buildErc20ApproveRequest({
         chainId: from as JBChainId,
         token: review.projectToken,
@@ -553,14 +559,13 @@ function MoveFlow({
       const { calls, saved, scope } = await sequenceCalls(`jbm:move:${from}:${review.sucker}:${review.token}`, review.account, [...approve, prepare])
       const offset = needsApproval ? 2 - calls.length : 0
       setRunShown(calls.map((_, at) => offset + at))
-      approvalOnly.current = false
       const ended = await tx.run({
         account: review.account,
         calls,
         scope,
         ...planShown(saved, { context: contextRows(rows) }),
       })
-      approvalOnly.current = ended?.status === 'proposed' && ended.step < calls.length - 1
+      if (ended) ranDone.current = ended.status === 'done'
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
     }
@@ -745,7 +750,7 @@ function MoveFlow({
         activeIndex={step === 3 ? steps.length - 1 : liveStep(tx, runShown, needsApproval ? step - 1 : step - 2)}
         stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
         start={step >= 1 && step <= 3 ? stepRun : undefined}
-        startKey={step}
+        startKey={`${step}:${round}`}
         next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
         complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}

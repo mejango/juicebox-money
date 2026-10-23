@@ -34,6 +34,13 @@ export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
   return sendReviewed({ ...action, guard: assertNoViewAs }, reviewedSendDeps)
 }
 
+/** Drop the run saved under `scope` once its last step is proven: nothing of it is left to continue. A step still held keeps it. */
+export async function finishSequence(scope: string, account: `0x${string}`) {
+  const engine = await loadReviewEngine()
+  const saved = engine.findReviewedSequence(scope, account)
+  if (saved) await engine.discardReviewedSequence(saved).catch(() => {})
+}
+
 /** The review's line for a saved action continued as it was reviewed. */
 export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as you reviewed it. Its remaining steps are below.'
 

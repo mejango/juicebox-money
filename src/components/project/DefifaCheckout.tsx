@@ -9,6 +9,7 @@ import { DefifaNftTransactionRevertedError, defifaPhaseAllowsPay, effectiveTierP
 import { approvalIntent, verifyReviewedWriteReceipt, type ReviewedWriteRecoveryRecord, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { useWallet } from '@/hooks/useWallet'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { finishSequence, SAVED_SEQUENCE_LINE, sequenceCalls } from '@/lib/reviewed-send'
 import { hashOf, liveStep, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
 import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
@@ -143,22 +144,26 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     setError(null)
     const scope = { chainId: review.chainId, projectId: review.projectId, account: review.account, action: 'pay' as const }
     const mint = reviewedCall({ ...review.prepared.transaction, label: 'Mint Defifa NFTs' }, review.approval ? { dependsOnPrior: true } : {})
-    const calls = review.approval
+    const planned = review.approval
       ? [reviewedCall(review.approval, { intent: approvalIntent(defifaWriteNamespace(scope), { step: 'approve', token: review.approval.address, spender: review.prepared.transaction.address }) }), mint]
       : [mint]
-    const last = calls.length - 1
+    let last = planned.length - 1
     // A sent transaction is followed by its receipt (a revert included); only an unsent submission is unknown.
     let sent = false
     try {
       assertCurrent(review)
-      const action: ReviewedRun = { account: review.account, calls, assertWriteState: () => assertCurrent(review), beforeWallet: (_call, at) => { assertCurrent(review); if (at === last) submissionStarted.current = true }, onUnsent: (_call, at) => { if (at === last) submissionStarted.current = false }, onSubmitted: (_call, at, hash, { safe }) => { if (at !== last) return; sent = true; setStep('mint'); setSubmitted({ hash, safe }) }, reverify: async (_call, at) => {
+      // A saved run whose step was sent continues as reviewed; one whose approval only went through is dropped, so a new cart reviews afresh.
+      const { calls, saved } = planned.length > 1 ? await sequenceCalls(defifaWriteNamespace(scope), review.account, planned) : { calls: planned, saved: false }
+      last = calls.length - 1
+      const reverify: ReviewedRun['reverify'] = async (_call, at) => {
         await prepareFresh(review)
         // With an approval step, the mint simulates on its receipt block: the simulation is the allowance check.
         if (at === last && !review.approval && review.prepared.inventory.pricing.token.toLowerCase() !== NATIVE_TOKEN.toLowerCase()) {
           const allowance = await review.client.readContract({ address: review.prepared.inventory.pricing.token, abi: erc20Abi, functionName: 'allowance', args: [review.account, review.prepared.transaction.address] })
           if (allowance < review.prepared.amount) throw new ReviewLineError('Mint payment allowance is insufficient. Review again.')
         }
-      } }
+      }
+      const action: ReviewedRun = { account: review.account, calls, ...(saved ? { description: SAVED_SEQUENCE_LINE } : { reverify }), assertWriteState: () => assertCurrent(review), beforeWallet: (_call, at) => { assertCurrent(review); if (at === last) submissionStarted.current = true }, onUnsent: (_call, at) => { if (at === last) submissionStarted.current = false }, onSubmitted: (_call, at, hash, { safe }) => { if (at !== last) return; sent = true; setStep('mint'); setSubmitted({ hash, safe }) } }
       const result = await runRecoverableDefifaWrite({ scope, action, onRecord: record => { recoveryRecord.current = record }, run: tx.run })
       if (result?.status === 'proposed' && result.step < last) {
         // A Safe executes each step as its own proposal: the approval first, then the mint, reviewed again once it runs.
@@ -180,8 +185,11 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const clearOriginal = async (frozen: Review) => {
     const record = recoveryRecord.current
     if (!record) throw new ReviewLineError('The original recovery record is unavailable. Keep this action pending.')
-    await clearDefifaWriteRecovery({ chainId: frozen.chainId, projectId: frozen.projectId, account: frozen.account, action: 'pay' }, record)
+    const scope = { chainId: frozen.chainId, projectId: frozen.projectId, account: frozen.account, action: 'pay' as const }
+    await clearDefifaWriteRecovery(scope, record)
     recoveryRecord.current = null
+    // The mint is proven: a run of its approval and mint saved for a Safe is over too.
+    if (frozen.approval) await finishSequence(defifaWriteNamespace(scope), frozen.account)
   }
   const active = tx
   const verify = async () => {
