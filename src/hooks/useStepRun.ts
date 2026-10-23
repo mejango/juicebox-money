@@ -133,7 +133,8 @@ export function useStepRun<Step>({
       setProposed(false)
       return
     }
-    if (tx.phase !== 'success' || !tx.hash) return
+    // An earlier step that settles after its run ended (a Safe's execution, a late receipt) settles it too.
+    if ((tx.phase !== 'success' && tx.settledStep == null) || !tx.hash) return
     const at = current.waiting
     current.waiting = null
     setProposed(false)
@@ -143,7 +144,7 @@ export function useStepRun<Step>({
     }
     // The step after a settled proposal is reviewed again: the run stops at it.
     setIndex(at + 1)
-  }, [running, tx.phase, tx.hash, tx.failure, finish])
+  }, [running, tx.phase, tx.settledStep, tx.hash, tx.failure, finish])
 
   /** Start a new run at the first step, or continue a held one as it was saved. */
   const start = useCallback(
