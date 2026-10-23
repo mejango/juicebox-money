@@ -162,6 +162,8 @@ export function useReviewedAction(chainId?: number) {
     error,
     /** The step of the run core is on (reviewing, simulating, signing or awaiting), counted in the run's calls. */
     step: runner.step,
+    /** An ended run's earlier step that later mined successfully, by its index. */
+    settledStep: runner.settled && !runner.settled.finished ? runner.settled.step : null,
     /** The value the failed run threw, for a flow's own decoder. */
     failure: runner.failure,
     hash,
