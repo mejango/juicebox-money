@@ -8,7 +8,7 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { buildSafeDeploymentCalls, SAFE_CREATE_ABI } from '@bananapus/nana-sdk-core/safe'
-import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
+import type { ReviewContextRow, ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 import { describeSafeInitializer } from '@bananapus/nana-sdk-core/review/decode'
 import { getAccount } from '@wagmi/core'
 import {
@@ -35,7 +35,9 @@ import {
   RELAYR_REQUEST_REFRESH_SECONDS,
   relayrHeldMessage,
   relayrPostBundle,
+  type RelayrCall,
 } from '@/lib/relayr'
+import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
 import {
   RelayrDestinationRevertedError,
   RelayrPaymentRevertedError,
@@ -595,6 +597,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       }
     }
 
+    /** Each launch still to sign, read and estimated before the one review of them all. */
+    const unsigned: { chainId: number; call: RelayrCall; nonce: bigint }[] = []
     for (const chainId of remaining) {
       if (journal.signed.some(item => item.chainId === chainId)) continue
       requireAccount()
@@ -623,17 +627,45 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       // is needed. No contract storage/code is overridden, so the real launch rules still execute.
       const estimate = await client.estimateGas({ account, to: request.address, data, value: request.value,
         stateOverride: [{ address: account, balance: creationFee + 100n * 10n ** 18n }] })
-      onProgress(`Sign the launch authorization for ${chainName(chainId)}.`)
-      status(chainId, { phase: 'signing' })
-      const entry = await buildForwardedTx({ chainId: chainId as JBChainId, target: request.address,
+      unsigned.push({ chainId, nonce, call: { chainId: chainId as JBChainId, target: request.address,
         data, value: request.value, gas: gasWithHeadroom(estimate + (plan.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
-        functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce,
-      plan.multisigs?.length ? { description: launchMultisigReview(plan), rows: launchMultisigRows(chainId, plan) } : undefined)
-      const signedRequest = relayrForwardRequest(entry)
-      if (!signedRequest) throw new Error('Invalid launch authorization.')
-      journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, plan), nonce: nonce.toString(), deadline: signedRequest.deadline })
-      persist()
-      status(chainId, { phase: 'pending' })
+        functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` } })
+    }
+    /** The one review of every launch still to sign, and the Relayr round its fee bound covers. */
+    let planned: { plan: ReviewedPlan; round: string; chainId: number } | undefined
+    if (unsigned.length) {
+      // Core bounds a round's fee on its first call's chain: the wallet's, when it launches there.
+      const first = unsigned.find(item => item.chainId === startChainId)
+      const ordered = first ? [first, ...unsigned.filter(item => item !== first)] : unsigned
+      const multisig = ordered.filter(item => current.plans[item.chainId].multisigs?.length)
+      // A Safe bundled with its launch reaches Relayr as another call than the
+      // request signed, so its fee is reviewed apart; so is a launch resumed half signed.
+      const round = first && !multisig.length && !journal.signed.length ? `launch:${current.salt}` : undefined
+      const { reviewPlan } = await loadReviewEngine()
+      const plan = await reviewPlan({
+        account,
+        title: ordered.length === 1 ? 'Review launch' : 'Review launches',
+        description: [...new Set(multisig.map(item => launchMultisigReview(current.plans[item.chainId])))].concat(
+          'Your signatures authorize these exact launches onchain. Relayr runs them once the network fee is paid.').join('\n\n'),
+        ...(multisig.length ? { context: multisig.flatMap(item => launchMultisigRows(item.chainId, current.plans[item.chainId])
+          .map(row => ordered.length > 1 ? { ...row, label: `${row.label} on ${chainName(item.chainId)}` } : row)) } : {}),
+        calls: ordered.map(({ call }) => ({ chainId: call.chainId, from: account, to: call.target, data: call.data,
+          value: call.value ?? 0n, gas: call.gas, ...(round ? { relayrRound: round } : {}),
+          label: call.label, abi: call.abi, functionName: call.functionName, args: call.args })),
+      }, await loadReviewedSendDeps())
+      if (first && round) planned = { plan, round, chainId: first.chainId }
+      for (const { chainId, call, nonce } of unsigned) {
+        requireAccount()
+        assertAuthorizationAvailable(remaining)
+        onProgress(`Sign the launch authorization for ${chainName(chainId)}.`)
+        status(chainId, { phase: 'signing' })
+        const entry = await buildForwardedTx(call, account, nonce, undefined, plan)
+        const signedRequest = relayrForwardRequest(entry)
+        if (!signedRequest) throw new Error('Invalid launch authorization.')
+        journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, current.plans[chainId]), nonce: nonce.toString(), deadline: signedRequest.deadline })
+        persist()
+        status(chainId, { phase: 'pending' })
+      }
     }
     try {
       await verifySigned()
@@ -694,8 +726,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         payments = relayrPaymentOptions(journal.quote!, destinations)
       }
       if (!payments.length) throw new Error('Relayr returned no usable payment options for this launch. Retry to request a new quote; nothing was paid.')
-      onProgress('Choose where to pay for the launch.')
-      const selectedChainId = await requireFundingChainSelection(payments.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })), startChainId)
+      const plannedChain = planned && payments.some(option => option.chain === planned!.chainId) ? planned.chainId : undefined
+      if (plannedChain === undefined) onProgress('Choose where to pay for the launch.')
+      const selectedChainId = plannedChain ?? await requireFundingChainSelection(payments.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })), startChainId)
       payment = payments.find(option => option.chain === selectedChainId)
       if (!payment) throw new Error('The selected funding chain is not available in this quote. No payment was sent.')
     }
@@ -719,6 +752,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       ;({ hash: journal.paymentHash } = await relayrPay({
         payment, account, bundleUuid: journal.quote!.bundle_uuid, destinationChainIds: destinations,
         sent: journal.payments ?? [],
+        ...(planned && !journal.payments?.length ? { planned: { plan: planned.plan, round: planned.round, quote: journal.quote! } } : {}),
         reverify: verifySigned,
         onSending: () => {
           journal!.phase = 'payment-signing'

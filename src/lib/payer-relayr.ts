@@ -456,14 +456,17 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     // One review covers every deployment the wallet sends in this run.
     const engine = await loadReviewEngine()
     let plan: ReviewedPlan | undefined
+    // Core bounds a Relayr round's fee on its first call's chain: the wallet's, when it deploys there.
+    const first = session.transport === 'relayr' ? session.calls.find(call => call.chainId === startChainId) : undefined
     if (!original && !active) {
       plan = await engine.reviewPlan({
         account: session.account,
         title: 'Review payer address deployments',
         description: `Deploy one payer address for each selected project. Each address uses the beneficiary, admin, and behavior shown in its exact factory call.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        // A Relayr deployment runs from Relayr's own account.
-        calls: session.calls.map(call => ({ ...reviewedDeployment(call, session.transport), ...(session.transport === 'relayr' ? { from: 'relayr' as const } : {}) })),
+        // A Relayr deployment runs from Relayr's own account, every one in one round under one fee bound.
+        calls: (first ? [first, ...session.calls.filter(call => call !== first)] : session.calls).map(call => ({ ...reviewedDeployment(call, session.transport),
+          ...(session.transport === 'relayr' ? { from: 'relayr' as const } : {}), ...(first ? { relayrRound: session.id } : {}) })),
       }, reviewedSendDeps)
       assertAccount(session)
       persist(true)
@@ -477,6 +480,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     if (session.transport === 'relayr') {
       const pollError = await runRawRelayrLifecycle({
         session, entries: session.calls.map(entryOf), preferredPaymentChainId: startChainId,
+        ...(plan && first ? { planned: { plan, round: session.id, chainId: first.chainId } } : {}),
         checked: {
           stillSaved: () => { const now = readJournal(session.id); return !!now && !now.archived && now.phase !== 'complete' },
           retired: () => {

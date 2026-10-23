@@ -51,7 +51,7 @@ type Engine = typeof import('@bananapus/nana-sdk-core/review')
  * Core's own tests cover its holds, journals and simulations; this keeps a
  * jbm test on jbm's checks around them.
  */
-export async function fakeEngine({ send, receipt, sign, safe = () => false, switchChain = async () => {}, hold }: {
+export async function fakeEngine({ send, receipt, sign, safe = () => false, switchChain = async () => {}, hold, proof, account }: {
   send: (call: import('@bananapus/nana-sdk-core/review').ReviewedCall) => Promise<Hex>
   receipt?: (hash: Hex, chainId: number) => Promise<import('viem').TransactionReceipt>
   sign?: (typedData: import('viem').TypedDataDefinition) => Promise<Hex>
@@ -60,6 +60,10 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
   switchChain?: (chainId: number) => Promise<void>
   /** Core's write hold over this client: each send is held under its intent, as core holds it. */
   hold?: { holds: import('@bananapus/nana-sdk-core/review').WriteHold; client: (chainId: number) => unknown }
+  /** The client a Relayr payment is proven on, as core proves it; unproven without one. */
+  proof?: (chainId: number) => import('viem').PublicClient
+  /** The wallet's account, read at a Relayr payment's final gate as core reads it. */
+  account?: () => Address | undefined
 }): Promise<Engine> {
   const core = await vi.importActual<Engine>('@bananapus/nana-sdk-core/review')
   const prompt = async (request: Parameters<Engine['buildReviewModel']>[0]) => {
@@ -71,6 +75,8 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
   const keyOf = (call: { chainId: number; from: string; to: string; data: string; value?: bigint; gas?: bigint }) =>
     `${call.chainId}:${call.from.toLowerCase()}:${call.to.toLowerCase()}:${call.data.toLowerCase()}:${call.value ?? 0n}:${call.gas ?? ''}`
   const spent = new WeakMap<object, boolean[]>()
+  /** Each plan's Relayr rounds: the chain its fee bound was reviewed on, spent once. */
+  const rounds = new WeakMap<object, Map<string, { chainId: number; used: boolean }>>()
   const spend = (plan: import('@bananapus/nana-sdk-core/review').ReviewedPlan, account: string, calls: readonly import('@bananapus/nana-sdk-core/review').ReviewedCall[]) => {
     const taken = [...(spent.get(plan) ?? [])]
     if (!taken.length || plan.account.toLowerCase() !== account.toLowerCase()) throw new core.ReviewLineError(core.REVIEWED_PLAN_REFUSED_LINE)
@@ -88,6 +94,11 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
       calls: action.calls.map(({ chainId, from, to, data, value, gas }) => ({ chainId, from: from ?? action.account, to, data,
         value: value ?? 0n, ...(gas === undefined || from === 'relayr' ? {} : { gas }) })) }
     spent.set(plan, plan.calls.map(() => false))
+    const fees = new Map<string, { chainId: number; used: boolean }>()
+    for (const { relayrRound, chainId } of action.calls) {
+      if (relayrRound !== undefined && !fees.has(relayrRound)) fees.set(relayrRound, { chainId, used: false })
+    }
+    rounds.set(plan, fees)
     return plan
   }
   const sendReviewed: Engine['sendReviewed'] = async action => {
@@ -167,7 +178,13 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
   }
   const signReviewed: Engine['signReviewed'] = async (signatures, action) => {
     const typed = signatures.map(typedDataOf)
-    await prompt({ kind: 'authorization', title: action.title, description: action.description ?? '', calls: [],
+    // A plan's forward requests are spent by their call and signed gas, with no prompt.
+    if (action.plan) spend(action.plan, action.account, signatures.map(signature => {
+      if (signature.kind !== 'forward-request') throw new Error(`This test engine plans no ${signature.kind}.`)
+      const { to, data, value, gas } = signature.request
+      return { chainId: signature.chainId, to, data, value, gas }
+    }))
+    else await prompt({ kind: 'authorization', title: action.title, description: action.description ?? '', calls: [],
       context: action.context, signatures: signatures.map((signature, index) => ({
         kind: signature.kind, chainId: 'chainId' in signature ? signature.chainId : 0, typedData: typed[index],
         // The call a forward request lets the forwarder run, decoded as core shows it.
@@ -182,5 +199,32 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     }
     return signed
   }
-  return { ...core, reviewPlan, sendReviewed, signReviewed }
+  const relayr = await vi.importActual<typeof import('@bananapus/nana-sdk-core/review/relayr')>('@bananapus/nana-sdk-core/review/relayr')
+  /** Core's Relayr payment: a planned round's bound pays with no prompt, once and on its own chain; anything else asks. */
+  const payRelayrReviewed: Engine['payRelayrReviewed'] = async (quote, chainId, action) => {
+    const destinationChainIds = quote.expectedTransactions.map(binding => binding.chain)
+    const option = relayr.relayrPaymentOptions(quote, destinationChainIds).find(payment => payment.chain === chainId)
+    if (!option) throw new Error(`Relayr returned no payment option on chain ${chainId}. Nothing was paid.`)
+    const details = relayr.relayrPaymentDetails(option, { bundleUuid: quote.bundle_uuid, destinationChainIds })
+    const call = { chainId, to: details.target, data: details.calldata, value: details.amount, gas: relayr.RELAYR_PAYMENT_GAS }
+    const fee = action.plan && action.relayrRound !== undefined ? rounds.get(action.plan)?.get(action.relayrRound) : undefined
+    if (fee && !fee.used && fee.chainId === chainId) fee.used = true
+    else await prompt({ title: fee ? 'The network fee went up' : 'Review network fee', description: '', context: action.context,
+      calls: [{ ...call, from: action.account, label: 'Pay network fee' }] })
+    await switchChain(chainId)
+    await action.onSending?.()
+    const live = account?.()
+    if (account && live?.toLowerCase() !== action.account.toLowerCase()) {
+      throw new relayr.RelayrPaymentNotSentError(new Error('Connected account changed.'))
+    }
+    const hash = await send(call)
+    await action.onSent?.(hash)
+    if (!proof) return { hash }
+    // A wallet that sped the payment up mined it under another hash.
+    const mined = (await proof(chainId).waitForTransactionReceipt({ hash })).transactionHash
+    if (mined.toLowerCase() !== hash.toLowerCase()) await action.onSent?.(mined)
+    await relayr.verifyRelayrPayment(proof(chainId), { hash: mined, from: action.account, payment: details })
+    return { hash: mined }
+  }
+  return { ...core, reviewPlan, sendReviewed, signReviewed, payRelayrReviewed }
 }

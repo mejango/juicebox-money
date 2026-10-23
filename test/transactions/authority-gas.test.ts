@@ -303,8 +303,9 @@ describe('relayed ruleset queue', () => {
       { chainId: 1, to: CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [7n, [configuration], ''] } },
       { chainId: 10, to: OTHER_CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [9n, [configuration], ''] } },
     ])
-    // Each queue is reviewed as the exact call its signature lets run, and one payment funds both.
-    const reviewed = mocks.requireReview.mock.calls.flatMap(([model]) => (model as ReviewModel).signatures.flatMap(signature => signature.calls))
+    // One review shows each queue as the exact call its signature lets run, and one payment funds both.
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    const reviewed = (mocks.requireReview.mock.calls[0][0] as ReviewModel).calls
     expect(reviewed.map(call => [call.to, call.data])).toEqual(signed.map((_, index) => [calls[index].target, calls[index].data]))
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ to: PAYMENT_ADDRESS, data: PAYMENT_CALLDATA }),
@@ -390,9 +391,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     ]
     const scope = relayrCallsScope(calls)
     mocks.client.estimateGas.mockResolvedValue(21_000n)
-    mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
+    // The payment is declined in the wallet, so the quote stays saved, unpaid.
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(Object.assign(new Error('User rejected the payment'), { code: 4001 }))
     try {
-      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Selection canceled')
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('User rejected the payment')
+      mocks.wallet.sendTransaction.mockClear()
       mocks.requireReview.mockImplementation(async review => {
         if (review.title === 'Review execution payment') changed = true
       })
@@ -413,9 +416,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     ]
     const scope = relayrCallsScope(calls)
     mocks.client.estimateGas.mockResolvedValue(21_000n)
-    mocks.chooseFunding.mockRejectedValueOnce(new Error('Selection canceled'))
+    // The payment is declined in the wallet, so the quote stays saved, unpaid.
+    mocks.wallet.sendTransaction.mockRejectedValueOnce(Object.assign(new Error('User rejected the payment'), { code: 4001 }))
     try {
-      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('Selection canceled')
+      await expect(runAuthorityCalls({ signal: flow, calls })).rejects.toThrow('User rejected the payment')
+      mocks.wallet.sendTransaction.mockClear()
       // Anyone holding the signed requests ran them at the forwarder, so the queue changed.
       ran = true
       reverifyAuthority.mockClear()
@@ -1160,7 +1165,7 @@ describe('Authority calls a parent review already covered', () => {
     )
   })
 
-  it('still reviews each relayed signature and the payment', async () => {
+  it('reviews the relayed requests and their fee bound once more, and pays within it', async () => {
     mocks.client.estimateGas.mockResolvedValue(21_000n)
 
     await runAuthorityCalls({
@@ -1172,11 +1177,7 @@ describe('Authority calls a parent review already covered', () => {
       plan: await planOf(ALICE, [{ chainId: 1, to: TARGET, data: '0x1234' }, { chainId: 10, to: TARGET, data: '0x5678' }]),
     })
 
-    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
-      'Review relayed transaction',
-      'Review relayed transaction',
-      'Review execution payment',
-    ])
+    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual(['Review relayed transactions'])
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })
 })
@@ -1261,7 +1262,7 @@ describe('One safety-check review per project batch', () => {
     )
   })
 
-  it('still reviews each relayed signature and the payment after the batch review', async () => {
+  it('reviews the relayed requests and their fee bound once after the batch review', async () => {
     const batch = await run([
       batchCall(1, '0x1234', { relayr: undefined }),
       batchCall(10, '0x5678', { relayr: undefined }),
@@ -1270,9 +1271,7 @@ describe('One safety-check review per project batch', () => {
     expect(batch.status).toBe('complete')
     expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
       'Review project actions',
-      'Review relayed transaction',
-      'Review relayed transaction',
-      'Review execution payment',
+      'Review relayed transactions',
     ])
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(2)
   })

@@ -40,6 +40,12 @@ vi.mock('@/lib/transaction-review', async importOriginal => ({
 }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => m.safe }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: m.client }))
+/** Core's review over this test: each launch's one review confirms; no send goes through it. */
+vi.mock('@/lib/preload-review', async () => {
+  const { fakeEngine } = await import('../support/core-review')
+  const engine = fakeEngine({ send: async () => { throw new Error('This test sends nothing through core.') } })
+  return { loadReviewEngine: () => engine, loadReviewedSendDeps: async () => ({}) }
+})
 vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectCreationFee: m.fee }))
 vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId }))
 vi.mock('@/lib/relayr', async importOriginal => ({
@@ -58,6 +64,7 @@ import { relayrHeldMessage } from '@/lib/relayr'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 import { friendlyError } from '@/lib/errors'
 import { savedAttempts } from '@/lib/write-holds'
+import { coreReviews } from '../support/core-review'
 
 /** The user's check of what the SDK showed: it must be a check, and it retires for every tab. */
 async function checkIt(shown: { attempt: Parameters<typeof savedAttempts.recover>[0] }) {
@@ -142,6 +149,7 @@ function multisigSession(flavor: LaunchPlan['flavor'] = 'project', chains = [1])
 }
 
 beforeEach(() => {
+  coreReviews.reset()
   vi.resetAllMocks()
   vi.spyOn(Date, 'now').mockReturnValue(NOW * 1000)
   m.account = ACCOUNT
@@ -245,11 +253,14 @@ describe('relayed launch execution and recovery', () => {
     expect(launch.functionName).toBe('execute')
     if (launch.functionName !== 'execute') throw new Error('Missing launch request')
     expect(launch.args[0]).toMatchObject({ from: ACCOUNT, to: TARGET, value: 17n, gas: 4_400_000n })
-    // The review lists the factory call the bundle runs, decoded down to the Safe's owners and threshold.
-    const [creation] = m.forward.mock.calls[0][3].rows
+    // The launch's one review lists the factory call the bundle runs, decoded down to the Safe's owners and threshold.
+    expect(coreReviews.shown).toHaveLength(1)
+    const [creation] = coreReviews.shown[0].context
     expect(creation).toMatchObject({ label: `Create ${flavor === 'revnet' ? 'operator' : 'owner'} multisig`, value: SAFE_FACTORY })
     expect(creation.lines).toEqual(expect.arrayContaining([`Owners ${ACCOUNT}, ${TARGET}`, 'Threshold 2 of 2']))
-    expect(m.forward.mock.calls[0][3].description).toContain(SAFE_PLAN.address)
+    expect(coreReviews.shown[0].description).toContain(SAFE_PLAN.address)
+    // The signature spends that review: its request is signed with no prompt of its own.
+    expect(m.forward.mock.calls[0][4]).toBeDefined()
     const client = clients.get(1)!
     expect(client.call).toHaveBeenCalledWith(expect.objectContaining({ to: MULTICALL3, data: entry.data,
       value: 17n, gas: 4_400_000n + 4_400_000n / 63n + 2_100_000n }))
@@ -345,6 +356,24 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.statuses[1].phase).toBe('uncertain')
     expect(m.multisigReceipt).not.toHaveBeenCalled()
     expect(m.projectId).not.toHaveBeenCalled()
+  })
+
+  it('launches from one review and pays its fee bound on the wallet\'s chain, with no funding choice', async () => {
+    m.chainId = 1
+    await run()
+    expect(coreReviews.shown).toHaveLength(1)
+    expect(coreReviews.shown[0].calls.map(call => call.chainId)).toEqual([1, 10])
+    expect(m.forward.mock.calls.map(([call, , , , plan]) => [call.chainId, plan !== undefined])).toEqual([[1, true], [10, true]])
+    expect(m.funding).not.toHaveBeenCalled()
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(m.pay.mock.calls[0][0]).toMatchObject({ payment: { chain: 1 }, planned: { round: `launch:${'0x' + 'cc'.repeat(32)}` } })
+  })
+
+  it('reviews once but asks where to pay when the wallet\'s chain is not a destination', async () => {
+    await run()
+    expect(coreReviews.shown).toHaveLength(1)
+    expect(m.funding).toHaveBeenCalledTimes(1)
+    expect(m.pay.mock.calls[0][0].planned).toBeUndefined()
   })
 
   it('waits for the quote before showing any funding choices or persisting a preferred chain', async () => {

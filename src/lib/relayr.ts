@@ -25,7 +25,7 @@ import {
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection } from '@/lib/transaction-review'
 import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
-import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
+import type { ReviewContextRow, ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 import {
   isDefiniteWalletRejection,
   relayrDiscardLine,
@@ -123,6 +123,9 @@ export async function withRelayrScopeLock<T>(scope: string, execute: () => Promi
     return await execute()
   } finally { activeRelayrScopes.delete(scope) }
 }
+
+/** The gas a forward request signs when its call measured none. */
+const RELAYR_FORWARD_GAS = 500_000n
 
 export type RelayrCall = {
   chainId: JBChainId
@@ -922,6 +925,8 @@ async function signForwardedRequest(
   expectedAccount: Address,
   expectedNonce?: bigint,
   context?: { description: string; rows?: readonly ReviewContextRow[] },
+  /** The plan that already reviewed this request: it is signed with no prompt of its own. */
+  plan?: ReviewedPlan,
 ): Promise<{ entry: RelayrEntry; nonce: bigint }> {
   const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -950,7 +955,7 @@ async function signForwardedRequest(
     from: expectedAccount,
     to: call.target,
     value,
-    gas: call.gas ?? 500_000n,
+    gas: call.gas ?? RELAYR_FORWARD_GAS,
     nonce,
     deadline: relayrForwarderDeadline(),
     data: call.data,
@@ -966,6 +971,7 @@ async function signForwardedRequest(
       'Your signature authorizes submission of this exact destination call onchain. The separate payment is reviewed before it is sent.',
     ].filter(Boolean).join('\n\n'),
     ...(context?.rows ? { context: context.rows } : {}),
+    ...(plan ? { plan } : {}),
     reverify: async () => assertWallet(),
   }, reviewedSendDeps)
 
@@ -1087,6 +1093,7 @@ export async function relayrPay({
   reverifyBeforeSendOnly = false,
   onSending,
   onSent,
+  planned,
 }: {
   /** One of the quote's payment options, as Relayr returned it. */
   payment: RelayrPayment
@@ -1106,6 +1113,11 @@ export async function relayrPay({
   onSending?: (details: RelayrPaymentDetails) => void | Promise<void>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void | Promise<void>
+  /**
+   * The plan whose review showed this quote's Relayr round and its fee bound:
+   * a first payment within it is sent with no prompt of its own.
+   */
+  planned?: { plan: ReviewedPlan; round: string; quote: RelayrQuote }
 }): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
@@ -1135,8 +1147,48 @@ export async function relayrPay({
   if (!reverifyBeforeSendOnly) await reverify?.()
   await requireRelayrPaymentRuntime(client)
 
-  const { sendReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
+  const { sendReviewed, payRelayrReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
   const reviewedSendDeps = await loadReviewedSendDeps()
+  if (planned && !sent.length) {
+    // The plan's review showed this round's fee bound: core spends it, pays
+    // with no prompt within it, and proves the mined payment.
+    let sentHash: Hex | undefined
+    let opened = false
+    let payments: RelayrSentPayment[] = []
+    try {
+      const { hash } = await payRelayrReviewed(planned.quote, chainId, {
+        account: expectedAccount,
+        plan: planned.plan,
+        relayrRound: planned.round,
+        onSending: async () => {
+          readReviewed()
+          await reverify?.()
+          assertReadyToPay()
+          await onSending?.(reviewed)
+          opened = true
+        },
+        onSent: async submitted => {
+          sentHash = submitted
+          payments = [sentRelayrPayment(reviewed, submitted)]
+          try {
+            await onSent?.(payments)
+          } catch {
+            throw new RelayrPaymentSubmittedError(submitted, chainId)
+          }
+        },
+      }, reviewedSendDeps) as { hash: Hex }
+      return { hash, payments }
+    } catch (error) {
+      if (sentHash) {
+        if (error instanceof RelayrPaymentSubmittedError || error instanceof RelayrProofError) throw error
+        throw new RelayrPaymentSubmittedError(sentHash, chainId)
+      }
+      if (error instanceof RelayrPaymentNotSentError || !opened) throw error
+      const walletError = relayrWalletPaymentError(error)
+      if (isDefiniteWalletRejection(walletError)) throw walletError
+      throw new RelayrPaymentSendingError()
+    }
+  }
   let details = reviewed
   let walletOpened = false
   /** The last gate passed after onSending: from here an error may come from the wallet. */
@@ -1727,6 +1779,27 @@ async function executeRelayrCalls({
       }
     }
   }
+  /** A fresh run's one review of every request, with the fee bound when the fee is paid on one of their chains. */
+  let plan: ReviewedPlan | undefined
+  let planned: { plan: ReviewedPlan; round: string; chainId: number } | undefined
+  if (!saved) {
+    // Core bounds a round's fee on its first call's chain: the funding chain, when it is a destination.
+    const first = calls.find(call => call.chainId === (paymentChainId ?? preferredPaymentChainId))
+    const round = first ? pendingScope ?? relayrCallsScope(calls) : undefined
+    const ordered = first ? [first, ...calls.filter(call => call !== first)] : calls
+    const { reviewPlan } = await loadReviewEngine()
+    plan = await reviewPlan({
+      account,
+      title: calls.length === 1 ? 'Review relayed transaction' : 'Review relayed transactions',
+      description: 'Your signatures authorize submission of these exact destination calls onchain. Relayr runs them once the network fee is paid.',
+      calls: ordered.map(call => ({
+        chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value ?? 0n,
+        gas: call.gas ?? RELAYR_FORWARD_GAS, ...(round ? { relayrRound: round } : {}),
+        label: call.label, abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
+      })),
+    }, await loadReviewedSendDeps())
+    if (first && round) planned = { plan, round, chainId: first.chainId }
+  }
   // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
   // the session when the payment lands would report a bundle as still valid
   // for however long the wallet sat on the signatures, and a "not yet expired"
@@ -1745,7 +1818,7 @@ async function executeRelayrCalls({
     const again = resigning?.[index]
     const signed = again
       ? await signForwardedRequest({ ...calls[index], gas: again.gas }, account, BigInt(again.nonce))
-      : await signForwardedRequest(calls[index], account)
+      : await signForwardedRequest(calls[index], account, undefined, undefined, plan)
     entries.push(signed.entry)
     nonces?.push(signed.nonce.toString())
     await reverify?.()
@@ -1788,7 +1861,7 @@ async function executeRelayrCalls({
     if (unkept) throw new Error('Relayr offered more payment options than this action can keep. Nothing was paid; try again for a new quote.')
     const options = relayrPaymentOptions(quote, destinations)
     if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
-    const selectedChain = paymentChainId ?? await requireFundingChainSelection(
+    const selectedChain = paymentChainId ?? (planned && options.some(option => option.chain === planned.chainId) ? planned.chainId : undefined) ?? await requireFundingChainSelection(
       options.map(option => ({ chainId: option.chain, label: relayrPaymentLabel(option) })),
       preferredPaymentChainId,
     )
@@ -1825,6 +1898,7 @@ async function executeRelayrCalls({
       payment, account, bundleUuid: quote.bundle_uuid, destinationChainIds: destinations,
       sent: session.payments ?? [],
       note: paidBefore,
+      ...(planned && !repaying ? { planned: { plan: planned.plan, round: planned.round, quote } } : {}),
       reverify: verifyBeforePayment,
       onSending: () => {
         const current = pendingScope ? loadRelayrPendingSession(pendingScope) : null
