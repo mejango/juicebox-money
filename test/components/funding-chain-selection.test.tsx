@@ -14,9 +14,9 @@ vi.mock('next/image', () => ({
 import { TransactionReviewProvider } from '@/components/TransactionReviewProvider'
 import {
   requireFundingChainSelection,
-  requireTransactionReview,
   TransactionReviewCancelledError,
 } from '@/lib/transaction-review'
+import { requireReview } from '../support/prompt-review'
 
 const OPTIONS = [
   { chainId: 1, label: 'Ethereum · 0.002 ETH' },
@@ -120,7 +120,7 @@ describe('funding chain selection modal', () => {
     let second!: Promise<number>
     await act(async () => {
       first = requireFundingChainSelection(OPTIONS)
-      review = requireTransactionReview({
+      review = requireReview({
         calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x' }],
       }).catch(error => error)
       second = requireFundingChainSelection(OPTIONS)
@@ -146,7 +146,7 @@ describe('funding chain selection modal', () => {
     await act(async () => {
       requests = [
         requireFundingChainSelection(OPTIONS),
-        requireTransactionReview({ calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x' }] }),
+        requireReview({ calls: [{ chainId: 1, to: '0x1111111111111111111111111111111111111111', data: '0x' }] }),
         requireFundingChainSelection(OPTIONS),
       ].map(request => request.catch(error => error))
     })

@@ -47,9 +47,24 @@ vi.mock('@/lib/wallet-core', () => ({
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-  requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.chooseFunding,
 }))
+vi.mock('@/lib/reviewed-send', () => ({ reviewedSendDeps: {} }))
+/** Core's review, plans and held sends over this test's wallet and node; each review goes to `requireReview`. */
+vi.mock('@/lib/preload-review', async () => {
+  const { coreReviews, fakeEngine } = await import('../support/core-review')
+  const { writeHolds } = await import('@/lib/write-holds')
+  coreReviews.answer.mockImplementation(async model => { await mocks.requireReview(model); return true })
+  const engine = fakeEngine({
+    safe: () => mocks.isSafeConnection(),
+    switchChain: async chainId => { await mocks.connectedWallet(chainId, {}) },
+    send: async ({ chainId, to, data, value, gas }) =>
+      mocks.wallet.sendTransaction({ account: mocks.account, chain: { id: chainId }, to, data, value, gas }),
+    sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
+    hold: { holds: writeHolds, client: () => mocks.client },
+  })
+  return { loadReviewEngine: () => engine }
+})
 vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
   runSafeCalls: mocks.runSafeCalls,
@@ -71,12 +86,14 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 }))
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { functionFromCall } from '@bananapus/nana-sdk-core/review/decode'
+import type { ReviewModel } from '@bananapus/nana-sdk-core/review'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { listedHeld } from '../support/held-chain'
 import { modelNode } from '../support/chain-node'
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
 import { projectBatchScope, runProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 import { clearRelayrPendingSession, listRelayrPendingScopes, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
@@ -283,12 +300,12 @@ describe('relayed ruleset queue', () => {
       call: decodeFunctionData({ abi: calls[0].abi!, data: message.data }),
     }))
     expect(signed).toEqual([
-      { chainId: 1n, to: CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [7n, [configuration], ''] } },
-      { chainId: 10n, to: OTHER_CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [9n, [configuration], ''] } },
+      { chainId: 1, to: CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [7n, [configuration], ''] } },
+      { chainId: 10, to: OTHER_CONTROLLER, call: { functionName: 'queueRulesetsOf', args: [9n, [configuration], ''] } },
     ])
-    // Each queue is reviewed decoded, and one payment funds both.
-    const reviewed = mocks.requireReview.mock.calls.flatMap(([request]) => request.calls ?? [])
-    expect(reviewed.filter(call => functionFromCall(call)?.name === 'queueRulesetsOf')).toHaveLength(2)
+    // Each queue is reviewed as the exact call its signature lets run, and one payment funds both.
+    const reviewed = mocks.requireReview.mock.calls.flatMap(([model]) => (model as ReviewModel).signatures.flatMap(signature => signature.calls))
+    expect(reviewed.map(call => [call.to, call.data])).toEqual(signed.map((_, index) => [calls[index].target, calls[index].data]))
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ to: PAYMENT_ADDRESS, data: PAYMENT_CALLDATA }),
     )
@@ -995,8 +1012,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     })
 
     const reviewed = mocks.requireReview.mock.calls[0][0].calls
-    expect(reviewed).toEqual([expect.objectContaining({ gas: 240_000n })])
-    expect(reviewed[0]).not.toHaveProperty('safeTxGas')
+    expect(reviewed).toEqual([expect.objectContaining({ gas: 240_000n, safeTxGas: null })])
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ gas: reviewed[0].gas }),
     )
@@ -1015,8 +1031,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     })
 
     const reviewed = mocks.requireReview.mock.calls[0][0].calls
-    expect(reviewed).toEqual([expect.objectContaining({ safeTxGas: 0n })])
-    expect(reviewed[0]).not.toHaveProperty('gas')
+    expect(reviewed).toEqual([expect.objectContaining({ safeTxGas: 0n, gas: null })])
     // The Safe app signs the sent gas as safeTxGas: 0 makes a failed call revert.
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ gas: 0n }),
@@ -1104,18 +1119,25 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
 })
 
 describe('Authority calls a parent review already covered', () => {
+  /** The parent's one review of `calls`, then a clean slate of reviews. */
+  async function planOf(account: Address, calls: { chainId: number; to: Address; data: Hex }[]) {
+    const plan = await (await loadReviewEngine()).reviewPlan({ account, calls }, reviewedSendDeps)
+    mocks.requireReview.mockClear()
+    return plan
+  }
   it('sends a direct call without reviewing it again, at its measured gas', async () => {
     mocks.client.estimateGas.mockResolvedValue(120_000n)
 
     await runAuthorityCalls({
       signal: flow,
       calls: [{ chainId: 1, authority: ALICE, target: TARGET, data: '0x1234', gas: 1_000_000n }],
-      reviewedInParent: true,
+      plan: await planOf(ALICE, [{ chainId: 1, to: TARGET, data: '0x1234' }]),
     })
 
     expect(mocks.requireReview).not.toHaveBeenCalled()
+    // The plan reviewed no gas: core measures it at send.
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
-      expect.objectContaining({ to: TARGET, data: '0x1234', gas: 240_000n }),
+      expect.objectContaining({ to: TARGET, data: '0x1234', gas: undefined }),
     )
   })
 
@@ -1129,7 +1151,7 @@ describe('Authority calls a parent review already covered', () => {
     await runAuthorityCalls({
       signal: flow,
       calls: [{ chainId: 1, authority: SAFE, target: TARGET, data: '0x1234' }],
-      reviewedInParent: true,
+      plan: await planOf(SAFE, [{ chainId: 1, to: TARGET, data: '0x1234' }]),
     })
 
     expect(mocks.requireReview).not.toHaveBeenCalled()
@@ -1147,7 +1169,7 @@ describe('Authority calls a parent review already covered', () => {
         { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
         { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
       ],
-      reviewedInParent: true,
+      plan: await planOf(ALICE, [{ chainId: 1, to: TARGET, data: '0x1234' }, { chainId: 10, to: TARGET, data: '0x5678' }]),
     })
 
     expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual([
@@ -1192,14 +1214,11 @@ describe('One safety-check review per project batch', () => {
     expect(mocks.requireReview).toHaveBeenCalledTimes(1)
     const [review] = mocks.requireReview.mock.calls[0]
     expect(review.calls.map((call: { data: Hex }) => call.data)).toEqual(['0x1234', '0x5678'])
-    // A cap is not the gas limit sent; the wallet shows the measured one.
-    for (const call of review.calls) {
-      expect(call).not.toHaveProperty('gas')
-      expect(call).not.toHaveProperty('safeTxGas')
-    }
+    // A cap is not the gas limit sent: the plan binds none, and core measures each at send.
+    for (const call of review.calls) expect(call).toMatchObject({ gas: null, safeTxGas: null })
     expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => [tx.data, tx.gas])).toEqual([
-      ['0x1234', 240_000n],
-      ['0x5678', 240_000n],
+      ['0x1234', undefined],
+      ['0x5678', undefined],
     ])
   })
 
@@ -1235,9 +1254,8 @@ describe('One safety-check review per project batch', () => {
     expect(review.description).toMatch(/Choose the correct Safe nonce\.$/)
     expect(review.confirmLabel).toBe('Agree & continue to Safe')
     expect(review.calls).toEqual([
-      expect.objectContaining({ from: SAFE, to: TARGET, data: '0x1234', safeTxGas: 0n }),
+      expect.objectContaining({ from: SAFE, to: TARGET, data: '0x1234', gas: null }),
     ])
-    expect(review.calls[0]).not.toHaveProperty('gas')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ account: SAFE, data: '0x1234', gas: 0n }),
     )

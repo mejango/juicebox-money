@@ -5,12 +5,13 @@ import { JBCoreContracts, jbV6ContractAddress, jbProjectsAbi, type JBChainId } f
 import { buildDeployProjectPayerTx, JB_PROJECT_PAYER_DEPLOYER, jbProjectPayerDeployerAbi } from '@bananapus/nana-sdk-core/v6'
 import { decodeEventLog, decodeFunctionData, decodeFunctionResult, encodeFunctionData, isAddress, isAddressEqual, zeroAddress, type Address, type Hex } from 'viem'
 import { wagmiConfig, SUPPORTED_CHAINS } from '@/providers/Providers'
-import { connectedWallet, publicClient } from '@/lib/wallet-core'
+import { publicClient } from '@/lib/wallet-core'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { assertNoViewAs } from '@/lib/viewAs'
-import { isDefiniteWalletRejection, simulateStateChangingTransaction, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { simulateStateChangingTransaction, writeIntentKey, type ReviewedCall, type ReviewedPlan, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictRetirable, writeHolds } from '@/lib/write-holds'
-import { requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
@@ -311,9 +312,10 @@ function entryOf(call: PayerDeploymentCall): RelayrEntry {
  * its bundle with its own gas. A Safe app signs the sent gas as safeTxGas,
  * so a Safe sends 0 and a failed deployment reverts instead of using the nonce.
  */
-function reviewedDeployment(call: PayerDeploymentCall, transport: PayerDeploymentSession['transport']): TransactionReviewCall {
+/** A deployment's exact call; a direct send fixes its gas, a Safe app proposes with safeTxGas 0. */
+function reviewedDeployment(call: PayerDeploymentCall, transport: PayerDeploymentSession['transport']): ReviewedCall {
   return { chainId: call.chainId, to: JB_PROJECT_PAYER_DEPLOYER, value: 0n, data: call.data,
-    ...(transport === 'direct' ? { gas: DEPLOY_GAS } : transport === 'safe' ? { safeTxGas: 0n } : {}),
+    ...(transport === 'direct' ? { gas: DEPLOY_GAS } : {}),
     abi: jbProjectPayerDeployerAbi, functionName: 'deployProjectPayer', args: payerDeploymentRequest(call).args,
     label: `Deploy payer for project #${call.projectId}`, contractName: 'JBProjectPayerDeployer' }
 }
@@ -452,18 +454,19 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
     assertAccount(session)
     const viaSafe = session.transport === 'safe'
     // One review covers every deployment the wallet sends in this run.
-    let reviewedAll = false
+    const engine = await loadReviewEngine()
+    let plan: ReviewedPlan | undefined
     if (!original && !active) {
-      await requireTransactionReview({
-        kind: session.transport === 'relayr' ? 'authorization' : 'transaction',
+      plan = await engine.reviewPlan({
+        account: session.account,
         title: 'Review payer address deployments',
         description: `Deploy one payer address for each selected project. Each address uses the beneficiary, admin, and behavior shown in its exact factory call.${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        calls: session.calls.map(call => reviewedDeployment(call, session.transport)),
-      })
+        // A Relayr deployment runs from Relayr's own account.
+        calls: session.calls.map(call => ({ ...reviewedDeployment(call, session.transport), ...(session.transport === 'relayr' ? { from: 'relayr' as const } : {}) })),
+      }, reviewedSendDeps)
       assertAccount(session)
       persist(true)
-      reviewedAll = true
     }
     if (session.phase === 'complete') {
       for (let index = 0; index < session.calls.length; index++) {
@@ -567,53 +570,44 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         await requireCanonicalDirectRevert(call, outcome.hash, session.account)
       }
       if (outcome.state === 'ready' || outcome.state === 'failed') {
-        // A resumed attempt reviews each deployment it sends.
-        if (!reviewedAll) {
-          await requireTransactionReview({ title: 'Review payer deployment',
-            ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: 'Agree & continue to Safe' } : {}),
-            calls: [reviewedDeployment(call, session.transport)] })
-        }
-        const { wallet } = await connectedWallet(call.chainId, { expected: session.account, changedError: 'The payer deployment wallet changed.' })
-        assertAccount(session)
-        await preflight(call, session.account)
-        assertAccount(session)
         const beforeSend = outcome
         const fromBlock = session.transport === 'safe' ? (await publicClient(call.chainId).getBlockNumber()).toString() : undefined
-        assertAccount(session)
-        outcome = session.outcomes[index] = { chainId: call.chainId, state: 'sending', failedHashes: beforeSend.failedHashes, fromBlock }
-        persist(true)
+        // Core sends under the deployment's hold (a resumed attempt reviews it
+        // first); a mined receipt, revert included, is proven below.
         try {
-          walletGuards[index]()
-          assertAccount(session)
+          await engine.sendReviewed({
+            account: session.account,
+            calls: [{ ...reviewedDeployment(call, session.transport), intent: payerNamespace(session.id, call.chainId) }],
+            title: 'Review payer deployment',
+            ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: 'Agree & continue to Safe' } : {}),
+            ...(plan ? { plan } : {}),
+            guard: assertNoViewAs,
+            reverify: async () => {
+              assertAccount(session)
+              await preflight(call, session.account)
+              assertAccount(session)
+            },
+            assertWriteState: () => {
+              walletGuards[index]()
+              assertAccount(session)
+            },
+            beforeWallet: () => {
+              outcome = session.outcomes[index] = { chainId: call.chainId, state: 'sending', failedHashes: beforeSend.failedHashes, fromBlock }
+              persist(true)
+            },
+            onUnsent: () => {
+              outcome = session.outcomes[index] = beforeSend
+              persist()
+            },
+            onSubmitted: (_sent, _step, hash) => {
+              outcome = session.outcomes[index] = session.transport === 'safe'
+                ? { ...outcome, state: 'submitted', safeProposalHash: hash }
+                : { ...outcome, state: 'submitted', hash }
+              persist()
+            },
+          }, reviewedSendDeps)
         } catch (error) {
-          session.outcomes[index] = beforeSend
-          persist()
-          throw error
-        }
-        try {
-          // Held by the SDK's write hold from just before the wallet opens until it settles.
-          const hash = await payerHold(session, call).send<Hex>(publicClient(call.chainId) as unknown as WriteHoldClient, async gate => {
-            await gate.beforeSend()
-            let sent: Hex
-            try {
-              sent = await wallet.sendTransaction({ chain: wallet.chain, account: session.account, to: JB_PROJECT_PAYER_DEPLOYER, data: call.data, value: 0n, gas: viaSafe ? 0n : DEPLOY_GAS })
-            } catch (error) {
-              if (isDefiniteWalletRejection(error)) gate.onRejected()
-              throw error
-            }
-            gate.afterSubmit(sent)
-            return sent
-          })
-          outcome = session.outcomes[index] = session.transport === 'safe'
-            ? { ...outcome, state: 'submitted', safeProposalHash: hash }
-            : { ...outcome, state: 'submitted', hash }
-          persist()
-        } catch (error) {
-          if (outcome.state === 'sending' && isDefiniteWalletRejection(error)) {
-            session.outcomes[index] = beforeSend
-            persist()
-          }
-          throw error
+          if (session.outcomes[index].state !== 'submitted' || !(error instanceof engine.ReviewedCallRevertedError || engine.isTransactionReceiptUnavailableError(error))) throw error
         }
       }
       if (!outcome.hash && outcome.safeProposalHash) {

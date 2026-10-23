@@ -1,4 +1,3 @@
-import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 import { ContractFunctionExecutionError, HttpRequestError, encodeFunctionData, toFunctionSelector, type Address, type Hex } from 'viem'
 import { erc2771ForwarderAbi, jbV6ContractAddress, JBCoreContracts, type JBChainId } from '@bananapus/nana-sdk-core'
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -23,7 +22,6 @@ const mocks = vi.hoisted(() => ({
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   getAccount: vi.fn(),
   connectedWallet: vi.fn(),
-  requireReview: vi.fn(),
   requireFundingChainSelection: vi.fn(),
   isSafeConnection: vi.fn(),
   waitForSafeExecutionHash: vi.fn(),
@@ -51,9 +49,22 @@ vi.mock('@/lib/wallet-core', () => ({
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-  requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.requireFundingChainSelection,
 }))
+vi.mock('@/lib/reviewed-send', () => ({ reviewedSendDeps: {} }))
+/** Core's send and sign over this test's wallet doubles. */
+vi.mock('@/lib/preload-review', async () => {
+  const { fakeEngine } = await import('../support/core-review')
+  const engine = fakeEngine({
+    safe: () => mocks.isSafeConnection(),
+    switchChain: async chainId => { await mocks.connectedWallet(chainId, {}) },
+    send: async ({ chainId, to, data, value, gas }) =>
+      mocks.wallet.sendTransaction({ account: mocks.account, chain: { id: chainId }, to, data, value, gas }),
+    receipt: async hash => mocks.client.waitForTransactionReceipt({ hash }),
+    sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
+  })
+  return { loadReviewEngine: () => engine }
+})
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: mocks.isSafeConnection,
   waitForSafeExecutionHash: mocks.waitForSafeExecutionHash,
@@ -96,6 +107,7 @@ import {
 } from '@/lib/relayr'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { formatDateTime } from '@/lib/format'
+import { coreReviews } from '../support/core-review'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -290,7 +302,7 @@ beforeEach(() => {
     mocks.chainId = chainId
     return { wallet: mocks.wallet, account: ALICE }
   })
-  mocks.requireReview.mockResolvedValue(undefined)
+  coreReviews.reset()
   mocks.requireFundingChainSelection.mockResolvedValue(1)
   mocks.isSafeConnection.mockReturnValue(false)
   mocks.waitForSafeExecutionHash.mockResolvedValue(HASH)
@@ -412,42 +424,43 @@ describe('Relayr quote and payment boundaries', () => {
     expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
   })
-  it('reviews prerequisite deployment calls alongside the exact forwarded authorization without adding a wallet prompt', async () => {
-    const prerequisite = { chainId: 1, to: BOB, data: '0xabcd' as Hex, value: 0n,
-      label: 'Create owner multisig' }
+  it('reviews prerequisite deployment rows alongside the exact forwarded authorization without adding a wallet prompt', async () => {
     const call = { chainId: 1 as JBChainId, target: TARGET, data: '0x1234' as Hex, value: 5n,
       gas: 700_000n, label: 'Launch project' }
+    const rows = [{ label: 'Create owner multisig', value: BOB, mono: true, lines: ['saltNonce 1'] }]
     await buildForwardedTx(call, ALICE, 4n, {
-      description: 'Create the owner Safe with 2 of 3 approvals.', calls: [prerequisite],
+      description: 'Create the owner Safe with 2 of 3 approvals.', rows,
     })
-    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
-    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+    expect(coreReviews.shown).toHaveLength(1)
+    const [review] = coreReviews.shown
+    expect(review).toMatchObject({
       description: expect.stringContaining('Create the owner Safe with 2 of 3 approvals.'),
-      calls: [prerequisite, expect.objectContaining({ from: ALICE, to: TARGET, data: call.data, value: 5n, gas: 700_000n })],
-      authorization: expect.objectContaining({ message: expect.objectContaining({ from: ALICE, to: TARGET,
-        data: call.data, value: 5n, gas: 700_000n, nonce: 4n }) }),
-    }))
+      context: rows,
+    })
+    const [signature] = review.signatures
+    expect(signature.typedData).toMatchObject({ message: { from: ALICE, to: TARGET,
+      data: call.data, value: 5n, gas: 700_000n, nonce: 4n } })
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
-      message: mocks.requireReview.mock.calls[0][0].authorization.message,
+      message: (signature.typedData as { message: unknown }).message,
     }))
-    expect(mocks.requireReview.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[0])
+    expect(coreReviews.answer.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[0])
   })
 
-  it.each([[false, 3], [true, 1]] as const)('with reverifyBeforeSendOnly=%s runs reverify %i time(s), last right before sending', async (beforeSendOnly, runs) => {
+  it.each([[false, 2], [true, 1]] as const)('with reverifyBeforeSendOnly=%s runs reverify %i time(s), last right before sending', async (beforeSendOnly, runs) => {
     const reverify = vi.fn(async () => {
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     })
     await pay(paymentFor({ chain: TESTNETS[0] }), TESTNETS, { reverify, reverifyBeforeSendOnly: beforeSendOnly })
     expect(reverify).toHaveBeenCalledTimes(runs)
-    expect(reverify.mock.invocationCallOrder.at(-1)).toBeGreaterThan(mocks.requireReview.mock.invocationCallOrder[0])
+    expect(reverify.mock.invocationCallOrder.at(-1)).toBeGreaterThan(coreReviews.answer.mock.invocationCallOrder[0])
   })
 
   it.each(TESTNETS)('authenticates and pays the canonical contract on testnet %s', async chain => {
     const testnetPayment = paymentFor({ chain })
     await expect(pay(testnetPayment, TESTNETS)).resolves.toMatchObject({ hash: HASH })
     expect(mocks.connectedWallet).toHaveBeenCalledWith(chain, expect.any(Object))
-    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+    expect(coreReviews.shown).toContainEqual(expect.objectContaining({
       calls: [expect.objectContaining({ chainId: chain, to: RELAYR_PAYMENT_ADDRESS, data: testnetPayment.calldata })],
     }))
     expect(mocks.client.getCode).toHaveBeenCalledWith({ address: RELAYR_PAYMENT_ADDRESS, blockTag: 'latest' })
@@ -462,7 +475,7 @@ describe('Relayr quote and payment boundaries', () => {
     { chain: 1, destinations: [] },
   ])('refuses funding chain $chain for destinations $destinations before wallet review', async ({ chain, destinations }) => {
     await expect(pay(paymentFor({ chain }), destinations)).rejects.toThrow(/same network family/)
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(mocks.connectedWallet).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
@@ -470,7 +483,7 @@ describe('Relayr quote and payment boundaries', () => {
   it.each(['review', 'wallet'] as const)('rejects a funding-chain change during %s even within the same family', async boundary => {
     const offered = paymentFor({ chain: 11155111 })
     const change = () => { offered.chain = 84532 }
-    if (boundary === 'review') mocks.requireReview.mockImplementationOnce(async () => change())
+    if (boundary === 'review') coreReviews.answer.mockImplementationOnce(async () => { change(); return true })
     else mocks.connectedWallet.mockImplementationOnce(async () => { change(); return { wallet: mocks.wallet, account: ALICE } })
     await expect(pay(offered, TESTNETS)).rejects.toThrow(/payment changed/)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
@@ -478,7 +491,7 @@ describe('Relayr quote and payment boundaries', () => {
 
   it('rechecks the network family when a quote changes while its payment review is open', async () => {
     const offered = paymentFor({ chain: 11155111 })
-    mocks.requireReview.mockImplementationOnce(async () => { offered.chain = 1 })
+    coreReviews.answer.mockImplementationOnce(async () => { offered.chain = 1; return true })
     await expect(pay(offered, TESTNETS)).rejects.toThrow(/same network family/)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
@@ -486,7 +499,7 @@ describe('Relayr quote and payment boundaries', () => {
   it('rejects unrecognized payment runtime on a supported testnet', async () => {
     mocks.client.getCode.mockResolvedValueOnce('0x6000')
     await expect(pay(paymentFor({ chain: 84532 }), TESTNETS)).rejects.toThrow(/code is not recognized/)
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -610,7 +623,7 @@ describe('Relayr quote and payment boundaries', () => {
     const reverify = vi.fn().mockResolvedValue(undefined)
 
     await expect(pay(payment, [1], { onSent: sent, reverify })).resolves.toMatchObject({ hash: HASH })
-    expect(mocks.requireReview).toHaveBeenCalledWith(
+    expect(coreReviews.shown).toContainEqual(
       expect.objectContaining({
         confirmLabel: 'Pay',
         calls: [
@@ -621,7 +634,8 @@ describe('Relayr quote and payment boundaries', () => {
             value: 100n,
             gas: 150_000n,
             data: payment.calldata,
-            ...relayrPaymentReview(payment.calldata),
+            functionName: 'prepayment',
+            contractName: 'Network-fee payment',
           }),
         ],
       }),
@@ -648,7 +662,7 @@ describe('Relayr quote and payment boundaries', () => {
       gas: 150_000n,
     })
     expect(sent).toHaveBeenCalledWith([expect.objectContaining({ hash: HASH })])
-    expect(reverify).toHaveBeenCalledTimes(3)
+    expect(reverify).toHaveBeenCalledTimes(2)
     // The payment is proven from the chain: its transaction, receipt and canonical block.
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: HASH })
     expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: HASH })
@@ -686,7 +700,7 @@ describe('Relayr quote and payment boundaries', () => {
       hash: HASH,
       payments: [expect.objectContaining({ hash: HASH, target: RELAYR_PAYMENT_ADDRESS, amount: '100', calldata: payment.calldata })],
     })
-    expect(mocks.requireReview).toHaveBeenCalledWith(expect.objectContaining({
+    expect(coreReviews.shown).toContainEqual(expect.objectContaining({
       confirmLabel: 'Pay',
       calls: [expect.objectContaining({ from: ALICE, to: RELAYR_PAYMENT_ADDRESS, value: 100n, data: payment.calldata })],
     }))
@@ -701,7 +715,7 @@ describe('Relayr quote and payment boundaries', () => {
     const sent = Array.from({ length: 16 }, () => sentRelayrPayment(details, HASH))
     await expect(pay(payment, [1], { sent })).rejects.toThrow(
       'This Relayr quote was paid too many times to pay again. Keep it pending; do not pay again.')
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -792,7 +806,7 @@ describe('Relayr quote and payment boundaries', () => {
     expect(() => relayrPaymentDetails({ ...payment, ...change }, bound)).toThrow(message)
     expect(relayrPaymentOptions({ bundle_uuid: BUNDLE_UUID, payment_info: [{ ...payment, ...change }] }, [1])).toEqual([])
     await expect(pay({ ...payment, ...change }, [1])).rejects.toThrow(message)
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
   })
 
   it("offers no option on a chain where any of Relayr's options fails its checksum, whichever comes first", () => {
@@ -812,7 +826,7 @@ describe('Relayr quote and payment boundaries', () => {
       throw new Error(`Unexpected RPC method ${method}`)
     })
 
-    await expect(pay(payment, [1])).rejects.toThrow(/account changed/i)
+    await expect(pay(payment, [1])).rejects.toThrow(/Connected wallet changed/)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -833,7 +847,7 @@ describe('Relayr quote and payment boundaries', () => {
   it('refuses to pay from a Safe, whose execution no proof can read as this payment', async () => {
     mocks.isSafeConnection.mockReturnValue(true)
     await expect(pay(payment, [1])).rejects.toThrow('Pay the network fee from an ordinary wallet. Nothing was sent.')
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -864,7 +878,7 @@ describe('Relayr quote and payment boundaries', () => {
     ],
   ])('rejects an unsafe quote before review', async (unsafe, message) => {
     await expect(pay(unsafe, [1])).rejects.toThrow(message)
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
@@ -873,12 +887,13 @@ describe('Relayr quote and payment boundaries', () => {
     // be dead by the time it is approved.
     const start = Date.now()
     const now = vi.spyOn(Date, 'now').mockReturnValue(start)
-    mocks.requireReview.mockImplementationOnce(async () => {
+    coreReviews.answer.mockImplementationOnce(async () => {
       now.mockReturnValue(start + 120_000)
+      return true
     })
 
     await expect(pay(paymentFor({}, Math.floor(start / 1000) + 60), [1])).rejects.toThrow(/quote expired/i)
-    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    expect(coreReviews.shown).toHaveLength(1)
     expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
     now.mockRestore()
   })
@@ -905,7 +920,7 @@ describe('Relayr quote and payment boundaries', () => {
     await expect(pay(payment, [1])).rejects.toThrow(
       /code is not recognized/i,
     )
-    expect(mocks.requireReview).not.toHaveBeenCalled()
+    expect(coreReviews.shown).toHaveLength(0)
     expect(RELAYR_PAYMENT_CODE_HASH).toMatch(/^0x[0-9a-f]{64}$/)
   })
 })
@@ -1258,13 +1273,13 @@ describe('Relayr polling and resume semantics', () => {
     })
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
-    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(coreReviews.shown).toHaveLength(2)
     expect(mocks.requireFundingChainSelection).toHaveBeenCalledWith([
       expect.objectContaining({ chainId: 1, label: expect.stringContaining('Ethereum') }),
     ], 1)
     expect(posts[0][0].data).not.toBe('0x1234')
     expect(mocks.client.getTransaction).toHaveBeenCalledWith({ hash: DESTINATION_HASH })
-    expect(reverify).toHaveBeenCalledTimes(5)
+    expect(reverify).toHaveBeenCalledTimes(4)
     expect(progress.mock.calls.map(call => call[0].phase)).toEqual([
       'signing',
       'quoting',
@@ -1904,7 +1919,7 @@ describe('paying a reverted Relayr payment again', () => {
     await expect(runRelayrCalls(options)).rejects.toThrow(
       'This Relayr quote cannot be paid again from its saved record. Keep it pending; do not pay again.')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
-    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(coreReviews.shown).toHaveLength(2)
   })
 
   it('leaves a saved quote as it was when the wallet declines before it holds the payment', async () => {
@@ -1936,7 +1951,7 @@ describe('paying a reverted Relayr payment again', () => {
       cause: expect.objectContaining({ message:
         'This Relayr quote expired after its payment reverted. A new quote needs its deadline final onchain and Relayr to report nothing ran; try again in a few minutes.' }) })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
-    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(coreReviews.shown).toHaveLength(2)
   })
 
   it('refuses a retry when any payment it sent did not revert, including one before a declined retry', async () => {
@@ -2257,7 +2272,7 @@ describe('paying a reverted Relayr payment again', () => {
       : response({ bundle_uuid: BUNDLE_UUID, payment_received: true, transactions: successfulRecords(posts[0]) }))
     await expect(runRelayrCalls(options)).resolves.toMatchObject({ records: successfulRecords(posts[0]) })
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
-    expect(mocks.requireReview).toHaveBeenCalledTimes(2)
+    expect(coreReviews.shown).toHaveLength(2)
     expect(loadRelayrPendingSession(options.pendingScope)).toBeNull()
   })
 })
@@ -2832,10 +2847,10 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(2)
       expect(loadRelayrPendingSession('r114')).toBeNull()
       // The new payment's review says why the first one can't be reused.
-      const payments = mocks.requireReview.mock.calls.filter(([review]) => review.title === 'Review execution payment')
+      const payments = coreReviews.shown.filter(review => review.title === 'Review execution payment')
       expect(payments).toHaveLength(2)
-      expect(payments[0][0].description).not.toContain('earlier payment')
-      expect(payments[1][0].description).toContain('The earlier payment can\'t be reused: its bundle ran and reverted.')
+      expect(payments[0].description).not.toContain('earlier payment')
+      expect(payments[1].description).toContain('The earlier payment can\'t be reused: its bundle ran and reverted.')
     })
 
     it('offers Discard with the changed line once every request expired unused and the recheck fails', async () => {
@@ -2980,10 +2995,10 @@ describe('a saved session whose bundle will not run as signed (ruling R114)', ()
       await expect(action()).resolves.toMatchObject({ paymentHash: SECOND_PAYMENT })
       expect(signed()).toEqual([[1, 4n], [10, 4n], [1, 4n], [10, 4n]])
       expect(reverify.mock.invocationCallOrder[0]).toBeLessThan(mocks.wallet.signTypedData.mock.invocationCallOrder[2])
-      const payments = mocks.requireReview.mock.calls.filter(([review]) => review.title === 'Review execution payment')
+      const payments = coreReviews.shown.filter(review => review.title === 'Review execution payment')
       expect(payments).toHaveLength(2)
-      expect(payments[0][0].description).not.toContain('earlier payment')
-      expect(payments[1][0].description).toContain('The earlier payment couldn\'t be matched to this action and isn\'t refunded.')
+      expect(payments[0].description).not.toContain('earlier payment')
+      expect(payments[1].description).toContain('The earlier payment couldn\'t be matched to this action and isn\'t refunded.')
       expect(loadRelayrPendingSession('r114')).toBeNull()
     })
 

@@ -19,9 +19,7 @@ import { useProjectReviewScope, type ProjectReviewScope } from '@/providers/Proj
 import { useProjectRouteBlocked } from '@/providers/ProjectRouteBlockedContext'
 import {
   registerFundingChainSelectionHandler,
-  registerTransactionReviewHandler,
   type FundingChainOption,
-  type TransactionReviewRequest,
 } from '@/lib/transaction-review'
 
 export type PendingReview = {
@@ -29,12 +27,9 @@ export type PendingReview = {
   id: number
   resolve: (approved: boolean) => void
   scope?: ProjectReviewScope | null
-} & (
-  /** A boolean review (Safe, Relayr and authority paths) of the request itself. */
-  | { request: TransactionReviewRequest; model?: undefined }
   /** Core's prompt: the model it bound, confirmed only by its own confirmation. */
-  | { model: ReviewModel; request?: undefined }
-)
+  model: ReviewModel
+}
 
 export type PendingFundingChainSelection = {
   kind: 'funding'
@@ -95,32 +90,6 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     setActive(pending)
   }, [])
 
-  const enqueue = useCallback(
-    (request: TransactionReviewRequest) =>
-      new Promise<boolean>(resolve => {
-        const snapshot: TransactionReviewRequest = {
-          ...request,
-          calls: request.calls.map(call => ({
-            ...call,
-            // The connected wallet sends a transaction. An authorization is sent
-            // by a relayer, a Safe or a sponsor, so only a call that names its
-            // own sender shows one.
-            from: call.from ?? (request.kind === 'authorization' ? undefined : accountRef.current),
-            args: call.args ? [...call.args] : undefined,
-          })),
-        }
-        const pending: PendingReview = {
-          kind: 'review',
-          id: nextId.current++,
-          request: snapshot,
-          resolve,
-          scope: scopeRef.current,
-        }
-        enqueueDialog(pending)
-      }),
-    [enqueueDialog],
-  )
-
   const enqueueFundingChainSelection = useCallback(
     (options: readonly FundingChainOption[], initialChainId: number | null) =>
       new Promise<number | null>(resolve => {
@@ -136,7 +105,6 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     [enqueueDialog],
   )
 
-  useEffect(() => registerTransactionReviewHandler(enqueue), [enqueue])
   useEffect(
     () =>
       registerReviewHandler(async prompt => {
