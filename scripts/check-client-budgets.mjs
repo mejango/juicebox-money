@@ -42,8 +42,8 @@ const routes = [
   { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox.' },
   // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
-  // 397 -> 398 and /[urn] 517 -> 519: Next 16.4.2.
-  { route: '/create', path: '/create', kib: 398, text: 'Start a project' },
+  // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.
+  { route: '/create', path: '/create', kib: 399, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
@@ -61,7 +61,8 @@ const budgets = {
   // WalletConnect (with @reown/appkit), Coinbase Wallet and Safe add ~690 KiB
   // of strictly lazy vendor SDK; the route ceilings and the lazy-load
   // assertions below are what protect first paint. History: git log -p.
-  allScripts: 2621 * KIB,
+  // 2621 -> 2624: the onchain pair check (SDK resolveSuckers) and Next 16.4.2.
+  allScripts: 2624 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
