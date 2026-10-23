@@ -2,7 +2,6 @@
 
 import { getAccount } from '@wagmi/core'
 import { isAddress, zeroAddress, type Address } from 'viem'
-import { safeRelayrWalletDeps } from '@bananapus/nana-sdk-core/review'
 import { relayrRecordChain, type RelayrEntry, type RelayrTransactionBinding, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   createSafeRelayrController,
@@ -12,7 +11,7 @@ import {
   type SafeRelayrSession,
 } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { wagmiConfig } from '@/providers/Providers'
-import { reviewedSendDeps } from '@/lib/reviewed-send'
+import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
 import {
   hasRelayrPendingEvidence,
   loadRelayrPendingSession,
@@ -108,8 +107,8 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
   onProgress?: (progress: SafeRelayrProgress) => void
 }) {
   let fundingChainId: number | undefined
-  // Core's review of the frozen executions, and its reviewed payment.
-  const wallet = safeRelayrWalletDeps(reviewedSendDeps)
+  // Core's review of the frozen executions, and its reviewed payment, loaded with the send engine.
+  const wallet = async () => (await loadReviewEngine()).safeRelayrWalletDeps(await loadReviewedSendDeps())
   return createSafeRelayrController({
     store: {
       scope: 'single-session',
@@ -155,9 +154,9 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
     revalidate,
     afterVerified,
     onProgress,
-    ...wallet,
+    review: async (...args) => (await wallet()).review(...args),
     // The chain the payment is sent on is saved with the session once the wallet is about to open.
-    sendPayment: options => wallet.sendPayment({ ...options, onSending: () => {
+    sendPayment: async options => (await wallet()).sendPayment({ ...options, onSending: () => {
       fundingChainId = options.payment.chain
       return options.onSending()
     } }),

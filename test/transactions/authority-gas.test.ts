@@ -63,7 +63,7 @@ vi.mock('@/lib/preload-review', async () => {
     sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
     hold: { holds: writeHolds, client: () => mocks.client },
   })
-  return { loadReviewEngine: () => engine }
+  return { loadReviewEngine: () => engine, loadReviewedSendDeps: async () => ({}) }
 })
 vi.mock('@/lib/safe', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/safe')>()),
