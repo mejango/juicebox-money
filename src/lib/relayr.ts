@@ -1181,6 +1181,13 @@ export async function relayrPay({
     } catch (error) {
       if (sentHash) {
         if (error instanceof RelayrPaymentSubmittedError || error instanceof RelayrProofError) throw error
+        // A reverted payment is proven as the unplanned path proves it: its proof decides a reverted quote.
+        if (error instanceof ReviewedCallRevertedError) {
+          await verifyRelayrPayment(client, { hash: error.hash, from: expectedAccount, payment: reviewed }).catch(proof => {
+            if (proof instanceof RelayrProofError) throw proof
+          })
+          throw new RelayrPaymentSubmittedError(error.hash, chainId)
+        }
         throw new RelayrPaymentSubmittedError(sentHash, chainId)
       }
       if (error instanceof RelayrPaymentNotSentError || !opened) throw error
@@ -1796,22 +1803,22 @@ async function executeRelayrCalls({
     plan = parent.plan
     planned = parent
   } else if (!saved) {
-    // Core bounds a round's fee on its first call's chain: the funding chain, when it is a destination.
-    const first = calls.find(call => call.chainId === (paymentChainId ?? preferredPaymentChainId))
-    const round = first ? pendingScope ?? relayrCallsScope(calls) : undefined
-    const ordered = first ? [first, ...calls.filter(call => call !== first)] : calls
+    // The fee bound is on the wallet's funding chain, when Relayr takes payment there.
+    const payOn = paymentChainId ?? preferredPaymentChainId
+    const round = payOn !== undefined && fundingChains.includes(payOn) ? pendingScope ?? relayrCallsScope(calls) : undefined
     const { reviewPlan } = await loadReviewEngine()
     plan = await reviewPlan({
       account,
       title: calls.length === 1 ? 'Review relayed transaction' : 'Review relayed transactions',
       description: 'Your signatures authorize submission of these exact destination calls onchain. Relayr runs them once the network fee is paid.',
-      calls: ordered.map(call => ({
+      calls: calls.map(call => ({
         chainId: call.chainId, from: account, to: call.target, data: call.data, value: call.value ?? 0n,
         gas: relayrForwardGas(call), ...(round ? { relayrRound: round } : {}),
         label: call.label, abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
       })),
+      ...(round && payOn !== undefined ? { relayrRounds: { [round]: { paymentChainId: payOn } } } : {}),
     }, await loadReviewedSendDeps())
-    if (first && round) planned = { plan, round, chainId: first.chainId }
+    if (round && payOn !== undefined) planned = { plan, round, chainId: payOn }
   }
   // The ForwardRequest deadlines start at SIGNING, not at payment — stamping
   // the session when the payment lands would report a bundle as still valid

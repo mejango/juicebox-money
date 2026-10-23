@@ -96,7 +96,9 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     spent.set(plan, plan.calls.map(() => false))
     const fees = new Map<string, { chainId: number; used: boolean }>()
     for (const { relayrRound, chainId } of action.calls) {
-      if (relayrRound !== undefined && !fees.has(relayrRound)) fees.set(relayrRound, { chainId, used: false })
+      if (relayrRound !== undefined && !fees.has(relayrRound)) {
+        fees.set(relayrRound, { chainId: action.relayrRounds?.[relayrRound]?.paymentChainId ?? chainId, used: false })
+      }
     }
     rounds.set(plan, fees)
     return plan
@@ -200,7 +202,7 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     return signed
   }
   const relayr = await vi.importActual<typeof import('@bananapus/nana-sdk-core/review/relayr')>('@bananapus/nana-sdk-core/review/relayr')
-  /** Core's Relayr payment: a planned round's bound pays with no prompt, once and on its own chain; anything else asks. */
+  /** Core's Relayr payment: a planned round's bound pays with no prompt, once and on its own chain; anything else asks, as core does with no bound. */
   const payRelayrReviewed: Engine['payRelayrReviewed'] = async (quote, chainId, action) => {
     const destinationChainIds = quote.expectedTransactions.map(binding => binding.chain)
     const option = relayr.relayrPaymentOptions(quote, destinationChainIds).find(payment => payment.chain === chainId)
@@ -209,7 +211,7 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     const call = { chainId, to: details.target, data: details.calldata, value: details.amount, gas: relayr.RELAYR_PAYMENT_GAS }
     const fee = action.plan && action.relayrRound !== undefined ? rounds.get(action.plan)?.get(action.relayrRound) : undefined
     if (fee && !fee.used && fee.chainId === chainId) fee.used = true
-    else await prompt({ title: fee ? 'The network fee went up' : 'Review network fee', description: '', context: action.context,
+    else await prompt({ title: 'Review network fee', description: '', context: action.context,
       calls: [{ ...call, from: action.account, label: 'Pay network fee' }] })
     await switchChain(chainId)
     await action.onSending?.()
@@ -221,8 +223,10 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     await action.onSent?.(hash)
     if (!proof) return { hash }
     // A wallet that sped the payment up mined it under another hash.
-    const mined = (await proof(chainId).waitForTransactionReceipt({ hash })).transactionHash
+    const receipt = await proof(chainId).waitForTransactionReceipt({ hash })
+    const mined = receipt.transactionHash
     if (mined.toLowerCase() !== hash.toLowerCase()) await action.onSent?.(mined)
+    if (receipt.status === 'reverted') throw new core.ReviewedCallRevertedError(0, mined, receipt)
     await relayr.verifyRelayrPayment(proof(chainId), { hash: mined, from: action.account, payment: details })
     return { hash: mined }
   }

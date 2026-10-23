@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   chainId: 1,
+  /** The chain Relayr's quote takes payment on. */
+  paymentChain: 1,
   connectorUid: 'wallet-a',
   client: {
     call: vi.fn(),
@@ -39,6 +41,7 @@ vi.mock('@/providers/Providers', () => ({
   SUPPORTED_CHAINS: [
     { id: 1, name: 'Ethereum' },
     { id: 10, name: 'Optimism' },
+    { id: 8453, name: 'Base' },
   ],
 }))
 vi.mock('@/lib/wallet-core', () => ({
@@ -153,6 +156,7 @@ beforeEach(() => {
   clearViewAs()
   mocks.account = ALICE
   mocks.chainId = 1
+  mocks.paymentChain = 1
   mocks.connectorUid = 'wallet-a'
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
@@ -216,7 +220,7 @@ beforeEach(() => {
         bundle_uuid: BUNDLE_UUID,
         payment_info: [
           {
-            chain: 1,
+            chain: mocks.paymentChain,
             amount: '100',
             calldata: PAYMENT_CALLDATA,
             target: PAYMENT_ADDRESS,
@@ -1277,8 +1281,22 @@ describe('One safety-check review per project batch', () => {
     expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.chain.id)).toEqual([1])
   })
 
-  it('reviews the relayed requests and their payment when the wallet is on no chain of the round', async () => {
+  it('pays a relayed round on the wallet\'s funding chain within the batch review', async () => {
     mocks.chainId = 8453
+    mocks.paymentChain = 8453
+    const batch = await run([
+      batchCall(1, '0x1234', { relayr: undefined }),
+      batchCall(10, '0x5678', { relayr: undefined }),
+    ])
+
+    expect(batch.status).toBe('complete')
+    expect(mocks.requireReview.mock.calls.map(([review]) => review.title)).toEqual(['Review project actions'])
+    expect(mocks.chooseFunding).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.chain.id)).toEqual([8453])
+  })
+
+  it('reviews the relayed requests and their payment when Relayr takes no payment on the wallet\'s chain', async () => {
+    mocks.chainId = 137
     const batch = await run([
       batchCall(1, '0x1234', { relayr: undefined }),
       batchCall(10, '0x5678', { relayr: undefined }),
