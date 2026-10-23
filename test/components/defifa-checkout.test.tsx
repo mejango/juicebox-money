@@ -317,7 +317,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
       wallet.client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => {
         const receipt = await readReceipt({ hash })
         return hash !== execution ? receipt : { ...receipt, to: ALICE, logs: [{ address: ALICE, topics: [toEventSelector('ExecutionSuccess(bytes32,uint256)'), record.hash!], data: `0x${'00'.repeat(32)}`,
-          removed: false, transactionHash: execution, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }] }
+          removed: false, transactionHash: execution, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber, transactionIndex: receipt.transactionIndex }] } as never
       })
       wallet.client.getTransaction.mockImplementation(async ({ hash }: { hash: Hex }) => {
         const transaction = await readTransaction({ hash })
