@@ -210,7 +210,9 @@ describe('Safe Relayr journal adapter', () => {
       return { hash: HASH, payments: [paid] }
     })
     const { options } = adapter()
-    expect(options.review).toBe(mocks.review)
+    const executions = [] as unknown as Parameters<typeof options.review>[0]
+    await options.review(executions, { resumed: false })
+    expect(mocks.review).toHaveBeenCalledWith(executions, { resumed: false })
     const onSending = vi.fn()
     const result = await options.sendPayment({
       session: { ...session(), paymentStatus: 'unfunded', reservationKeys: [`1:${SAFE}:1`] },

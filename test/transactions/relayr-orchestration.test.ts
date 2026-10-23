@@ -63,7 +63,7 @@ vi.mock('@/lib/preload-review', async () => {
     receipt: async hash => mocks.client.waitForTransactionReceipt({ hash }),
     sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
   })
-  return { loadReviewEngine: () => engine }
+  return { loadReviewEngine: () => engine, loadReviewedSendDeps: async () => ({}) }
 })
 vi.mock('@/lib/safe-connector', () => ({
   isSafeConnection: mocks.isSafeConnection,

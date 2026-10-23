@@ -63,8 +63,7 @@ import {
 } from '@/lib/cross-chain-authority'
 import { publicClient } from '@/lib/wallet-core'
 import type { TransactionReviewCall, TransactionReviewRequest } from '@/lib/transaction-review'
-import { loadReviewEngine } from '@/lib/preload-review'
-import { reviewedSendDeps } from '@/lib/reviewed-send'
+import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
 import {
   isSafeConnection,
   requireSafeProposalSuccess,
@@ -335,6 +334,7 @@ async function signSafeTx(
   assertSafeTxNonce(before, tx, 'pending')
   // Core reviews the exact SafeTx with its decoded call and signs it; the Safe's live state is rechecked first.
   const { signReviewed } = await loadReviewEngine()
+  const reviewedSendDeps = await loadReviewedSendDeps()
   const [signature] = await signReviewed([{ kind: 'safe-tx', chainId, safe, tx }], {
     account: signer,
     title: label ? `Review ${label}` : 'Review Safe transaction',
@@ -602,6 +602,7 @@ async function sendContractAndConfirm({
     ? await verifySafeWriteContext(chainId, address, expectedAccount, safeContext)
     : null
   const { sendReviewed, isTransactionReceiptUnavailableError } = await loadReviewEngine()
+  const reviewedSendDeps = await loadReviewedSendDeps()
   let sent: Hex | undefined
   let result
   try {

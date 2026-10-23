@@ -149,6 +149,16 @@ describe('durable project batches', () => {
     expect(loadProjectBatch(projectBatchScope(action, 10, 7))?.id).toBe(saved.id)
   })
 
+  it('reviews permissionless calls a Safe sends as the Safe, the sender that spends the plan', async () => {
+    mocks.safe = true
+    const calls = [call(1, 'a'), call(10, 'b')].map(item => ({ ...item, value: 0n, relayr: 'permissionless' as const }))
+    // Only the review matters here; this harness can't prove a Safe's receipt.
+    await run(calls).catch(() => {})
+    expect(mocks.review).toHaveBeenCalledWith(expect.objectContaining({
+      calls: calls.map(item => expect.objectContaining({ from: item.authority })),
+    }), expect.anything())
+    expect(mocks.rawRelayr).not.toHaveBeenCalled()
+  })
   it('finishes a recovered journal whose calls were already marked complete', async () => {
     const batch = await run([call()])
     const key = `jb-project-batch:v1:journal:${batch.id}`

@@ -79,7 +79,7 @@ vi.mock('@/lib/preload-review', async () => {
     send: ({ chainId, to, data, value, gas }) => mocks.send(chainId, { chain: { id: chainId }, account: mocks.address, to, data, value, gas }),
     hold: { holds: writeHolds, client: chainId => publicClient(chainId as never) },
   })
-  return { loadReviewEngine: () => engine }
+  return { loadReviewEngine: () => engine, loadReviewedSendDeps: async () => ({}) }
 })
 vi.mock('@/lib/write-holds', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/write-holds')>()
