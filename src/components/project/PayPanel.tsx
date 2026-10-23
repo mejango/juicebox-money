@@ -1510,7 +1510,7 @@ export function PayPanel({
 
   // An approval whose run ended before it settled can confirm later: it counts as done, and the payment continues.
   useEffect(() => {
-    if (!paymentRunEnded || tx.settledStep === null || paymentSubmitted) return;
+    if (!paymentRunEnded || tx.settledStep == null || paymentSubmitted) return;
     setPaymentRunEnded(false);
     setSequenceCompletedKinds(current => current.includes("token-approval") ? current : [...current, "token-approval"]);
     setSequenceStatus("Approval confirmed. Continue to the payment.");
