@@ -132,6 +132,15 @@ describe('moving tokens', () => {
     expect(send.calls[0].value).toBe(7n)
   })
 
+  it('moves on to the send once a lone prepare settles with a Safe, never preparing again', async () => {
+    m.allowance = 10n ** 19n
+    m.ends = [{ status: 'proposed', step: 0, safeTxHash: HASH }]
+    await startMove()
+    await act(async () => m.settle())
+    for (let attempt = 0; attempt < 20; attempt++) await tick()
+    expect(m.runs.map(names)).toEqual([['prepare'], ['toRemote']])
+  })
+
   it('reviews the prepare alone when the bridge already has the allowance', async () => {
     m.allowance = 10n ** 19n
     await startMove()

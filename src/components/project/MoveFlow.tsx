@@ -565,7 +565,8 @@ function MoveFlow({
         scope,
         ...planShown(saved, { context: contextRows(rows) }),
       })
-      if (ended) ranDone.current = ended.status === 'done'
+      // A lone prepare saves no run to continue: once it settles, it is done.
+      if (ended) ranDone.current = ended.status === 'done' || calls.length === 1
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
     }
