@@ -190,5 +190,6 @@ describe('a run step as a flow shows it', () => {
     expect(liveStep({ busy: true, step: 1 }, [1, 2], 0)).toBe(2)
     expect(liveStep({ busy: false, step: 1 }, [1, 2], 0)).toBe(0)
     expect(liveStep({ busy: true, step: 1 }, null, 0)).toBe(0)
+    expect(liveStep({ busy: true, step: 5 }, [1, 2], 0)).toBe(0)
   })
 })
