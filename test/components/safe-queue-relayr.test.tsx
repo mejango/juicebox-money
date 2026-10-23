@@ -86,10 +86,21 @@ vi.mock('@bananapus/nana-sdk-core/safe-service', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/safe-service')>()),
   hasSafeService: () => true,
 }))
-vi.mock('@/lib/transaction-review', async importOriginal => ({
-  ...(await importOriginal<typeof import('@/lib/transaction-review')>()),
-  requireTransactionReview: mocks.review,
-}))
+/** Core reviews the executions; the payment goes to this test's `pay`, in relayrPay's terms. */
+vi.mock('@bananapus/nana-sdk-core/review', async importOriginal => {
+  const actual = await importOriginal<typeof import('@bananapus/nana-sdk-core/review')>()
+  return {
+    ...actual,
+    safeRelayrWalletDeps: (deps: Parameters<typeof actual.safeRelayrWalletDeps>[0]) => ({
+      ...actual.safeRelayrWalletDeps(deps),
+      sendPayment: ({ session, payment, beforeSend, onSending, onSent }: Parameters<ReturnType<typeof actual.safeRelayrWalletDeps>['sendPayment']>[0]) => mocks.pay({
+        payment, account: session.account, bundleUuid: session.quote!.bundle_uuid,
+        destinationChainIds: session.executions.map(item => item.entry.chain),
+        sent: session.payments, reverify: beforeSend, reverifyBeforeSendOnly: true, onSending, onSent,
+      }),
+    }),
+  }
+})
 vi.mock('@/lib/relayr', async importOriginal => {
   const actual = await importOriginal<typeof import('@/lib/relayr')>()
   return {
@@ -114,6 +125,7 @@ vi.mock('@/lib/relayr', async importOriginal => {
 })
 
 import { SafeQueueCard } from '@/components/project/SafeQueueCard'
+import { coreReviews } from '../support/core-review'
 import { safeExecRelayrEntry } from '@/lib/safe'
 import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import {
@@ -357,6 +369,8 @@ beforeEach(() => {
   })
   mocks.poll.mockReset().mockRejectedValue(new Error('Bundle outcomes remain unresolved.'))
   mocks.review.mockReset().mockResolvedValue(undefined)
+  coreReviews.reset()
+  coreReviews.answer.mockImplementation(async model => { await mocks.review(model); return true })
 })
 
 afterEach(async () => {
