@@ -8,6 +8,8 @@ import {
 } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
 import { buildSafeDeploymentCalls, SAFE_CREATE_ABI } from '@bananapus/nana-sdk-core/safe'
+import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
+import { describeSafeInitializer } from '@bananapus/nana-sdk-core/review/decode'
 import { getAccount } from '@wagmi/core'
 import {
   decodeFunctionData,
@@ -19,7 +21,7 @@ import {
   type TransactionReceipt,
 } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
-import { buildLaunchRequest, projectIdFromReceipt } from '@/lib/launch'
+import { buildLaunchRequest, projectIdFromReceipt, type LaunchPlan } from '@/lib/launch'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { gasWithHeadroom, intent, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, strictRetirable } from '@/lib/write-holds'
@@ -96,6 +98,23 @@ type SignedLaunch = {
 }
 
 /** Exact signatures and quote bindings survive refreshes, including the wallet's no-hash send window. */
+
+/** The Safe creations a launch's Relayr bundle also runs, each with its exact factory call, for the launch's review. */
+function launchMultisigRows(chainId: number, plan: LaunchPlan): ReviewContextRow[] {
+  const calls = buildSafeDeploymentCalls(plan.multisigs!)
+  return calls.map((call, index) => {
+    const [singleton, initializer, saltNonce] = decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args
+    // The Safe's owners, threshold and modules, decoded from the exact initializer it is created with.
+    const setup = (describeSafeInitializer(chainId, initializer) ?? []).flatMap(step => step.rows.map(([name, text]) => `${name} ${text}`))
+    return {
+      label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig${calls.length > 1 ? ` ${index + 1}` : ''}`,
+      value: call.target,
+      mono: true,
+      note: 'Safe Proxy Factory createProxyWithNonce, run in the same Relayr bundle as the launch.',
+      lines: [...setup, `singleton ${singleton}`, `saltNonce ${saltNonce}`, `value ${call.value}`, `initializer ${initializer}`],
+    }
+  })
+}
 export type LaunchRelayrJournal = {
   account: Address
   paymentChainId?: number
@@ -609,14 +628,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const entry = await buildForwardedTx({ chainId: chainId as JBChainId, target: request.address,
         data, value: request.value, gas: gasWithHeadroom(estimate + (plan.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce,
-      plan.multisigs?.length ? {
-        description: launchMultisigReview(plan),
-        // The review shows the arguments these exact bytes carry.
-        calls: buildSafeDeploymentCalls(plan.multisigs).map(call => ({ chainId, to: call.target,
-          data: call.callData, value: call.value, abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
-          args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
-          label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig`, contractName: 'Safe Proxy Factory' })),
-      } : undefined)
+      plan.multisigs?.length ? { description: launchMultisigReview(plan), rows: launchMultisigRows(chainId, plan) } : undefined)
       const signedRequest = relayrForwardRequest(entry)
       if (!signedRequest) throw new Error('Invalid launch authorization.')
       journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, plan), nonce: nonce.toString(), deadline: signedRequest.deadline })

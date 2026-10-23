@@ -3,9 +3,9 @@
   "sites": [
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 139,
-      "api": "registerTransactionReviewHandler",
-      "boundary": "Old-review handler: the provider queues the SDK's boolean review requests (Safe, Relayr and authority paths) into the one review dialog. Removed when those paths move to core (J5).",
+      "line": 110,
+      "api": "registerReviewHandler",
+      "boundary": "The app's one review dialog answers core's prompts: core mints the model and the confirmation, and nothing is sent unless the dialog returns it.",
       "test": "test/components/transaction-review-project-scope.test.tsx"
     },
     {
@@ -23,41 +23,6 @@
       "test": "test/components/queue-ruleset-multichain.test.tsx"
     },
     {
-      "file": "src/lib/authority.ts",
-      "line": 291,
-      "api": "reviewedInParent",
-      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
-      "test": "test/transactions/authority-gas.test.ts"
-    },
-    {
-      "file": "src/lib/authority.ts",
-      "line": 697,
-      "api": "reviewedInParent",
-      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
-      "test": "test/transactions/authority-gas.test.ts"
-    },
-    {
-      "file": "src/lib/authority.ts",
-      "line": 745,
-      "api": "sendTransaction",
-      "boundary": "Safe app connection: hands the reviewed inner call to the Safe app (gas 0, so safeTxGas 0) under the write hold; the returned id is a Safe proposal, resolved to its execution hash afterwards. Moves to core in J5.",
-      "test": "test/transactions/authority-gas.test.ts"
-    },
-    {
-      "file": "src/lib/authority.ts",
-      "line": 825,
-      "api": "reviewedInParent",
-      "boundary": "runAuthorityCalls skips its review when the batch caller already reviewed the group. Removed when authority signing moves to core (J5).",
-      "test": "test/transactions/authority-gas.test.ts"
-    },
-    {
-      "file": "src/lib/authority.ts",
-      "line": 888,
-      "api": "sendTransaction",
-      "boundary": "Direct wallet: sends the reviewed authority call with its estimated gas under the write hold after the gate's final checks. Moves to core in J5.",
-      "test": "test/transactions/authority-gas.test.ts"
-    },
-    {
       "file": "src/lib/forwarder-authorization.ts",
       "line": 91,
       "api": "request",
@@ -65,60 +30,11 @@
       "test": "test/transactions/forwarder-authorization.test.ts"
     },
     {
-      "file": "src/lib/payer-relayr.ts",
-      "line": 599,
-      "api": "sendTransaction",
-      "boundary": "Deploys a project payer from the reviewed call under the SDK write hold. Moves to core in J5.",
-      "test": "test/transactions/payer-relayr.test.ts"
-    },
-    {
-      "file": "src/lib/project-batch.ts",
-      "line": 745,
-      "api": "reviewedInParent",
-      "boundary": "The batch dialog already reviewed the group, so runAuthorityCalls skips its own review when the connection mode is unchanged. Moves to core sequences in J4.",
-      "test": "test/transactions/project-batch.test.ts"
-    },
-    {
       "file": "src/lib/relayr.ts",
-      "line": 120,
+      "line": 119,
       "api": "request",
       "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
       "test": "test/transactions/relayr-orchestration.test.ts"
-    },
-    {
-      "file": "src/lib/relayr.ts",
-      "line": 1016,
-      "api": "signTypedData",
-      "boundary": "Signs a reviewed ERC-2771 forward request after the account is rechecked. Moves to core runRelayrReviewed in J5.",
-      "test": "test/transactions/relayr-orchestration.test.ts"
-    },
-    {
-      "file": "src/lib/relayr.ts",
-      "line": 1237,
-      "api": "sendTransaction",
-      "boundary": "Pays a reviewed Relayr quote under the payment hold after the saved marker. Moves to core runRelayrReviewed in J5.",
-      "test": "test/transactions/relayr-orchestration.test.ts"
-    },
-    {
-      "file": "src/lib/safe-batch-connector.ts",
-      "line": 113,
-      "api": "sendCalls",
-      "boundary": "Hands a reviewed batch to the Safe app connection under the Safe batch hold. Replaced by proposeReviewedSafeTransaction in J5.",
-      "test": "test/lib/safe-batch-connector.test.ts"
-    },
-    {
-      "file": "src/lib/safe.ts",
-      "line": 399,
-      "api": "signTypedData",
-      "boundary": "Signs a reviewed Safe transaction hash after the Safe state and hash are rechecked. Moves to core safeSend in J5.",
-      "test": "test/transactions/safe-orchestration.test.ts"
-    },
-    {
-      "file": "src/lib/safe.ts",
-      "line": 738,
-      "api": "writeContract",
-      "boundary": "Sends the simulated, reviewed contract call (Safe execTransaction or direct) after the wallet and Safe mode are rechecked. Moves to core in J5.",
-      "test": "test/transactions/safe-orchestration.test.ts"
     }
   ]
 }
