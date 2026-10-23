@@ -24,9 +24,8 @@ import {
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
 import { fundingChainLabel, requireFundingChainSelection } from '@/lib/transaction-review'
-import { loadReviewEngine } from '@/lib/preload-review'
+import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
 import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
-import { reviewedSendDeps } from '@/lib/reviewed-send'
 import {
   isDefiniteWalletRejection,
   relayrDiscardLine,
@@ -958,6 +957,7 @@ async function signForwardedRequest(
   }
   // Core reviews the exact ERC-2771 request, decoded, and signs it on the canonical forwarder's domain.
   const { signReviewed } = await loadReviewEngine()
+  const reviewedSendDeps = await loadReviewedSendDeps()
   const [signature] = await signReviewed([{ kind: 'forward-request', chainId: call.chainId, request }], {
     account: expectedAccount,
     title: 'Review relayed transaction',
@@ -1136,6 +1136,7 @@ export async function relayrPay({
   await requireRelayrPaymentRuntime(client)
 
   const { sendReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
+  const reviewedSendDeps = await loadReviewedSendDeps()
   let details = reviewed
   let walletOpened = false
   /** The last gate passed after onSending: from here an error may come from the wallet. */

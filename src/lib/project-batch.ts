@@ -149,6 +149,9 @@ function batchCallAttempt(batch: ProjectBatch, call: ProjectBatchCall, kind: Cal
 }
 
 const relayrScopeOf = (batch: Pick<ProjectBatch, 'id'>, round: number) => `project-batch:${batch.id}:${round}`
+/** A round Relayr runs from its own account: every call permissionless, on chains it can be paid on, with no Safe connected. */
+const relayrRuns = (calls: ProjectBatchCall[]) => !isSafeConnection(wagmiConfig) &&
+  calls.every(call => call.relayr === 'permissionless' && relayrSupportsChain(call.chainId)) && relayrPaymentChains(calls.map(call => call.chainId)).length > 0
 const savedRelayrRound = (scope: string) => loadRelayrPendingSession(scope) ?? loadRawRelayrSession(scope)
 
 /** No relay session or journal entry shows that anything left this browser. */
@@ -493,11 +496,13 @@ export async function runProjectBatch({
       // its sent gas limit, which is measured at send time, so it is not shown.
       const viaSafe = isSafeConnection(wagmiConfig)
       const { reviewPlan } = await loadReviewEngine()
+      const planned = batch
       const plan = await reviewPlan({ account, title,
         description: `${batch.calls.every(call => call.relayr === 'permissionless') && !viaSafe ? 'Pay network fees once for this batch. Each payment has its own result.' : 'Review each destination and its amounts. Later calls on the same chain wait for earlier calls to finish.'}${viaSafe ? ` ${SAFE_NONCE_GUIDANCE}` : ''}`,
         ...(viaSafe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        // Permissionless calls run from Relayr's own account.
-        calls: batch.calls.map(call => ({ chainId: call.chainId, from: call.relayr === 'permissionless' ? 'relayr' as const : call.authority,
+        // A round Relayr runs goes from its own account; every other call from its authority.
+        calls: batch.calls.map(call => ({ chainId: call.chainId,
+          from: relayrRuns(planned.rounds.find(ids => ids.includes(call.id))!.map(id => planned.calls.find(item => item.id === id)!)) ? 'relayr' as const : call.authority,
           to: call.target, data: call.data, value: call.value ?? 0n, label: call.label, abi: call.abi,
           functionName: call.functionName, args: call.args, contractName: call.contractName })) }, reviewedSendDeps)
       reviewed = { plan, viaSafe }
@@ -532,9 +537,7 @@ export async function runProjectBatch({
       checkAccount()
       const relayrScope = relayrScopeOf(journal, round)
       const rawSaved = loadRawRelayrSession(relayrScope)
-      if (rawSaved || (!isSafeConnection(wagmiConfig) && pending.every(call => call.relayr === 'permissionless') &&
-        pending.every(call => relayrSupportsChain(call.chainId) && !journal.submissions[call.id]) &&
-        relayrPaymentChains(pending.map(call => call.chainId)).length)) {
+      if (rawSaved || (relayrRuns(pending) && pending.every(call => !journal.submissions[call.id]))) {
         const boundIds = journal.relayrCallIds?.[String(round)]
         let rawCalls = boundIds ? pending.filter(call => boundIds.includes(call.id)) : pending
         if (!rawSaved && !boundIds) {
