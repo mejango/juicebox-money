@@ -1,7 +1,7 @@
 'use client'
 
 import { isAddressEqual, type Address, type Hex } from 'viem'
-import { writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { writeIntentKey, type ReviewedPlan, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, strictRetirable } from '@/lib/write-holds'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { RelayrPaymentSubmittedError, RelayrQuoteTimeoutError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
@@ -74,7 +74,7 @@ function rawFundingAttempt(session: RawRelayrState, stillSaved: () => boolean): 
 }
 
 /** Shared raw-call funding lifecycle. Owners durably save every transition before external writes. */
-export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, changedCallMessage, lostQuoteMessage, releasable = false, signal, onQuoted, checked }: {
+export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session, entries, saveState: save, assertAccount, reverify, preferredPaymentChainId, planned, changedCallMessage, lostQuoteMessage, releasable = false, signal, onQuoted, checked }: {
   session: S
   entries: RelayrEntry[]
   saveState: (session: S, beforeWrite?: boolean) => void
@@ -83,6 +83,11 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
   changedCallMessage?: string
   lostQuoteMessage?: string
   preferredPaymentChainId?: number
+  /**
+   * The plan that reviewed these calls as one Relayr round, with its fee bound
+   * on `chainId`: the first payment is made there with no prompt within it.
+   */
+  planned?: { plan: ReviewedPlan; round: string; chainId: number }
   /**
    * Retryable routing calls: the quote may take minutes and be cancelled, and a
    * quote that never arrived is released. Other owners keep the 45 s hold.
@@ -166,7 +171,11 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
       let paidNow = false
       if ((session.phase === 'quoted' || session.phase === 'payment-reverted') && !fundedElsewhere) {
         let payment: RelayrPayment | undefined
-        if (session.phase === 'payment-reverted') {
+        const plannedPayment = session.phase === 'quoted' && planned
+          ? relayrPaymentOptions(quote, chains).find(item => item.chain === planned.chainId)
+          : undefined
+        if (plannedPayment) payment = plannedPayment
+        else if (session.phase === 'payment-reverted') {
           // A quote that was paid before is paid again with exactly the option it
           // used, and only when the SDK's retry rule clears it.
           payment = relayrRetryOption(session.payments, quote.payment_info)
@@ -188,6 +197,7 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           const { hash } = await relayrPay({
             payment: chosen, account: session.account, bundleUuid: quote.bundle_uuid,
             destinationChainIds: chains, sent: session.payments ?? [], reverify: recheck,
+            ...(plannedPayment && planned ? { planned: { plan: planned.plan, round: planned.round, quote } } : {}),
             onSending: () => {
               session.phase = 'payment-sending'
               session.paymentChainId = chosen.chain
