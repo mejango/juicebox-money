@@ -11,7 +11,7 @@ import {
   type Abi,
   type Address,
   type Hex,
-  type PublicClient,
+  type TransactionReceipt,
 } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
@@ -43,7 +43,6 @@ import {
   onchainApprovalStep,
   proposeSafeTransaction,
   SAFE_EXEC_ABI,
-  SAFE_TX_TYPES,
   safeBatchProposalFor,
   safeExecutionArgs,
   safeExecutionResult,
@@ -51,7 +50,6 @@ import {
   safeTransactionHash,
   safeTransactionHasRefund,
   safeTransactionMatchesCall,
-  safeTransactionMessage,
   submitSafeConfirmation,
   usableSafeConfirmations,
   type SafeConfirmation,
@@ -62,16 +60,10 @@ import {
   readMatchingAuthorityIdentities,
   UnprovenSafeError,
 } from '@/lib/cross-chain-authority'
-import {
-  connectedWallet as connectedWalletCore,
-  publicClient,
-} from '@/lib/wallet-core'
-import {
-  requireContractTransactionReview,
-  requireTransactionReview,
-  type TransactionReviewCall,
-  type TransactionReviewRequest,
-} from '@/lib/transaction-review'
+import { publicClient } from '@/lib/wallet-core'
+import type { TransactionReviewCall, TransactionReviewRequest } from '@/lib/transaction-review'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import {
   isSafeConnection,
   requireSafeProposalSuccess,
@@ -164,13 +156,6 @@ function safeFetchOnce(
 
 /** The SDK's Safe service calls, at most SAFE_MAX_CONCURRENT at a time. */
 export const SAFE_SERVICE: SafeServiceOptions = { fetch: safeFetchOnce }
-
-function connectedWallet(chainId: JBChainId, expected?: Address) {
-  return connectedWalletCore(chainId, {
-    expected,
-    changedError: 'Connected account changed. Review the Safe transaction again.',
-  })
-}
 
 async function fetchSafeInfo(
   chainId: JBChainId,
@@ -334,10 +319,6 @@ async function signSafeTx(
   tx: SafeQueuedTransaction,
   signer: Address,
   label?: string,
-  reviewCall?: Pick<
-    SafeCall,
-    'abi' | 'functionName' | 'args' | 'contractName' | 'calls'
-  >,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<Hex> {
   const assertWallet = captureWalletContext(wagmiConfig, { account: signer, chainId })
@@ -351,63 +332,30 @@ async function signSafeTx(
   const before = await readLiveSafeState(chainId, safe)
   assertCurrentSafeSigner(before, signer)
   assertSafeTxNonce(before, tx, 'pending')
-  const domain = { chainId, verifyingContract: safe } as const
-  const message = safeTransactionMessage(tx)
-  await requireTransactionReview({
-    kind: 'authorization',
-    title: 'Review Safe transaction',
-    description: `Your signature authorizes Safe ${safe} to make this exact call at nonce ${tx.nonce}. It may execute once the Safe has enough approvals.`,
-    confirmLabel: 'Agree & sign Safe transaction',
-    authorization: {
-      type: 'EIP-712 SafeTx',
-      domain,
-      primaryType: 'SafeTx',
-      message,
-      digest: expectedHash,
-    },
-    calls: [
-      {
-        chainId,
-        from: signer,
-        to: message.to,
-        value: message.value,
-        data: message.data,
-        safeTxGas: message.safeTxGas,
-        label: label ?? `Safe transaction #${tx.nonce}`,
-        abi: reviewCall?.abi,
-        functionName: reviewCall?.functionName,
-        args: reviewCall?.args,
-        contractName: reviewCall?.contractName,
-        calls: reviewCall?.calls,
-      },
-    ],
-  })
-  const { wallet, account } = await connectedWallet(chainId, signer)
-  if (account.toLowerCase() !== signer.toLowerCase()) {
-    throw new Error('Connected account changed. Review the Safe transaction again.')
-  }
-  await reverifyAuthority?.()
-  const after = await readLiveSafeState(chainId, safe)
-  assertCurrentSafeSigner(after, signer)
-  assertSafeTxNonce(after, tx, 'pending')
-  assertSafeStateUnchanged(before, after)
-  if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
-    throw new Error('The queued Safe transaction changed during review.')
-  }
-  assertWallet()
-  if (isSafeConnection(wagmiConfig) !== viaSafe) throw new Error('Connected wallet changed. Review the Safe transaction again.')
-  const signature = await wallet.signTypedData({
+  // Core reviews the exact SafeTx with its decoded call and signs it; the Safe's live state is rechecked first.
+  const { signReviewed } = await loadReviewEngine()
+  const [signature] = await signReviewed([{ kind: 'safe-tx', chainId, safe, tx }], {
     account: signer,
-    domain,
-    types: SAFE_TX_TYPES,
-    primaryType: 'SafeTx',
-    message,
-  })
+    title: label ? `Review ${label}` : 'Review Safe transaction',
+    description: `Your signature authorizes Safe ${safe} to make this exact call at nonce ${tx.nonce}. It may execute once the Safe has enough approvals.`,
+    reverify: async () => {
+      await reverifyAuthority?.()
+      const after = await readLiveSafeState(chainId, safe)
+      assertCurrentSafeSigner(after, signer)
+      assertSafeTxNonce(after, tx, 'pending')
+      assertSafeStateUnchanged(before, after)
+      if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
+        throw new Error('The queued Safe transaction changed during review.')
+      }
+      assertWallet()
+      if (isSafeConnection(wagmiConfig) !== viaSafe) throw new Error('Connected wallet changed. Review the Safe transaction again.')
+    },
+  }, reviewedSendDeps)
   await reverifyAuthority?.()
   const signed = await readLiveSafeState(chainId, safe)
   assertCurrentSafeSigner(signed, signer)
   assertSafeTxNonce(signed, tx, 'pending')
-  assertSafeStateUnchanged(after, signed)
+  assertSafeStateUnchanged(before, signed)
   if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
     throw new Error('The queued Safe transaction changed while signing.')
   }
@@ -484,11 +432,6 @@ async function proposeSafeTx({
   signer,
   nonce,
   label,
-  abi,
-  functionName,
-  args,
-  contractName,
-  calls,
   reverifyAuthority,
   onSafePrepared,
   ...call
@@ -500,13 +443,7 @@ async function proposeSafeTx({
   const tx = proposalFor(call, nonce)
   const safeTxHash = safeTransactionHash(chainId, safe, tx)
   await onSafePrepared?.({ ...tx, safeTxHash })
-  const signature = await signSafeTx(chainId, safe, tx, signer, label, {
-    abi,
-    functionName,
-    args,
-    contractName,
-    calls,
-  }, reverifyAuthority)
+  const signature = await signSafeTx(chainId, safe, tx, signer, label, reverifyAuthority)
   await proposeSafeTransaction(
     chainId,
     safe,
@@ -527,10 +464,7 @@ export async function confirmSafeTx(
   safe: Address,
   tx: SafeQueuedTransaction,
   signer: Address,
-  reviewCall?: Pick<
-    SafeCall,
-    'label' | 'abi' | 'functionName' | 'args' | 'contractName' | 'calls'
-  >,
+  label?: string,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<void> {
   assertNoViewAs()
@@ -544,8 +478,7 @@ export async function confirmSafeTx(
     safe,
     tx,
     signer,
-    reviewCall?.label,
-    reviewCall,
+    label,
     reverifyAuthority,
   )
   await submitSafeConfirmation(chainId, safe, tx, signature, SAFE_SERVICE)
@@ -636,203 +569,96 @@ async function sendContractAndConfirm({
   // balance requirement for an execution that costs a fraction of it. The
   // limit is measured once, inside the cap, so the review shows the sent gas.
   const gas = viaSafe
-    ? 0n
+    ? undefined
     : ((await gasWithinCap(client, { account: expectedAccount, to: address, data }, gasCap)) ??
       gasCap)
-  const sentGas = viaSafe ? { safeTxGas: 0n } : { gas }
-  const safeApp = viaSafe
-    ? {
-        description: [review?.description, SAFE_NONCE_GUIDANCE].filter(Boolean).join(' '),
-        confirmLabel: 'Agree & continue to Safe',
-      }
-    : {}
-  if (review) {
-    await requireTransactionReview({
-      ...review,
-      ...safeApp,
-      calls: review.calls.map(call => ({
-        ...call,
-        from: expectedAccount,
-        ...sentGas,
-      })),
-    })
-  } else {
-    await requireContractTransactionReview(
-      {
-        chainId,
-        address,
-        abi,
-        functionName,
-        args,
-        account: expectedAccount,
-        ...sentGas,
-      },
-      {
-        title: 'Review onchain transaction',
-        label:
-          functionName === 'execTransaction'
-            ? 'Execute Safe transaction'
-            : functionName === 'approveHash'
-              ? 'Approve Safe transaction hash'
-              : functionName === 'createProxyWithNonce'
-                ? 'Deploy Safe on this chain'
-                : functionName,
-        contractName:
-          functionName === 'createProxyWithNonce' ? 'Safe Proxy Factory' : 'Safe',
-        ...safeApp,
-      },
-    )
-  }
-  await reverifyAuthority?.()
-  const { wallet, account } = await connectedWallet(chainId, expectedAccount)
+  const label = review?.calls[0]?.label ?? (
+    functionName === 'execTransaction'
+      ? 'Execute Safe transaction'
+      : functionName === 'approveHash'
+        ? 'Approve Safe transaction hash'
+        : functionName === 'createProxyWithNonce'
+          ? 'Deploy Safe on this chain'
+          : functionName)
   const before = safeContext
-    ? await verifySafeWriteContext(
-        chainId,
-        address,
-        account,
-        safeContext,
-      )
+    ? await verifySafeWriteContext(chainId, address, expectedAccount, safeContext)
     : null
-  const simulation = await simulateStateChangingTransaction(client, {
-    from: account,
-    to: address,
-    data,
-    gas: gasCap,
-  })
-  if (functionName === 'execTransaction') {
-    let result = false
-    try {
-      result = decodeFunctionResult({
-        abi: SAFE_EXEC_ABI,
-        functionName: 'execTransaction',
-        data: simulation,
-      })
-    } catch {
-      // Handled by the fail-closed result check below.
-    }
-    if (result !== true) {
-      throw new Error('Safe simulation reported that the transaction would fail.')
-    }
-  }
-  const live = getAccount(wagmiConfig).address
-  if (!live || live.toLowerCase() !== account.toLowerCase()) {
-    throw new Error('Connected account changed. Review the transaction again.')
-  }
-  const fees = await safeFeeOverrides(client)
-  await reverifyAuthority?.()
-  if (safeContext && before) {
-    const after = await verifySafeWriteContext(
-      chainId,
-      address,
-      account,
-      safeContext,
-    )
-    assertSafeStateUnchanged(before, after)
-  }
-  assertWallet()
-  if (isSafeConnection(wagmiConfig) !== viaSafe) {
-    throw new Error('Connected wallet changed. Review the transaction again.')
-  }
-  // Reuse the exact call which just simulated, while setting EIP-1559 fees
-  // explicitly instead of spreading a provider-specific transaction fee mode.
-  let hash = await wallet.writeContract({
-    chain: wallet.chain,
-    address,
-    abi,
-    functionName,
-    args,
-    account,
-    gas,
-    ...fees,
-    ...('maxFeePerGas' in fees ? { type: 'eip1559' as const } : {}),
-  })
-  // A Safe app replies with its proposal; its execution is what lands.
-  const proposal = viaSafe ? hash : null
-  if (proposal) hash = await waitForSafeExecutionHash(chainId, proposal, { signal })
-  let receipt
+  const { sendReviewed, isTransactionReceiptUnavailableError } = await loadReviewEngine()
+  let sent: Hex | undefined
+  let result
   try {
-    receipt = await client.waitForTransactionReceipt({ hash })
-  } catch {
-    // A submitted transaction should not be reported as rejected just because
-    // the read RPC timed out.
-    return { hash, status: 'submitted' }
-  }
-  if (receipt.status !== 'success') {
-    throw new Error(`${functionName} reverted onchain (tx ${hash}).`)
-  }
-  if (proposal) {
-    await requireSafeProposalSuccess(
-      {
-        client,
-        receipt,
-        safe: account,
-        proposalHash: proposal,
-        calls: [{ to: address, data }],
+    // Core reviews and sends the exact call; jbm's Safe checks run before the wallet opens.
+    result = await sendReviewed({
+      account: expectedAccount,
+      calls: [{
+        chainId, to: address, data, abi, functionName, args, label,
+        contractName: review?.calls[0]?.contractName ?? (functionName === 'createProxyWithNonce' ? 'Safe Proxy Factory' : 'Safe'),
+        ...(gas === undefined ? {} : { gas }),
+      }],
+      title: review?.title ?? 'Review onchain transaction',
+      description: [review?.description, viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join(' ') || undefined,
+      guard: assertNoViewAs,
+      reverify: async () => {
+        await reverifyAuthority?.()
+        if (safeContext && before) {
+          assertSafeStateUnchanged(before, await verifySafeWriteContext(chainId, address, expectedAccount, safeContext))
+        }
+        if (functionName === 'execTransaction') {
+          const simulation = await simulateStateChangingTransaction(client, { from: expectedAccount, to: address, data, gas: gasCap })
+          let succeeds = false
+          try {
+            succeeds = decodeFunctionResult({ abi: SAFE_EXEC_ABI, functionName: 'execTransaction', data: simulation })
+          } catch {
+            // Handled by the fail-closed result check below.
+          }
+          if (succeeds !== true) throw new Error('Safe simulation reported that the transaction would fail.')
+        }
+        assertWallet()
+        if (isSafeConnection(wagmiConfig) !== viaSafe) {
+          throw new Error('Connected wallet changed. Review the transaction again.')
+        }
       },
+      onSubmitted: (_call, _step, hash) => { sent = hash },
+    }, reviewedSendDeps)
+  } catch (error) {
+    // A submitted transaction is not reported as rejected because its receipt could not be read.
+    if (sent && isTransactionReceiptUnavailableError(error)) return { hash: sent, status: 'submitted' }
+    throw error
+  }
+  let hash: Hex
+  if (result.status === 'proposed') {
+    // A Safe app replies with its proposal; its execution is what lands.
+    hash = await waitForSafeExecutionHash(chainId, result.safeTxHash, { signal })
+    let receipt
+    try {
+      receipt = await client.waitForTransactionReceipt({ hash })
+    } catch {
+      return { hash, status: 'submitted' }
+    }
+    if (receipt.status !== 'success') {
+      throw new Error(`${functionName} reverted onchain (tx ${hash}).`)
+    }
+    await requireSafeProposalSuccess(
+      { client, receipt, safe: expectedAccount, proposalHash: result.safeTxHash, calls: [{ to: address, data }] },
       `${functionName} reverted after Safe execution (tx ${hash}).`,
     )
-  }
-  // An executed Safe transaction is confirmed only by the Safe's own
-  // ExecutionSuccess for its exact hash, never by the receipt's status.
-  if (
-    safeContext?.mode === 'execute' &&
-    safeExecutionResult(
-      receipt,
-      address,
-      canonicalSafeTxHash(chainId, address, safeContext.tx),
-    ).status !== 'success'
-  ) {
-    throw new Error(
-      `Safe transaction ${hash} was mined, but its exact inner call did not execute successfully.`,
-    )
+    assertExecuted(receipt)
+  } else {
+    const receipt = result.receipts[0]
+    hash = receipt.transactionHash
+    assertExecuted(receipt)
   }
   return { hash, status: 'confirmed' }
-}
 
-type SafeFeeOverrides =
-  | { maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
-  | Record<string, never>
-
-/**
- * Fees for a Safe execution.
- *
- * Asks the node what the network currently wants, because a flat tip is wrong in both
- * directions: 0.05 gwei is far below mainnet's ask under congestion (the transaction just
- * sits unmined) while being needlessly generous on an L2.
- *
- * Every returned cap is derived from a fee value the node actually reported. When neither
- * read succeeds there is no evidence to build one from, so nothing is overridden and the
- * wallet picks — a fabricated cap on an unknown network is how a signed execution ends up
- * rejected or stuck AFTER signing.
- */
-async function safeFeeOverrides(client: PublicClient): Promise<SafeFeeOverrides> {
-  const tip = 50_000_000n // 0.05 gwei
-  const floor = 1_000_000_000n // a cap; actual cost remains base fee + tip
-  try {
-    const estimated = await client.estimateFeesPerGas()
-    if (estimated.maxFeePerGas > 0n && estimated.maxPriorityFeePerGas > 0n) {
-      // Never bid BELOW the flat floor — it is the historical known-good value.
-      return {
-        maxFeePerGas:
-          estimated.maxFeePerGas > floor ? estimated.maxFeePerGas : floor,
-        maxPriorityFeePerGas:
-          estimated.maxPriorityFeePerGas > tip ? estimated.maxPriorityFeePerGas : tip,
-      }
+  // An executed Safe transaction is confirmed only by the Safe's own
+  // ExecutionSuccess for its exact hash, never by the receipt's status.
+  function assertExecuted(receipt: TransactionReceipt) {
+    if (
+      safeContext?.mode === 'execute' &&
+      safeExecutionResult(receipt, address, canonicalSafeTxHash(chainId, address, safeContext.tx)).status !== 'success'
+    ) {
+      throw new Error(`Safe transaction ${receipt.transactionHash} was mined, but its exact inner call did not execute successfully.`)
     }
-  } catch {
-    // Fall through to the block-derived estimate below.
-  }
-  try {
-    const block = await client.getBlock()
-    // A chain with no base fee is not EIP-1559; there is no 1559 cap to derive.
-    if (block?.baseFeePerGas == null) return {}
-    const buffered = block.baseFeePerGas * 3n + tip
-    return {
-      maxFeePerGas: buffered > floor ? buffered : floor,
-      maxPriorityFeePerGas: tip,
-    }
-  } catch {
-    return {}
   }
 }
 
@@ -1192,7 +1018,7 @@ export async function runSafeCalls({
             call.safe,
             matching,
             signer,
-            call,
+            call.label,
             call.reverifyAuthority,
           )
         }

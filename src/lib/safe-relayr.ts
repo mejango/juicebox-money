@@ -1,9 +1,8 @@
 'use client'
 
 import { getAccount } from '@wagmi/core'
-import { decodeFunctionData, isAddress, zeroAddress, type Address } from 'viem'
-import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { isAddress, zeroAddress, type Address } from 'viem'
+import { safeRelayrWalletDeps } from '@bananapus/nana-sdk-core/review'
 import { relayrRecordChain, type RelayrEntry, type RelayrTransactionBinding, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import {
   createSafeRelayrController,
@@ -13,13 +12,11 @@ import {
   type SafeRelayrSession,
 } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { wagmiConfig } from '@/providers/Providers'
-import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
-import { requireTransactionReview } from '@/lib/transaction-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import {
   hasRelayrPendingEvidence,
   loadRelayrPendingSession,
   relayrChainClient,
-  relayrPay,
   saveRelayrPendingSessionDurably,
   withRelayrScopeLock,
   type RelayrPendingSession,
@@ -111,6 +108,8 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
   onProgress?: (progress: SafeRelayrProgress) => void
 }) {
   let fundingChainId: number | undefined
+  // Core's review of the frozen executions, and its reviewed payment.
+  const wallet = safeRelayrWalletDeps(reviewedSendDeps)
   return createSafeRelayrController({
     store: {
       scope: 'single-session',
@@ -156,42 +155,11 @@ export function createProjectSafeRelayr({ scope, revalidate, onSaved, afterVerif
     revalidate,
     afterVerified,
     onProgress,
-    review: async (executions, { resumed }) => {
-      await requireTransactionReview({
-        title: `Review ${executions.length} Safe executions`,
-        confirmLabel: resumed ? 'Use saved quote' : 'Review & get payment options',
-        calls: executions.map(({ entry }) => {
-          const decoded = decodeFunctionData({ abi: SAFE_EXEC_ABI, data: entry.data })
-          if (decoded.functionName !== 'execTransaction') throw new Error('The saved call is not a Safe execution.')
-          const [to, value, data, operation] = decoded.args
-          return {
-            chainId: entry.chain, to: entry.target, data: entry.data, value: BigInt(entry.value),
-            abi: SAFE_EXEC_ABI, functionName: 'execTransaction', args: decoded.args, contractName: 'Safe',
-            calls: [queuedSafeReviewCall(entry.chain as JBChainId, { to, value: String(value), data, operation })],
-          }
-        }),
-      })
-    },
-    sendPayment: async ({ session, payment, beforeSend, onSending, onSent }) => {
-      // The legacy wallet adapter reports the latest mined replacement. Preserve
-      // every earlier hash in the SDK journal, including an unmined original.
-      let history = [...session.payments]
-      const remember: typeof onSent = async payments => {
-        history = [...history, ...payments.filter(payment => !history.some(saved =>
-          saved.chainId === payment.chainId && saved.hash.toLowerCase() === payment.hash.toLowerCase()))]
-        await onSent(history)
-      }
-      const result = await relayrPay({
-        payment, account: session.account, bundleUuid: session.quote!.bundle_uuid,
-        destinationChainIds: session.executions.map(item => item.entry.chain),
-        sent: session.payments, reverify: beforeSend, reverifyBeforeSendOnly: true,
-        onSending: () => {
-          fundingChainId = payment.chain
-          return onSending()
-        }, onSent: remember,
-      })
-      await remember(result.payments)
-      return { hash: result.hash, payments: history }
-    },
+    ...wallet,
+    // The chain the payment is sent on is saved with the session once the wallet is about to open.
+    sendPayment: options => wallet.sendPayment({ ...options, onSending: () => {
+      fundingChainId = options.payment.chain
+      return options.onSending()
+    } }),
   })
 }

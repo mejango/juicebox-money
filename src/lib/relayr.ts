@@ -23,7 +23,9 @@ import {
   type TransactionReceipt,
 } from 'viem'
 import { SUPPORTED_CHAINS, wagmiConfig } from '@/providers/Providers'
-import { fundingChainLabel, requireFundingChainSelection, requireTransactionReview, type TransactionReviewCall } from '@/lib/transaction-review'
+import { fundingChainLabel, requireFundingChainSelection } from '@/lib/transaction-review'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import {
   isDefiniteWalletRejection,
   relayrDiscardLine,
@@ -34,7 +36,6 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { captureWalletContext } from '@/lib/wallet-context'
 import { withForwarderAuthorizationLock } from '@/lib/forwarder-authorization'
 import {
-  FORWARD_REQUEST_TYPES,
   MAX_RELAYR_SENT_PAYMENTS,
   RELAYR_API,
   RELAYR_REQUEST_RUN_MARGIN_SECONDS,
@@ -89,10 +90,7 @@ import {
 import { isSafeConnection } from '@/lib/safe-connector'
 import { formatDateTime } from '@/lib/format'
 import type { SafeRelayrSession } from '@bananapus/nana-sdk-core/review/safe-relayr'
-import {
-  connectedWallet as connectedWalletCore,
-  publicClient,
-} from '@/lib/wallet-core'
+import { publicClient } from '@/lib/wallet-core'
 
 const RELAYR_PENDING_PREFIX = 'jb-relayr-pending-v1:'
 const RELAYR_QUOTE_TIMEOUT_MS = 45_000
@@ -865,13 +863,6 @@ export type RelayrProgress =
       paymentHash: Hex | null
     }
 
-function connectedWallet(chainId: JBChainId) {
-  return connectedWalletCore(chainId, {
-    requireUnchanged: true,
-    changedError: 'Connected account changed. Review the cross-chain request again.',
-  })
-}
-
 /** Relayr requires an ordinary wallet in the context captured before review. */
 function captureRelayrWallet(account: Address, chainId: JBChainId): () => void {
   const message = 'Connected wallet changed. Review the relayed transaction again.'
@@ -930,7 +921,7 @@ async function signForwardedRequest(
   call: RelayrCall,
   expectedAccount: Address,
   expectedNonce?: bigint,
-  context?: { description: string; calls: readonly TransactionReviewCall[] },
+  context?: { description: string },
 ): Promise<{ entry: RelayrEntry; nonce: bigint }> {
   const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -944,19 +935,12 @@ async function signForwardedRequest(
   }
   const assertWallet = captureRelayrWallet(expectedAccount, call.chainId)
 
-  const [domain, nonce] = await Promise.all([
-    client.readContract({
-      address: forwarder,
-      abi: erc2771ForwarderAbi,
-      functionName: 'eip712Domain',
-    }),
-    client.readContract({
-      address: forwarder,
-      abi: erc2771ForwarderAbi,
-      functionName: 'nonces',
-      args: [expectedAccount],
-    }),
-  ])
+  const nonce = await client.readContract({
+    address: forwarder,
+    abi: erc2771ForwarderAbi,
+    functionName: 'nonces',
+    args: [expectedAccount],
+  })
   if (expectedNonce !== undefined && nonce !== expectedNonce) {
     throw new Error('The previous relay authorization may have executed. Check its original bundle before signing again.')
   }
@@ -971,55 +955,17 @@ async function signForwardedRequest(
     deadline: relayrForwarderDeadline(),
     data: call.data,
   }
-  const typedDomain = {
-    name: domain[1],
-    version: domain[2],
-    chainId: BigInt(call.chainId),
-    verifyingContract: forwarder,
-  } as const
-  await requireTransactionReview({
-    kind: 'authorization',
+  // Core reviews the exact ERC-2771 request, decoded, and signs it on the canonical forwarder's domain.
+  const { signReviewed } = await loadReviewEngine()
+  const [signature] = await signReviewed([{ kind: 'forward-request', chainId: call.chainId, request }], {
+    account: expectedAccount,
     title: 'Review relayed transaction',
     description: [
       context?.description,
-      'Your signature authorizes submission of this exact destination call onchain. The Raw view includes the full ERC-2771 request. The separate payment is reviewed before it is sent.',
+      'Your signature authorizes submission of this exact destination call onchain. The separate payment is reviewed before it is sent.',
     ].filter(Boolean).join('\n\n'),
-    confirmLabel: 'Agree & sign relay request',
-    authorization: {
-      type: 'EIP-712 ForwardRequest',
-      domain: typedDomain,
-      primaryType: 'ForwardRequest',
-      message: request,
-    },
-    calls: [
-      ...(context?.calls ?? []),
-      {
-        chainId: call.chainId,
-        from: expectedAccount,
-        to: call.target,
-        value,
-        gas: request.gas,
-        data: call.data,
-        label: call.label ?? 'Relayed Juicebox transaction',
-        abi: call.abi,
-        functionName: call.functionName,
-        args: call.args,
-        contractName: call.contractName,
-      },
-    ],
-  })
-  const { wallet, account } = await connectedWallet(call.chainId)
-  if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the cross-chain request again.')
-  }
-  assertWallet()
-  const signature = await wallet.signTypedData({
-    account: expectedAccount,
-    domain: typedDomain,
-    types: FORWARD_REQUEST_TYPES,
-    primaryType: 'ForwardRequest',
-    message: request,
-  })
+    reverify: async () => assertWallet(),
+  }, reviewedSendDeps)
 
   const live = getAccount(wagmiConfig).address
   if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
@@ -1187,85 +1133,79 @@ export async function relayrPay({
   if (!reverifyBeforeSendOnly) await reverify?.()
   await requireRelayrPaymentRuntime(client)
 
-  await requireTransactionReview({
-    title: 'Review execution payment',
-    description: [note,
-      'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
-    ].filter(Boolean).join(' '),
-    confirmLabel: 'Pay',
-    calls: [
-      {
-        chainId,
-        from: expectedAccount,
-        to: reviewed.target,
-        value: reviewed.amount,
-        gas: RELAYR_PAYMENT_GAS,
-        data: reviewed.calldata,
-        label: 'Pay network fee',
-        ...relayrPaymentReview(reviewed.calldata),
-      },
-    ],
-  })
-
-  readReviewed()
-  if (!reverifyBeforeSendOnly) await reverify?.()
-  const { wallet, account } = await connectedWallet(chainId)
-  if (account.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the Relayr payment again.')
-  }
-  await requireRelayrPaymentRuntime(client)
-  await simulateRelayrPayment(client, { from: account, payment: reviewed })
-  const live = getAccount(wagmiConfig).address
-  if (!live || live.toLowerCase() !== expectedAccount.toLowerCase()) {
-    throw new Error('Connected account changed. Review the Relayr payment again.')
-  }
-  // Review and wallet preparation are open-ended. Re-authenticate the exact
-  // quote immediately before the fixed-gas write.
-  const details = readReviewed()
-  await reverify?.()
-  if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: account, bundleUuid: details.bundleUuid })
-  assertReadyToPay()
-  await onSending?.(details)
-  try {
-    assertReadyToPay()
-  } catch (error) {
-    // The saved marker can be withdrawn because the wallet has not been invoked.
-    throw new RelayrPaymentNotSentError(error)
-  }
-  let hash: Hex
-  try {
-    hash = await wallet.sendTransaction({
-      chain,
-      account,
-      to: details.target,
-      value: details.amount,
-      data: details.calldata,
-      gas: RELAYR_PAYMENT_GAS,
-    })
-  } catch (error) {
-    const walletError = relayrWalletPaymentError(error)
-    if (isDefiniteWalletRejection(walletError)) throw walletError
-    throw new RelayrPaymentSendingError()
-  }
-  // Once the wallet returns a hash, a storage, receipt or proof failure is an
-  // uncertain submitted outcome, never permission to quote and pay again.
-  let payments = [...sent, sentRelayrPayment(details, hash)]
-  try {
-    await onSent?.(payments)
-  } catch {
-    throw new RelayrPaymentSubmittedError(hash, chainId)
-  }
+  const { sendReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
+  let details = reviewed
+  let walletOpened = false
+  let unsent = false
+  let hash: Hex | undefined
+  let payments: RelayrSentPayment[] = [...sent]
   let receipt: TransactionReceipt
   try {
-    receipt = await client.waitForTransactionReceipt({ hash })
-  } catch {
-    throw new RelayrPaymentSubmittedError(hash, chainId)
+    // Core reviews and sends the exact payment once; the quote is re-read before the wallet opens.
+    const result = await sendReviewed({
+      account: expectedAccount,
+      calls: [{
+        chainId,
+        to: reviewed.target,
+        value: reviewed.amount,
+        data: reviewed.calldata,
+        gas: RELAYR_PAYMENT_GAS,
+        label: 'Pay network fee',
+        ...relayrPaymentReview(reviewed.calldata),
+      }],
+      title: 'Review execution payment',
+      description: [note,
+        'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
+      ].filter(Boolean).join(' '),
+      confirmLabel: 'Pay',
+      guard: assertNoViewAs,
+      reverify: async () => {
+        readReviewed()
+        await reverify?.()
+        await requireRelayrPaymentRuntime(client)
+        await simulateRelayrPayment(client, { from: expectedAccount, payment: reviewed })
+        details = readReviewed()
+        if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: expectedAccount, bundleUuid: details.bundleUuid })
+        assertReadyToPay()
+      },
+      assertWriteState: assertReadyToPay,
+      beforeWallet: async () => {
+        await onSending?.(details)
+        walletOpened = true
+      },
+      onUnsent: () => { unsent = true },
+      onSubmitted: async (_call, _step, submitted) => {
+        hash = submitted
+        // Once the wallet returns a hash, a storage, receipt or proof failure is an
+        // uncertain submitted outcome, never permission to quote and pay again.
+        payments = [...sent, sentRelayrPayment(details, submitted)]
+        try {
+          await onSent?.(payments)
+        } catch {
+          throw new RelayrPaymentSubmittedError(submitted, chainId)
+        }
+      },
+    }, reviewedSendDeps)
+    if (result.status !== 'done') throw new Error('Pay the network fee from an ordinary wallet. Nothing was sent.')
+    receipt = result.receipts[0]
+  } catch (error) {
+    // A reverted payment is proven below, as its proof decides a reverted quote.
+    if (hash && error instanceof ReviewedCallRevertedError) receipt = error.receipt
+    else if (hash) throw error instanceof RelayrPaymentSubmittedError ? error : new RelayrPaymentSubmittedError(hash, chainId)
+    else if (walletOpened && unsent && !isDefiniteWalletRejection(relayrWalletPaymentError(error))) {
+      // The saved marker can be withdrawn because the wallet has not been invoked.
+      throw new RelayrPaymentNotSentError(error)
+    } else if (walletOpened) {
+      const walletError = relayrWalletPaymentError(error)
+      if (isDefiniteWalletRejection(walletError)) throw walletError
+      throw new RelayrPaymentSendingError()
+    } else throw error
   }
   // A wallet that sped the payment up mined it under another hash; that
   // transaction is the payment to prove and to remember.
   const mined = receipt.transactionHash
-  if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash, chainId)
-  if (mined.toLowerCase() !== hash.toLowerCase()) {
+  if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash!, chainId)
+  if (mined.toLowerCase() !== hash!.toLowerCase()) {
     payments = [...sent, sentRelayrPayment(details, mined)]
     try {
       await onSent?.(payments)
@@ -1274,7 +1214,7 @@ export async function relayrPay({
     }
   }
   try {
-    await verifyRelayrPayment(client, { hash: mined, from: account, payment: details })
+    await verifyRelayrPayment(client, { hash: mined, from: expectedAccount, payment: details })
   } catch (error) {
     // A proof error is final: the payment reverted, or the mined transaction is another one.
     if (error instanceof RelayrProofError) throw error

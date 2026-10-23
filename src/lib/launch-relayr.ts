@@ -7,10 +7,8 @@ import {
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { getProjectCreationFee } from '@bananapus/nana-sdk-core/v6'
-import { buildSafeDeploymentCalls, SAFE_CREATE_ABI } from '@bananapus/nana-sdk-core/safe'
 import { getAccount } from '@wagmi/core'
 import {
-  decodeFunctionData,
   encodeFunctionData,
   isAddressEqual,
   type Address,
@@ -609,14 +607,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const entry = await buildForwardedTx({ chainId: chainId as JBChainId, target: request.address,
         data, value: request.value, gas: gasWithHeadroom(estimate + (plan.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` }, account, nonce,
-      plan.multisigs?.length ? {
-        description: launchMultisigReview(plan),
-        // The review shows the arguments these exact bytes carry.
-        calls: buildSafeDeploymentCalls(plan.multisigs).map(call => ({ chainId, to: call.target,
-          data: call.callData, value: call.value, abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce',
-          args: decodeFunctionData({ abi: SAFE_CREATE_ABI, data: call.callData }).args,
-          label: `Create ${plan.flavor === 'revnet' ? 'operator' : 'owner'} multisig`, contractName: 'Safe Proxy Factory' })),
-      } : undefined)
+      plan.multisigs?.length ? { description: launchMultisigReview(plan) } : undefined)
       const signedRequest = relayrForwardRequest(entry)
       if (!signedRequest) throw new Error('Invalid launch authorization.')
       journal.signed.push({ chainId, entry: bundleLaunchMultisigs(entry, plan), nonce: nonce.toString(), deadline: signedRequest.deadline })

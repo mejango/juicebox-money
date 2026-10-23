@@ -1,20 +1,17 @@
 'use client'
 
 import { getAccount } from '@wagmi/core'
-import { sendCalls } from 'wagmi/actions'
-import { isHex, size, type Abi, type Address, type Hex } from 'viem'
+import type { Abi, Address, Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { isDefiniteWalletRejection, simulateCallSequence, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
-import { reviewDescription, writeHolds } from '@/lib/write-holds'
+import { writeHolds } from '@/lib/write-holds'
 import { encodeMultiSend, MULTI_SEND_CALL_ONLY } from '@bananapus/nana-sdk-core/safe'
 import { wagmiConfig } from '@/providers/Providers'
 import type { BatchCall } from '@/lib/safe-batch'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
-import { requireTransactionReview } from '@/lib/transaction-review'
-import { chainName } from '@/lib/urn'
+import { loadReviewEngine } from '@/lib/preload-review'
+import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { assertReviewedAccountConnected } from '@/lib/wallet-context'
-import { connectedWallet, publicClient } from '@/lib/wallet-core'
 
 const SAFE_CONNECTION_CHANGED = 'Safe connection changed. Review this batch again.'
 
@@ -46,9 +43,8 @@ export function safeBatchHold({ chainId, safe, intent, calls, legacy = [] }: {
 }
 
 /**
- * The one raw `sendCalls` site: a Safe app connection maps `wallet_sendCalls`
- * to a single MultiSend proposal, and the returned id is its safeTxHash.
- * The sequence is simulated and every call reviewed first. Resolves with the
+ * A Safe app connection's batch as one MultiSend proposal, through core: the
+ * sequence is simulated and every call reviewed once. Resolves with the
  * safeTxHash once Safe has queued the proposal; a flow that needs its
  * execution waits for it.
  */
@@ -58,7 +54,7 @@ export async function proposeSafeBatch({
   calls: given,
   title,
   intent,
-  legacy,
+  legacy = [],
 }: {
   chainId: JBChainId
   safe: Address
@@ -81,51 +77,22 @@ export async function proposeSafeBatch({
   // The batch was reviewed for this Safe: refuse before simulating or
   // reviewing it when the wallet is connected as another account.
   assertReviewedAccountConnected(safe, getAccount(wagmiConfig).address, SAFE_CONNECTION_CHANGED)
-  const client = publicClient(chainId)
-  await simulateCallSequence(client, { from: safe, calls, chainName: chainName(chainId) })
-  await requireTransactionReview({
+  // Core simulates the sequence, reviews every call once and proposes them as one MultiSend under this hold key.
+  const { sendReviewed } = await loadReviewEngine()
+  const result = await sendReviewed({
+    account: safe,
+    batch: true,
     title,
-    description: reviewDescription(`These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`),
+    description: `These ${calls.length} calls continue in Safe as one MultiSend proposal, in the displayed order. ${SAFE_NONCE_GUIDANCE}`,
     confirmLabel: 'Agree & propose to Safe',
-    calls: calls.map(call => ({
-      chainId,
-      from: safe,
-      to: call.to,
-      data: call.data,
-      value: call.value,
-      label: call.label,
-      abi: call.abi,
-      functionName: call.functionName,
-      args: call.args,
-      contractName: call.contractName,
+    guard: assertNoViewAs,
+    calls: calls.map((call, index) => ({
+      chainId, to: call.to, data: call.data, value: call.value, label: call.label,
+      abi: call.abi, functionName: call.functionName, args: call.args, contractName: call.contractName,
+      dependsOnPrior: call.dependsOnPrior,
+      ...(index === 0 ? { intent, legacy: [...legacy] } : {}),
     })),
-  })
-  await connectedWallet(chainId, {
-    expected: safe,
-    requireUnchanged: true,
-    changedError: SAFE_CONNECTION_CHANGED,
-  })
-  const hold = safeBatchHold({ chainId, safe, intent, calls, legacy })
-  return hold.send<Hex>(client as unknown as WriteHoldClient, async gate => {
-    await gate.beforeSend()
-    let id: string
-    try {
-      ;({ id } = await sendCalls(wagmiConfig, {
-        chainId,
-        calls: calls.map(call => ({
-          to: call.to,
-          data: call.data,
-          value: call.value,
-        })),
-      }))
-    } catch (error) {
-      if (isDefiniteWalletRejection(error)) gate.onRejected()
-      throw error
-    }
-    if (!isHex(id) || size(id) !== 32) {
-      throw new Error('Check this proposal in your Safe before sending it again.')
-    }
-    gate.afterSubmit(id)
-    return id
-  })
+  }, reviewedSendDeps)
+  if (result.status !== 'proposed') throw new Error('Check this proposal in your Safe before sending it again.')
+  return result.safeTxHash
 }
