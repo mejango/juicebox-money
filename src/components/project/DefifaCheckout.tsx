@@ -239,7 +239,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     finally { setChecking(false) }
   }
   useEffect(() => {
-    if (submitted && active.receipt && (active.phase === 'success' || active.phase === 'error' || active.settledStep !== null)) void verify()
+    if (submitted && active.receipt && (active.phase === 'success' || active.phase === 'error' || active.settledStep != null)) void verify()
     // Keep the exact submitted context. Changes in the current wallet never replace it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submitted, active.receipt, active.phase])

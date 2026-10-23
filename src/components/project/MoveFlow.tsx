@@ -365,7 +365,8 @@ function MoveFlow({
 
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
-    if (tx.phase !== 'success') return
+    // An earlier step a Safe ran after its run ended settles it too.
+    if (tx.phase !== 'success' && tx.settledStep == null) return
     if (advancedFor.current === `${step}:${round}`) return
     advancedFor.current = `${step}:${round}`
     if (step === 3) setSentHash(tx.hash)
@@ -375,7 +376,7 @@ function MoveFlow({
     else setRound(next => next + 1)
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tx.phase, step])
+  }, [tx.phase, tx.settledStep, step])
 
   /** Live re-reads + all fail-closed checks, then freeze the reviewed move. */
   const handleReview = async () => {
