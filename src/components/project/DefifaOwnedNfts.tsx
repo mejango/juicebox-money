@@ -14,7 +14,7 @@ import { encodeFunctionData, isAddress, zeroAddress, type Address, type Hex, typ
 import { useConfig, usePublicClient } from 'wagmi'
 import { getAccount } from 'wagmi/actions'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -284,12 +284,12 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     {proof === 'error' ? <button type="button" onClick={() => void verifyReceipt()}>Retry receipt verification</button> : null}
     {tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(plan?.chainId ?? chainId, tx.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View transaction</a> : null}
     {failedTransaction && failedTransaction.hash !== tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(failedTransaction.chainId, failedTransaction.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View previous failed transaction</a> : null}
-    {plan ? <TxConfirmDialog open title={plan.kind === 'cash-out' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT'} rows={[
+    {plan ? <TxProgress open title={plan.kind === 'cash-out' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT'} rows={[
       { label: 'Account', value: plan.account, mono: true }, { label: 'NFTs', value: plan.tokenIds.map(String).join(', ') },
       { label: 'Recipient', value: plan.recipient, mono: true },
       ...(cash ? [{ label: 'Reclaimed', value: `${formatTokenAmount(cash.reclaimAmount, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Minimum', value: `${formatTokenAmount(plan.minimum, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Protocol rewards', value: `${formatTokenAmount(cash.protocolRewards.defifaAmount, cash.protocolRewards.defifaDecimals)} at ${cash.protocolRewards.defifaToken}, ${formatTokenAmount(cash.protocolRewards.baseProtocolAmount, cash.protocolRewards.baseProtocolDecimals)} at ${cash.protocolRewards.baseProtocolToken}` }] : []),
-    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} action="Confirm NFT action" onConfirm={() => void confirm()} onClose={close} busy={tx.busy || proof === 'checking'} actionDisabled={held || proof !== 'idle'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}><WriteRecoveryInTabNote /></TxConfirmDialog> : null}
+    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} action="Confirm NFT action" onConfirm={() => void confirm()} onClose={close} busy={tx.busy || proof === 'checking'} actionDisabled={held || proof !== 'idle'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}><WriteRecoveryInTabNote /></TxProgress> : null}
   </div></DefifaRecovery>
 }

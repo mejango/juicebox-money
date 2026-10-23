@@ -1,6 +1,6 @@
 'use client'
 
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { withFailedStep, withUnconfirmedStep } from '@/components/ui/TxSteps'
 import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import { UNISWAP_PERMIT2_ADDRESS } from '@bananapus/nana-sdk-core/v6'
@@ -550,7 +550,7 @@ export function EditPositionPanel({
 
   const stopped = run.stoppedOn(reviewed?.steps)
   const dialog = reviewed || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!reviewed}
       title={batchProposed || run.proposed ? 'Proposed to Safe' : done ? 'Position updated' : 'Confirm edit'}
@@ -598,7 +598,7 @@ export function EditPositionPanel({
           the price moves against it. Lower the amount to be safe.
         </p>
       ) : null}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   if (done) {

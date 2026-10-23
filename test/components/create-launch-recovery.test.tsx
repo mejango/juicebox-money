@@ -72,8 +72,8 @@ vi.mock('@/lib/launch', async original => ({
     chainId: 1, address: DEPLOYER, abi: parseAbi(['function launch(uint256 salt)']), functionName: 'launch', args: [1n], value: 0n,
   }),
 }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, error, children }: {
+vi.mock('@/components/ui/TxProgress', () => ({
+  TxProgress: ({ open, action, onConfirm, error, children }: {
     open: boolean; action: string; onConfirm: () => void; error?: ReactNode; children?: ReactNode
   }) => open ? (
     <section data-tx-confirm>

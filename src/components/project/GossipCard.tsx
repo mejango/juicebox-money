@@ -38,7 +38,7 @@ import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { GossipTablesSkeleton } from '@/components/LoadingSkeletons'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { formatTokenAmount } from '@/lib/format'
@@ -914,7 +914,7 @@ function GossipRow({
             ) : null}
           </div>
         ) : null}
-        <TxConfirmDialog
+        <TxProgress
           open={open}
           onClose={() => {
             setOpen(false)

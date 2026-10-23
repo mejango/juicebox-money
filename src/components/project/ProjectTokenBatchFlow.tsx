@@ -5,7 +5,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useState } from 'react'
 import { isAddressEqual, type Address } from 'viem'
 import { ChainPicker } from '@/components/ui/ChainPicker'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -200,7 +200,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
         {savedForDisplay ? 'Resume saved batch' : title}
       </button>
       {!open ? <TxError error={error} className="mt-2 text-xs text-red-700" /> : null}
-      {open ? <TxConfirmDialog
+      {open ? <TxProgress
         open title={complete ? 'Completed' : review ? `Confirm ${isClaim ? 'claims' : allocation && review.length === 1 ? 'distribution' : 'auto issuance'}` : title}
         rows={confirmation}
         steps={(review ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
@@ -225,7 +225,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
               : 'Includes every unlocked stage and beneficiary allocation on the selected chains. Recipients remain unchanged.'}
         </p>
         {discard.element}
-      </TxConfirmDialog> : null}
+      </TxProgress> : null}
     </div>
   )
 }

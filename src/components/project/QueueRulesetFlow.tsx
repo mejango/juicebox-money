@@ -39,7 +39,7 @@ import {
 } from "viem";
 import { usePublicClient, useReadContract } from "wagmi";
 import { ModalShell } from "@/components/ui/ModalShell";
-import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import { TxProgress, type TxConfirmRow } from "@/components/ui/TxProgress";
 import { TxError } from "@/components/ui/TxError";
 import { RelayrDiscard } from "@/components/RelayrDiscard";
 import { FormCardSkeleton } from "@/components/LoadingSkeletons";
@@ -1664,7 +1664,7 @@ function RulesetEditorForm({
       )}
 
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={success ? "Rules queued" : "Confirm new rules"}
           rows={reviewRows}
@@ -1688,7 +1688,7 @@ function RulesetEditorForm({
               new limit.
             </p>
           ) : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   );

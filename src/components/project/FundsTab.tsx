@@ -48,7 +48,7 @@ import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlo
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
 import { SplitRecipient, type Split } from '@/components/project/SplitRecipient'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -1007,7 +1007,7 @@ function FundsTxFlow({
   if (!line) return null
 
   const dialog = review || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!review}
       onClose={closeReview}
@@ -1082,7 +1082,7 @@ function FundsTxFlow({
       <p className="text-xs text-smoke-700">
         The amount you receive is shown after the 2.5% withdrawal fee.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   if (!open) {

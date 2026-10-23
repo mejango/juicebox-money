@@ -4,7 +4,7 @@ import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ModalDialog, ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { PaymentNotice } from '@/components/project/PaymentNotice'
 import { LoadingText } from '@/components/ui/LoadingText'
 import { withFailedStep } from '@/components/ui/TxSteps'
@@ -194,7 +194,7 @@ describe('a confirm hosted in the shell', () => {
   })
   it('keeps submitted transaction hashes readable in confirmation errors', () => {
     const message = `Payment 0x${'a'.repeat(64)} was submitted; confirmation is unavailable.`
-    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1}
+    render(<TxProgress open title="Confirm" steps={[]} activeIndex={-1}
       action="Resume" onConfirm={() => {}} onClose={() => {}} error={message} />)
     const alert = only().querySelector('[role="alert"]')!
     expect(alert.textContent).toBe(message)
@@ -212,7 +212,7 @@ describe('a confirm hosted in the shell', () => {
   }) {
     return (
       <ModalShell title="Add liquidity" onClose={onClose}>
-        <TxConfirmDialog
+        <TxProgress
           open
           title="Confirm"
           steps={[{ title: 'Approve' }, { title: 'Mint' }]}
@@ -255,7 +255,7 @@ describe('the transaction confirm while a read-only phase runs', () => {
   const base = { open: true, title: 'Confirm', steps: [{ title: 'Check' }], activeIndex: 0, onConfirm: () => {}, onClose: () => {} }
 
   it('drops its buttons when there is no action, leaving only Close', () => {
-    render(<TxConfirmDialog {...base} action={null} busy status="Checking the transactions…" />)
+    render(<TxProgress {...base} action={null} busy status="Checking the transactions…" />)
     const dialog = only()
     expect([...dialog.querySelectorAll('button')].map(button => button.getAttribute('aria-label') ?? button.textContent)).toEqual(['Close'])
     expect(dialog.querySelector('footer')).toBeNull()
@@ -264,7 +264,7 @@ describe('the transaction confirm while a read-only phase runs', () => {
 
   it('keeps Cancel for work that can be stopped, and nothing else', () => {
     const onCancel = vi.fn()
-    render(<TxConfirmDialog {...base} action={null} busy onCancel={onCancel} status="Getting the quote…" />)
+    render(<TxProgress {...base} action={null} busy onCancel={onCancel} status="Getting the quote…" />)
     const buttons = [...only().querySelectorAll('footer button')]
     expect(buttons.map(button => button.textContent)).toEqual(['Cancel'])
     act(() => (buttons[0] as HTMLButtonElement).click())
@@ -272,7 +272,7 @@ describe('the transaction confirm while a read-only phase runs', () => {
   })
 
   it('brings the buttons back when an action returns', () => {
-    render(<TxConfirmDialog {...base} action="Retry" />)
+    render(<TxProgress {...base} action="Retry" />)
     expect([...only().querySelectorAll('footer button')].map(button => button.textContent)).toEqual(['Cancel', 'Retry'])
   })
 })
@@ -366,7 +366,7 @@ describe('ModalDialog', () => {
 
 describe('a confirm error that carries a link', () => {
   it('turns an explorer address in the error into a link', () => {
-    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1} action={null} complete={false}
+    render(<TxProgress open title="Confirm" steps={[]} activeIndex={-1} action={null} complete={false}
       onConfirm={() => {}} onClose={() => {}} error="Couldn't confirm yet. Check https://etherscan.io/tx/0xabc before sending again." />)
     const link = only().querySelector('[role="alert"] a')!
     expect(link.getAttribute('href')).toBe('https://etherscan.io/tx/0xabc')
@@ -377,7 +377,7 @@ describe('a confirm error that carries a link', () => {
 
 describe('TxSteps failed steps', () => {
   it('shows × and a status on the failed step, and keeps earlier steps done', () => {
-    render(<TxConfirmDialog open title="Confirm" action="Retry" onConfirm={() => {}} onClose={() => {}} activeIndex={1}
+    render(<TxProgress open title="Confirm" action="Retry" onConfirm={() => {}} onClose={() => {}} activeIndex={1}
       steps={withFailedStep([{ title: 'Approve' }, { title: 'Mint' }, { title: 'Done' }], 1, true)} />)
     const items = [...only().querySelectorAll('li[data-state]')]
     expect(items.map(item => item.getAttribute('data-state'))).toEqual(['complete', 'failed', 'pending'])
@@ -395,7 +395,7 @@ describe('TxSteps failed steps', () => {
 describe('payment review notices', () => {
   it('keeps the full project notice at the bottom of a single-title review and allows native expansion', () => {
     const text = 'Please read before paying.\n\nContact us after donating.\n' + 'Full project terms. '.repeat(80) + '<script>doNotRun()</script>'
-    render(<TxConfirmDialog open eyebrow={null} title="Confirm payment"
+    render(<TxProgress open eyebrow={null} title="Confirm payment"
       rows={[{ label: 'Send', value: '0.0001 ETH' }]} steps={[{ title: 'Pay' }]}
       activeIndex={-1} action="Confirm & Pay" onConfirm={() => {}} onClose={() => {}}
       error="Payment was cancelled." notice={<PaymentNotice text={text} />} />)
@@ -419,7 +419,7 @@ describe('payment review notices', () => {
   })
 
   it('omits empty notices and retains the default eyebrow for other reviews', () => {
-    render(<TxConfirmDialog open title="Confirm" steps={[]} activeIndex={-1} action="Continue"
+    render(<TxProgress open title="Confirm" steps={[]} activeIndex={-1} action="Continue"
       onConfirm={() => {}} onClose={() => {}} notice={<PaymentNotice text="  " />} />)
     expect(only().querySelector('details')).toBeNull()
     expect(only().querySelector('header')?.textContent).toBe('ReviewConfirm')

@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, type ReactNode } from 'react'
+import { Fragment, useMemo, useState, type ReactNode } from 'react'
 import {
   addressLabel,
   currencyLabel,
@@ -582,6 +582,20 @@ function ReviewModal({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          {model.context.length ? (
+            <dl data-review-context className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+              {model.context.map((row, index) => (
+                <Fragment key={index}>
+                  <dt className="text-smoke-500">{row.label}</dt>
+                  <dd className={`min-w-0 text-right text-ink ${row.mono ? 'break-all font-mono text-xs' : 'break-words'} ${row.strong ? 'font-medium' : ''}`}>
+                    {row.value}
+                    {row.lines?.map((line, lineIndex) => <span key={lineIndex} className="block">{line}</span>)}
+                    {row.note ? <span className="block text-xs text-smoke-500">{row.note}</span> : null}
+                  </dd>
+                </Fragment>
+              ))}
+            </dl>
+          ) : null}
           <div className="rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3">
             <p
               id={descriptionId}

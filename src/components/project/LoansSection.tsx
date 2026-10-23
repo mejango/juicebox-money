@@ -24,7 +24,7 @@ import { usePublicClient } from 'wagmi'
 import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import {
@@ -510,7 +510,7 @@ function RepayFlow({
   const error = flowError ?? approveTx.error ?? repayTx.error
 
   const dialog = plan || checking ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!plan}
       title={repayTx.phase === 'success' ? 'Loan repaid' : 'Confirm repayment'}
@@ -573,7 +573,7 @@ function RepayFlow({
         The limit covers the amount borrowed plus the current repayment cost in {meta.symbol},
         with room for changes before confirmation. Anything unused is refunded.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   if (repayTx.phase === 'success') {

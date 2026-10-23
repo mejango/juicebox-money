@@ -32,7 +32,7 @@ import { usePublicClient, useReadContract } from 'wagmi'
 import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
@@ -346,7 +346,7 @@ export function GetLoanFlow({
   const reviewError = flowError ?? permTx.error ?? borrowTx.error
 
   const dialog = review || quoting ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing={!review}
       title={borrowTx.phase === 'success' ? 'Loan opened' : 'Confirm loan'}
@@ -419,7 +419,7 @@ export function GetLoanFlow({
         fails. Repaying restores your {collateralSymbol}. After 10 years,
         any tokens backing an unpaid loan are lost.
       </p>
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null
 
   const borrowTxUrl = borrowTx.hash

@@ -24,7 +24,7 @@ import {
 import { useConfig } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { useWallet } from '@/hooks/useWallet'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { captureWalletContext } from '@/lib/wallet-context'
@@ -217,7 +217,7 @@ export function MintShopItemModal({
       </div>
       {message && !review ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}
       {review || phase === 'checking' ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!review}
           title={tx.phase === 'success' ? 'Items minted' : settled ? 'Mint submitted' : 'Confirm mint'}
@@ -255,7 +255,7 @@ export function MintShopItemModal({
               This free mint consumes {review.quantity} item{review.quantity === 1 ? '' : 's'} of inventory, collects no payment, and cannot be undone.
             </div>
           )}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </ModalShell>
   )

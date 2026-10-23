@@ -21,7 +21,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
@@ -984,7 +984,7 @@ export function BuybackActionForm({
       </div>
       {error && !review ? <ErrorNote message={error} /> : null}
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={done ? `${action.title} complete` : `Confirm ${action.title.toLowerCase()}`}
           rows={review.rows}
@@ -1003,7 +1003,7 @@ export function BuybackActionForm({
           onClose={closeReview}
         >
           {discard.element}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )

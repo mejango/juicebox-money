@@ -18,7 +18,7 @@ import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { chainName } from '@/lib/urn'
 import { ErrorNote } from '@/components/ui/TxError'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { formatTokenAmount } from '@/lib/format'
@@ -813,7 +813,7 @@ function ChainLpRows({
               rows.push({ label: 'To', value: pending.account, mono: true })
               rows.push({ label: 'On', value: chainName(chainId) })
               return (
-                <TxConfirmDialog
+                <TxProgress
                   open
                   title={
                     pending.kind === 'claim'
@@ -864,7 +864,7 @@ function ChainLpRows({
         : null}
       {panelHost && !pending && reviewing !== null
         ? ReactDOM.createPortal(
-            <TxConfirmDialog
+            <TxProgress
               open
               preparing
               title="Remove liquidity"

@@ -131,7 +131,7 @@ import {
 } from "./ui";
 import { MultiChainSelect } from "@/components/ChainSelect";
 import { ChainIcon } from "@/components/ChainIcon";
-import type { TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import type { TxConfirmRow } from "@/components/ui/TxProgress";
 import {
   feedReachabilityBlock,
   probeFeedReachability,
@@ -162,8 +162,8 @@ const AuthoritySafeEditor = dynamic(
 );
 // Mounts only when open: client-side, with its own empty boundary so a first
 // open never falls through to the route skeleton.
-const TxConfirmDialog = dynamic(
-  () => import("@/components/ui/TxConfirmDialog").then(module => module.TxConfirmDialog),
+const TxProgress = dynamic(
+  () => import("@/components/ui/TxProgress").then(module => module.TxProgress),
   { ssr: false },
 );
 const IssuanceLadder = dynamic(
@@ -2614,7 +2614,7 @@ export function CreateForm() {
     </>
   );
   const launchDialog = confirmOpen ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       eyebrow="Launch"
       title={phase === "done" ? `${name.trim()} is live` : "Confirm launch"}
@@ -2669,7 +2669,7 @@ export function CreateForm() {
         </ul>
       ) : null}
       {launchCancellation}
-    </TxConfirmDialog>
+    </TxProgress>
   ) : null;
 
   // ---- Success view ----

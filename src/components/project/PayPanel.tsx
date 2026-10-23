@@ -7,8 +7,7 @@ import {
   currentRulesetQuery,
   projectDisplayQuery,
 } from '@/lib/project-display-queries'
-import { PaymentNotice } from "@/components/project/PaymentNotice";
-import { TxConfirmDialog, type TxConfirmRow } from "@/components/ui/TxConfirmDialog";
+import { contextRows, TxProgress, type TxConfirmRow } from "@/components/ui/TxProgress";
 import {
   bytes32ToCidV0,
   JBCoreContracts,
@@ -291,13 +290,11 @@ export function PayPanel({
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
   const tx = useReviewedAction(chainId);
-  const approveTx = useReviewedAction(chainId);
   // Once an approval is confirmed, every dependent allowance read and final
   // simulation is anchored to that receipt block. Base providers are load
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
   // backend that still sees the old allowance.
-  const approvalBlock =
-    approveTx.receipt?.status === "success" ? approveTx.receipt.blockNumber : undefined;
+  const [approvalBlock, setApprovalBlock] = useState<bigint | undefined>(undefined);
 
   const [mode, setMode] = useState<"pay" | "addbalance">("pay");
   const [amount, setAmount] = useState("");
@@ -342,7 +339,7 @@ export function PayPanel({
   const [retrySlippageBps, setRetrySlippageBps] = useState<number | null>(null);
   /** The payment reverted onchain: it is only reviewed again, quoted afresh. */
   /** The step whose run ended without finishing: its own state says why, and what may follow. */
-  const [paymentRunEnded, setPaymentRunEnded] = useState<"token-approval" | "payment" | null>(null);
+  const [paymentRunEnded, setPaymentRunEnded] = useState(false);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedAmount(amount), 400);
     return () => clearTimeout(t);
@@ -1041,12 +1038,7 @@ export function PayPanel({
   // be bounded — refuse it (website/ 6439 parity), only direct tokens top up.
   const addBalanceViaRouter = mode === "addbalance" && !!context?.viaRouter;
 
-  useEffect(() => {
-    if (approveTx.phase === "success") void refetchAllowance();
-  }, [approveTx.phase, refetchAllowance]);
-
-  const sequenceSafeTx =
-    sequenceSafeStage === "token-approval" ? approveTx : tx;
+  const sequenceSafeTx = tx;
   const sequenceSafePhase = sequenceSafeTx.phase;
   const sequenceSafeError = sequenceSafeTx.error;
   // A Safe stage with the Safe says where it is in place of the stage's own line:
@@ -1054,8 +1046,8 @@ export function PayPanel({
   const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
   // A stage the write hold holds (its follower couldn't prove it) shows the hold's line and exit.
   const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "unconfirmed" ? sequenceSafeTx.error : null;
-  const endedTx = paymentRunEnded === "token-approval" ? approveTx : paymentRunEnded === "payment" ? tx : null;
-  const endedPayment = paymentRunEnded === "payment" ? tx.failure : null;
+  const endedTx = paymentRunEnded ? tx : null;
+  const endedPayment = paymentRunEnded ? tx.failure : null;
   const endedPay = mode === "pay" ? endedPayment : null;
   const payFailure = endedPay ? decodePayFailure(endedPay) : null;
   const minedRevert = !!revertedReceipt(endedPayment);
@@ -1067,12 +1059,10 @@ export function PayPanel({
   const endedLine = !endedTx ? null
     : endedTx.phase === "unconfirmed" ? endedTx.error
       : minedRevert ? (mode === "pay" ? "The payment reverted." : "Payment reverted onchain.")
-      : payFailure?.message ?? endedTx.error ?? (paymentRunEnded === "payment" ? "Payment was cancelled." : "Token approval was cancelled.");
+      : payFailure?.message ?? endedTx.error ?? (mode === "pay" ? "Payment was cancelled." : "Adding to the balance was cancelled.");
   // A payment the hold still has in flight is never sent again from here.
-  const sequencePending = paymentRunEnded === "payment" && tx.phase === "unconfirmed" ? tx.hash : null;
-  const panelTxError = [approveTx, tx]
-    .map(item => (sequenceSafeHeld && item === sequenceSafeTx ? null : item.error))
-    .find(Boolean) ?? null;
+  const sequencePending = paymentRunEnded && tx.phase === "unconfirmed" ? tx.hash : null;
+  const panelTxError = sequenceSafeHeld ? null : tx.error;
   // A stage another flow dismissed shows nothing any more.
   const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
   // An unproven or lost stage ends with its line: Dismiss releases its call and frees the panel.
@@ -1082,17 +1072,6 @@ export function PayPanel({
     sequenceSafeTx.dismiss();
     setSequenceSafeStage(null);
   };
-
-  // An approval whose tracking ended before it settled can still confirm later; it then counts as done, not cancelled.
-  useEffect(() => {
-    if (paymentRunEnded !== "token-approval" || approveTx.phase !== "success") return;
-    setPaymentRunEnded(null);
-    setSequenceCompletedKinds(current =>
-      current.includes("token-approval") ? current : [...current, "token-approval"],
-    );
-    setSequenceStatus(null);
-    void refetchAllowance();
-  }, [paymentRunEnded, approveTx.phase, refetchAllowance]);
 
   useEffect(() => {
     if (!sequenceSafeStage) return;
@@ -1143,22 +1122,16 @@ export function PayPanel({
     tx.phase === "signing" ||
     tx.phase === "pending" ||
     tx.phase === "unconfirmed" ||
-    approveTx.phase === "simulating" ||
-    approveTx.phase === "signing" ||
-    approveTx.phase === "pending" ||
-    approveTx.phase === "unconfirmed" ||
     sequenceStarted ||
     !!sequenceSafeStage;
 
   useEffect(() => {
     if (!sequenceOpen) return;
-    const activePhase = [tx.phase, approveTx.phase].find(
-      phase => phase === "simulating" || phase === "signing" || phase === "pending",
-    );
+    const activePhase = tx.phase;
     if (activePhase === "simulating") setSequenceStatus("Checking the reviewed wallet action…");
     else if (activePhase === "signing") setSequenceStatus("Confirm this action in your wallet.");
     else if (activePhase === "pending") setSequenceStatus("Submitted. Confirming onchain…");
-  }, [approveTx.phase, sequenceOpen, tx.phase]);
+  }, [sequenceOpen, tx.phase]);
 
   const preparePaymentSequence = (): PaymentSequenceAction[] => {
     if (!address || !context || !terminalAddress) return [];
@@ -1349,6 +1322,26 @@ export function PayPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [submitWhenFresh, previewReady, previewIsStale, previewError, mode]);
 
+  // The payment's own summary: shown on its progress, and first in its review.
+  const sequenceRows: TxConfirmRow[] = [
+    {
+      label: "Send",
+      value: `${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`,
+      strong: true,
+    },
+    { label: "On", value: chainName(chainId) },
+    ...(mode === "pay" && sequenceSummary
+      ? [{ label: "You get at least", value: `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`, strong: true }]
+      : []),
+    ...(sequenceSummary ? [{ label: "Beneficiary", value: sequenceSummary.account, mono: true }] : []),
+    ...(memo.trim() ? [{ label: "Note", value: memo.trim() }] : []),
+  ];
+  const sequenceContext = [
+    ...contextRows(sequenceRows),
+    ...(mode === "pay" && sequenceSummary?.quoteFailed ? [{ label: "Quote", value: PAY_QUOTE_FAILED_MESSAGE }] : []),
+    ...(payDisclosure ? [{ label: "Project notice", value: payDisclosure, strong: true }] : []),
+  ];
+
   const runPaymentSequence = async () => {
     if (mode === "pay" && (nativeMarket || !identity.isSuccess)) return;
     const reviewed = sequenceSummary;
@@ -1368,21 +1361,15 @@ export function PayPanel({
     setSequenceStarted(true);
     setSequenceError(null);
     setRetrySlippageBps(null);
-    setPaymentRunEnded(null);
+    setPaymentRunEnded(false);
     // Each send refuses another account on its own; checking before each step
     // also says so here, where a refused send would read as a cancelled one.
     const stillReviewed = () =>
       assertReviewedAccountConnected(account, getAccount(wagmiConfig).address);
-    let latestApprovalBlock = approvalBlock;
     const actionOf = (kind: PaymentSequenceAction["kind"]) =>
       sequenceCompletedKinds.includes(kind)
         ? undefined
         : sequenceActions.find(action => action.kind === kind);
-    const showAction = async (kind: PaymentSequenceAction["kind"]) => {
-      const index = sequenceActions.findIndex(action => action.kind === kind);
-      if (index >= 0) setSequenceActionIndex(index);
-      await nextUiPaint();
-    };
     try {
       stillReviewed();
       if (mode === "pay") {
@@ -1393,69 +1380,55 @@ export function PayPanel({
           throw new ReviewLineError('Defifa payments are not supported by this form.');
         }
       }
-      const tokenApproval = actionOf("token-approval");
-      if (tokenApproval?.kind === "token-approval") {
-        await showAction("token-approval");
-        setSequenceStatus(`Review and approve ${symbol} access.`);
-        const approved = await approveTx.run({
-          account,
-          calls: [reviewedCall(tokenApproval.request, { intent: tokenApproval.intent, legacy: tokenApproval.legacy })],
-          assertWriteState: () => writeState.current(reviewed),
-        });
-        if (!approved) {
-          // A write the final check refused says why; otherwise the approval's own line does.
-          writeState.current(reviewed);
-          setSequenceStatus(null);
-          setPaymentRunEnded("token-approval");
-          return;
-        }
-        if (approved.status === "proposed") {
-          setSequenceSafeStage("token-approval");
-          setSequenceStatus("Approval proposed to your Safe. Execute it there before continuing.");
-          return;
-        }
-        latestApprovalBlock = approved.receipts.at(-1)?.blockNumber ?? latestApprovalBlock;
-        approveTx.reset();
-        await refetchAllowance();
-        setSequenceCompletedKinds(current =>
-          current.includes("token-approval")
-            ? current
-            : [...current, "token-approval"],
-        );
-      }
       const paymentAction = actionOf("payment");
       if (paymentAction?.kind !== "payment") {
         throw new ReviewLineError("The reviewed payment action is unavailable.");
       }
-      const paymentRequest = paymentAction.request;
-
-      stillReviewed();
-      await showAction("payment");
-      setSequenceStatus(mode === "pay" ? "Review and execute the payment." : "Review and add to the balance.");
+      // An approval that confirmed after its run ended is not asked for again.
+      let tokenApproval = actionOf("token-approval");
+      if (tokenApproval) {
+        const { data: current } = await refetchAllowance();
+        if (current !== undefined && current >= reviewed.amountRaw) tokenApproval = undefined;
+      }
+      const steps = [...(tokenApproval ? [tokenApproval] : []), paymentAction];
+      setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === steps[0].kind));
+      await nextUiPaint();
+      setSequenceStatus(mode === "pay" ? "Review the payment." : "Review adding to the balance.");
+      // The approval and the payment are one review: the payment simulates on the approval's receipt block.
       const paid = await tx.run({
         account,
-        calls: [reviewedCall(paymentRequest, {
-          simulationBlockNumber: latestApprovalBlock,
-          intent: paymentAction.intent,
-          legacy: paymentAction.legacy,
-        })],
+        calls: steps.map((action, index) => reviewedCall(action.request, {
+          intent: action.intent,
+          legacy: action.legacy,
+          ...(index > 0 ? { dependsOnPrior: true } : { simulationBlockNumber: approvalBlock }),
+        })),
+        context: sequenceContext,
         assertWriteState: () => writeState.current(reviewed),
+        onSubmitted: (_call, step) => {
+          setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === steps[step]?.kind));
+        },
       });
       if (!paid) {
         writeState.current(reviewed);
         // Its line, its retry and a held payment's "do not send again" come from the run's own state.
         setSequenceStatus(null);
-        setPaymentRunEnded("payment");
+        setPaymentRunEnded(true);
         return;
       }
       if (paid.status === "proposed") {
-        setSequenceSafeStage("payment");
-        setSequenceStatus("Payment proposed to your Safe. Execute it there to finish.");
+        // A Safe executes each step as its own proposal: an approval first, then the payment.
+        const stage = steps[paid.step]?.kind ?? "payment";
+        setSequenceSafeStage(stage);
+        setSequenceStatus(stage === "token-approval"
+          ? "Approval proposed to your Safe. Execute it there before continuing."
+          : "Payment proposed to your Safe. Execute it there to finish.");
         return;
       }
-      setSequenceCompletedKinds(current =>
-        current.includes("payment") ? current : [...current, "payment"],
-      );
+      if (tokenApproval) setApprovalBlock(paid.receipts[0]?.blockNumber);
+      setSequenceCompletedKinds(current => [
+        ...current.filter(kind => !steps.some(step => step.kind === kind)),
+        ...steps.map(step => step.kind),
+      ]);
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
@@ -1481,7 +1454,7 @@ export function PayPanel({
     void queryClient.invalidateQueries({ queryKey: ["prepareUserPay"] });
     tx.reset();
     setRetrySlippageBps(null);
-    setPaymentRunEnded(null);
+    setPaymentRunEnded(false);
     setSequenceOpen(false);
     setSequenceActions([]);
     setSequenceActionIndex(0);
@@ -1493,7 +1466,7 @@ export function PayPanel({
 
   const reset = () => {
     tx.reset();
-    approveTx.reset();
+    setApprovalBlock(undefined);
     setSequenceOpen(false);
     setSequenceStarted(false);
     setSequenceComplete(false);
@@ -1505,7 +1478,7 @@ export function PayPanel({
     setSequenceStatus(null);
     setSequenceError(null);
     setRetrySlippageBps(null);
-    setPaymentRunEnded(null);
+    setPaymentRunEnded(false);
     setPayerSlippage(null);
     setAmount("");
     setDebouncedAmount("");
@@ -2111,10 +2084,9 @@ export function PayPanel({
         </div>
       ) : null}
       {sequenceOpen ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           eyebrow={null}
-          notice={<PaymentNotice text={payDisclosure} />}
           title={
             sequenceComplete
               ? mode === "pay"
@@ -2124,26 +2096,7 @@ export function PayPanel({
                 ? "Confirm payment"
                 : "Confirm add to balance"
           }
-          rows={(() => {
-            const rows: TxConfirmRow[] = [
-              {
-                label: "Send",
-                value: `${formatTokenAmount(sequenceSummary?.amountRaw ?? amountRaw, decimals)} ${symbol}`,
-                strong: true,
-              },
-              { label: "On", value: chainName(chainId) },
-            ];
-            if (mode === "pay" && sequenceSummary) {
-              rows.push({
-                label: "You get at least",
-                value: `${formatTokenAmount(sequenceSummary.minReturned, 18)} ${projectTokenLabel}`,
-                strong: true,
-              });
-            }
-            if (sequenceSummary) rows.push({ label: "Beneficiary", value: sequenceSummary.account, mono: true });
-            if (memo.trim()) rows.push({ label: "Note", value: memo.trim() });
-            return rows;
-          })()}
+          rows={sequenceRows}
           steps={sequenceActions.map(action => ({
             key: `${action.kind}:${action.label}`,
             title: action.label,
@@ -2158,8 +2111,15 @@ export function PayPanel({
           error={sequenceError ?? sequenceSafeHeld ?? endedLine}
           busy={paymentSequenceLocked(sequenceStarted, sequencePending)}
           complete={sequenceComplete || !!sequenceSafeStage}
-          action={retryBps !== null || reviewAfterRevert ? "Review again" : mode === "pay" ? "Confirm & Pay" : "Confirm & Add"}
-          onConfirm={() => retryBps !== null || reviewAfterRevert ? reviewAgain(retryBps) : void runPaymentSequence()}
+          start={sequenceError ? undefined : () => void runPaymentSequence()}
+          retry={
+            retryBps !== null || reviewAfterRevert
+              ? { label: "Review again", onClick: () => reviewAgain(retryBps) }
+              : !sequenceComplete && !sequenceSafeStage && !sequencePending && !sequenceStarted && sequenceActions.length &&
+                  (endedLine || sequenceError || sequenceCompletedKinds.length)
+                ? { label: endedLine || sequenceError ? "Try again" : "Continue", onClick: () => void runPaymentSequence() }
+                : null
+          }
           onClose={() => {
             if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
             // An unproven or lost Safe stage ends with its line: Done dismisses it,
@@ -2172,7 +2132,7 @@ export function PayPanel({
             setSequenceStatus(null);
             setSequenceError(null);
             setRetrySlippageBps(null);
-            setPaymentRunEnded(null);
+            setPaymentRunEnded(false);
             setPayerSlippage(null);
           }}
         >
@@ -2183,7 +2143,7 @@ export function PayPanel({
           {retryBps !== null ? (
             <AllowedDecreaseField bps={retryBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   );

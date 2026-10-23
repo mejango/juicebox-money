@@ -31,7 +31,7 @@ import { useConfig } from 'wagmi'
 import { getAccount, getPublicClient } from 'wagmi/actions'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -586,7 +586,7 @@ export function RedeemShopItemsModal({
       ) : null}
 
       {plan || preparing ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!plan}
           title={tx.phase === 'success' ? 'Items redeemed' : 'Confirm redemption'}

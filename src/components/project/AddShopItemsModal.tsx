@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import { ChainPillButton } from '@/components/ui/ChainPillButton'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { StoreEditor, itemOk, newDraftItem, type DraftItem, type StoreCategory } from '@/components/create/StoreEditor'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -244,7 +244,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       ) : null}
 
       {review || phase === 'checking' ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!review}
           title={phase === 'done' ? 'Items added' : 'Confirm items'}
@@ -316,7 +316,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
           }
         >
           {discard.element}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </ModalShell>
   )

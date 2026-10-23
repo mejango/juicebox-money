@@ -79,7 +79,7 @@ async function flushQueries() {
   })
 }
 
-/** The TxConfirmDialog stacked on top of the editor's ModalShell. */
+/** The TxProgress stacked on top of the editor's ModalShell. */
 function confirmDialog(renderer: TestRenderer.ReactTestRenderer) {
   return renderer.root.findAllByType('dialog').at(-1)!
 }

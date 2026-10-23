@@ -37,8 +37,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => createElement('div', null, children),
 }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ title, onConfirm, preparing }: {
+vi.mock('@/components/ui/TxProgress', () => ({
+  TxProgress: ({ title, onConfirm, preparing }: {
     title: string
     onConfirm: () => void
     preparing: boolean

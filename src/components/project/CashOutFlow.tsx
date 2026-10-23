@@ -34,7 +34,7 @@ import {
 import { useReadContract, usePublicClient } from 'wagmi'
 import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import {
   cashOutExecutionErrorMessage,
@@ -648,7 +648,7 @@ export function CashOutPanel({
   }
 
   const confirmDialog = plan ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       title={
         success
@@ -725,7 +725,7 @@ export function CashOutPanel({
       onClose={closeReview}
     />
   ) : preparing ? (
-    <TxConfirmDialog
+    <TxProgress
       open
       preparing
       title="Confirm cash out"

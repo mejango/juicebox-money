@@ -160,8 +160,8 @@ vi.mock('@/components/project/Tabs', () => ({ replaceProjectTabHash: () => {} })
 vi.mock('@/components/ui/ModalShell', () => ({
   ModalShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: ({ open, action, onConfirm, onClose, complete, error, status, notice, rows, children }: {
+vi.mock('@/components/ui/TxProgress', () => ({
+  TxProgress: ({ open, action, onConfirm, onClose, complete, error, status, notice, rows, children }: {
     open: boolean
     action: string
     onConfirm: () => void

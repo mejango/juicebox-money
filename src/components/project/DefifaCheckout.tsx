@@ -17,7 +17,7 @@ import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
 import { clearDefifaWriteRecovery, PendingDefifaWriteError, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { DefifaRecovery } from '@/components/project/DefifaRecovery'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
 import { formatTokenAmount } from '@/lib/format'
 import { explorerTxUrl } from '@/lib/chainDisplay'
@@ -298,7 +298,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
       {explorerTxUrl(previousFailedTransaction.chainId, previousFailedTransaction.hash) ? <a href={explorerTxUrl(previousFailedTransaction.chainId, previousFailedTransaction.hash)!} target="_blank" rel="noopener noreferrer" className="text-bluebs-600 underline">{previousFailedTransaction.hash}</a> : previousFailedTransaction.hash}
     </p> : null}
     {!review && error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
-    <TxConfirmDialog open={!!review} title="Mint Defifa NFTs" onClose={closeReview} rows={review ? [
+    <TxProgress open={!!review} title="Mint Defifa NFTs" onClose={closeReview} rows={review ? [
       { label: 'Account', value: review.account, mono: true },
       { label: 'Chain ID', value: review.chainId },
       { label: 'Project ID', value: review.projectId },
@@ -309,6 +309,6 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     ] : []} steps={[...(review?.approval ? [{ title: 'Approve Defifa mint payment' }] : []), { title: 'Mint Defifa NFTs' }]} activeIndex={approvalBlock === undefined && review?.approval ? 0 : review?.approval ? 1 : 0} action={step === 'failed' ? 'Close review' : submitted ? 'Recheck confirmation' : review?.approval && approvalBlock === undefined ? 'Approve payment' : 'Confirm mint'} onConfirm={() => { if (step === 'failed') closeReview(); else void (submitted ? verify() : confirm()) }} busy={busy} complete={step === 'verified'} actionDisabled={submissionUnknown || (step !== 'failed' && !!submitted && !active.receipt)} status={submissionUnknown ? 'The wallet submission is unconfirmed. Check your wallet before taking further action. This mint has not been verified.' : step === 'verified' ? 'NFT mint verified onchain.' : submitted ? active.notice ?? `${submitted.safe ? 'Safe proposal' : 'Submitted transaction'} ${active.hash ?? submitted.hash}` : approvalBlock !== undefined ? 'Payment approval verified. Confirm the NFT mint.' : undefined} error={error ?? approvalTx.error ?? mintTx.error}>
       <p className="text-sm text-smoke-600">Minting to your account updates voting delegation for all your NFTs in each selected tier, including NFTs you already hold. A blank delegate preserves the native contract default.</p>
       <WriteRecoveryInTabNote />
-    </TxConfirmDialog>
+    </TxProgress>
   </div></DefifaRecovery>
 }

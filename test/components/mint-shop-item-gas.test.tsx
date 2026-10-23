@@ -42,9 +42,9 @@ vi.mock('@/components/ui/ModalShell', () => ({
     <div>{children}{footer}</div>
   ),
 }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
+vi.mock('@/components/ui/TxProgress', () => ({
   // Once complete, the confirm offers only Done.
-  TxConfirmDialog: ({ onConfirm, onClose, title, error, complete }: {
+  TxProgress: ({ onConfirm, onClose, title, error, complete }: {
     onConfirm: () => void; onClose: () => void; title: string; error?: ReactNode; complete?: boolean
   }) => (
     <div>

@@ -12,7 +12,7 @@ import { useMemo, useState } from 'react'
 import { burnIntent } from '@bananapus/nana-sdk-core/review'
 import { formatUnits, parseEther, zeroAddress, type Address } from 'viem'
 import { useReadContract } from 'wagmi'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -213,7 +213,7 @@ export function BurnTokensFlow({
         </button>
       </div>
       {plan || preparing ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing={!plan}
           onClose={closeReview}

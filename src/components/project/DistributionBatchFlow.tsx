@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { formatUnits, isAddressEqual, parseUnits, zeroAddress, type Address } from 'viem'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { chainName } from '@/lib/urn'
@@ -227,6 +227,6 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
       <TxError error={error} />
       <div className="flex gap-3"><button className="btn-primary min-h-[40px] px-4 text-sm" disabled={busy || options.isLoading} onClick={() => void handleReview()}>{busy ? 'Reviewing…' : 'Review selected distributions'}</button><button className="text-sm underline" disabled={busy} onClick={() => setOpen(false)}>Cancel</button></div>
     </div> : null}
-    {open && reviewed ? <TxConfirmDialog open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed, complete ? distributed : {})} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} actionDisabled={discard.active} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }}>{discard.element}</TxConfirmDialog> : null}
+    {open && reviewed ? <TxProgress open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed, complete ? distributed : {})} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} action={batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} actionDisabled={discard.active} onConfirm={() => void submit()} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }}>{discard.element}</TxProgress> : null}
   </div>
 }

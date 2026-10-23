@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 
 export default function TallConfirmProofPage() {
   const [ready, setReady] = useState(false)
@@ -18,7 +18,7 @@ export default function TallConfirmProofPage() {
   return (
     <main data-ready={ready ? 'true' : 'false'}>
       {ready ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title="Tall review"
           steps={[{ title: 'First' }, { title: 'Second' }]}

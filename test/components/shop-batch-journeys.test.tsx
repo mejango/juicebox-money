@@ -15,7 +15,7 @@ vi.mock('@/lib/jbcenter-ipfs', () => ({ JBCENTER_MAX_IMAGE_BYTES: 1_000_000, JBC
 vi.mock('@/lib/shop-batch', async original => ({ ...await original(), pendingShopBatch: () => mocks.saved, readShopSnapshot: mocks.snapshot, reverifyShopCall: mocks.reverify, readOriginalShopMetadata: mocks.metadata, readShopTier: mocks.tier }))
 vi.mock('@/components/create/StoreEditor', async original => ({ ...await original(), StoreEditor: () => null }))
 vi.mock('@/components/ui/ModalShell', () => ({ ModalShell: ({ children, footer }: { children: React.ReactNode; footer: React.ReactNode }) => <section>{children}{footer}</section> }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: ({ children }: { children?: React.ReactNode }) => <div>{children}</div> }))
+vi.mock('@/components/ui/TxProgress', () => ({ TxProgress: ({ children }: { children?: React.ReactNode }) => <div>{children}</div> }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/components/ui/ChainPillButton', () => ({ ChainPillButton: () => null }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
@@ -23,7 +23,7 @@ vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 import { AddShopItemsModal } from '@/components/project/AddShopItemsModal'
 import { ReplaceTierMediaModal } from '@/components/project/ReplaceTierMediaModal'
 import { StoreEditor, newDraftItem } from '@/components/create/StoreEditor'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { buildShopAddCalls, buildShopMediaCalls } from '@/lib/shop-batch'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { RelayrDiscardError } from '@/lib/relayr'
@@ -73,7 +73,7 @@ async function clickReview(renderer: ReactTestRenderer) {
   await act(async () => { button.props.onClick(); await Promise.resolve() })
 }
 async function confirm(renderer: ReactTestRenderer) {
-  await act(async () => { renderer.root.findByType(TxConfirmDialog).props.onConfirm(); await Promise.resolve() })
+  await act(async () => { renderer.root.findByType(TxProgress).props.onConfirm(); await Promise.resolve() })
 }
 
 describe('shop batch component journeys', () => {
@@ -89,7 +89,7 @@ describe('shop batch component journeys', () => {
     expect(args.calls.map((call: ProjectBatchCall) => [call.chainId, call.projectId, call.target])).toEqual([[1, 101, HOOK], [8453, 202, PEER]])
     expect(args.calls[1].context.items[0]).toMatchObject({ name: 'Reviewed', price: '3.123456', supply: '19' })
     expect(mocks.reverify).toHaveBeenCalled()
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
   it('stops a stale add review before pinning or publishing', async () => {
@@ -99,7 +99,7 @@ describe('shop batch component journeys', () => {
     mocks.reverify.mockRejectedValue(new Error('Shop changed'))
     await confirm(renderer)
     expect(mocks.pinItems).not.toHaveBeenCalled(); expect(mocks.run).not.toHaveBeenCalled()
-    expect(renderer.root.findByType(TxConfirmDialog).props.error).toContain('Shop changed')
+    expect(renderer.root.findByType(TxProgress).props.error).toContain('Shop changed')
     await act(async () => renderer.unmount())
   })
   it('passes a frozen owner Safe to the shared shop runner for an EOA signer', async () => {
@@ -110,19 +110,19 @@ describe('shop batch component journeys', () => {
     const submitted = mocks.run.mock.calls[0][0]
     expect(submitted.account).toBe(ACCOUNT)
     expect(submitted.calls.every((call: ProjectBatchCall) => call.authority === PEER)).toBe(true)
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
   it('reopens a partially confirmed add batch without drafts, re-pinning or new calls', async () => {
     const calls = buildShopAddCalls(targets.map(target => snapshot(target, 'shop-add-items')), ACCOUNT, [{ draft: { ...newDraftItem(), name: 'Original', price: '1' }, encodedIpfsUri: URI }])
     mocks.saved = journal('shop-add-items', calls)
     const renderer = await addModal()
-    expect(renderer.root.findByType(TxConfirmDialog).props.action).toBe('Continue saved update')
+    expect(renderer.root.findByType(TxProgress).props.action).toBe('Continue saved update')
     await confirm(renderer)
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ scope: mocks.saved.scope, account: ACCOUNT, calls: mocks.saved.calls, expectedBatchId: mocks.saved.id })
     expect(mocks.pinItems).not.toHaveBeenCalled()
     expect(mocks.reverify.mock.calls.map(([call]) => call.id)).toEqual([calls[1].id])
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
   it('wallet-action:replace-shop-item-media preserves the full original media JSON in a newly reviewed multichain update', async () => {
@@ -133,7 +133,7 @@ describe('shop batch component journeys', () => {
     expect(mocks.pinJson).toHaveBeenCalledWith({ name: 'Original item', properties: { nested: ['preserve'] }, custom: 123, image: 'ipfs://new-media', mediaType: 'image/png' })
     const args = mocks.run.mock.calls[0][0]
     expect(args.calls.map((call: ProjectBatchCall) => [call.chainId, call.projectId, call.target])).toEqual([[1, 101, HOOK], [8453, 202, PEER]])
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
   it('resumes saved media without the upload file and rejects another connected account', async () => {
@@ -144,13 +144,13 @@ describe('shop batch component journeys', () => {
     await act(async () => renderer.update(<ReplaceTierMediaModal chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
     await confirm(renderer)
     expect(mocks.run).not.toHaveBeenCalled()
-    expect(renderer.root.findByType(TxConfirmDialog).props.error).toContain('Reconnect')
+    expect(renderer.root.findByType(TxProgress).props.error).toContain('Reconnect')
     mocks.wallet.address = ACCOUNT
     await act(async () => renderer.update(<ReplaceTierMediaModal chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
     await confirm(renderer)
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ calls: mocks.saved.calls, scope: mocks.saved.scope, expectedBatchId: mocks.saved.id })
     expect(mocks.pinImage).not.toHaveBeenCalled(); expect(mocks.pinJson).not.toHaveBeenCalled()
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
 
@@ -162,7 +162,7 @@ describe('shop batch component journeys', () => {
     mocks.run.mockRejectedValueOnce(new RelayrDiscardError('project-batch:saved:0', 'ran'))
     const renderer = kind === 'add' ? await addModal() : await mediaModal()
     await confirm(renderer)
-    const dialog = renderer.root.findByType(TxConfirmDialog)
+    const dialog = renderer.root.findByType(TxProgress)
     expect(dialog.props.error).toBeFalsy()
     expect(dialog.props.actionDisabled).toBe(true)
     expect(renderer.root.findByType(RelayrDiscard).props).toMatchObject({ scope: 'project-batch:saved:0', reason: 'ran' })
@@ -171,7 +171,7 @@ describe('shop batch component journeys', () => {
     await act(async () => { await renderer.root.findAllByType('button').find(item => item.props.children === 'Discard')!.props.onClick() })
     expect(mocks.discard).toHaveBeenCalledWith('project-batch:saved:0')
     expect(renderer.root.findAllByType(RelayrDiscard)).toHaveLength(0)
-    expect(renderer.root.findAllByType(TxConfirmDialog)).toHaveLength(0)
+    expect(renderer.root.findAllByType(TxProgress)).toHaveLength(0)
     expect(mocks.run).toHaveBeenCalledOnce()
     await act(async () => renderer.unmount())
   })
@@ -192,12 +192,12 @@ describe('shop batch component journeys', () => {
       throw new Error('Review canceled before publication.')
     })
     await confirm(renderer)
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(false)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(false)
     await confirm(renderer)
     expect(mocks.run.mock.calls[1][0]).toMatchObject({ expectedBatchId: undefined })
     expect(mocks.run.mock.calls[1][0].calls).toEqual(mocks.run.mock.calls[0][0].calls)
     expect(kind === 'add' ? mocks.pinItems : mocks.pinJson).toHaveBeenCalledTimes(1)
-    expect(renderer.root.findByType(TxConfirmDialog).props.complete).toBe(true)
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
 })

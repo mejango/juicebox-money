@@ -1,7 +1,7 @@
 'use client'
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { withFailedStep, withUnconfirmedStep } from '@/components/ui/TxSteps'
 import {
   JB_CHAINS,
@@ -943,7 +943,7 @@ function AddLiquidityForm({
         rows.push({ label: 'Fee tier', value: `${(d.fee / 10000).toFixed(2)}%` })
         rows.push({ label: 'Ticks', value: `${d.tickLower} to ${d.tickUpper}` })
         return (
-          <TxConfirmDialog
+          <TxProgress
             open
             title={
               done || run.proposed
@@ -1006,12 +1006,12 @@ function AddLiquidityForm({
                 reverts if the price moves against it. Lower the amount to be safe.
               </p>
             ) : null}
-          </TxConfirmDialog>
+          </TxProgress>
         )
       })()
     : quoting
       ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           preparing
           title={mode === 'market' ? 'Make the market' : 'Add liquidity'}

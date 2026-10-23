@@ -29,7 +29,7 @@ import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { replaceProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
 import {
   clientFor,
@@ -1096,7 +1096,7 @@ export function MetadataEditor({
       {error && !reviewed ? <ErrorNote message={error} /> : null}
 
       {reviewed ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={done ? 'Project metadata updated' : 'Confirm project metadata'}
           rows={frozen?.rows ?? []}
@@ -1115,7 +1115,7 @@ export function MetadataEditor({
         >
           {/* Its retry stays beside Discard: the recheck refuses calls that ran, and a paid bundle that ran completes. */}
           {discardable && frozen ? <RelayrDiscard scope={frozen.scope} reason={discardable} paymentUnmatched={discardSession?.paymentUnmatched} onDiscarded={discarded} /> : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )
@@ -1334,7 +1334,7 @@ export function TokenEditor({
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={done ? 'Token metadata updated' : 'Confirm token metadata'}
           rows={[
@@ -1382,7 +1382,7 @@ export function TokenEditor({
               ? ' Every deploy uses the same salt, so the ERC-20 lands on one address across the chains you sign from this account.'
               : ''}
           </p>
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )

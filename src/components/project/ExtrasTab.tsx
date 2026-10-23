@@ -11,7 +11,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField } from '@/components/create/AddressField'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
@@ -346,12 +346,12 @@ function PayerAddressCard({ chainId, projectId, chains }: {
           </div>
         </ModalShell>
       ) : null}
-      {review ? <TxConfirmDialog open title="Confirm deploy" rows={payerReviewRows(review)}
+      {review ? <TxProgress open title="Confirm deploy" rows={payerReviewRows(review)}
         steps={[{ title: `Deploy ${review.calls.length} payer address${review.calls.length === 1 ? '' : 'es'}` }]}
         activeIndex={busy ? 0 : -1} action="Confirm deploy" onConfirm={() => void run(review)} busy={busy} complete={false}
         error={flowError} onClose={() => { if (!busy) setReview(null) }}>
         <p className="text-xs text-smoke-700">{review.calls[0].owner === zeroAddress ? 'These settings can never be changed.' : `${truncateAddress(review.calls[0].owner)} can change these settings later.`}</p>
-      </TxConfirmDialog> : null}
+      </TxProgress> : null}
       <PayerAddressList rows={payerRows} isLoading={payersLoading} isError={payersError} isFetching={payersFetching} />
     </div>
   )

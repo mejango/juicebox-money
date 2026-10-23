@@ -36,7 +36,7 @@ import {
   SUCKER_EXTRA_ABI,
   type Infra,
 } from '@/components/project/SettlementSection'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -656,6 +656,7 @@ function MoveFlow({
       ]
     : []
 
+  const stepRun = step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
   const stepIdle =
     step === 1 ? 'Approve' : step === 2 ? 'Prepare' : `Send to ${chainName(to)}`
 
@@ -715,7 +716,7 @@ function MoveFlow({
         />
       ) : null}
 
-      <TxConfirmDialog
+      <TxProgress
         open={dialogOpen}
         preparing={preparing}
         onClose={() => {
@@ -731,13 +732,9 @@ function MoveFlow({
             ? 'Three separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
             : 'Two separate onchain actions, each confirmed before the next. You can leave and resume where you stopped.'
         }
-        action={txPhaseLabel(step === 3 && checking ? 'simulating' : tx.phase, {
-          pending: 'Submitting…',
-          idle: stepIdle,
-        })}
-        onConfirm={
-          step === 1 ? sendApprove : step === 2 ? sendPrepare : () => void sendToRemote()
-        }
+        start={step >= 1 && step <= 3 ? stepRun : undefined}
+        startKey={step}
+        retry={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
         complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
         status={

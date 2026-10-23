@@ -40,7 +40,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { MovementGroupsSkeleton } from '@/components/LoadingSkeletons'
 import { SkeletonTable } from '@/components/ui/Skeleton'
 import { GossipCard } from '@/components/project/GossipCard'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, txPhaseLabel, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
@@ -807,7 +807,7 @@ function MovementGroup({
         />
       ) : null}
 
-      <TxConfirmDialog
+      <TxProgress
         open={open}
         onClose={() => {
           setOpen(false)
@@ -969,7 +969,7 @@ function ClaimButton({
           className="mt-1 max-w-[220px] text-right text-[11px] text-red-700"
         />
       ) : null}
-      <TxConfirmDialog
+      <TxProgress
         open={open}
         onClose={() => {
           setOpen(false)

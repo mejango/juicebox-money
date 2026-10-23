@@ -19,8 +19,8 @@ vi.mock('@/lib/authority', async original => ({
 }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
 vi.mock('@/components/project/SafeBatchProvider', () => ({ useSafeBatch: () => null }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({
-  TxConfirmDialog: (props: { error?: ReactNode; children?: ReactNode; actionDisabled?: boolean; onConfirm: () => void }) => (
+vi.mock('@/components/ui/TxProgress', () => ({
+  TxProgress: (props: { error?: ReactNode; children?: ReactNode; actionDisabled?: boolean; onConfirm: () => void }) => (
     <div>
       {props.error ? <p>{props.error}</p> : null}
       {props.children}

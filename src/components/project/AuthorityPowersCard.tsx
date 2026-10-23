@@ -18,7 +18,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
-import { TxConfirmDialog, type TxConfirmRow } from '@/components/ui/TxConfirmDialog'
+import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import {
@@ -700,7 +700,7 @@ export function PowerActionForm({
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
-        <TxConfirmDialog
+        <TxProgress
           open
           title={
             done ? `${power.label} complete` : `Confirm ${power.actionLabel.toLowerCase()}`
@@ -758,7 +758,7 @@ export function PowerActionForm({
               </span>
             </label>
           ) : null}
-        </TxConfirmDialog>
+        </TxProgress>
       ) : null}
     </div>
   )

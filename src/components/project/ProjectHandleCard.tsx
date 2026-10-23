@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Address } from 'viem'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
 import { ModalShell } from '@/components/ui/ModalShell'
-import { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import { TxProgress } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
 import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -1205,7 +1205,7 @@ export function ProjectHandleCard({
           ) : null}
 
           {editing && confirming && normalized ? (
-            <TxConfirmDialog
+            <TxProgress
               open
               title={alreadyVerified ? 'Handle verified' : 'Confirm handle'}
               rows={[
@@ -1273,7 +1273,7 @@ export function ProjectHandleCard({
                   Open pending handle setup in Safe ↗
                 </a>
               ) : null}
-            </TxConfirmDialog>
+            </TxProgress>
           ) : null}
         </div>
       )}

@@ -5,7 +5,7 @@ import { zeroHash, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ReviewedPayment } from '@/lib/pending-payments'
 import type { ProjectBatch, ProjectBatchCall } from '@/lib/project-batch'
-import type { TxConfirmDialog } from '@/components/ui/TxConfirmDialog'
+import type { TxProgress } from '@/components/ui/TxProgress'
 
 type Row = { payment: ReviewedPayment['payment']; review: ReviewedPayment | null; error: string | null }
 const mocks = vi.hoisted(() => ({
@@ -40,7 +40,7 @@ vi.mock('@/lib/bendystraw', () => ({ getProjectsByRefs: mocks.projects }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (rows: unknown) => rows }))
 vi.mock('@/components/ui/LoadingText', () => ({ LoadingText: ({ text }: { text: string }) => text }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: mocks.address, isConnected: mocks.connected, openSignIn: mocks.openSignIn }) }))
-vi.mock('@/components/ui/TxConfirmDialog', () => ({ TxConfirmDialog: (props: ComponentProps<typeof TxConfirmDialog>) => props.open ? createElement('review-dialog', props) : null }))
+vi.mock('@/components/ui/TxProgress', () => ({ TxProgress: (props: ComponentProps<typeof TxProgress>) => props.open ? createElement('review-dialog', props) : null }))
 vi.mock('@/lib/pending-payments', () => ({
   PENDING_PAYMENT_ACTION: 'route-destination-payments',
   loadPendingPaymentBatch: mocks.load,
@@ -83,7 +83,7 @@ async function render(chains: [number, number][] = [[1, 17], [10, 42]]) {
 }
 const text = (node: ReactTestInstance): string => node.children.map(child => typeof child === 'string' ? child : text(child)).join('')
 const button = (label: string) => tree!.root.findAllByType('button').find(item => text(item) === label)!
-const dialog = () => tree!.root.findByType('review-dialog' as never).props as ComponentProps<typeof TxConfirmDialog>
+const dialog = () => tree!.root.findByType('review-dialog' as never).props as ComponentProps<typeof TxProgress>
 
 beforeEach(() => {
   vi.resetAllMocks()

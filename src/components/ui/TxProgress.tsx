@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useId, type ReactNode } from 'react'
+import { useEffect, useId, useRef, type ReactNode } from 'react'
+import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
 import { createPortal } from 'react-dom'
 import {
   ModalCloseButton,
@@ -21,12 +22,27 @@ export type TxConfirmRow = {
   strong?: boolean
 }
 
+/** A follow-up the action offers after it ran: try again, recheck, resume. It never confirms a send; the review does. */
+export type TxProgressRetry = { label: string; onClick: () => void; disabled?: boolean }
+
+/** The rows a review shows as the site's own summary: those whose label and value are text. */
+export function contextRows(rows: readonly TxConfirmRow[]): ReviewContextRow[] {
+  return rows.flatMap(row => {
+    const text = (node: ReactNode) => typeof node === 'string' || typeof node === 'number' || typeof node === 'bigint' ? String(node) : null
+    const label = text(row.label)
+    const value = text(row.value)
+    return label === null || value === null ? [] : [{ label, value, ...(row.strong ? { strong: true } : {}), ...(row.mono ? { mono: true } : {}) }]
+  })
+}
+
 /**
- * The one review surface for every wallet write: a frozen plan (label/value
- * rows), the wallet-prompt queue, then a single action. Closing is refused
- * while `busy`; once `complete` the footer collapses to Done.
+ * An action's progress: its frozen plan (label/value rows), the wallet-prompt
+ * queue, status and error. The review is the action's one confirmation, so
+ * this starts the action (`start`) once its plan is ready and offers only
+ * follow-ups (`retry`). Closing is refused while `busy`; once `complete` the
+ * footer collapses to Done.
  */
-export function TxConfirmDialog({
+export function TxProgress({
   open,
   onClose,
   eyebrow = 'Review',
@@ -37,10 +53,10 @@ export function TxConfirmDialog({
   steps,
   activeIndex,
   stepsIntro,
-  action,
-  actionDisabled = false,
+  start,
+  startKey,
+  retry,
   cancelLabel = 'Cancel',
-  onConfirm,
   onCancel,
   busy = false,
   complete = false,
@@ -60,11 +76,12 @@ export function TxConfirmDialog({
   steps: readonly TxStep[]
   activeIndex: number
   stepsIntro?: string
-  /** Null while a read-only phase advances on its own; closing stays available. */
-  action: string | null
-  actionDisabled?: boolean
+  /** Starts the action once it is open and prepared; its review is the one confirmation. */
+  start?: () => void
+  /** A multi-step action's current step: a new key starts that step's review once it is ready. */
+  startKey?: unknown
+  retry?: TxProgressRetry | null
   cancelLabel?: string
-  onConfirm: () => void
   /** Stops the work in progress without cost; the Cancel button stays live while busy. */
   onCancel?: () => void
   busy?: boolean
@@ -81,6 +98,14 @@ export function TxConfirmDialog({
   // Hosted, the confirm has no dialog of its own: while busy it keeps the
   // enclosing shell open, or Escape there would drop a send in flight.
   useHoldEnclosingModal(open && busy)
+  // Started once per open and step: each step's review is its own confirmation, with no click between.
+  const started = useRef<{ key: unknown } | null>(null)
+  useEffect(() => {
+    if (!open) { started.current = null; return }
+    if (preparing || !start || (started.current && Object.is(started.current.key, startKey))) return
+    started.current = { key: startKey }
+    start()
+  }, [open, preparing, start, startKey])
   useEffect(() => {
     if (!host || !open) return
     const hidden = Array.from(host.children).filter(
@@ -144,13 +169,13 @@ export function TxConfirmDialog({
                 intro={stepsIntro}
                 className="rounded-xl border border-smoke-200 bg-white p-3"
               />
-              {status ? <p role="status" className="text-sm text-bluebs-700">{typeof status === 'string' ? <LoadingText text={transactionMessage(status)} active={busy || action === null || undefined} /> : status}</p> : null}
+              {status ? <p role="status" className="text-sm text-bluebs-700">{typeof status === 'string' ? <LoadingText text={transactionMessage(status)} active={busy || !retry || undefined} /> : status}</p> : null}
             </>
           )}
           {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? <LinkedText text={transactionMessage(error)} /> : error}</p> : null}
           {notice}
         </div>
-        {complete || action || (busy && onCancel) ? (
+        {complete || retry || !busy || onCancel ? (
           <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">
             {complete ? (
               <button
@@ -170,15 +195,14 @@ export function TxConfirmDialog({
                 >
                   {cancelLabel}
                 </button>
-                {action ? (
+                {retry ? (
                   <button
                     type="button"
                     className="btn-primary min-h-[44px] px-5 text-sm"
-                    disabled={busy || preparing || actionDisabled}
-                    aria-busy={preparing || undefined}
-                    onClick={onConfirm}
+                    disabled={busy || preparing || retry.disabled}
+                    onClick={retry.onClick}
                   >
-                    {action}
+                    {retry.label}
                   </button>
                 ) : null}
               </>
