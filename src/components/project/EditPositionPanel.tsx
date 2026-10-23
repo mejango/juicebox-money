@@ -549,7 +549,8 @@ export function EditPositionPanel({
       error={batchError ?? tx.error}
       onClose={back}
       start={startRun}
-      next={stopped ? { label: `Retry step ${run.index + 1} of ${reviewed?.steps.length ?? 0}`, onClick: resume } : null}
+      next={stopped ? { label: `Retry step ${run.index + 1} of ${reviewed?.steps.length ?? 0}`, onClick: resume }
+        : batchError && !run.running ? { label: 'Retry', onClick: startRun } : null}
     >
       {reviewed &&
       balances.data &&

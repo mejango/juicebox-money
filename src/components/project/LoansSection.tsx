@@ -21,7 +21,7 @@ import { tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -360,6 +360,8 @@ function RepayFlow({
   /** The repayment reached the wallet: only then does a settled run mean the loan is repaid, not just approved. */
   const [repaySent, setRepaySent] = useState(false)
   const [runStep, setRunStep] = useState(0)
+  /** Each run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -496,7 +498,8 @@ function RepayFlow({
     const shown = (step: number) => Math.max(0, total - calls.length + step)
     setRepaySent(false)
     setRunStep(shown(0))
-    await tx.run({
+    setRunShown(calls.map((_, step) => shown(step)))
+    const ended = await tx.run({
       account: plan.account,
       scope: runScope,
       calls,
@@ -506,6 +509,7 @@ function RepayFlow({
         if (shown(step) === total - 1) setRepaySent(true)
       },
     })
+    if (reachedLastStep(ended, calls.length)) setRepaySent(true)
   }
 
   const closeDialog = () => {
@@ -515,7 +519,7 @@ function RepayFlow({
     if (!repaid) tx.dismiss()
   }
 
-  const activeIndex = tx.phase !== 'idle' ? runStep : -1
+  const activeIndex = tx.phase !== 'idle' ? liveStep(tx, runShown, runStep) : -1
   const error = flowError ?? tx.error
 
   const dialog = plan || checking ? (

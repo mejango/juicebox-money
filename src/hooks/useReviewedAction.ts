@@ -15,7 +15,7 @@ import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { loadReviewEngine, preloadReviewDialog } from '@/lib/preload-review'
 
 import { revertedReceipt } from '@/lib/reviewed-call'
-export { hashOf, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
+export { hashOf, liveStep, reachedLastStep, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
 import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 

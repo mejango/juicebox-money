@@ -940,7 +940,8 @@ function AddLiquidityForm({
             error={batchError ?? tx.error}
             onClose={closePlan}
             start={startRun}
-            next={stopped ? { label: `Retry step ${run.index + 1} of ${plan.steps.length}`, onClick: resume } : null}
+            next={stopped ? { label: `Retry step ${run.index + 1} of ${plan.steps.length}`, onClick: resume }
+              : batchError && !run.running ? { label: 'Retry', onClick: startRun } : null}
           >
             {balances && (d.maxTok > balances.tok || d.maxPair > balances.pair) ? (
               <p className="text-sm text-orange-600">

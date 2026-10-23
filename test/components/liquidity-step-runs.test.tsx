@@ -28,6 +28,12 @@ const H1 = `0x${'a1'.repeat(32)}` as Hex
 const H2 = `0x${'a2'.repeat(32)}` as Hex
 const H3 = `0x${'a3'.repeat(32)}` as Hex
 
+const batch = vi.hoisted(() => ({ applies: false, propose: vi.fn() }))
+vi.mock('@/lib/liquidity-safe-batch', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/liquidity-safe-batch')>()),
+  liquidityBatchApplies: () => batch.applies,
+  proposeLiquidityBatch: (...args: unknown[]) => batch.propose(...args),
+}))
 const m = vi.hoisted(() => ({ account: '' as string, range: { minPrice: 0.5, maxPrice: 2 }, balance: 10n ** 30n, holding: { tokenHolding: 0n, pairHolding: 0n } }))
 
 /** The plan's own bytes name the account they were reviewed for. */
@@ -411,6 +417,26 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       ALICE,
       BOB,
     ])
+  })
+})
+
+describe('a liquidity batch whose review was closed', () => {
+  afterEach(() => { batch.applies = false; batch.propose.mockReset() })
+
+  it('offers Retry at once, which reviews the same batch again', async () => {
+    batch.applies = true
+    batch.propose.mockRejectedValueOnce(new Error('Transaction review cancelled.')).mockResolvedValueOnce(H1)
+    await render(() => <AddLiquidityFlow chainId={1} projectId={7} tokenSymbol="TKN" />)
+    await waitFor('input[aria-label="TKN amount"]')
+    await typeInto('TKN amount', '1')
+    await review('Add liquidity')
+    await settle()
+    expect(batch.propose).toHaveBeenCalledTimes(1)
+    expect(action().textContent).toBe('Retry')
+    await confirm()
+    await settle()
+    expect(batch.propose).toHaveBeenCalledTimes(2)
+    expect(batch.propose.mock.calls[1][0]).toEqual(batch.propose.mock.calls[0][0])
   })
 })
 

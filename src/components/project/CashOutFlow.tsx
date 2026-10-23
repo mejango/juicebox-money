@@ -32,7 +32,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { liveStep, reachedLastStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
@@ -110,6 +110,8 @@ export function CashOutPanel({
   const tx = useReviewedAction(chainId)
   /** The dialog step the run is on, once it started. */
   const [runStep, setRunStep] = useState(-1)
+  /** Each pool-sale run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
   /** The run sent its cash-out: a settled approval alone sold nothing. */
   const [finalSent, setFinalSent] = useState(false)
 
@@ -437,7 +439,7 @@ export function CashOutPanel({
   const cashOutActiveIndex = success
     ? cashOutSteps.length
     : runStep >= 0
-      ? runStep
+      ? liveStep(tx, runShown, runStep)
       : needsTokenApproval
       ? requiredApprovals.indexOf('token')
       : needsRouterApproval
@@ -643,7 +645,8 @@ export function CashOutPanel({
         const shown = (step: number) => Math.max(0, cashOutSteps.length - calls.length + step)
         setUsedDirectSell(true)
         setRunStep(shown(0))
-        await tx.run({
+        setRunShown(calls.map((_, step) => shown(step)))
+        const ended = await tx.run({
           account: reviewedAccount,
           calls,
           scope: runScope,
@@ -661,12 +664,14 @@ export function CashOutPanel({
             if (step === calls.length - 1) setFinalSent(true)
           },
         })
+        if (reachedLastStep(ended, calls.length)) setFinalSent(true)
         return
       }
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      await tx.run({
+      setRunShown(null)
+      const ended = await tx.run({
         account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
         calls: [reviewedCall(plan.request, { intent: cashOutKey, legacy: cashOutLegacy })],
@@ -674,6 +679,7 @@ export function CashOutPanel({
         onSubmitted: () => setFinalSent(true),
         description: plan.reviewNotice,
       })
+      if (reachedLastStep(ended, 1)) setFinalSent(true)
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }

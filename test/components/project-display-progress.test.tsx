@@ -137,7 +137,8 @@ describe('project display request dependencies', () => {
         </QueryClientProvider>,
       )
     })
-    await flush()
+    // The ready chain's reads settle in their own time under a loaded run.
+    for (let attempt = 0; attempt < 100 && !text().includes('1 ETH'); attempt++) await flush()
     expect(text()).toContain('1 ETH')
     expect(text()).toContain('Loading…')
     expect(text()).toContain('Verified balance so far')

@@ -54,7 +54,7 @@ import {
 import { usePublicClient } from "wagmi";
 import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
-import { revertedReceipt, reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
+import { liveStep, revertedReceipt, reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
 import { useWallet } from "@/hooks/useWallet";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { useTokenBalances } from "@/hooks/useTokenBalances";
@@ -335,6 +335,8 @@ export function PayPanel({
   // receives the tokens and owns the approvals: only it may send them.
   const [sequenceSummary, setSequenceSummary] = useState<ReviewedPayment | null>(null);
   const [sequenceActionIndex, setSequenceActionIndex] = useState(0);
+  /** Each payment run call's place in the dialog's queue. */
+  const [runShown, setRunShown] = useState<number[] | null>(null);
   const [sequenceCompletedKinds, setSequenceCompletedKinds] = useState<
     PaymentSequenceAction["kind"][]
   >([]);
@@ -1411,6 +1413,7 @@ export function PayPanel({
       const kinds: PaymentSequenceAction["kind"][] = !saved
         ? steps.map(step => step.kind)
         : calls.length > 1 ? ["token-approval", "payment"] : ["payment"];
+      setRunShown(kinds.map(kind => sequenceActions.findIndex(action => action.kind === kind)));
       const paid = await tx.run({
         account,
         calls,
@@ -1440,6 +1443,8 @@ export function PayPanel({
       }
       if (kinds.length > 1 && paid.receipts.length > 1) setApprovalBlock(paid.receipts[0]?.blockNumber);
       setSequenceCompletedKinds(current => [...current.filter(kind => !kinds.includes(kind)), ...kinds]);
+      // A payment resumed from a saved run went through with no onSubmitted here.
+      if (kinds.includes("payment")) setPaymentSubmitted(true);
       setSequenceComplete(true);
       setSequenceStatus(mode === "pay" ? "Payment confirmed." : "Added to the balance.");
     } catch (reason) {
@@ -2125,7 +2130,7 @@ export function PayPanel({
             title: action.label,
           }))}
           activeIndex={Math.max(
-            sequenceActionIndex,
+            liveStep(tx, runShown, sequenceActionIndex),
             sequenceActions.filter(action =>
               sequenceCompletedKinds.includes(action.kind),
             ).length,

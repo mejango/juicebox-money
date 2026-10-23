@@ -29,7 +29,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
@@ -116,6 +116,8 @@ export function GetLoanFlow({
   const [loanStep, setLoanStep] = useState(-1)
   /** The run sent its borrow: a settled permission alone opens no loan. */
   const [borrowSent, setBorrowSent] = useState(false)
+  /** Each run call's dialog step. */
+  const [runShown, setRunShown] = useState<number[] | null>(null)
 
   const borrowTx = useReviewedAction(chainId)
 
@@ -272,8 +274,9 @@ export function GetLoanFlow({
       /** A run step's dialog step: the permission first when the run has one. */
       const shown = (step: number) => calls.length > 1 && step === 0 ? 0 : borrowIndex
       setLoanStep(shown(0))
+      setRunShown(calls.map((_, step) => shown(step)))
       setQuoting(false)
-      await borrowTx.run({
+      const ended = await borrowTx.run({
         account: r.account,
         calls,
         scope: runScope,
@@ -283,6 +286,7 @@ export function GetLoanFlow({
           if (shown(step) === borrowIndex) setBorrowSent(true)
         },
       })
+      if (reachedLastStep(ended, calls.length)) setBorrowSent(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)
@@ -352,7 +356,7 @@ export function GetLoanFlow({
     setLoanStep(-1)
     if (!opened) borrowTx.dismiss()
   }
-  const activeIndex = loanStep >= 0 ? loanStep : quoting ? 0 : -1
+  const activeIndex = liveStep(borrowTx, runShown, loanStep >= 0 ? loanStep : quoting ? 0 : -1)
   const reviewError = flowError ?? borrowTx.error
 
   const dialog = review || quoting ? (

@@ -56,3 +56,17 @@ export function revertedReceipt(failure: unknown): TransactionReceipt | null {
     ? (failure as Error & { receipt?: TransactionReceipt }).receipt ?? null
     : null
 }
+
+/**
+ * The run reached its last step: every step went through (a step resumed
+ * from a saved run included, which no `onSubmitted` reports), or the last one
+ * is with a Safe.
+ */
+export function reachedLastStep(result: ReviewedResult | null, calls: number): boolean {
+  return result?.status === 'done' || (result?.status === 'proposed' && result.step === calls - 1)
+}
+
+/** The flow's step for the one core is on while a run is in flight (`shown[i]` is call `i`'s), else `fallback`. */
+export function liveStep(tx: { busy: boolean; step: number }, shown: readonly number[] | null, fallback: number): number {
+  return tx.busy && shown ? shown[tx.step] ?? fallback : fallback
+}
