@@ -347,7 +347,7 @@ export function GetLoanFlow({
 
   const opened = borrowTx.phase === 'success' && borrowSent
   /** A Safe executed the permission it was proposed: the borrow is reviewed next. */
-  const permissionOnly = borrowTx.phase === 'success' && !borrowSent
+  const permissionOnly = (borrowTx.phase === 'success' && !borrowSent) || borrowTx.settledStep != null
 
   const closeReview = () => {
     if (busy) return

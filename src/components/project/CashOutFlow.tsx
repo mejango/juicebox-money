@@ -405,7 +405,7 @@ export function CashOutPanel({
   const busy = tx.busy
   const success = tx.phase === 'success' && finalSent
   /** A Safe executed an approval it was proposed: the sale is reviewed next. */
-  const approvalOnly = tx.phase === 'success' && !finalSent
+  const approvalOnly = (tx.phase === 'success' && !finalSent) || tx.settledStep != null
 
   useEffect(() => {
     if (success) refetchBalance()

@@ -373,7 +373,7 @@ function RepayFlow({
   const busy = tx.busy
   const repaid = tx.phase === 'success' && repaySent
   /** A Safe executed the approval alone: the repayment is next. */
-  const approvalOnly = tx.phase === 'success' && !repaySent
+  const approvalOnly = (tx.phase === 'success' && !repaySent) || tx.settledStep != null
 
   const repayTxUrl = repaid && tx.hash
     ? etherscanTxUrl(chainId, tx.hash)
