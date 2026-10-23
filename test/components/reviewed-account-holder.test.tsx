@@ -83,6 +83,8 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   prepareHookAwareCashOut: m.prepareCashOut,
   getBorrowableAmount: m.borrowable,
   hasPermissions: m.hasPermissions,
+  // The pool still beats the treasury when the sale is built.
+  quoteUniswapV4ExactInputSingle: vi.fn(async () => 30_000n),
 }))
 vi.mock('@tanstack/react-query', async importOriginal => ({
   ...(await importOriginal<typeof import('@tanstack/react-query')>()),
@@ -95,16 +97,13 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
         return { data: { token: RECLAIM_TOKEN, decimals: 6, currency: 2 } }
       case 'cashOutTerminal':
         return { data: { address: TERMINAL, isRouter: false } }
-      case 'cashOutQuote':
-        return {
-          data: {
-            route: 'treasury', expectedReturn: 9_750n, minimumReturn: 9_652n, terminalMinimum: 9_652n,
-            metadata: '0x', treasuryGross: 10_000n, treasuryProtocolFee: 250n, treasuryNet: 9_750n, buyback: null,
-          },
-          isFetching: false,
-          isError: false,
-          refetch: vi.fn(),
+      case 'cashOutQuote': {
+        const data = {
+          route: 'treasury', expectedReturn: 9_750n, minimumReturn: 9_652n, terminalMinimum: 9_652n,
+          metadata: '0x', treasuryGross: 10_000n, treasuryProtocolFee: 250n, treasuryNet: 9_750n, buyback: null,
         }
+        return { data, isFetching: false, isError: false, refetch: vi.fn(async () => ({ data, isError: false })) }
+      }
       case 'cashOutMarket':
         return {
           data: m.directSell
@@ -318,7 +317,10 @@ describe('a loan reviewed for one account', () => {
 
     await switchTo(BOB)
     await act(async () => wallet.confirm(sentHash(1)))
-    await settle()
+    // The run's next step reads the permission's receipt, then refuses Bob.
+    for (let attempt = 0; attempt < 40 && !text(renderer.root).includes(CHANGED); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+    }
 
     expect(wallet.writes()).toEqual([{ functionName: 'setPermissionsFor', account: ALICE }])
     expect(text(renderer.root)).toContain(CHANGED)

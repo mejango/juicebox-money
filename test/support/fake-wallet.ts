@@ -48,11 +48,11 @@ function createFakeWallet() {
   }
   let sentCount = 0
   /** What each answered write sent, by its hash: the chain shows it as that call once confirmed. */
-  const sent = new Map<string, { to: Address; data: Hex; value: bigint }>()
+  const sent = new Map<string, { to: Address; data: Hex; value: bigint; from?: Address }>()
   const writeContract = vi.fn(async (request?: { address?: Address; abi?: Abi; functionName?: string; args?: readonly unknown[]; value?: bigint; data?: Hex; account?: Address }) => {
     const hash = sentHash((sentCount += 1))
     if (request?.address && (request.data || (request.abi && request.functionName))) {
-      sent.set(hash.toLowerCase(), { to: request.address, value: request.value ?? 0n,
+      sent.set(hash.toLowerCase(), { to: request.address, value: request.value ?? 0n, from: request.account ?? account,
         data: request.data ?? encodeFunctionData({ abi: request.abi!, functionName: request.functionName!, args: request.args ?? [] } as never) })
     }
     return hash
@@ -148,7 +148,7 @@ function createFakeWallet() {
     confirm(hash: Hex, blockNumber = 10n, status: Receipt['status'] = 'success') {
       const key = hash.toLowerCase()
       const receipt: Receipt = { status, blockNumber, transactionHash: hash, blockHash: MINED_BLOCK,
-        transactionIndex: 0, from: account ?? ('0x0000000000000000000000000000000000000000' as Address), to: sent.get(key)?.to ?? null, logs: [] }
+        transactionIndex: 0, from: sent.get(key)?.from ?? account ?? ('0x0000000000000000000000000000000000000000' as Address), to: sent.get(key)?.to ?? null, logs: [] }
       receipts.set(key, receipt)
       for (const { resolve } of awaiting.get(key) ?? []) resolve(receipt)
       awaiting.delete(key)

@@ -292,12 +292,10 @@ async function replanAfterStop({
   reviewLabel,
   stoppedAction,
   stoppedError,
-  finalAction,
 }: {
   reviewLabel: string
   stoppedAction: string
   stoppedError: string
-  finalAction: string
 }) {
   expect(action().textContent).toBe(stoppedAction)
   expect(host.textContent).toContain(stoppedError)
@@ -344,7 +342,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       reviewLabel: 'Add liquidity',
       stoppedAction: 'Retry step 3 of 3',
       stoppedError: 'Transaction cancelled.',
-      finalAction: 'Confirm & add liquidity',
     })
   })
 
@@ -373,7 +370,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       reviewLabel: 'Edit position',
       stoppedAction: 'Retry step 3 of 3',
       stoppedError: 'Old failure',
-      finalAction: 'Increase the position',
     })
   })
 
@@ -402,7 +398,6 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
       reviewLabel: 'Edit the market',
       stoppedAction: 'Retry step 2 of 3',
       stoppedError: 'Transaction cancelled.',
-      finalAction: 'Edit the market',
     })
     // Alice's stopped Permit2 authorization went back to the engine only as hers,
     // which it refuses while Bob is connected; Bob's plan starts with his own approval.

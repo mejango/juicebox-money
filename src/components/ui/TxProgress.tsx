@@ -60,7 +60,6 @@ export function TxProgress({
   title,
   rows,
   children,
-  notice,
   steps,
   activeIndex,
   stepsIntro,
@@ -82,8 +81,6 @@ export function TxProgress({
   rows?: readonly TxConfirmRow[]
   /** Extra body content under the rows (warnings, notes, custom grids). */
   children?: ReactNode
-  /** Project notice or disclosure at the end of the body, above the actions. */
-  notice?: ReactNode
   steps: readonly TxStep[]
   activeIndex: number
   stepsIntro?: string
@@ -177,7 +174,6 @@ export function TxProgress({
             </>
           )}
           {error ? <p role="alert" className="wrap-anywhere text-sm text-red-600">{typeof error === 'string' ? <LinkedText text={transactionMessage(error)} /> : error}</p> : null}
-          {notice}
         </div>
         {complete || next || !busy || onCancel ? (
           <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-bone px-5 py-4">

@@ -165,7 +165,7 @@ describe('aggregate token action reviews', () => {
     expect(text(renderer.root)).toContain('different calls')
     await click(renderer, 'Resume original batch')
     expect(mocks.run).toHaveBeenCalledOnce()
-    expect(mocks.run.mock.calls[0][0].calls).toEqual(mocks.saved.calls)
+    expect(mocks.run.mock.calls[0][0].calls).toEqual(mocks.saved!.calls)
     expect(mocks.run.mock.calls[0][0].expectedBatchId).toBe('batch-2')
   })
 

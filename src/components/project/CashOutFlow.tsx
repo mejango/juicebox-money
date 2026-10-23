@@ -34,7 +34,8 @@ import {
 import { useReadContract, usePublicClient } from 'wagmi'
 import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
-import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
+import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
+import { sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import {
   cashOutExecutionErrorMessage,
@@ -107,7 +108,10 @@ export function CashOutPanel({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
   const tx = useReviewedAction(chainId)
-  const approveTx = useReviewedAction(chainId)
+  /** The dialog step the run is on, once it started. */
+  const [runStep, setRunStep] = useState(-1)
+  /** The run sent its cash-out: a settled approval alone sold nothing. */
+  const [finalSent, setFinalSent] = useState(false)
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
@@ -347,11 +351,11 @@ export function CashOutPanel({
       Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800)
 
   useEffect(() => {
-    if (approveTx.phase === 'success') {
+    if (tx.phase === 'success') {
       void refetchTokenAllowance()
       void refetchPermit2Allowance()
     }
-  }, [approveTx.phase, refetchTokenAllowance, refetchPermit2Allowance])
+  }, [tx.phase, refetchTokenAllowance, refetchPermit2Allowance])
 
   // A cleared approval stops being "needed", so the queue is built from the
   // approvals this sale ever required — otherwise a finished step disappears
@@ -396,8 +400,10 @@ export function CashOutPanel({
     route !== undefined &&
     route.expectedReturn <= 0n
 
-  const busy = tx.busy || approveTx.busy
-  const success = tx.phase === 'success'
+  const busy = tx.busy
+  const success = tx.phase === 'success' && finalSent
+  /** A Safe executed an approval it was proposed: the sale is reviewed next. */
+  const approvalOnly = tx.phase === 'success' && !finalSent
 
   useEffect(() => {
     if (success) refetchBalance()
@@ -430,7 +436,9 @@ export function CashOutPanel({
   ]
   const cashOutActiveIndex = success
     ? cashOutSteps.length
-    : needsTokenApproval
+    : runStep >= 0
+      ? runStep
+      : needsTokenApproval
       ? requiredApprovals.indexOf('token')
       : needsRouterApproval
         ? requiredApprovals.indexOf('router')
@@ -505,9 +513,43 @@ export function CashOutPanel({
     }
   }
 
+  /** What the cash-out's review shows above its calls. */
+  const reviewRows = (plan: CashOutPlan): TxConfirmRow[] => {
+    const rows: TxConfirmRow[] = [
+      {
+        label: plan.kind === 'pool' ? 'Sell' : 'Cash out',
+        value: `${formatTokenAmount(cashOutCount, 18)} ${holdingsSymbol}`,
+        strong: true,
+      },
+      { label: 'On', value: chainName(chainId) },
+      {
+        label: 'You get at least',
+        value: `${formatTokenAmount(plan.minimumReturn, receiveDecimals)} ${receiveSymbol}`,
+        strong: true,
+      },
+    ]
+    if (plan.kind === 'treasury' && plan.venue === 'treasury' && plan.fee > 0n) {
+      rows.push({
+        label: 'Fee',
+        value: `${formatTokenAmount(plan.fee, receiveDecimals)} ${receiveSymbol}`,
+      })
+    }
+    rows.push({
+      label: 'Route',
+      value:
+        plan.kind === 'pool'
+          ? 'Sell on the market'
+          : plan.venue === 'amm'
+            ? 'Market trade through the payment contract'
+            : 'Project treasury',
+    })
+    return rows
+  }
+
   const cashOut = async () => {
     if (!plan || !address || busy) return
     setErrorMsg(null)
+    setFinalSent(false)
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
     const cashOutKey = cashOutIntent({ chainId, project: projectId, holder: reviewedAccount, beneficiary: reviewedAccount })
@@ -517,41 +559,6 @@ export function CashOutPanel({
       if (plan.kind === 'pool') {
         if (market?.status !== 'pool' || !projectToken || !swapDeployment) {
           throw new Error('No direct sell route is available.')
-        }
-        if (needsTokenApproval) {
-          await approveTx.run({
-            account: reviewedAccount,
-            calls: [reviewedCall(
-              buildTokenApproval({
-                chainId,
-                token: projectToken.address,
-                spender: swapDeployment.permit2,
-                amount: cashOutCount,
-              }),
-              { intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
-            )],
-          })
-          return
-        }
-        if (needsRouterApproval) {
-          const approval = buildPermit2ApproveTx({
-            chainId,
-            token: projectToken.address,
-            amount: cashOutCount,
-            expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-          })
-          await approveTx.run({
-            account: reviewedAccount,
-            calls: [reviewedCall(
-              {
-                ...approval,
-                args: approval.args as unknown as readonly unknown[],
-                label: 'Approve swap router',
-              },
-              { intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: approval.args[1] as string }) },
-            )],
-          })
-          return
         }
         const refreshedCashOut = await refetchCashOutRoute()
         if (
@@ -590,24 +597,61 @@ export function CashOutPanel({
           recipient: reviewedAccount,
           deadline: swapDeadline(tx.isSafe),
         })
+        // Each approval the sale needs, then the sale: one review and one run, each step simulated where the one before it landed.
+        const routerApproval = buildPermit2ApproveTx({
+          chainId,
+          token: projectToken.address,
+          amount: cashOutCount,
+          expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+        })
+        const approvals = [
+          ...(needsTokenApproval ? [reviewedCall(
+            buildTokenApproval({
+              chainId,
+              token: projectToken.address,
+              spender: swapDeployment.permit2,
+              amount: cashOutCount,
+            }),
+            { intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
+          )] : []),
+          ...(needsRouterApproval ? [reviewedCall(
+            {
+              ...routerApproval,
+              args: routerApproval.args as unknown as readonly unknown[],
+              label: 'Approve swap router',
+            },
+            { intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: routerApproval.args[1] as string }) },
+          )] : []),
+        ].map((call, index) => index > 0 ? { ...call, dependsOnPrior: true } : call)
+        const sale = reviewedCall(
+          {
+            ...request,
+            args: request.args as unknown as readonly unknown[],
+            label:
+              'Sell claimed project tokens through the best available pool route',
+          },
+          {
+            // Its deadline and minimum regenerate on retry: held by what the user chose.
+            intent: cashOutKey,
+            legacy: cashOutLegacy,
+            ...(approvals.length ? { dependsOnPrior: true } : {}),
+          },
+        )
+        const scope = `jbm:cash-out:${chainId}:${projectId}`
+        const calls = await sequenceCalls(scope, reviewedAccount, [...approvals, sale])
+        /** A run step's place in the dialog's queue: the sale is always its last step. */
+        const shown = (step: number) => Math.max(0, cashOutSteps.length - calls.length + step)
         setUsedDirectSell(true)
+        setRunStep(shown(0))
         await tx.run({
           account: reviewedAccount,
-          calls: [reviewedCall(
-            {
-              ...request,
-              args: request.args as unknown as readonly unknown[],
-              label:
-                'Sell claimed project tokens through the best available pool route',
-            },
-            {
-              // Its deadline and minimum regenerate on retry: held by what the user chose.
-              intent: cashOutKey,
-              legacy: cashOutLegacy,
-              // An approval sent just before took effect here.
-              ...(approveTx.receipt ? { simulationBlockNumber: approveTx.receipt.blockNumber } : {}),
-            },
-          )],
+          calls,
+          scope,
+          context: contextRows(reviewRows(plan)),
+          onSubmitted: (_call, step) => {
+            setRunStep(shown(step))
+            if (step === calls.length - 1) setFinalSent(true)
+          },
           description: minimumDropNotice({
             displayedMinimum: plan.minimumReturn,
             freshMinimum: refreshedBest.minimumReturn,
@@ -624,6 +668,8 @@ export function CashOutPanel({
         account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
         calls: [reviewedCall(plan.request, { intent: cashOutKey, legacy: cashOutLegacy })],
+        context: contextRows(reviewRows(plan)),
+        onSubmitted: () => setFinalSent(true),
         description: plan.reviewNotice,
       })
     } catch (e) {
@@ -642,9 +688,9 @@ export function CashOutPanel({
   const closeReview = () => {
     setPlan(null)
     setErrorMsg(null)
+    setRunStep(-1)
     if (success) return
     tx.dismiss()
-    approveTx.dismiss()
   }
 
   const confirmDialog = plan ? (
@@ -659,44 +705,15 @@ export function CashOutPanel({
             ? 'Confirm pool sale'
             : 'Confirm cash out'
       }
-      rows={(() => {
-        const rows: TxConfirmRow[] = [
-          {
-            label: plan.kind === 'pool' ? 'Sell' : 'Cash out',
-            value: `${formatTokenAmount(cashOutCount, 18)} ${holdingsSymbol}`,
-            strong: true,
-          },
-          { label: 'On', value: chainName(chainId) },
-          {
-            label: 'You get at least',
-            value: `${formatTokenAmount(plan.minimumReturn, receiveDecimals)} ${receiveSymbol}`,
-            strong: true,
-          },
-        ]
-        if (plan.kind === 'treasury' && plan.venue === 'treasury' && plan.fee > 0n) {
-          rows.push({
-            label: 'Fee',
-            value: `${formatTokenAmount(plan.fee, receiveDecimals)} ${receiveSymbol}`,
-          })
-        }
-        rows.push({
-          label: 'Route',
-          value:
-            plan.kind === 'pool'
-              ? 'Sell on the market'
-              : plan.venue === 'amm'
-                ? 'Market trade through the payment contract'
-                : 'Project treasury',
-        })
-        return rows
-      })()}
+      rows={reviewRows(plan)}
       steps={cashOutSteps}
       activeIndex={cashOutActiveIndex}
       busy={busy}
-      complete={success || tx.phase === 'submitted' || approveTx.phase === 'submitted' || tx.phase === 'unconfirmed' || approveTx.phase === 'unconfirmed'}
+      complete={success || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
       status={
-        tx.notice || approveTx.notice ? (
-          (tx.notice ?? approveTx.notice)
+        approvalOnly ? 'Approval confirmed. Continue to the sale.'
+        : tx.notice ? (
+          tx.notice
         ) : tx.phase === 'pending' && txUrl ? (
           <>
             Waiting for confirmation —{' '}
@@ -711,11 +728,10 @@ export function CashOutPanel({
           </>
         ) : null
       }
-      error={errorMsg ?? tx.error ?? approveTx.error}
+      error={errorMsg ?? tx.error}
       onClose={closeReview}
       start={() => void cashOut()}
-      startKey={`${needsTokenApproval}:${needsRouterApproval}`}
-      next={!busy && !success && !!(errorMsg ?? tx.error ?? approveTx.error) ? { label: 'Try again', onClick: () => void cashOut() } : null}
+      next={!busy && !success && (approvalOnly || !!(errorMsg ?? tx.error)) ? { label: approvalOnly ? 'Continue' : 'Try again', onClick: () => void cashOut() } : null}
     />
   ) : preparing ? (
     <TxProgress

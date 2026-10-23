@@ -6,7 +6,7 @@
  * recovery rule), never sent again, and never a dead end.
  */
 
-import { act, type ReactNode } from 'react'
+import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { encodeFunctionData, parseAbi, type Address, type Hex } from 'viem'
 import { beforeAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -208,7 +208,7 @@ describe('a saved launch restored on the create page', () => {
 
     // Past the hold's window with the hash never found, its warned exit appears.
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
-    await settle()
+    for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     await act(async () => exit!.click())
@@ -243,7 +243,7 @@ describe('a saved launch restored on the create page', () => {
     await mount()
     await resume()
     await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
-    await settle()
+    for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
     // The launch mines just as the user takes the exit: the exit's own check settles it.

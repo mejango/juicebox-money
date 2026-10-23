@@ -57,7 +57,7 @@ vi.mock('@/components/ui/TxProgress', async original => {
   const actual = await original<typeof import('@/components/ui/TxProgress')>()
   return { ...actual, TxProgress: ({ title, start, startKey, next, status, error, children, rows, complete, onClose, busy }: ComponentProps<typeof actual.TxProgress>) => {
     actual.useStartOnce(true, !!complete, start, startKey)
-    return createElement('section', null, title, status, error, children, ...rows.map(row => createElement('p', { key: String(row.label) }, row.label, row.value)), createElement('button', { onClick: onClose, disabled: busy }, 'Close'), complete ? createElement('button', { onClick: onClose }, 'Done') : next ? createElement('button', { onClick: next.onClick, disabled: busy || next.disabled }, next.label) : null)
+    return createElement('section', null, title, status, error, children, ...(rows ?? []).map(row => createElement('p', { key: String(row.label) }, row.label, row.value)), createElement('button', { onClick: onClose, disabled: busy }, 'Close'), complete ? createElement('button', { onClick: onClose }, 'Done') : next ? createElement('button', { onClick: next.onClick, disabled: busy || next.disabled }, next.label) : null)
   } }
 })
 import { wallet } from '../support/fake-wallet'

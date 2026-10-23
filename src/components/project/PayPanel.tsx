@@ -85,7 +85,8 @@ import { assertReviewedAccountConnected } from "@/lib/wallet-context";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
-import { loadReviewEngine, preloadReview } from "@/lib/preload-review";
+import { preloadReview } from "@/lib/preload-review";
+import { sequenceCalls } from "@/lib/reviewed-send";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { useShop721 } from '@/hooks/useShop721'
@@ -1401,24 +1402,15 @@ export function PayPanel({
       // An approval and its payment resume as one action after a reload.
       const scope = `jbm:pay:${chainId}:${projectId}:${reviewed.terminal}:${reviewed.token}`;
       // The approval and the payment are one review: the payment simulates on the approval's receipt block.
-      let calls = steps.map((action, index) => reviewedCall(action.request, {
+      const fresh = steps.map((action, index) => reviewedCall(action.request, {
         intent: action.intent,
         legacy: action.legacy,
         ...(index > 0 ? { dependsOnPrior: true } : { simulationBlockNumber: approvalBlock }),
       }));
-      let kinds = steps.map(step => step.kind);
-      // Every step above is read again from the chain, so an earlier run's unsent rest starts over.
-      const engine = await loadReviewEngine();
-      const unfinished = engine.findReviewedSequence(scope, account);
-      if (unfinished) {
-        try {
-          await engine.discardReviewedSequence(unfinished);
-        } catch {
-          // A held step decides first: the saved run resumes, with its hold's line and exit.
-          calls = unfinished.calls;
-          kinds = calls.length > 1 ? ["token-approval", "payment"] : ["payment"];
-        }
-      }
+      const calls = await sequenceCalls(scope, account, fresh);
+      const kinds: PaymentSequenceAction["kind"][] = calls === fresh
+        ? steps.map(step => step.kind)
+        : calls.length > 1 ? ["token-approval", "payment"] : ["payment"];
       const paid = await tx.run({
         account,
         calls,

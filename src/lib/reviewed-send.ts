@@ -33,3 +33,21 @@ export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
   const { sendReviewed } = await loadReviewEngine()
   return sendReviewed({ ...action, guard: assertNoViewAs }, reviewedSendDeps)
 }
+
+/**
+ * The calls a fresh run of a multi-step action sends under `scope`. Its steps
+ * are read again from the chain, so an earlier run's unsent rest is dropped;
+ * while a step of that run is held, its saved calls resume instead, so the
+ * step's hold decides it. A caller tells the two apart by identity.
+ */
+export async function sequenceCalls<Call>(scope: string, account: `0x${string}`, calls: Call[]): Promise<Call[]> {
+  const engine = await loadReviewEngine()
+  const unfinished = engine.findReviewedSequence(scope, account)
+  if (!unfinished) return calls
+  try {
+    await engine.discardReviewedSequence(unfinished)
+    return calls
+  } catch {
+    return unfinished.calls as Call[]
+  }
+}

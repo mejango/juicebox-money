@@ -10,7 +10,7 @@ type Module = { TxProgress: typeof TxProgress; useStartOnce: typeof useStartOnce
  * `vi.mock('@/components/ui/TxProgress', async original => (await import('../support/tx-progress')).testTxProgress(await original()))`.
  */
 export function testTxProgress<T extends Module>(original: T): T {
-  function TestTxProgress({ open = true, preparing = false, start, startKey, next, onClose, complete, busy, error, status, notice, rows, children, title }: Partial<ComponentProps<typeof TxProgress>>) {
+  function TestTxProgress({ open = true, preparing = false, start, startKey, next, onClose, complete, busy, error, status, rows, children, title }: Partial<ComponentProps<typeof TxProgress>>) {
     original.useStartOnce(open, preparing || !!complete, start, startKey)
     if (!open) return null
     return (
@@ -20,7 +20,6 @@ export function testTxProgress<T extends Module>(original: T): T {
         <p data-status>{status}</p>
         <p data-error>{error}</p>
         {children}
-        {notice}
         {complete
           ? <button type="button" onClick={onClose}>Done</button>
           : <button type="button" onClick={onClose}>Close review</button>}
