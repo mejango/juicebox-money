@@ -8,7 +8,8 @@ import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 
 const saved = vi.hoisted(() => ({ calls: null as unknown[] | null }))
 vi.mock('@/lib/reviewed-send', () => ({
-  sequenceCalls: async (_scope: string, _account: string, calls: unknown[]) => saved.calls ?? calls,
+  SAVED_SEQUENCE_LINE: 'Saved as reviewed.',
+  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls: saved.calls ?? calls, saved: !!saved.calls, scope }),
 }))
 
 type Tx = ReviewedActionState
@@ -159,11 +160,15 @@ describe('useStepRun', () => {
     expect(t.run).toHaveBeenCalledOnce()
   })
 
-  it('continues a held sequence as saved, its steps mapped onto the plan', async () => {
+  it('continues a saved sequence as it was reviewed, never under the new plan\'s summary or checks', async () => {
     saved.calls = [call('mint')]
     const t = await renderRun()
+    t.action.mockImplementation(steps => ({ account: ACCOUNT, scope: 'jbm:liquidity:pool', calls: steps.map(call), context: [{ label: 'Adds', value: '10 JBT' }], reverify: async () => {} }))
     await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
     expect(t.runs[0].action.calls).toEqual([call('mint')])
+    expect(t.runs[0].action).not.toHaveProperty('context')
+    expect(t.runs[0].action).not.toHaveProperty('reverify')
+    expect(t.runs[0].action.description).toBe('Saved as reviewed.')
     await t.submitted(0, H2)
     expect(t.ref.current!.index).toBe(1)
   })

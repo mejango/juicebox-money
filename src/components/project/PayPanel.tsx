@@ -86,7 +86,7 @@ import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
 import { preloadParaHost } from "@/providers/preload-para";
 import { preloadReview } from "@/lib/preload-review";
-import { sequenceCalls } from "@/lib/reviewed-send";
+import { planShown, sequenceCalls } from "@/lib/reviewed-send";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { useShop721 } from '@/hooks/useShop721'
@@ -1407,15 +1407,15 @@ export function PayPanel({
         legacy: action.legacy,
         ...(index > 0 ? { dependsOnPrior: true } : { simulationBlockNumber: approvalBlock }),
       }));
-      const calls = await sequenceCalls(scope, account, fresh);
-      const kinds: PaymentSequenceAction["kind"][] = calls === fresh
+      const { calls, saved, scope: runScope } = await sequenceCalls(scope, account, fresh);
+      const kinds: PaymentSequenceAction["kind"][] = !saved
         ? steps.map(step => step.kind)
         : calls.length > 1 ? ["token-approval", "payment"] : ["payment"];
       const paid = await tx.run({
         account,
         calls,
-        context: sequenceContext,
-        scope,
+        ...planShown(saved, { context: sequenceContext }),
+        scope: runScope,
         assertWriteState: () => writeState.current(reviewed),
         onSubmitted: (_call, step) => {
           setSequenceActionIndex(sequenceActions.findIndex(action => action.kind === kinds[step]));

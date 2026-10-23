@@ -22,7 +22,7 @@ import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
-import { sequenceCalls } from '@/lib/reviewed-send'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { contextRows, TxProgress } from '@/components/ui/TxProgress'
@@ -490,7 +490,7 @@ function RepayFlow({
     })
     const fresh = approve ? [reviewedCall(approve, { intent: plan.intents.approve }), repay] : [repay]
     const scope = `jbm:repay:${chainId}:${loan.id}`
-    const calls = await sequenceCalls(scope, plan.account, fresh)
+    const { calls, saved, scope: runScope } = await sequenceCalls(scope, plan.account, fresh)
     // The dialog's steps: a held sequence resumes as saved, and a continued one is the repayment alone.
     const total = plan.approve ? 2 : 1
     const shown = (step: number) => Math.max(0, total - calls.length + step)
@@ -498,9 +498,9 @@ function RepayFlow({
     setRunStep(shown(0))
     await tx.run({
       account: plan.account,
-      scope,
+      scope: runScope,
       calls,
-      context: contextRows(repayRows(plan)),
+      ...planShown(saved, { context: contextRows(repayRows(plan)) }),
       onSubmitted: (_call, step) => {
         setRunStep(shown(step))
         if (shown(step) === total - 1) setRepaySent(true)

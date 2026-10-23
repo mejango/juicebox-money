@@ -33,7 +33,7 @@ import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
-import { sequenceCalls } from '@/lib/reviewed-send'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
@@ -267,7 +267,7 @@ export function GetLoanFlow({
         permissionIds: [BURN_TOKENS],
       }))
       const scope = `jbm:loan:${chainId}:${projectId}`
-      const calls = await sequenceCalls(scope, r.account, has ? [borrow] : [permission, borrow])
+      const { calls, saved, scope: runScope } = await sequenceCalls(scope, r.account, has ? [borrow] : [permission, borrow])
       const borrowIndex = r.needsPermission ? 1 : 0
       /** A run step's dialog step: the permission first when the run has one. */
       const shown = (step: number) => calls.length > 1 && step === 0 ? 0 : borrowIndex
@@ -276,8 +276,8 @@ export function GetLoanFlow({
       await borrowTx.run({
         account: r.account,
         calls,
-        scope,
-        context: contextRows(loanRows(r)),
+        scope: runScope,
+        ...planShown(saved, { context: contextRows(loanRows(r)) }),
         onSubmitted: (_call, step) => {
           setLoanStep(shown(step))
           if (shown(step) === borrowIndex) setBorrowSent(true)

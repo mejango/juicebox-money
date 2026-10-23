@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Hex } from 'viem'
 import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
 import { revertedReceipt } from '@/lib/reviewed-call'
-import { sequenceCalls } from '@/lib/reviewed-send'
+import { SAVED_SEQUENCE_LINE, sequenceCalls } from '@/lib/reviewed-send'
 
 /** A plan's whole run: one reviewed call per step, in order, saved under `scope` so a stopped run resumes. */
 export type StepRunAction = ReviewedRun & { scope: string }
@@ -48,7 +48,7 @@ export function useStepRun<Step>({
   // what renders.
   const run = useRef({
     steps: [] as readonly Step[],
-    action: null as StepRunAction | null,
+    action: null as ReviewedRun | null,
     running: false,
     /** Other work holds the run (see `hold`). */
     holding: false,
@@ -140,14 +140,15 @@ export function useStepRun<Step>({
     async (steps: readonly Step[]) => {
       const fresh = run.current.running || !steps.length ? null : action(steps)
       if (!fresh) return
-      const current = { steps, action: fresh, running: true, holding: false, submitted: null, waiting: null }
+      const current: typeof run.current = { steps, action: fresh, running: true, holding: false, submitted: null, waiting: null }
       run.current = current
       setIndex(0)
       setRunSteps(steps)
       setRunning(true)
-      const calls = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
+      const { calls, saved, scope } = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
       if (run.current !== current) return
-      current.action = { ...fresh, calls }
+      // A saved run continues as it was reviewed: never under this plan's summary or checks.
+      current.action = saved ? { account: fresh.account, scope, calls, description: SAVED_SEQUENCE_LINE } : { ...fresh, calls, scope }
       await go(current)
     },
     [action, go],

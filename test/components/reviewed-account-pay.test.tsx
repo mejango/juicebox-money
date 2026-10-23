@@ -649,6 +649,58 @@ describe('an approval whose receipt watch gives up', () => {
   })
 })
 
+describe('a payment sequence the page reloads in the middle of', () => {
+  /** The page reloads: a fresh panel, with nothing of the last one but what was saved. */
+  async function reload() {
+    await act(async () => root.unmount())
+    root = createRoot(host)
+  }
+
+  it('sends only the payment after a reload with the approval confirmed', async () => {
+    m.token = 'erc20'
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => wallet.awaits(sentHash(1)))
+    // The payer rejects the payment in the wallet once the approval confirms.
+    wallet.writeContract.mockRejectedValueOnce(Object.assign(new Error('User rejected the request.'), { code: 4001 }))
+    await act(async () => wallet.confirm(sentHash(1)))
+    await waitUntil(() => wallet.writeContract.mock.calls.length === 2)
+    await reload()
+    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => wallet.writeContract.mock.calls.length === 3)
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'pay', 'pay'])
+    expect(wallet.writes().filter(write => write.functionName === 'approve')).toHaveLength(1)
+  })
+
+  it('never pays twice: a payment that landed while away finishes on the saved sequence', async () => {
+    m.token = 'erc20'
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => wallet.awaits(sentHash(1)))
+    await act(async () => wallet.confirm(sentHash(1)))
+    await waitUntil(() => wallet.awaits(sentHash(2)))
+    // The page goes away while the payment confirms: its own wait ends without the receipt.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
+    wallet.giveUp()
+    await act(async () => { await vi.advanceTimersByTimeAsync(200_000) })
+    vi.useRealTimers()
+    await reload()
+    await act(async () => wallet.confirm(sentHash(2)))
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+
+    await enterAmount()
+    // The restored sequence offers its review again; the payer confirms it.
+    if (!wallet.openReviews && button('Pay', false)?.disabled === false) await click('Pay')
+    await confirmReview()
+    await waitUntil(() => false)
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'pay'])
+  })
+})
+
 describe('a held payment whose token the app switched', () => {
   it('refuses the same typed amount in the currency the app fell back to, before the wallet', async () => {
     m.safe = true

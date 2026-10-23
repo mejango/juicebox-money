@@ -35,7 +35,7 @@ import { useReadContract, usePublicClient } from 'wagmi'
 import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
-import { sequenceCalls } from '@/lib/reviewed-send'
+import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import {
   cashOutExecutionErrorMessage,
@@ -638,7 +638,7 @@ export function CashOutPanel({
           },
         )
         const scope = `jbm:cash-out:${chainId}:${projectId}`
-        const calls = await sequenceCalls(scope, reviewedAccount, [...approvals, sale])
+        const { calls, saved, scope: runScope } = await sequenceCalls(scope, reviewedAccount, [...approvals, sale])
         /** A run step's place in the dialog's queue: the sale is always its last step. */
         const shown = (step: number) => Math.max(0, cashOutSteps.length - calls.length + step)
         setUsedDirectSell(true)
@@ -646,18 +646,20 @@ export function CashOutPanel({
         await tx.run({
           account: reviewedAccount,
           calls,
-          scope,
-          context: contextRows(reviewRows(plan)),
+          scope: runScope,
+          ...planShown(saved, {
+            context: contextRows(reviewRows(plan)),
+            description: minimumDropNotice({
+              displayedMinimum: plan.minimumReturn,
+              freshMinimum: refreshedBest.minimumReturn,
+              decimals: receiveDecimals,
+              symbol: receiveSymbol,
+            }),
+          }),
           onSubmitted: (_call, step) => {
             setRunStep(shown(step))
             if (step === calls.length - 1) setFinalSent(true)
           },
-          description: minimumDropNotice({
-            displayedMinimum: plan.minimumReturn,
-            freshMinimum: refreshedBest.minimumReturn,
-            decimals: receiveDecimals,
-            symbol: receiveSymbol,
-          }),
         })
         return
       }

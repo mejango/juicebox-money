@@ -38,7 +38,7 @@ vi.mock('@/hooks/useReviewedAction', async () => {
   const { engine } = await import('../support/lp-flow-harness')
   return { ...(await import('@/lib/reviewed-call')), txPhaseLabel: (await import('@/hooks/useReviewedAction')).txPhaseLabel, useReviewedAction: () => engine.useReviewedAction() }
 })
-vi.mock('@/lib/reviewed-send', () => ({ sequenceCalls: async (_scope: string, _account: string, calls: unknown[]) => calls }))
+vi.mock('@/lib/reviewed-send', () => ({ SAVED_SEQUENCE_LINE: 'saved', planShown: (saved: boolean, shown: object) => (saved ? { description: 'saved' } : shown), sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls, saved: false, scope }) }))
 vi.mock('wagmi', async importOriginal => ({
   ...(await importOriginal<typeof import('wagmi')>()),
   usePublicClient: () => client,
