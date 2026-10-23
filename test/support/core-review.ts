@@ -45,8 +45,8 @@ type Engine = typeof import('@bananapus/nana-sdk-core/review')
 /**
  * Core's send and sign as a lib test needs them, over its own wallet doubles:
  * one prompt of core's model (`coreReviews`), then for each call the chain
- * switch, `reverify`,
- * the final gate, `beforeWallet`, the send and its receipt, telling the
+ * switch, `reverify`, `beforeWallet`, the final gate,
+ * the send and its receipt, telling the
  * action's callbacks as core does. A Safe app's first send is its proposal.
  * Core's own tests cover its holds, journals and simulations; this keeps a
  * jbm test on jbm's checks around them.
@@ -74,9 +74,19 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     for (const [step, call] of action.calls.entries()) {
       await switchChain(call.chainId)
       await action.reverify?.(call, step, undefined)
-      action.assertWriteState?.()
-      await action.beforeWallet?.(call, step)
       let hash: Hex
+      try {
+        await action.beforeWallet?.(call, step)
+      } catch (error) {
+        await action.onUnsent?.(call, step)
+        throw error
+      }
+      try {
+        action.assertWriteState?.()
+      } catch (error) {
+        await action.onUnsent?.(call, step)
+        throw error
+      }
       try {
         // A Safe app proposes with safeTxGas 0, whatever gas the call names.
         hash = await send(safe() ? { ...call, gas: 0n } : call)

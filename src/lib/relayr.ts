@@ -1138,7 +1138,8 @@ export async function relayrPay({
   const { sendReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
   let details = reviewed
   let walletOpened = false
-  let unsent = false
+  /** The last gate passed after onSending: from here an error may come from the wallet. */
+  let ready = false
   let hash: Hex | undefined
   let payments: RelayrSentPayment[] = [...sent]
   let receipt: TransactionReceipt
@@ -1170,12 +1171,14 @@ export async function relayrPay({
         if (sent.length) await requireRelayrRetry(relayrChainClient, { payments: sent, from: expectedAccount, bundleUuid: details.bundleUuid })
         assertReadyToPay()
       },
-      assertWriteState: assertReadyToPay,
+      assertWriteState: () => {
+        assertReadyToPay()
+        if (walletOpened) ready = true
+      },
       beforeWallet: async () => {
         await onSending?.(details)
         walletOpened = true
       },
-      onUnsent: () => { unsent = true },
       onSubmitted: async (_call, _step, submitted) => {
         hash = submitted
         // Once the wallet returns a hash, a storage, receipt or proof failure is an
@@ -1194,7 +1197,7 @@ export async function relayrPay({
     // A reverted payment is proven below, as its proof decides a reverted quote.
     if (hash && error instanceof ReviewedCallRevertedError) receipt = error.receipt
     else if (hash) throw error instanceof RelayrPaymentSubmittedError ? error : new RelayrPaymentSubmittedError(hash, chainId)
-    else if (walletOpened && unsent && !isDefiniteWalletRejection(relayrWalletPaymentError(error))) {
+    else if (walletOpened && !ready) {
       // The saved marker can be withdrawn because the wallet has not been invoked.
       throw new RelayrPaymentNotSentError(error)
     } else if (walletOpened) {
