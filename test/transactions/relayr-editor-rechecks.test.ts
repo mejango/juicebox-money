@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
   clients: new Map<number, unknown>(),
   wallet: { signTypedData: vi.fn(), sendTransaction: vi.fn() },
   connectedWallet: vi.fn(),
-  requireReview: vi.fn(),
   chooseFunding: vi.fn(),
   identity: vi.fn(),
   current: vi.fn(),
@@ -37,9 +36,20 @@ vi.mock('@/lib/wallet-core', () => ({
 }))
 vi.mock('@/lib/transaction-review', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/transaction-review')>(),
-  requireTransactionReview: mocks.requireReview,
   requireFundingChainSelection: mocks.chooseFunding,
 }))
+vi.mock('@/lib/reviewed-send', () => ({ reviewedSendDeps: {} }))
+/** Core's review and signature over this test's wallet. */
+vi.mock('@/lib/preload-review', async () => {
+  const { fakeEngine } = await import('../support/core-review')
+  const engine = fakeEngine({
+    switchChain: async chainId => { await mocks.connectedWallet(chainId, {}) },
+    send: async ({ chainId, to, data, value, gas }) =>
+      mocks.wallet.sendTransaction({ account: mocks.account, chain: { id: chainId }, to, data, value, gas }),
+    sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
+  })
+  return { loadReviewEngine: () => engine }
+})
 vi.mock('@/lib/safe-connector', async importOriginal => ({
   ...await importOriginal<typeof import('@/lib/safe-connector')>(),
   isSafeConnection: () => false,
@@ -182,7 +192,6 @@ beforeEach(() => {
     mocks.chainId = chainId
     return { wallet: mocks.wallet, account: ALICE }
   })
-  mocks.requireReview.mockResolvedValue(undefined)
   mocks.chooseFunding.mockRejectedValue(new Error('Funding chain selection cancelled. Nothing was sent.'))
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
   mocks.permissions.mockResolvedValue(false)
