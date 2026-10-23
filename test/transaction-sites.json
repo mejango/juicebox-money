@@ -3,23 +3,13 @@
   "reviewedActions": {
     "src/components/project/AddLiquidityFlow.tsx": {
       "hooks": 1,
-      "sends": 3,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "approve-token-for-permit2",
+          "id": "approve-and-mint-liquidity",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "authorize-position-manager",
-          "actions": [
-            "Authorize the Uniswap position manager"
-          ]
-        },
-        {
-          "id": "mint-liquidity-position",
-          "actions": [
+            "Approve an ERC-20",
+            "Authorize the Uniswap position manager",
             "Add Uniswap V4 liquidity"
           ]
         }
@@ -38,24 +28,13 @@
       ]
     },
     "src/components/project/CashOutFlow.tsx": {
-      "hooks": 2,
-      "sends": 4,
+      "hooks": 1,
+      "sends": 2,
       "sendSites": [
         {
-          "id": "approve-project-token-for-direct-sell",
+          "id": "approve-and-sell-on-pool",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "authorize-direct-sell-router",
-          "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "sell-project-token-on-pool",
-          "actions": [
+            "Approve an ERC-20",
             "Swap project tokens"
           ]
         },
@@ -69,23 +48,13 @@
     },
     "src/components/project/EditPositionPanel.tsx": {
       "hooks": 1,
-      "sends": 3,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "approve-token-for-permit2",
+          "id": "approve-and-edit-liquidity",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "authorize-position-manager",
-          "actions": [
-            "Authorize the Uniswap position manager"
-          ]
-        },
-        {
-          "id": "edit-liquidity-position",
-          "actions": [
+            "Approve an ERC-20",
+            "Authorize the Uniswap position manager",
             "Edit Uniswap V4 liquidity"
           ]
         }
@@ -104,18 +73,13 @@
       ]
     },
     "src/components/project/GetLoanFlow.tsx": {
-      "hooks": 2,
-      "sends": 2,
+      "hooks": 1,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "borrow-after-permission",
+          "id": "permit-and-borrow",
           "actions": [
-            "Borrow or repay"
-          ]
-        },
-        {
-          "id": "grant-loan-burn-permission",
-          "actions": [
+            "Borrow or repay",
             "Add or revoke permissions"
           ]
         }
@@ -152,18 +116,13 @@
       ]
     },
     "src/components/project/LoansSection.tsx": {
-      "hooks": 2,
-      "sends": 2,
+      "hooks": 1,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "repay-loan",
+          "id": "approve-and-repay-loan",
           "actions": [
-            "Borrow or repay"
-          ]
-        },
-        {
-          "id": "approve-loan-repayment",
-          "actions": [
+            "Borrow or repay",
             "Approve an ERC-20"
           ]
         }
@@ -171,23 +130,13 @@
     },
     "src/components/project/MarketEditPanel.tsx": {
       "hooks": 1,
-      "sends": 3,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "approve-token-for-permit2",
+          "id": "approve-and-edit-market",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "authorize-position-manager",
-          "actions": [
-            "Authorize the Uniswap position manager"
-          ]
-        },
-        {
-          "id": "edit-market",
-          "actions": [
+            "Approve an ERC-20",
+            "Authorize the Uniswap position manager",
             "Make or edit a Uniswap V4 market"
           ]
         }
@@ -218,18 +167,13 @@
       ]
     },
     "src/components/project/PayPanel.tsx": {
-      "hooks": 2,
-      "sends": 2,
+      "hooks": 1,
+      "sends": 1,
       "sendSites": [
         {
-          "id": "approve-payment-token",
+          "id": "approve-and-pay",
           "actions": [
-            "Approve an ERC-20"
-          ]
-        },
-        {
-          "id": "execute-payment-route",
-          "actions": [
+            "Approve an ERC-20",
             "Pay a project",
             "Add to treasury balance"
           ]

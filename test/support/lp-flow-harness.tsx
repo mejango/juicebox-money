@@ -17,15 +17,24 @@ const IDLE: EngineState = { phase: 'idle', hash: null, receipt: null, error: nul
 
 /**
  * A stand-in for useReviewedAction whose runs the test answers, keeping the
- * engine's rules: a run it takes shows its hash as pending before it
- * resolves, a run it does not take (a closed review) changes nothing and
- * answers null, and `reset` clears the last result. `send` records each run
- * as the call its flow built and the run's options with the call's keys.
+ * engine's rules: each step it takes shows its hash as pending, a step it
+ * does not take (a closed review) changes nothing and ends the run with null,
+ * the next step goes only once the one before it confirmed, and `reset`
+ * clears the last result. `send` records each step as the call its flow built
+ * and the run's options with the call's keys.
  */
 function fakeReviewedAction() {
   let state = IDLE
   const listeners = new Set<() => void>()
   const waiting: ((hash: Hex | null) => void)[] = []
+  /** How the step the wallet took ends: confirmed, proposed to a Safe, or stopped. */
+  const saved = new Map<string, { calls: unknown; from: number }>()
+  let settling: ((end: 'confirmed' | 'proposed' | 'stopped') => void) | null = null
+  const settle = (end: 'confirmed' | 'proposed' | 'stopped') => {
+    const next = settling
+    settling = null
+    next?.(end)
+  }
   const set = (next: Partial<EngineState>) => {
     state = { ...state, ...next }
     for (const listener of listeners) listener()
@@ -38,16 +47,33 @@ function fakeReviewedAction() {
   }
   const send = vi.fn(
     (_request: unknown, _options?: unknown) =>
-      new Promise<ReviewedResult | null>(resolve => {
+      new Promise<Hex | null>(resolve => {
         waiting.push(hash => {
           if (hash) set({ phase: 'pending', hash, receipt: null, error: null })
-          resolve(hash ? { status: 'done', hashes: [hash], receipts: [] } : null)
+          resolve(hash)
         })
       }),
   )
-  const run = (action: ReviewedRun) => {
-    const [{ chainId, to, abi, functionName, args, value, label, intent, legacy, simulationBlockNumber, dependsOnPrior }] = action.calls
-    return send({ chainId, address: to, abi, functionName, args, value, label }, { ...action, intent, legacy, simulationBlockNumber, dependsOnPrior })
+  const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
+    const hashes: Hex[] = []
+    // As core: the same calls again under their scope continue after the steps that confirmed.
+    const record = action.scope ? saved.get(action.scope) : undefined
+    const from = record?.calls === action.calls ? record.from : 0
+    if (action.scope) saved.set(action.scope, { calls: action.calls, from })
+    for (const [step, call] of action.calls.entries()) {
+      if (step < from) continue
+      const { chainId, to, abi, functionName, args, value, label, intent, legacy, simulationBlockNumber, dependsOnPrior } = call
+      const hash = await send({ chainId, address: to, abi, functionName, args, value, label }, { ...action, intent, legacy, simulationBlockNumber, dependsOnPrior })
+      if (!hash) return null
+      hashes.push(hash)
+      await action.onSubmitted?.(call, step, hash, { safe: false, adopted: false })
+      const end = await new Promise<'confirmed' | 'proposed' | 'stopped'>(resolve => (settling = resolve))
+      if (end === 'proposed') return { status: 'proposed', step, safeTxHash: hash }
+      if (end === 'stopped') return null
+      if (action.scope) saved.set(action.scope, { calls: action.calls, from: step + 1 })
+    }
+    if (action.scope) saved.delete(action.scope)
+    return { status: 'done', hashes, receipts: [] }
   }
   const reset = vi.fn(() => set(IDLE))
   /** Closing a confirm: the engine forgets its state, as `reset` does here. */
@@ -83,21 +109,27 @@ function fakeReviewedAction() {
     },
     confirm(hash: Hex, blockNumber: bigint) {
       set({ phase: 'success', hash, receipt: { blockNumber, transactionHash: hash }, notice: null })
+      settle('confirmed')
     },
     /** The send went to a Safe, which has not settled it: its confirm can end, showing `notice`. */
     propose(notice: string) {
       set({ phase: 'submitted', notice })
+      settle('proposed')
     },
     /** The receipt watch gave up on the sent step: it may still land, and the engine keeps it locked. */
     unconfirm(error: string) {
       set({ phase: 'unconfirmed', error })
+      settle('stopped')
     },
     fail(error: string) {
       set({ phase: 'error', error })
+      settle('stopped')
     },
     restart() {
       state = IDLE
       waiting.length = 0
+      settling = null
+      saved.clear()
       send.mockClear()
       reset.mockClear()
       dismiss.mockClear()

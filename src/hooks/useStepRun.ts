@@ -2,36 +2,39 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Hex } from 'viem'
-import type { ReviewedActionState } from '@/hooks/useReviewedAction'
+import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
+import { revertedReceipt } from '@/lib/reviewed-call'
+import { sequenceCalls } from '@/lib/reviewed-send'
+
+/** A plan's whole run: one reviewed call per step, in order, saved under `scope` so a stopped run resumes. */
+export type StepRunAction = ReviewedRun & { scope: string }
 
 /**
- * Sends a plan's steps through one reviewed action, each once the step before it
- * confirmed. `send` gets the block the last confirmed step landed in, so a
- * step that spends an approval simulates where that approval is visible.
+ * Sends a plan's steps as one reviewed action: one review, then each step once
+ * the one before it confirmed (core simulates it on that step's block).
  *
- * A confirmation counts only for a step whose send the engine took, and only
- * once. The engine answers null, and changes nothing, for a send it does not
- * take (a closed review, say): the run then stops at that step, and `resume`
- * sends it again. A failed step stops the run the same way. A stopped run
- * belongs to the steps it started with: `stoppedOn` and `resume` answer only
- * for those, so a plan reviewed since can never continue an older one.
+ * The run's calls are frozen when it starts: `resume` sends the same calls, so
+ * core continues the saved sequence at the step it stopped on and never sends
+ * a completed step again. A stopped run belongs to the steps it started with:
+ * `stoppedOn` and `resume` answer only for those, so a plan reviewed since can
+ * never continue an older one.
  *
- * A step whose receipt could not be read suspends the run on Done the same way:
- * the engine keeps that step locked, and the run goes on once its receipt shows.
- *
- * A step proposed to a Safe ends the run on Done. When the Safe executes it
- * while the engine still shows it, it counts as that step's confirmation: the
- * run finishes after the last step, and otherwise stops at the next step,
- * which `resume` sends for review. A proposal that ends without running
- * leaves the run stopped on its step.
+ * A step proposed to a Safe, or one whose receipt could not be read, ends the
+ * run on Done. When it settles while the engine still shows it, it counts as
+ * that step's confirmation: the run finishes after the last step, and
+ * otherwise stops at the next step, which `resume` sends for review.
  */
 export function useStepRun<Step>({
   tx,
   send,
+  action,
   onFinish,
 }: {
   tx: ReviewedActionState
-  send: (step: Step, confirmedAt: bigint | undefined) => Promise<Hex | null>
+  /** The flow's own reviewed send (its hook's `run`), so the send stays in the flow's inventory. */
+  send: ReviewedActionState['run']
+  /** The run for these steps, or null when there is no plan to send. */
+  action: (steps: readonly Step[]) => StepRunAction | null
   /** The last step confirmed, in the transaction `hash`. */
   onFinish: (hash: Hex) => void
 }) {
@@ -39,23 +42,20 @@ export function useStepRun<Step>({
   const [index, setIndex] = useState(0)
   /** The steps the run started with, while it is remembered. */
   const [runSteps, setRunSteps] = useState<readonly Step[] | null>(null)
-  /** The step whose send the engine took and whose confirmation is not counted yet. */
-  const [accepted, setAccepted] = useState<number | null>(null)
   /** The run ended on a step proposed to a Safe. */
   const [proposed, setProposed] = useState(false)
   // Event handlers and send callbacks read these at once; the state above is
   // what renders.
   const run = useRef({
     steps: [] as readonly Step[],
-    index: 0,
+    action: null as StepRunAction | null,
     running: false,
-    /** Other work holds the run (see `hold`); no step is waiting on the engine. */
+    /** Other work holds the run (see `hold`). */
     holding: false,
-    /** The last confirmation counted: one still showing is never counted again. */
-    counted: null as Hex | null,
-    confirmedAt: undefined as bigint | undefined,
-    /** The step the run ended on as a Safe proposal, until the Safe executes it. */
-    proposed: null as number | null,
+    /** The last step the wallet took. */
+    submitted: null as number | null,
+    /** The step the run ended on, proposed or unconfirmed, until it settles. */
+    waiting: null as number | null,
   })
 
   const halt = useCallback(() => {
@@ -63,122 +63,108 @@ export function useStepRun<Step>({
     setRunning(false)
   }, [])
 
-  const sendAt = useCallback(
-    (at: number) => {
-      const current = run.current
-      void send(current.steps[at], current.confirmedAt).then(hash => {
-        if (run.current !== current || !current.running || current.index !== at) return
-        if (hash === null) halt()
-        else setAccepted(at)
-      })
+  const finish = useCallback(
+    (current: typeof run.current, hash: Hex) => {
+      setIndex(current.steps.length)
+      setProposed(false)
+      onFinish(hash)
     },
-    [send, halt],
+    [onFinish],
+  )
+
+  const go = useCallback(
+    async (current: typeof run.current) => {
+      const frozen = current.action!
+      // A held sequence resumes as saved, so its steps map onto the plan's last ones.
+      const shown = (step: number) => Math.max(0, current.steps.length - frozen.calls.length + step)
+      current.running = true
+      current.waiting = null
+      setRunning(true)
+      setProposed(false)
+      tx.reset()
+      const result = await send({
+        ...frozen,
+        onSubmitted: (call, step, hash, sent) => {
+          current.submitted = shown(step)
+          if (run.current === current) setIndex(current.submitted)
+          return frozen.onSubmitted?.(call, step, hash, sent)
+        },
+      })
+      if (run.current !== current) return
+      halt()
+      if (result?.status === 'done') {
+        finish(current, result.hashes.at(-1)!)
+      } else if (result?.status === 'proposed') {
+        current.waiting = shown(result.step)
+        setIndex(current.waiting)
+        setProposed(true)
+      } else if (current.submitted !== null) {
+        // Stopped after the last step the wallet took: the effect below moves
+        // back onto it when that step is the one that reverted or is held.
+        setIndex(current.submitted + 1)
+      }
+    },
+    [tx, send, halt, finish],
   )
 
   useEffect(() => {
     const current = run.current
-    if (!running && current.proposed !== null && tx.phase === 'error') {
+    if (running || current.running) return
+    const failedOnSubmitted = tx.phase === 'unconfirmed' || (tx.phase === 'error' && !!revertedReceipt(tx.failure))
+    if (current.waiting === null && current.submitted !== null && failedOnSubmitted) {
+      setIndex(current.submitted)
+      if (tx.phase === 'unconfirmed') current.waiting = current.submitted
+      return
+    }
+    if (current.waiting === null) return
+    if (tx.phase === 'error') {
       // The proposal ended without running: the run stays stopped on its step.
-      current.proposed = null
+      current.waiting = null
       setProposed(false)
       return
     }
-    // The step the run ended on as a Safe proposal, which the Safe executed.
-    const executed = !running && current.proposed !== null && tx.phase === 'success'
-    if ((!running && !executed) || current.holding) return
-    if (running && tx.phase === 'error') {
-      setAccepted(null)
-      halt()
-      return
-    }
-    // A step whose receipt could not be read ends the run the same way: it is
-    // suspended on that step, nothing else is sent, and when the receipt shows
-    // the step succeeded the run goes on as it does after an executed proposal.
-    if (running && tx.phase === 'unconfirmed') {
-      current.proposed = current.index
-      setAccepted(null)
-      halt()
-      return
-    }
-    // A step proposed to a Safe ends the run: its confirm ends on Done.
-    if (running && tx.phase === 'submitted') {
-      current.proposed = current.index
-      setAccepted(null)
-      setProposed(true)
-      halt()
-      return
-    }
-    const at = executed ? current.proposed : accepted
-    if (tx.phase !== 'success' || at === null || !tx.hash || tx.hash === current.counted) {
-      return
-    }
-    current.counted = tx.hash
-    current.proposed = null
-    setAccepted(null)
+    if (tx.phase !== 'success' || !tx.hash) return
+    const at = current.waiting
+    current.waiting = null
     setProposed(false)
-    const block = tx.receipt?.blockNumber
-    if (block !== undefined && (current.confirmedAt === undefined || block > current.confirmedAt)) {
-      current.confirmedAt = block
-    }
     if (at >= current.steps.length - 1) {
-      current.index = current.steps.length
-      setIndex(current.index)
-      halt()
-      onFinish(tx.hash)
+      finish(current, tx.hash)
       return
     }
-    current.index = at + 1
-    setIndex(current.index)
-    // The step after an executed proposal is reviewed again: the run stops at it.
-    if (executed) return
-    tx.reset()
-    sendAt(current.index)
-  }, [running, accepted, tx, sendAt, halt, onFinish])
+    // The step after a settled proposal is reviewed again: the run stops at it.
+    setIndex(at + 1)
+  }, [running, tx.phase, tx.hash, tx.failure, finish])
 
-  /** Start a new run at the first step. */
+  /** Start a new run at the first step, or continue a held one as it was saved. */
   const start = useCallback(
-    (steps: readonly Step[]) => {
-      if (run.current.running || !steps.length) return
-      run.current = {
-        steps,
-        index: 0,
-        running: true,
-        holding: false,
-        counted: null,
-        confirmedAt: undefined,
-        proposed: null,
-      }
+    async (steps: readonly Step[]) => {
+      const fresh = run.current.running || !steps.length ? null : action(steps)
+      if (!fresh) return
+      const current = { steps, action: fresh, running: true, holding: false, submitted: null, waiting: null }
+      run.current = current
       setIndex(0)
       setRunSteps(steps)
-      setAccepted(null)
-      setProposed(false)
       setRunning(true)
-      tx.reset()
-      sendAt(0)
+      const calls = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
+      if (run.current !== current) return
+      current.action = { ...fresh, calls }
+      await go(current)
     },
-    [tx, sendAt],
+    [action, go],
   )
 
   /**
-   * Send the step the run stopped at again. It refuses (false) for any steps
-   * but the ones the run started with.
+   * Send the run's frozen calls again, so core continues where it stopped. It
+   * refuses (false) for any steps but the ones the run started with.
    */
   const resume = useCallback(
     (steps: readonly Step[]): boolean => {
       const current = run.current
-      if (current.running || steps !== current.steps || current.index >= current.steps.length) {
-        return false
-      }
-      current.running = true
-      current.proposed = null
-      setAccepted(null)
-      setProposed(false)
-      setRunning(true)
-      tx.reset()
-      sendAt(current.index)
+      if (current.running || !current.action || steps !== current.steps || index >= steps.length) return false
+      void go(current)
       return true
     },
-    [tx, sendAt],
+    [go, index],
   )
 
   /** Run other work, such as one Safe batch proposal, as the run: the flow is busy until it ends. */
@@ -201,21 +187,12 @@ export function useStepRun<Step>({
 
   /**
    * Forget the run and reset the engine, whenever the flow drops or replaces
-   * its plan: a stopped step, its error and its confirmed block go with it.
+   * its plan: a stopped step and its error go with it.
    */
   const clear = useCallback(() => {
-    run.current = {
-      steps: [],
-      index: 0,
-      running: false,
-      holding: false,
-      counted: null,
-      confirmedAt: undefined,
-      proposed: null,
-    }
+    run.current = { steps: [], action: null, running: false, holding: false, submitted: null, waiting: null }
     setIndex(0)
     setRunSteps(null)
-    setAccepted(null)
     setProposed(false)
     setRunning(false)
     tx.reset()

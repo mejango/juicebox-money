@@ -38,6 +38,7 @@ vi.mock('@/hooks/useReviewedAction', async () => {
   const { engine } = await import('../support/lp-flow-harness')
   return { ...(await import('@/lib/reviewed-call')), txPhaseLabel: (await import('@/hooks/useReviewedAction')).txPhaseLabel, useReviewedAction: () => engine.useReviewedAction() }
 })
+vi.mock('@/lib/reviewed-send', () => ({ sequenceCalls: async (_scope: string, _account: string, calls: unknown[]) => calls }))
 vi.mock('wagmi', async importOriginal => ({
   ...(await importOriginal<typeof import('wagmi')>()),
   usePublicClient: () => client,
@@ -362,9 +363,9 @@ describe('a stopped liquidity run never continues on a newly reviewed plan', () 
     await settle()
     await review('Edit position')
     await land(H1, H2)
-    // The edit itself fails for Alice: the run stops at step 3 with that error.
-    await act(async () => engine.answer(H3))
+    // The edit itself fails for Alice before it is sent: the run stops at step 3 with that error.
     await act(async () => engine.fail('Old failure'))
+    await act(async () => engine.answer(null))
 
     await replanAfterStop({
       reviewLabel: 'Edit position',

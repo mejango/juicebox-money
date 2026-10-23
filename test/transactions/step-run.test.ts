@@ -1,21 +1,25 @@
 import { createElement, createRef, forwardRef, useImperativeHandle } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { Hex } from 'viem'
-import { describe, expect, it, vi } from 'vitest'
-import type { ReviewedActionState } from '@/hooks/useReviewedAction'
-import { useStepRun } from '@/hooks/useStepRun'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
+
+const saved = vi.hoisted(() => ({ calls: null as unknown[] | null }))
+vi.mock('@/lib/reviewed-send', () => ({
+  sequenceCalls: async (_scope: string, _account: string, calls: unknown[]) => saved.calls ?? calls,
+}))
 
 type Tx = ReviewedActionState
 type Run = ReturnType<typeof useStepRun<string>>
-type Props = {
-  tx: Tx
-  send: (step: string, confirmedAt: bigint | undefined) => Promise<Hex | null>
-  onFinish: (hash: Hex) => void
-}
+type Props = { tx: Tx; send: Tx['run']; action: (steps: readonly string[]) => StepRunAction | null; onFinish: (hash: Hex) => void }
 
+const ACCOUNT = '0x00000000000000000000000000000000000000a1'
 const H1 = `0x${'01'.repeat(32)}` as Hex
 const H2 = `0x${'02'.repeat(32)}` as Hex
 const H3 = `0x${'03'.repeat(32)}` as Hex
+const call = (step: string) => ({ chainId: 1, to: ACCOUNT, data: '0x', value: 0n, label: step }) as unknown as StepRunAction['calls'][number]
 
 const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
   const run = useStepRun<string>(props)
@@ -23,327 +27,168 @@ const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
   return null
 })
 
-/** The engine's state as useReviewedAction reports it, and a send whose answer each test gives. */
+beforeEach(() => {
+  saved.calls = null
+})
+
+/** The engine's state as useReviewedAction reports it, and runs whose ends each test gives. */
 async function renderRun() {
   const ref = createRef<Run>()
   const reset = vi.fn()
-  let tx = { phase: 'idle', hash: null, receipt: null, reset } as unknown as Tx
-  const answers: ((hash: Hex | null) => void)[] = []
-  const send = vi.fn(
-    (_step: string, _confirmedAt: bigint | undefined) =>
-      new Promise<Hex | null>(resolve => answers.push(resolve)),
-  )
-  const onFinish = vi.fn()
+  const runs: { action: ReviewedRun; end: (result: ReviewedResult | null) => Promise<void> }[] = []
   let renderer!: TestRenderer.ReactTestRenderer
+  const onFinish = vi.fn()
+  const action = vi.fn((steps: readonly string[]): StepRunAction => ({ account: ACCOUNT, scope: 'jbm:liquidity:pool', calls: steps.map(call) }))
+  const run = vi.fn((sent: ReviewedRun) => new Promise<ReviewedResult | null>(resolve => {
+    runs.push({ action: sent, end: async result => { await act(async () => resolve(result)) } })
+  }))
+  let tx = { phase: 'idle', hash: null, failure: null, receipt: null, reset, run } as unknown as Tx
+  const render = () => createElement(Harness, { ref, tx, send: run, action, onFinish })
   await act(async () => {
-    renderer = TestRenderer.create(createElement(Harness, { ref, tx, send, onFinish }))
+    renderer = TestRenderer.create(render())
   })
   const engine = async (next: Partial<Tx>) => {
     tx = { ...tx, ...next } as Tx
-    await act(async () => {
-      renderer.update(createElement(Harness, { ref, tx, send, onFinish }))
-    })
+    await act(async () => renderer.update(render()))
   }
-  /**
-   * The engine answers the latest send: a hash it took, or null for one it did
-   * not. The engine shows a taken hash as pending before `send` resolves;
-   * `showFirst: false` answers while it still shows its previous state.
-   */
-  const answer = async (
-    hash: Hex | null,
-    { showFirst = true, send = answers.length - 1 } = {},
-  ) => {
-    if (hash && showFirst) await engine({ phase: 'pending', hash })
-    await act(async () => {
-      answers[send](hash)
-    })
-    if (hash && !showFirst) await engine({ phase: 'pending', hash })
+  /** The wallet took step `step` of the latest run. */
+  const submitted = async (step: number, hash: Hex) => {
+    const latest = runs.at(-1)!.action
+    await act(async () => { await latest.onSubmitted?.(latest.calls[step], step, hash, { safe: false, adopted: false }) })
   }
-  const confirm = (hash: Hex, blockNumber: bigint) =>
-    engine({ phase: 'success', hash, receipt: { blockNumber } as Tx['receipt'] })
-  return { ref, send, reset, onFinish, engine, answer, confirm }
+  return { ref, run, runs, action, reset, onFinish, engine, submitted }
 }
 
 describe('useStepRun', () => {
-  it('sends each step once the one before it confirms, at the block it confirmed in', async () => {
-    const run = await renderRun()
+  it('sends every step as one reviewed run, each after the one before it', async () => {
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['approve', 'permit', 'mint']) })
+    expect(t.run).toHaveBeenCalledOnce()
+    const sent = t.runs[0].action
+    expect(sent.calls.map(c => [c.label, !!c.dependsOnPrior])).toEqual([['approve', false], ['permit', true], ['mint', true]])
+    expect(sent).toMatchObject({ account: ACCOUNT, scope: 'jbm:liquidity:pool' })
+    expect(t.ref.current).toMatchObject({ running: true, index: 0 })
+
+    await t.submitted(1, H2)
+    expect(t.ref.current!.index).toBe(1)
+    await t.runs[0].end({ status: 'done', hashes: [H1, H2, H3], receipts: [] })
+    expect(t.onFinish).toHaveBeenCalledWith(H3)
+    expect(t.ref.current).toMatchObject({ running: false, index: 3 })
+  })
+
+  it('stops after the last step the wallet took, and resumes with the same frozen calls', async () => {
+    const t = await renderRun()
     const plan = ['approve', 'permit', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    expect(run.send).toHaveBeenLastCalledWith('approve', undefined)
-    expect(run.ref.current).toMatchObject({ running: true, index: 0 })
-    expect(run.ref.current!.isRunning()).toBe(true)
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.submitted(0, H1)
+    await t.engine({ phase: 'error' })
+    await t.runs[0].end(null)
+    expect(t.ref.current).toMatchObject({ running: false, index: 1 })
+    expect(t.ref.current!.stoppedOn(plan)).toBe(true)
 
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    expect(run.send).toHaveBeenLastCalledWith('permit', 10n)
-    expect(run.ref.current!.index).toBe(1)
-
-    await run.answer(H2)
-    await run.confirm(H2, 12n)
-    expect(run.send).toHaveBeenLastCalledWith('mint', 12n)
-
-    await run.answer(H3)
-    await run.confirm(H3, 14n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H3)
-    expect(run.send).toHaveBeenCalledTimes(3)
-    // One reset before each send clears the engine's lock and last result.
-    expect(run.reset).toHaveBeenCalledTimes(3)
-    expect(run.ref.current).toMatchObject({ running: false, index: 3 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
-    expect(run.ref.current!.isRunning()).toBe(false)
+    await act(async () => { expect(t.ref.current!.resume(plan)).toBe(true) })
+    expect(t.run).toHaveBeenCalledTimes(2)
+    expect(t.runs[1].action.calls).toBe(t.runs[0].action.calls)
+    expect(t.action).toHaveBeenCalledOnce()
   })
 
-  it('counts a confirmation only for a step whose send the engine took', async () => {
-    const run = await renderRun()
-    const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    expect(run.send).toHaveBeenLastCalledWith('mint', 10n)
-
-    // The engine did not take the mint (its review closed). A success still on
-    // screen, or seen again, is the approval's and never the mint's.
-    await run.answer(null)
-    await run.engine({ phase: 'success', hash: H1 })
-    await run.engine({ phase: 'success', hash: H2 })
-    expect(run.onFinish).not.toHaveBeenCalled()
-    expect(run.send).toHaveBeenCalledTimes(2)
-    expect(run.ref.current).toMatchObject({ running: false, index: 1 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-  })
-
-  it("never counts the last step's confirmation for the next step", async () => {
-    const run = await renderRun()
-    await act(async () => run.ref.current!.start(['approve', 'mint']))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    // The engine takes the mint while it still shows the approval's success.
-    await run.answer(H2, { showFirst: false })
-    expect(run.onFinish).not.toHaveBeenCalled()
-    await run.confirm(H2, 11n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
-  })
-
-  it('waits for the engine to take a send before counting any confirmation', async () => {
-    const run = await renderRun()
-    await act(async () => run.ref.current!.start(['approve', 'mint']))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    // The mint is in review: nothing the engine shows counts for it yet.
-    await run.engine({ phase: 'success', hash: H2 })
-    expect(run.onFinish).not.toHaveBeenCalled()
-    expect(run.send).toHaveBeenCalledTimes(2)
-    expect(run.ref.current).toMatchObject({ running: true, index: 1 })
-
-    await run.answer(H3)
-    await run.confirm(H3, 11n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H3)
-  })
-
-  it('stops at a step the engine did not take, so the flow is not left busy, and resumes from it', async () => {
-    const run = await renderRun()
-    const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    await run.answer(null)
-    await run.engine({ phase: 'idle', hash: null })
-    expect(run.ref.current).toMatchObject({ running: false, index: 1 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-
-    await act(async () => {
-      expect(run.ref.current!.resume(plan)).toBe(true)
-    })
-    expect(run.send).toHaveBeenLastCalledWith('mint', 10n)
-    expect(run.ref.current).toMatchObject({ running: true, index: 1 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
-    await run.answer(H2)
-    await run.confirm(H2, 11n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
-  })
-
-  it('starts over when the first step was not taken', async () => {
-    const run = await renderRun()
-    const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(null)
-    expect(run.ref.current).toMatchObject({ running: false, index: 0 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
-    await act(async () => run.ref.current!.start(plan))
-    expect(run.send).toHaveBeenLastCalledWith('approve', undefined)
-    expect(run.send).toHaveBeenCalledTimes(2)
-  })
-
-  it('ends on a step proposed to a Safe, and stops at the next step for review once the Safe executes it', async () => {
-    const run = await renderRun()
-    const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'submitted' })
-    expect(run.ref.current).toMatchObject({ running: false, proposed: true, index: 0 })
-
-    // Its signers execute it: the engine shows the execution, then its receipt.
-    await run.engine({ phase: 'pending', hash: H2 })
-    await run.confirm(H2, 10n)
-    expect(run.send).toHaveBeenCalledTimes(1)
-    expect(run.onFinish).not.toHaveBeenCalled()
-    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 1 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-
-    await act(async () => {
-      run.ref.current!.resume(plan)
-    })
-    expect(run.send).toHaveBeenLastCalledWith('mint', 10n)
-    await act(async () => run.ref.current!.clear())
-    expect(run.ref.current!.proposed).toBe(false)
-  })
-
-  it('finishes a run whose last step was proposed once the Safe executes it, at once or later', async () => {
-    const run = await renderRun()
-    const plan = ['mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'submitted' })
-    expect(run.ref.current).toMatchObject({ running: false, proposed: true })
-
-    await run.engine({ phase: 'pending', hash: H2 })
-    await run.confirm(H2, 12n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
-    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 1 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
-  })
-
-  it('stops on a proposed step that ends without running, so it can be sent again', async () => {
-    const run = await renderRun()
-    const plan = ['mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'submitted' })
-    // Its deadline passed before the Safe ran it.
-    await run.engine({ phase: 'error' })
-    expect(run.ref.current).toMatchObject({ running: false, proposed: false, index: 0 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-    await act(async () => {
-      run.ref.current!.resume(plan)
-    })
-    expect(run.send).toHaveBeenCalledTimes(2)
-  })
-
-  it('counts nothing for a proposed step once the flow resets its engine', async () => {
-    const run = await renderRun()
-    const plan = ['mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'submitted' })
-    await act(async () => run.ref.current!.clear())
-    await run.confirm(H2, 12n)
-    expect(run.onFinish).not.toHaveBeenCalled()
-  })
-
-  it('stops on a failed step and sends that step again on resume', async () => {
-    const run = await renderRun()
-    const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'error' })
-    expect(run.ref.current).toMatchObject({ running: false, index: 0 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-
-    await act(async () => {
-      run.ref.current!.resume(plan)
-    })
-    expect(run.send).toHaveBeenLastCalledWith('approve', undefined)
-    expect(run.send).toHaveBeenCalledTimes(2)
+  it('stops on the step that reverted', async () => {
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    await t.submitted(1, H2)
+    const failure = Object.assign(new Error('reverted'), { name: 'ReviewedCallRevertedError', receipt: { status: 'reverted' } })
+    await t.engine({ phase: 'error', failure })
+    await t.runs[0].end(null)
+    expect(t.ref.current!.index).toBe(1)
   })
 
   it('belongs to the steps it started with: another plan is never stopped and never resumed', async () => {
-    const run = await renderRun()
+    const t = await renderRun()
     const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    await run.answer(null)
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-
-    // A plan reviewed since, even one with the same steps, cannot continue this run.
-    const reviewedSince = ['approve', 'mint']
-    expect(run.ref.current!.stoppedOn(reviewedSince)).toBe(false)
-    expect(run.ref.current!.stoppedOn(undefined)).toBe(false)
-    await act(async () => {
-      expect(run.ref.current!.resume(reviewedSince)).toBe(false)
-    })
-    expect(run.send).toHaveBeenCalledTimes(2)
-    expect(run.ref.current!.isRunning()).toBe(false)
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.engine({ phase: 'error' })
+    await t.runs[0].end(null)
+    const other = ['approve', 'mint']
+    expect(t.ref.current!.stoppedOn(other)).toBe(false)
+    expect(t.ref.current!.resume(other)).toBe(false)
+    expect(t.run).toHaveBeenCalledOnce()
   })
 
-  it('forgets a stopped run and resets the engine when the plan is dropped', async () => {
-    const run = await renderRun()
+  it('ends on a step proposed to a Safe, and stops at the next step once the Safe executes it', async () => {
+    const t = await renderRun()
     const plan = ['approve', 'mint']
-    await act(async () => run.ref.current!.start(plan))
-    await run.answer(H1)
-    await run.engine({ phase: 'error' })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(true)
-    const resets = run.reset.mock.calls.length
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.engine({ phase: 'submitted' })
+    await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
+    expect(t.ref.current).toMatchObject({ running: false, proposed: true, index: 0 })
 
-    await act(async () => run.ref.current!.clear())
-    expect(run.reset).toHaveBeenCalledTimes(resets + 1)
-    await run.engine({ phase: 'idle', hash: null })
-    expect(run.ref.current).toMatchObject({ running: false, index: 0 })
-    expect(run.ref.current!.stoppedOn(plan)).toBe(false)
-    await act(async () => {
-      expect(run.ref.current!.resume(plan)).toBe(false)
-    })
-    expect(run.send).toHaveBeenCalledOnce()
+    await t.engine({ phase: 'success', hash: H1 })
+    expect(t.ref.current).toMatchObject({ proposed: false, index: 1 })
+    expect(t.onFinish).not.toHaveBeenCalled()
+    expect(t.ref.current!.stoppedOn(plan)).toBe(true)
+    expect(t.run).toHaveBeenCalledOnce()
   })
 
-  it('ignores a send answered after its run was cleared, even once a new run started', async () => {
-    const run = await renderRun()
-    await act(async () => run.ref.current!.start(['approve', 'mint']))
-    await act(async () => run.ref.current!.clear())
-    await act(async () => run.ref.current!.start(['approve', 'mint']))
-    // The first run's approval answers now; the new run's is still in review.
-    await run.answer(H1, { send: 0 })
-    await run.confirm(H1, 10n)
-    expect(run.send).toHaveBeenCalledTimes(2)
-    expect(run.ref.current).toMatchObject({ running: true, index: 0 })
+  it('finishes a run whose last step was proposed once the Safe executes it', async () => {
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['mint']) })
+    await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
+    await t.engine({ phase: 'success', hash: H2 })
+    expect(t.onFinish).toHaveBeenCalledWith(H2)
   })
 
-  it('holds the run busy for other work until it ends, whatever the engine last reported', async () => {
-    const run = await renderRun()
-    await run.engine({ phase: 'error' })
+  it('stops on a proposed step that ends without running', async () => {
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
+    await t.engine({ phase: 'error' })
+    expect(t.ref.current).toMatchObject({ proposed: false, index: 0 })
+    expect(t.ref.current!.stoppedOn(plan)).toBe(true)
+  })
+
+  it('suspends on an unconfirmed step, and finishes when its receipt shows up', async () => {
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    await t.submitted(1, H2)
+    await t.engine({ phase: 'unconfirmed' })
+    await t.runs[0].end(null)
+    expect(t.ref.current).toMatchObject({ unconfirmed: true, index: 1 })
+    await t.engine({ phase: 'success', hash: H2 })
+    expect(t.onFinish).toHaveBeenCalledWith(H2)
+    expect(t.run).toHaveBeenCalledOnce()
+  })
+
+  it('continues a held sequence as saved, its steps mapped onto the plan', async () => {
+    saved.calls = [call('mint')]
+    const t = await renderRun()
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    expect(t.runs[0].action.calls).toEqual([call('mint')])
+    await t.submitted(0, H2)
+    expect(t.ref.current!.index).toBe(1)
+  })
+
+  it('forgets a stopped run and resets the engine when the plan is dropped, ignoring its late end', async () => {
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    act(() => t.ref.current!.clear())
+    expect(t.reset).toHaveBeenCalled()
+    await t.runs[0].end({ status: 'done', hashes: [H1, H2], receipts: [] })
+    expect(t.onFinish).not.toHaveBeenCalled()
+    expect(t.ref.current).toMatchObject({ running: false, index: 0 })
+    expect(t.ref.current!.stoppedOn(plan)).toBe(false)
+  })
+
+  it('holds the run busy for other work until it ends', async () => {
+    const t = await renderRun()
     let finish!: () => void
+    const work = new Promise<void>(resolve => (finish = resolve))
     let held!: Promise<void>
-    await act(async () => {
-      held = run.ref.current!.hold(() => new Promise<void>(resolve => (finish = resolve)))
-    })
-    await run.engine({ phase: 'error' })
-    expect(run.ref.current).toMatchObject({ running: true })
-    expect(run.ref.current!.stoppedOn(['approve'])).toBe(false)
-    // A second start while held does nothing.
-    await act(async () => run.ref.current!.start(['approve']))
-    expect(run.send).not.toHaveBeenCalled()
-
-    await act(async () => {
-      finish()
-      await held
-    })
-    expect(run.ref.current).toMatchObject({ running: false })
-  })
-
-  it('suspends on an unconfirmed step, sends nothing more, and finishes when its receipt shows up', async () => {
-    const run = await renderRun()
-    await act(async () => run.ref.current!.start(['approve', 'mint']))
-    await run.answer(H1)
-    await run.confirm(H1, 10n)
-    await run.answer(H2)
-    await run.engine({ phase: 'unconfirmed', hash: H2 })
-    expect(run.ref.current).toMatchObject({ running: false, index: 1, unconfirmed: true })
-    expect(run.send).toHaveBeenCalledTimes(2)
-    expect(run.onFinish).not.toHaveBeenCalled()
-
-    await run.confirm(H2, 11n)
-    expect(run.onFinish).toHaveBeenCalledExactlyOnceWith(H2)
-    expect(run.ref.current).toMatchObject({ running: false, unconfirmed: false })
-    expect(run.send).toHaveBeenCalledTimes(2)
+    act(() => { held = t.ref.current!.hold(() => work) })
+    expect(t.ref.current!.running).toBe(true)
+    await act(async () => { finish(); await held })
+    expect(t.ref.current!.running).toBe(false)
+    expect(t.run).not.toHaveBeenCalled()
   })
 })

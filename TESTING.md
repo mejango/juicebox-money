@@ -96,6 +96,11 @@ enables the full artifact comparison; it does not trust the fixture alone.
   core's reviewed send refuses any other connected account. The `reviewed-account-*` tests run the real engine over a fake
   wallet (`test/support/fake-wallet.ts`) and switch accounts between review
   and confirm, or between steps: nothing reaches the wallet.
+- `test/one-confirmation.test.tsx` renders the site's own
+  `TransactionReviewProvider` over the same fake wallet and counts the review
+  dialogs each multi-step action opens: one per action (pay with approval,
+  cash out on the pool, loan, repayment, add liquidity, project batch), with
+  every step sent and no confirm button on the progress dialog.
 - [`test/TRANSACTION_COVERAGE.md`](test/TRANSACTION_COVERAGE.md) is the safety
   inventory. Every new wallet write must add or update a row and should have an
   exact ABI round-trip test before it is considered covered.

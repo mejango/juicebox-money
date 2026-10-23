@@ -16,6 +16,7 @@ import { projectTokenQuery } from '@/lib/project-token-query'
 const mocks = vi.hoisted(() => ({ client: { readContract: vi.fn() } }))
 vi.mock('wagmi', () => ({ usePublicClient: () => mocks.client }))
 vi.mock('@/hooks/useReviewedAction', async () => ({ ...(await import('@/lib/reviewed-call')), useReviewedAction: () => ({}), txPhaseLabel: () => '' }))
+vi.mock('@/lib/reviewed-send', () => ({ sequenceCalls: async (_scope: string, _account: string, calls: unknown[]) => calls }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({}) }))
 vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => ({}) }))
 vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: ({ address }: { address: string }) => address }))
