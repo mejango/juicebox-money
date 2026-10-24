@@ -23,6 +23,8 @@ const m = vi.hoisted(() => ({
   multisigPreflight: vi.fn(),
   multisigReceipt: vi.fn(),
   multisigSimulation: vi.fn(),
+  scheduleGuard: vi.fn(),
+  receiptOrder: vi.fn(),
 }))
 vi.mock('@/lib/launch-multisig', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/launch-multisig')>()),
@@ -46,8 +48,16 @@ vi.mock('@/lib/preload-review', async () => {
   const engine = fakeEngine({ send: async () => { throw new Error('This test sends nothing through core.') } })
   return { loadReviewEngine: () => engine, loadReviewedSendDeps: async () => ({}) }
 })
-vi.mock('@bananapus/nana-sdk-core/v6', () => ({ getProjectCreationFee: m.fee }))
-vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId }))
+vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
+  ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
+  getProjectCreationFee: m.fee,
+}))
+vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId,
+  assertLaunchScheduleFresh: m.scheduleGuard,
+  launchScheduleDescription: () => undefined,
+  resolveStages: (plan: LaunchPlan) => Array.from({ length: plan.stageStarts?.length ?? 1 }, () => ({})),
+}))
+vi.mock('@/lib/ruleset-receipt', () => ({ assertRulesetReceiptOrder: m.receiptOrder }))
 vi.mock('@/lib/relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/relayr')>()),
   buildForwardedTx: m.forward, relayrPostBundle: m.quote, relayrPay: m.pay,
@@ -134,6 +144,20 @@ function session(chains = [1, 10], paymentChainId = 8453): LaunchSession {
     transport: 'relayr', account: ACCOUNT, paymentChainId,
   }
 }
+function realSimpleSession(actual: typeof import('@/lib/launch')): LaunchSession {
+  const value = session(TESTNETS)
+  const realPlan: LaunchPlan = {
+    accounting: { tokens: ['eth'], custom: null }, issuanceBase: 'eth', flavor: 'project',
+    projectName: 'Simple case regression', operator: null, ticker: '',
+    stages: [actual.createSimpleProjectStage()], afterMode: 'wait',
+    approvalDeadline: 'none', approvalCustomAddress: null, allowAnyToken: false,
+    owner: ACCOUNT, chains: TESTNETS, linkChains: true, bridge: 'ccip',
+    store: { name: 'Simple case regression', symbol: 'SIMPLE', currency: 'eth',
+      ...actual.DEFAULT_STORE_FLAGS, items: [] },
+  }
+  value.plans = Object.fromEntries(TESTNETS.map(chainId => [chainId, realPlan]))
+  return value
+}
 function run(value = loadLaunchSession() ?? session()) {
   return runRelayrLaunch({ session: value, account: m.account, onStatus: vi.fn(), onProgress: vi.fn() })
 }
@@ -177,7 +201,7 @@ beforeEach(() => {
     expect(nonce).toBe(0n)
     return { chain: call.chainId, target: jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][call.chainId as JBChainId],
       value: call.value.toString(), data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
-        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.floor(Date.now() / 1000) + 3600,
+        args: [{ from: account, to: call.target, value: call.value, gas: call.gas, deadline: Math.min(Math.floor(Date.now() / 1000) + 3600, call.deadline ?? Infinity),
           data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }
   })
   entries = []
@@ -208,6 +232,34 @@ beforeEach(() => {
 })
 
 describe('saved launch payments', () => {
+  it('signs and resumes an unchanged real SDK linked Simple launch without inventing a fee change from hex casing', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/launch')>('@/lib/launch')
+    const value = realSimpleSession(actual)
+    saveLaunchSession(value)
+    offeredPaymentChains = [84532, 11155111]
+    m.build.mockImplementation(actual.buildLaunchRequest)
+    m.funding.mockResolvedValue(84532).mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run(value)).rejects.toThrow('Funding selection cancelled')
+    expect(m.forward).toHaveBeenCalledTimes(4)
+    expect(m.pay).not.toHaveBeenCalled()
+    await run()
+    expect(m.forward).toHaveBeenCalledTimes(4)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(loadLaunchSession()?.statuses).toMatchObject(Object.fromEntries(TESTNETS.map(chainId => [chainId, { phase: 'done' }])))
+  })
+
+  it('reports the chain and old/new amounts for a genuine fee change using the real SDK', async () => {
+    const actual = await vi.importActual<typeof import('@/lib/launch')>('@/lib/launch')
+    const value = realSimpleSession(actual)
+    saveLaunchSession(value)
+    m.build.mockImplementation(actual.buildLaunchRequest)
+    let reads = 0
+    m.fee.mockImplementation(async () => ++reads <= TESTNETS.length ? 17n : 18n)
+    await expect(run(value)).rejects.toThrow('The creation fee changed on Sepolia from 0.000000000000000017 ETH to 0.000000000000000018 ETH')
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.retryNonces).toEqual(Object.fromEntries(TESTNETS.map(chainId => [chainId, '0'])))
+  })
+
   it('refuses a saved launch whose payment record is malformed before checking anything', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
       await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
@@ -848,12 +900,32 @@ describe('relayed launch execution and recovery', () => {
 
   it('refreshes changed creation fees with the same nonce before any funding', async () => {
     m.fee.mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValue(18n)
-    await expect(run()).rejects.toThrow('creation fee changed')
+    await expect(run()).rejects.toThrow('from 0.000000000000000017 ETH to 0.000000000000000018 ETH')
     expect(m.pay).not.toHaveBeenCalled()
     expect(loadLaunchSession()?.relayr?.retryNonces).toEqual({ 1: '0', 10: '0' })
     await run()
     expect(m.forward.mock.calls.slice(2).every(([call, _account, nonce]) => call.value === 18n && nonce === 0n)).toBe(true)
     expect(m.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([false, true])('still refuses a changed calldata byte without calling it a fee change (fee changed: %s)', async feeChanged => {
+    if (feeChanged) m.fee.mockResolvedValueOnce(17n).mockResolvedValueOnce(17n).mockResolvedValue(18n)
+    const forward = m.forward.getMockImplementation()!
+    m.forward.mockImplementationOnce(async (...args) => {
+      const entry = await forward(...args) as RelayrEntry
+      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: entry.data })
+      if (decoded.functionName !== 'execute') throw new Error('expected the signed forward request')
+      const request = decoded.args[0]
+      return { ...entry, data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute',
+        args: [{ ...request, data: `${request.data.slice(0, -2)}01` as Hex }] }) }
+    })
+    const error = await run().catch(error => error)
+    expect(error).toBeInstanceOf(Error)
+    expect(error.message).toMatch(/saved (?:launch authorization|signature)/)
+    expect(error.message).not.toContain('creation fee changed')
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.signed).toHaveLength(2)
   })
 
   it('makes an unfunded published quote safely abandonable only after canonical unused signature expiry', async () => {

@@ -48,8 +48,8 @@ import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
-import { loadRelayrPendingSession, relayrCallsScope } from "@/lib/relayr";
-import { relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
+import { loadRelayrPendingSession, relayrCallsScope, RELAYR_REQUEST_REFRESH_SECONDS } from "@/lib/relayr";
+import { relayrDestinationHash, relayrRecordChain, relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
   etherscanTxUrl,
@@ -61,6 +61,7 @@ import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
 import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
+import { assertRulesetReceiptOrder } from "@/lib/ruleset-receipt";
 import { chainName } from "@/lib/urn";
 import { requireLinkedPairs } from "@/lib/sucker-group";
 import {
@@ -77,6 +78,10 @@ import {
   FOREVER_SECONDS,
   deadlineSecondsForHook,
   deriveQueuedStartFrom,
+  knownDeadlineSeconds,
+  orderedRulesetSchedule,
+  SCHEDULE_PREPARATION_SECONDS,
+  LAUNCH_START_DELAY_SECONDS,
 } from "@/lib/launch";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
@@ -162,29 +167,49 @@ function followerStartOk(f: Follower): boolean {
   return Number.isInteger(n) && n >= 1;
 }
 
-/** Ruleset #1's `mustStartAtOrAfter` is fixed by the queue position; each
- *  follower encodes 0 (the previous ruleset's next boundary) or an absolute
- *  start. Starts chain from the parent ruleset the queue is based on, the
- *  way JBRulesets.deriveStartFrom will snap them. */
+/** Pin a batch to explicit parent-derived starts so a pending follower cannot
+ *  be replaced by the next entry. Singleton edits retain their queue position. */
 export function queueStageStarts({
   parent,
   firstMust,
   stages,
   now,
   latestRulesetId = 0,
+  validUntil,
 }: {
-  parent: { start: number; duration: number; noticeSeconds?: number } | null;
+  parent: { start: number; duration: number; noticeSeconds?: number | null } | null;
   firstMust: number;
   stages: {
     duration: number;
-    noticeSeconds?: number;
+    noticeSeconds?: number | null;
     startMode?: "cycles" | "date";
     startCycles?: string;
     startDate?: string;
   }[];
   now: number;
   latestRulesetId?: number;
-}): { musts: number[]; starts: number[] } {
+  validUntil?: number;
+}): { musts: number[]; starts: number[]; validUntil?: number } {
+  if (stages.length > 1) {
+    if (!parent) throw new Error("The queued ruleset's parent could not be verified. Queue one ruleset at a time.");
+    if (validUntil !== undefined && (now >= validUntil || latestRulesetId + 1 > validUntil)) {
+      throw new Error("This ruleset schedule has expired. Review a later queue position.");
+    }
+    const timing = orderedRulesetSchedule({
+      parent,
+      firstStart: firstMust,
+      latestRulesetId,
+      queuedAt: now,
+      stages: stages.map(stage => ({
+        duration: stage.duration,
+        noticeSeconds: stage.noticeSeconds,
+        ...(stage.startMode === "date"
+          ? { mustStartAtOrAfter: stage.startDate ? Math.floor(new Date(stage.startDate).getTime() / 1000) : 0 }
+          : { startCycles: Number(stage.startCycles) || 1 }),
+      })),
+    });
+    return validUntil === undefined ? timing : { ...timing, validUntil: Math.min(validUntil, timing.validUntil ?? Infinity) };
+  }
   const queuedAt = Math.max(now, latestRulesetId + 1);
   const musts = [firstMust];
   const starts = [
@@ -671,7 +696,7 @@ function queueRecoveryKey(chainId: number, projectId: number): string {
   return `jbm:queue-rulesets:${chainId}:${projectId}`;
 }
 
-type QueueRecoveryJournal = { scope: string; review: Reviewed; action: QueueAction };
+type QueueRecoveryJournal = { scope: string; review: Reviewed; action: QueueAction; result?: AuthorityResult };
 
 export function readQueueJournal(key: string): QueueRecoveryJournal | null {
   try {
@@ -685,7 +710,7 @@ export function readQueueJournal(key: string): QueueRecoveryJournal | null {
 
 function pendingQueueScope(key: string): QueueRecoveryJournal | null {
   const journal = readQueueJournal(key);
-  return journal && loadRelayrPendingSession(journal.scope) ? journal : null;
+  return journal && (journal.result || loadRelayrPendingSession(journal.scope)) ? journal : null;
 }
 
 export function saveQueueJournal(journal: QueueRecoveryJournal): void {
@@ -735,17 +760,51 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
       if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
     }
     // Freeze every destination before any signature can be published.
-    if (calls.length > 1) saveQueueJournal(journal);
+    const staged = review.destinations.some(destination => destination.configs.length > 1);
+    if (calls.length > 1 || staged) saveQueueJournal(journal);
+    let submitted = false;
     try {
       const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message), signal });
+      submitted = true;
+      if (staged) {
+        // Keep execution hashes while verifying ancestry so a failed read
+        // resumes verification instead of exposing another queue submission.
+        saveQueueJournal({ ...journal, result });
+        await verifyQueuedStageOrder(review, result);
+      }
       clearQueueJournal(journal);
       return result;
     } catch (error) {
       // A submission that published nothing leaves no saved review: the editor still holds it.
-      if (!loadRelayrPendingSession(journal.scope)) clearQueueJournal(journal);
+      if (!submitted && !loadRelayrPendingSession(journal.scope)) clearQueueJournal(journal);
       throw error;
     }
   });
+}
+
+/** Verify confirmed executions only; a queued Safe proposal has not executed. */
+export async function verifyQueuedStageOrder(review: Reviewed, result: AuthorityResult): Promise<void> {
+  for (const destination of review.destinations.filter(item => item.configs.length > 1)) {
+    const hashes = new Set([
+      ...(result.directResultDetails?.filter(item => item.chainId === destination.chainId).map(item => item.hash)
+        ?? (review.destinations.length === 1 ? result.directResults : [])),
+      ...result.relayrResults.flatMap(group => group.records.flatMap(record => {
+        const hash = relayrDestinationHash(record);
+        return relayrRecordChain(record) === destination.chainId && hash ? [hash] : [];
+      })),
+      ...result.safeResults.flatMap(item => item.chainId === destination.chainId && item.transactionHash ? [item.transactionHash] : []),
+    ]);
+    if (!hashes.size) {
+      if (result.safeResults.some(item => item.chainId === destination.chainId && item.status !== "executed")) continue;
+      throw new Error("The queued stage execution could not be verified. Check the saved update before trying again.");
+    }
+    for (const hash of hashes) {
+      const receipt = await clientFor(destination.chainId).getTransactionReceipt({ hash });
+      const firstParent = destination.expectedFirstParentId ?? BigInt(destination.source.action === "replace"
+        ? destination.source.entry.ruleset.basedOnId : destination.source.entry.ruleset.id);
+      assertRulesetReceiptOrder(destination.chainId, destination.projectId, destination.configs.length, receipt, firstParent);
+    }
+  }
 }
 
 /**
@@ -769,13 +828,17 @@ export function QueueRecovery({ journal, onComplete, onDiscard, onError }: { jou
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
       // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-      const result = await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
+      const result = journal.result ?? await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
+      if (journal.review.destinations.some(destination => destination.configs.length > 1)) {
+        saveQueueJournal({ ...journal, result });
+        await verifyQueuedStageOrder(journal.review, result);
+      }
       clearQueueJournal(journal);
       onComplete(result);
     } catch (err) { onError?.(); setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
     finally { setBusy(false); }
   };
-  if (session?.discardable) {
+  if (!journal.result && session?.discardable) {
     // Resuming stays beside Discard: a paid bundle that ran completes, and the recheck refuses calls that ran.
     return <div className="space-y-3">
       <RelayrDiscard scope={journal.scope} reason={session.discardable} paymentUnmatched={session.paymentUnmatched} onDiscarded={() => { setDiscards(count => count + 1); onDiscard(); }} />
@@ -791,9 +854,9 @@ export function QueueRecovery({ journal, onComplete, onDiscard, onError }: { jou
     <TxError error={error} />
     <div className="flex flex-wrap gap-2">
       <button className="btn-primary min-h-[44px] px-5 text-sm" disabled={busy || !address} onClick={resume}>
-        {busy ? "Checking saved update…" : session ? "Resume ruleset update" : "Review again"}
+        {busy ? "Checking saved update…" : journal.result ? "Verify queued rules" : session ? "Resume ruleset update" : "Review again"}
       </button>
-      {session ? null : <button className="btn-secondary min-h-[44px] px-5 text-sm" disabled={busy}
+      {session || journal.result ? null : <button className="btn-secondary min-h-[44px] px-5 text-sm" disabled={busy}
         onClick={() => { clearQueueJournal(journal); onDiscard(); }}>Edit rules</button>}
     </div>
   </div>;
@@ -812,6 +875,10 @@ type ReviewedDestination = QueueDestination & {
   source: PrefillSource;
   configs: JBRulesetConfig[];
   starts: number[];
+  /** Latest inclusion time preserving the reviewed stage sequence. */
+  validUntil?: number;
+  /** The reviewed parent of the first queued configuration. */
+  expectedFirstParentId?: bigint;
   changes: TxConfirmRow[];
 };
 
@@ -988,7 +1055,10 @@ export function reviewedQueueCalls(review: Reviewed, action: QueueAction): Autho
           chainId: destination.chainId, authority: destination.authority, controller: destination.controller,
           projectId: BigInt(destination.projectId), rulesetConfigurations: destination.configs, memo: "", label: "Queue new rules",
         }),
+        ...(destination.validUntil !== undefined ? { deadline: destination.validUntil } : {}),
+        onSending: async () => assertQueueScheduleFresh(destination),
         reverifyAuthority: async () => {
+          assertQueueScheduleFresh(destination);
           const live = await readQueueDestination(destination.chainId, destination.projectId, review.account);
           const liveSource = live.data.sources[action];
           if (live.authority.toLowerCase() !== destination.authority.toLowerCase() || live.controller.toLowerCase() !== destination.controller.toLowerCase() || queueSourceFingerprint(liveSource) !== queueSourceFingerprint(destination.source)) {
@@ -1003,9 +1073,28 @@ export function reviewedQueueCalls(review: Reviewed, action: QueueAction): Autho
           if (destination.source.option.requiresStartDate && destination.configs[0].mustStartAtOrAfter < Math.max(now + 60, Number(liveSource!.entry.ruleset.start) + 1)) {
             throw new Error("The chosen start is no longer safely in the future. Choose a later time and review again.");
           }
-
+          assertQueueScheduleFresh(destination);
         },
       }));
+}
+
+function assertQueueScheduleFresh(destination: Pick<ReviewedDestination, "validUntil" | "configs" | "starts">): void {
+  if (destination.configs.length > 1 && destination.configs.some((config, index) =>
+    !config.mustStartAtOrAfter || config.mustStartAtOrAfter !== destination.starts[index],
+  )) {
+    throw new Error("This saved ruleset update needs a fixed stage schedule. Review the rules again before sending.");
+  }
+  assertQueueExecutionWindow(destination.validUntil, false);
+}
+
+/** Cross-chain signing needs Relayr's minimum lifetime; other routes need a live schedule. */
+export function assertQueueExecutionWindow(validUntil: number | undefined, relayr: boolean, now = Math.floor(Date.now() / 1000)): void {
+  if (validUntil !== undefined && now >= validUntil) {
+    throw new Error("This ruleset schedule has expired. Review the rules again before sending.");
+  }
+  if (relayr && validUntil !== undefined && validUntil <= now + RELAYR_REQUEST_REFRESH_SECONDS) {
+    throw new Error("This ruleset schedule expires too soon for cross-chain signing. Review a later queue position.");
+  }
 }
 
 function RulesetEditor(props: {
@@ -1223,12 +1312,14 @@ function RulesetEditorForm({
       if (action === "replace" && selectedSources.some(item => item.source.option.mustStartAtOrAfter !== source.option.mustStartAtOrAfter)) {
         throw new Error("The queued changes start at different times. Replace them separately on each chain, or choose a following ruleset.");
       }
-      // A shared lower bound leaves time to sign/pay. Each parent still snaps
-      // that bound to its own calendar, shown for every destination below.
-      const commonMust = multi && action !== "replace" ? Math.max(
-        now + 600,
-        scheduledStartSeconds || 0,
-        ...selectedSources.map(({ destination, source: peer }) => Math.max(peer.option.mustStartAtOrAfter ?? 0, now + (deadlineSecondsForHook(peer.entry.ruleset.approvalHook as Address, destination.chainId) ?? 0) + 600)),
+      // Automatic starts leave time to sign/pay. A chosen date or replacement
+      // cycle remains the user's bound; a short relay window must be refused.
+      const commonMust = multi && action !== "replace" && !source.option.requiresStartDate ? Math.max(
+        now + LAUNCH_START_DELAY_SECONDS,
+        ...selectedSources.map(({ destination, source: peer }) => {
+          const notice = deadlineSecondsForHook(peer.entry.ruleset.approvalHook as Address, destination.chainId);
+          return Math.max(peer.option.mustStartAtOrAfter ?? 0, now + notice + (notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS));
+        }),
       ) : mustStartAtOrAfter;
       const destinations: ReviewedDestination[] = selectedSources.map(({ destination, source: peer }) => {
         if (peer.option.requiresStartDate && (!commonMust || commonMust < Math.max(now + 60, Number(peer.entry.ruleset.start) + 1))) {
@@ -1239,14 +1330,28 @@ function RulesetEditorForm({
           ? BigInt(peer.entry.ruleset.basedOnId) === BigInt(destination.data.current.ruleset.id) ? destination.data.current.ruleset : null
           : peer.entry.ruleset;
         if (multi && !peerParent) throw new Error(`The replaced ruleset's parent could not be verified on ${chainName(destination.chainId)}. Edit this chain separately.`);
+        const parentNotice = peerParent ? knownDeadlineSeconds(peerParent.approvalHook as Address, destination.chainId) : null;
+        // Keep preparation inside the selected replacement window and retain
+        // that boundary for final checks and signed requests.
+        const replacementUntil = peerStages.length > 1 && action === "replace"
+          ? Number(peer.entry.ruleset.start) - (destination.data.latestApprovalStatus === 3 ? parentNotice ?? 0 : 0) - 1
+          : undefined;
         const timing = queueStageStarts({
-          parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration), noticeSeconds: deadlineSecondsForHook(peerParent.approvalHook as Address, destination.chainId) } : null,
+          parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration), noticeSeconds: parentNotice } : null,
           latestRulesetId: Number(destination.data.latest.ruleset.id),
           firstMust: commonMust,
-          stages: peerStages.map((rules, i) => ({ duration: rules.duration, noticeSeconds: deadlineSecondsForHook(peer.entry.ruleset.approvalHook as Address, destination.chainId), ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
+          stages: peerStages.map((rules, i) => ({ duration: rules.duration, noticeSeconds: knownDeadlineSeconds(peer.entry.ruleset.approvalHook as Address, destination.chainId), ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
           now,
+          validUntil: replacementUntil,
         });
+        if (replacementUntil !== undefined && timing.starts[0] !== Number(peer.entry.ruleset.start)) {
+          throw new Error(`The replacement cycle changed on ${chainName(destination.chainId)}. Review a later queue position.`);
+        }
+        const validUntil = timing.validUntil;
+        assertQueueExecutionWindow(validUntil, multi, now);
         return { ...destination, source: peer, configs: peerStages.map((rules, i) => buildQueueDestinationConfig(rules, timing.musts[i], peer)), starts: timing.starts,
+          ...(validUntil !== undefined ? { validUntil } : {}),
+          ...(peerStages.length > 1 && peerParent ? { expectedFirstParentId: BigInt(peerParent.id) } : {}),
           changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
         };
       });
@@ -1336,6 +1441,7 @@ function RulesetEditorForm({
           { label: chainName(destination.chainId), value: `Project #${destination.projectId}; issuance per ${currencyLabel(destination.source.entry.metadata.baseCurrency, "base currency " + destination.source.entry.metadata.baseCurrency)}` },
           ...(review.destinations.length > 1 ? destination.changes : []),
           ...destination.starts.map((start, index) => ({ label: `${chainName(destination.chainId)} ruleset #${index + 1}`, value: `Starts around ${formatRulesetDate(start)}` })),
+          ...(destination.validUntil !== undefined ? [{ label: `${chainName(destination.chainId)} execute before`, value: `${formatRulesetDate(destination.validUntil)}. Rebuild if unexecuted after this time; a Safe executed elsewhere can still execute late.` }] : []),
         ]),
       ]
     : [];

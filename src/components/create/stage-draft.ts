@@ -139,6 +139,13 @@ export function newDraftStage(
   };
 }
 
+/** The same integer-second cycle the revnet encoder sends to the contracts. */
+export function revnetCutFrequency(stage: Pick<DraftStage, "cutOn" | "cutPct" | "cutFreqDays">): number {
+  return stage.cutOn && Number(stage.cutPct) > 0
+    ? Math.round(Number(stage.cutFreqDays || "0") * 86_400)
+    : 0;
+}
+
 /** Form representation of the same preset the Simple launch encoder uses. */
 export function newSimpleProjectDraftStage(): DraftStage {
   const preset = createSimpleProjectStage();

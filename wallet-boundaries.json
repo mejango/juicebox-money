@@ -17,7 +17,7 @@
     },
     {
       "file": "src/components/project/QueueRulesetFlow.tsx",
-      "line": 709,
+      "line": 734,
       "api": "request",
       "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
       "test": "test/components/queue-ruleset-multichain.test.tsx"
@@ -31,7 +31,7 @@
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 118,
+      "line": 124,
       "api": "request",
       "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
       "test": "test/transactions/relayr-orchestration.test.ts"

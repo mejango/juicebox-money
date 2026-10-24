@@ -14,6 +14,7 @@ import { getAccount } from '@wagmi/core'
 import {
   decodeFunctionData,
   encodeFunctionData,
+  formatEther,
   isAddressEqual,
   type Address,
   type Abi,
@@ -21,12 +22,14 @@ import {
   type TransactionReceipt,
 } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
-import { buildLaunchRequest, projectIdFromReceipt, type LaunchPlan } from '@/lib/launch'
+import { assertLaunchScheduleFresh, buildLaunchRequest, launchScheduleDescription, projectIdFromReceipt, resolveStages, type LaunchPlan } from '@/lib/launch'
+import { assertRulesetReceiptOrder } from '@/lib/ruleset-receipt'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { gasWithHeadroom, intent, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, strictRetirable } from '@/lib/write-holds'
 import {
   buildForwardedTx,
+  assertRelayrScheduleWindow,
   readRelayrPendingSessionsForAuthorization,
   relayrChainClient,
   relayrPay,
@@ -138,7 +141,8 @@ export type LaunchRelayrJournal = {
 }
 
 function launchData(request: ReturnType<typeof buildLaunchRequest>): Hex {
-  return encodeFunctionData({ abi: request.abi as Abi, functionName: request.functionName, args: request.args })
+  // ABI decoding canonicalizes bytes, while bytes32 inputs can preserve hex letter case during encoding.
+  return encodeFunctionData({ abi: request.abi as Abi, functionName: request.functionName, args: request.args }).toLowerCase() as Hex
 }
 
 export function canRelayrLaunch(session: LaunchSession): boolean {
@@ -288,7 +292,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt,
         creationFee: request.value })
       if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address) ||
-          request.data !== launchData(expected)) throw new Error('The saved signature does not match this pinned launch.')
+          request.data.toLowerCase() !== launchData(expected)) throw new Error('The saved signature does not match this pinned launch.')
       return request
     }
     for (const signed of journal?.signed ?? []) pinnedRequest(signed)
@@ -438,6 +442,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
               await verifyCreatedLaunchMultisigs(client, current.plans[signed.chainId], receipt.blockNumber)
               const projectId = projectIdFromReceipt(receipt, signed.chainId as JBChainId)
               if (!projectId) throw new Error('The launch confirmed but its project ID could not be verified.')
+              assertRulesetReceiptOrder(signed.chainId, projectId, resolveStages(current.plans[signed.chainId]).length, receipt)
               status(signed.chainId, { phase: 'done', txHash: hash, projectId })
             } catch (error) {
               held = true
@@ -566,16 +571,28 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       requireAccount()
       assertAuthorizationAvailable(remaining)
       for (const signed of journal!.signed) {
+        assertLaunchScheduleFresh(current.plans[signed.chainId], undefined, signed.chainId)
         const request = requestOf(signed, current.plans[signed.chainId])
+        if (request.deadline > (current.plans[signed.chainId].scheduleValidUntil ?? Infinity)) {
+          throw new Error('The launch authorization outlives its reviewed schedule. Recover the original bundle before continuing.')
+        }
         const client = publicClient(signed.chainId as JBChainId)
         await checkLaunchMultisigs(client, current.plans[signed.chainId])
         const creationFee = await getProjectCreationFee(client, signed.chainId as JBChainId)
         const expected = buildLaunchRequest({ chainId: signed.chainId as JBChainId, owner: account,
           projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt, creationFee })
         const data = launchData(expected)
-        if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address) ||
-            request.data !== data || request.value !== expected.value) {
-          throw new LaunchSignaturesNeedRefresh('A creation fee changed. Review fresh launch authorizations before payment.')
+        if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address)) {
+          throw new Error('The saved launch authorization no longer matches the reviewed launch. Check the original bundle before continuing.')
+        }
+        if (request.value !== expected.value) {
+          if (expected.value !== creationFee) throw new Error('The launch value no longer matches its creation fee. Check the original bundle before continuing.')
+          // Only the fee may change: the signed payload must still reconstruct at its original value.
+          pinnedRequest(signed)
+          throw new LaunchSignaturesNeedRefresh(`The creation fee changed on ${chainName(signed.chainId)} from ${formatEther(request.value)} ETH to ${formatEther(creationFee)} ETH. Review fresh launch authorizations before payment.`)
+        }
+        if (request.data.toLowerCase() !== data) {
+          throw new Error('The saved launch authorization no longer matches the reviewed launch. Check the original bundle before continuing.')
         }
         const [trusted, valid, code] = await Promise.all([
           client.readContract({ address: expected.address, abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [forwarderFor(signed.chainId)] }),
@@ -606,6 +623,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       assertAuthorizationAvailable(remaining)
       const client = publicClient(chainId as JBChainId)
       const plan = current.plans[chainId]
+      assertLaunchScheduleFresh(plan, undefined, chainId)
+      assertRelayrScheduleWindow(plan.scheduleValidUntil)
       await checkLaunchMultisigs(client, plan)
       const creationFee = await getProjectCreationFee(client, chainId as JBChainId)
       const request = buildLaunchRequest({ chainId: chainId as JBChainId, owner: account,
@@ -635,6 +654,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const estimate = await client.estimateGas({ account, to: request.address, data, value: request.value,
         stateOverride: [{ address: account, balance: creationFee + 100n * 10n ** 18n }] })
       unsigned.push({ chainId, nonce, call: { chainId: chainId as JBChainId, target: request.address,
+        deadline: plan.scheduleValidUntil,
         data, value: request.value, gas: gasWithHeadroom(estimate + (plan.multisigs?.length ? 200_000n : 0n)), abi: request.abi,
         functionName: request.functionName, args: request.args, label: `Launch on ${chainName(chainId)}` } })
     }
@@ -651,7 +671,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
       const plan = await reviewPlan({
         account,
         title: unsigned.length === 1 ? 'Review launch' : 'Review launches',
-        description: [...new Set(multisig.map(item => launchMultisigReview(current.plans[item.chainId])))].concat(
+        description: [...new Set(multisig.map(item => launchMultisigReview(current.plans[item.chainId]))), ...new Set(unsigned.map(item => launchScheduleDescription(current.plans[item.chainId])).filter((line): line is string => !!line))].concat(
           'Your signatures authorize these exact launches onchain. Relayr runs them once the network fee is paid.').join('\n\n'),
         ...(multisig.length ? { context: multisig.flatMap(item => launchMultisigRows(item.chainId, current.plans[item.chainId])
           .map(row => unsigned.length > 1 ? { ...row, label: `${row.label} on ${chainName(item.chainId)}` } : row)) } : {}),

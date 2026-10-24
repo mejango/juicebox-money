@@ -287,8 +287,8 @@ export function StageRulesEditor({
               checked={!stage.scheduleOn}
               onToggle={() => set({ scheduleOn: !stage.scheduleOn })}
               disabled={disabled}
-              title="Launch right away"
-              blurb="Rules take effect the moment your project deploys. Uncheck to schedule a start time."
+              title="Use the default start"
+              blurb="Review the prepared start time before signing. Uncheck to choose a date."
             />
             {stage.scheduleOn ? (
               <DateTimeField

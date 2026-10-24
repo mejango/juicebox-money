@@ -101,6 +101,12 @@ const RELAYR_QUOTE_TIMEOUT_MS = 45_000
  * payable option, so the session waits for its requests to expire and signs again.
  */
 export const RELAYR_REQUEST_REFRESH_SECONDS = 15 * 60 + RELAYR_REQUEST_RUN_MARGIN_SECONDS
+/** A staged request must leave the existing quote and execution safety window intact. */
+export function assertRelayrScheduleWindow(deadline: number | undefined): void {
+  if (deadline !== undefined && deadline <= Math.floor(Date.now() / 1000) + RELAYR_REQUEST_REFRESH_SECONDS) {
+    throw new Error(`This schedule expires too soon for Relayr. Allow at least ${Math.ceil(RELAYR_REQUEST_REFRESH_SECONDS / 60)} minutes to complete it, then review again.`)
+  }
+}
 /** The longest a request may be signed for (Relayr refuses 48 hours); sessions saved before 2-hour signing used it. */
 const RELAYR_LONGEST_DEADLINE_SECONDS = 47 * 60 * 60
 const RELAYR_STATUS_REQUEST_TIMEOUT_MS = 15_000
@@ -128,6 +134,8 @@ export async function withRelayrScopeLock<T>(scope: string, execute: () => Promi
 export const relayrForwardGas = (call: { gas?: bigint }): bigint => call.gas ?? 500_000n
 
 export type RelayrCall = {
+  /** An application schedule may expire sooner than a generic forward request. */
+  deadline?: number
   chainId: JBChainId
   target: Address
   data: Hex
@@ -892,10 +900,16 @@ export async function relayrTargetSupportsForwarder(call: RelayrCall): Promise<b
   } catch { return false }
 }
 
-async function verifyForwardedEntries(entries: RelayrEntry[], account: Address): Promise<void> {
+async function verifyForwardedEntries(entries: RelayrEntry[], account: Address, calls: readonly RelayrCall[]): Promise<void> {
   for (const entry of entries) {
     const request = relayrForwardRequest(entry)
     if (!request) throw new Error('Invalid relay authorization.')
+    const call = calls.find(call => call.chainId === entry.chain &&
+      call.target.toLowerCase() === request.to.toLowerCase() && call.data.toLowerCase() === request.data.toLowerCase())
+    if (!call) throw new Error('The saved authorization no longer matches the reviewed action. Recover the original bundle before continuing.')
+    if (request.deadline > (call.deadline ?? Infinity)) {
+      throw new Error('The saved authorization outlives its reviewed schedule. Recover the original bundle before continuing.')
+    }
     const client = publicClient(entry.chain as JBChainId)
     if (!isAddressEqual(request.from, account) ||
         request.value !== BigInt(entry.value) ||
@@ -957,9 +971,10 @@ async function signForwardedRequest(
     value,
     gas: relayrForwardGas(call),
     nonce,
-    deadline: relayrForwarderDeadline(),
+    deadline: Math.min(relayrForwarderDeadline(), call.deadline ?? Infinity),
     data: call.data,
   }
+  assertRelayrScheduleWindow(request.deadline)
   // Core reviews the exact ERC-2771 request, decoded, and signs it on the canonical forwarder's domain.
   const { signReviewed } = await loadReviewEngine()
   const reviewedSendDeps = await loadReviewedSendDeps()
@@ -972,7 +987,10 @@ async function signForwardedRequest(
     ].filter(Boolean).join('\n\n'),
     ...(context?.rows ? { context: context.rows } : {}),
     ...(plan ? { plan } : {}),
-    reverify: async () => assertWallet(),
+    reverify: async () => {
+      assertWallet()
+      assertRelayrScheduleWindow(request.deadline)
+    },
   }, reviewedSendDeps)
 
   const live = getAccount(wagmiConfig).address
@@ -1760,7 +1778,7 @@ async function executeRelayrCalls({
       const request = relayrForwardRequest(published[index])
       if (!request || published[index].chain !== calls[index].chainId ||
           !isAddressEqual(request.from, account) || !isAddressEqual(request.to, calls[index].target) ||
-          request.data !== calls[index].data || request.value !== (calls[index].value ?? 0n)) {
+          request.data.toLowerCase() !== calls[index].data.toLowerCase() || request.value !== (calls[index].value ?? 0n)) {
         throw new Error('The original published Relayr calls changed. Keep the original action pending.')
       }
       requests.push(request)
@@ -1774,7 +1792,7 @@ async function executeRelayrCalls({
       // verifies, since their nonces let at most one bundle run.
       try {
         await reverify?.()
-        await verifyForwardedEntries(published, account)
+        await verifyForwardedEntries(published, account, calls)
       } catch (error) {
         throw new Error(relayrHeldMessage(outcome.until), { cause: error })
       }
@@ -1908,7 +1926,7 @@ async function executeRelayrCalls({
   const verifyBeforePayment = async () => {
     assertAuthorizationAvailable()
     await reverify?.()
-    await verifyForwardedEntries(entries, account)
+    await verifyForwardedEntries(entries, account, calls)
   }
   let paymentHash: Hex
   /** The wallet holds the payment and has returned no hash for it. */

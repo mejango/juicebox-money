@@ -3,14 +3,14 @@ import { RESERVED_TOKEN_SPLIT_GROUP_ID, v6Address } from '@bananapus/nana-sdk-co
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { type ReactNode } from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
-import { decodeFunctionData, parseEther, zeroAddress, type Address } from 'viem'
+import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, parseAbi, parseEther, zeroAddress, type Address } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   wallet: { address: '0x1111111111111111111111111111111111111111', isConnected: true },
   clientFor: vi.fn(), runAuthorityCalls: vi.fn(), loadSession: vi.fn(), resume: vi.fn(), discard: vi.fn(),
   current: vi.fn(), upcoming: vi.fn(), contexts: vi.fn(), identity: vi.fn(),
-  resolveSuckers: vi.fn(),
+  resolveSuckers: vi.fn(), receipt: vi.fn(),
 }))
 vi.mock('@bananapus/nana-sdk-core', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core')>(), resolveSuckers: mocks.resolveSuckers }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => mocks.wallet }))
@@ -34,7 +34,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'ETH' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getUpcomingRuleset: mocks.upcoming, getAccountingContexts: mocks.contexts }))
 
-import { buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
+import { assertQueueExecutionWindow, buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, verifyQueuedStageOrder, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { clearSuckerGroups } from '@/lib/sucker-group'
 import { relayrCallsScope } from '@/lib/relayr'
 
@@ -94,7 +94,8 @@ beforeEach(() => {
   mocks.loadSession.mockReturnValue({ paymentStatus: 'unpaid' })
   mocks.resume.mockResolvedValue({ records: [] })
   installReads()
-  mocks.clientFor.mockImplementation(chain => ({ readContract: reads.get(chain) }))
+  mocks.receipt.mockReset()
+  mocks.clientFor.mockImplementation(chain => ({ readContract: reads.get(chain), getTransactionReceipt: mocks.receipt }))
   mocks.current.mockImplementation(async (_client, args) => currentReview.destinations.find(item => item.chainId === args.chainId)!.source.entry)
   mocks.upcoming.mockImplementation(mocks.current)
   mocks.contexts.mockImplementation(async (_client, args) => currentReview.destinations.find(item => item.chainId === args.chainId)!.source.access.map(item => item.ctx))
@@ -412,5 +413,140 @@ describe('queue recovery after cancellation or partial execution', () => {
     expect(mocks.current).not.toHaveBeenCalled()
     expect(completed).toHaveBeenCalledOnce()
     await act(async () => renderer.unmount())
+  })
+})
+
+const queueHash = `0x${'ab'.repeat(32)}` as const
+const initializedAbi = parseAbi(['event RulesetInitialized(uint256 indexed rulesetId, uint256 indexed projectId, uint256 indexed basedOnId, address caller)'])
+function queueReceipt(reviewed: Review, secondParent = 501n) {
+  const destination = reviewed.destinations[0]
+  return { logs: [501n, 502n].map((rulesetId, index) => ({
+    address: jbV6ContractAddress[JBCoreContracts.JBRulesets][destination.chainId],
+    topics: encodeEventTopics({ abi: initializedAbi, eventName: 'RulesetInitialized', args: { rulesetId, projectId: BigInt(destination.projectId), basedOnId: index ? secondParent : 50n } }),
+    data: encodeAbiParameters([{ type: 'address' }], [destination.controller]),
+  })) }
+}
+function stagedReview(): Review {
+  const prepared = review([1])
+  prepared.destinations[0].configs.push({ ...prepared.configs[0], mustStartAtOrAfter: 2_000_086_400 })
+  prepared.destinations[0].starts.push(2_000_086_400)
+  return prepared
+}
+
+describe('frozen queue stage schedules', () => {
+  it('accepts a live 299-second direct/Safe window and refuses it only for Relayr signing', () => {
+    const now = 2_000_000_000
+    expect(() => assertQueueExecutionWindow(now + 299, false, now)).not.toThrow()
+    expect(() => assertQueueExecutionWindow(now + 299, true, now)).toThrow(/cross-chain signing/)
+    expect(() => assertQueueExecutionWindow(now, false, now)).toThrow(/expired/)
+    expect(() => assertQueueExecutionWindow(now, true, now)).toThrow(/expired/)
+  })
+
+  it.each([null, { paymentStatus: 'unpaid', discardable: 'ran' }])('retains a confirmed unverified result without offering edits or another send (%j)', async session => {
+    const prepared = stagedReview()
+    const result = { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }
+    const journal = { scope: relayrCallsScope(reviewedQueueCalls(prepared, 'current')), review: prepared, action: 'current' as const, result }
+    mocks.loadSession.mockReturnValue(session)
+    saveQueueJournal(journal)
+    mocks.receipt.mockResolvedValue(queueReceipt(prepared, 50n))
+    const complete = vi.fn(), discard = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<QueueRecovery journal={journal} onComplete={complete} onDiscard={discard} />) })
+    try {
+      expect(renderer.root.findAllByType('button').map(node => node.props.children)).toEqual(['Verify queued rules'])
+      await act(async () => { await renderer.root.findByType('button').props.onClick() })
+      expect(JSON.stringify(renderer.toJSON())).toContain('ruleset order could not be verified')
+      expect(readQueueJournal('jbm:queue-rulesets:1:101')!.result).toEqual(result)
+      expect(renderer.root.findAllByType('button').map(node => node.props.children)).toEqual(['Verify queued rules'])
+      expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+      expect(complete).not.toHaveBeenCalled()
+      expect(discard).not.toHaveBeenCalled()
+    } finally { await act(async () => renderer.unmount()) }
+  })
+
+  it('verifies a mixed direct EOA and queued Safe result using chain-tagged direct hashes', async () => {
+    const prepared = stagedReview()
+    const safeDestination = review([8453]).destinations[0]
+    safeDestination.authority = OTHER
+    safeDestination.configs.push({ ...safeDestination.configs[0], mustStartAtOrAfter: 2_000_086_400 })
+    safeDestination.starts.push(2_000_086_400)
+    prepared.destinations.push(safeDestination)
+    const result = {
+      directResults: [queueHash], directResultDetails: [{ chainId: 1 as const, hash: queueHash }],
+      relayrGroups: 0, relayrResults: [],
+      safeResults: [{ chainId: 8453 as const, mode: 'service' as const, status: 'queued' as const, nonce: 0, safeTxHash: queueHash }],
+    }
+    mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
+    await expect(verifyQueuedStageOrder(prepared, result)).resolves.toBeUndefined()
+    expect(mocks.receipt).toHaveBeenCalledExactlyOnceWith({ hash: queueHash })
+  })
+
+  it('does not guess a chain for untagged direct hashes in a mixed saved result', async () => {
+    const prepared = stagedReview()
+    prepared.destinations.push(review([8453]).destinations[0])
+    await expect(verifyQueuedStageOrder(prepared, { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }))
+      .rejects.toThrow(/execution could not be verified/)
+    expect(mocks.receipt).not.toHaveBeenCalled()
+  })
+
+  it('refuses fresh signing of a saved batch with relative follower starts', async () => {
+    const prepared = stagedReview()
+    prepared.destinations[0].configs[1].mustStartAtOrAfter = 0
+    await expect(reviewedQueueCalls(prepared, 'current')[0].reverifyAuthority!()).rejects.toThrow(/fixed stage schedule/)
+  })
+
+  it('retains the execution deadline through saved review and rejects expired wallet boundaries', async () => {
+    const prepared = stagedReview()
+    const deadline = Math.floor(Date.now() / 1000) + 300
+    prepared.destinations[0].validUntil = deadline
+    const calls = reviewedQueueCalls(prepared, 'current')
+    expect(calls[0].deadline).toBe(deadline)
+    await expect(calls[0].onSending!('direct')).resolves.toBeUndefined()
+    await expect(calls[0].onSending!('safe-connector')).resolves.toBeUndefined()
+    const scope = relayrCallsScope(calls)
+    saveQueueJournal({ scope, review: prepared, action: 'current' })
+    expect(readQueueJournal('jbm:queue-rulesets:1:101')!.review.destinations[0].validUntil).toBe(deadline)
+    prepared.destinations[0].validUntil = Math.floor(Date.now() / 1000) - 1
+    await expect(reviewedQueueCalls(prepared, 'current')[0].reverifyAuthority!()).rejects.toThrow(/schedule has expired/)
+    await expect(reviewedQueueCalls(prepared, 'current')[0].onSending!('direct')).rejects.toThrow(/schedule has expired/)
+  })
+
+  it('verifies each confirmed follower inherits from the preceding queued ruleset', async () => {
+    const prepared = stagedReview()
+    const result = { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }
+    mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
+    await expect(verifyQueuedStageOrder(prepared, result)).resolves.toBeUndefined()
+    mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared, 50n))
+    await expect(verifyQueuedStageOrder(prepared, result)).rejects.toThrow(/ruleset order could not be verified/)
+  })
+
+  it('refuses an internally ordered receipt whose first ruleset uses a different reviewed parent', async () => {
+    const prepared = stagedReview()
+    prepared.destinations[0].expectedFirstParentId = 49n
+    mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
+    await expect(verifyQueuedStageOrder(prepared, { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }))
+      .rejects.toThrow(/ruleset order could not be verified/)
+  })
+
+  it('recovers a confirmed ancestry check without resubmitting the saved queue', async () => {
+    const prepared = stagedReview()
+    const result = { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }
+    mocks.runAuthorityCalls.mockResolvedValueOnce(result)
+    mocks.receipt.mockRejectedValueOnce(new Error('RPC unavailable'))
+    await expect(submitQueueReview(prepared, 'current', vi.fn(), flow)).rejects.toThrow('RPC unavailable')
+    const saved = readQueueJournal('jbm:queue-rulesets:1:101')!
+    expect(saved.result).toEqual(result)
+    mocks.runAuthorityCalls.mockClear()
+    mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
+    const complete = vi.fn()
+    let renderer!: ReactTestRenderer
+    await act(async () => { renderer = create(<QueueRecovery journal={saved} onComplete={complete} onDiscard={vi.fn()} />) })
+    try {
+      const button = renderer.root.findAllByType('button').find(node => node.children.includes('Verify queued rules'))!
+      await act(async () => { await button.props.onClick() })
+      expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+      expect(complete).toHaveBeenCalledWith(result)
+      expect(readQueueJournal('jbm:queue-rulesets:1:101')).toBeNull()
+    } finally { await act(async () => renderer.unmount()) }
   })
 })
