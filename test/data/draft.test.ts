@@ -201,3 +201,97 @@ describe('.jb draft auto-issuance rows', () => {
     ])
   })
 })
+
+describe('.jb saved flavor rules', () => {
+  it('round-trips independent Custom and Revnet rules without changing active rules', () => {
+    const fields = {
+      stages: [{ issuanceRate: '10000', durationValue: '0' }],
+      issuanceBase: null, approvalDeadline: 'none',
+      savedRules: {
+        project: {
+          stages: [{ issuanceRate: '1234', durationValue: '86400', reservedPct: '20' }],
+          issuanceBase: 'usd', afterMode: 'terminal', approvalDeadline: 'custom',
+          approvalCustom: HOOK, approvalPerChain: { 10: TOKEN },
+        },
+        revnet: {
+          stages: [{ issuanceRate: '9876', cashOuts: true, cashOutTax: 1000 }],
+          issuanceBase: 'eth', afterMode: 'cycle', approvalDeadline: 'none',
+          approvalCustom: '', approvalPerChain: {},
+        },
+      },
+    }
+    const first = parseDraft(jbDraft(fields))
+    expect(first).toMatchObject(fields)
+    expect(parseDraft(JSON.stringify(first))).toMatchObject(fields)
+  })
+
+  it('preserves incomplete saved form input as incomplete', () => {
+    const savedRules = {
+      project: {
+        stages: [{
+          issuanceRate: '', reservedPct: '20',
+          reservedSplits: [{ kind: 'hook', hookKind: 'fundmarket', value: '' }],
+        }],
+        issuanceBase: 'usd', approvalDeadline: 'custom',
+        approvalCustom: '', approvalPerChain: { 10: 'unfinished.eth' },
+      },
+    }
+    const parsed = parseDraft(jbDraft({ savedRules }))
+    expect(parsed.savedRules).toMatchObject(savedRules)
+    expect(parseDraft(JSON.stringify(parsed)).savedRules).toMatchObject(savedRules)
+  })
+
+  it('whitelists only rule fields and editable flavors', () => {
+    const rules = {
+      stages: [{ issuanceRate: '1000' }],
+      owner: TOKEN, chains: [1], savedRules: { revnet: { stages: [{}] } },
+      name: 'Injected name', allowAnyToken: false,
+    }
+    const parsed = parseDraft(jbDraft({ savedRules: {
+      project: rules, revnet: rules, simple: rules, arbitrary: rules,
+    } }))
+    expect(Object.keys(parsed.savedRules!)).toEqual(['project', 'revnet'])
+    expect(Object.keys(parsed.savedRules!.project!).sort()).toEqual([
+      'afterMode', 'approvalCustom', 'approvalDeadline', 'approvalPerChain',
+      'issuanceBase', 'stages',
+    ])
+    expect(parsed.name).toBe('Test project')
+    expect(parsed.chains).toEqual([10, 8453])
+    expect(parsed.owner).toBe('')
+    expect(parsed.allowAnyToken).toBe(true)
+  })
+
+  it('omits empty and malformed snapshots rather than manufacturing saved rules', () => {
+    for (const savedRules of [undefined, null, [], 'invalid', {
+      project: { stages: [] }, revnet: { stages: 'invalid' },
+    }, { project: null, revnet: [] }]) {
+      expect(parseDraft(jbDraft({ savedRules }))).not.toHaveProperty('savedRules')
+    }
+  })
+
+  it('preserves an explicit empty saved map as a normalized draft marker', () => {
+    const parsed = parseDraft(jbDraft({ savedRules: {} }))
+    expect(parsed.savedRules).toEqual({})
+    expect(parseDraft(JSON.stringify(parsed)).savedRules).toEqual({})
+    expect(parseDraft(jbDraft({}))).not.toHaveProperty('savedRules')
+  })
+
+  it('bounds each saved stage array and reuses the active rule sanitizers', () => {
+    const parsed = parseDraft(jbDraft({ savedRules: { project: {
+      stages: Array.from({ length: 101 }, () => ({
+        issuanceRate: '9'.repeat(50), reservedSplits: Array(101).fill({ value: '1' }),
+      })),
+      issuanceBase: 'invalid', afterMode: 'invalid', approvalDeadline: 'invalid',
+      approvalCustom: 'x'.repeat(100),
+      approvalPerChain: { 10: 'y'.repeat(100), invalid: HOOK },
+    } } }))
+    const saved = parsed.savedRules!.project!
+    expect(saved.stages).toHaveLength(100)
+    expect(saved.stages[0].issuanceRate).toBe('9'.repeat(15))
+    expect(saved.stages[0].reservedSplits).toHaveLength(100)
+    expect(saved).toMatchObject({
+      issuanceBase: null, afterMode: 'wait', approvalDeadline: '1day',
+      approvalCustom: 'x'.repeat(64), approvalPerChain: { 10: 'y'.repeat(64) },
+    })
+  })
+})

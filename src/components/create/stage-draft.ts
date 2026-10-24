@@ -1,4 +1,5 @@
-import { FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
+import { formatUnits } from "viem";
+import { createSimpleProjectStage, FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
 import { resolvedAddress } from "@/lib/ens";
 import { formatDateTime } from "@/lib/format";
 import { splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
@@ -133,6 +134,35 @@ export function newDraftStage(
     },
     expanded: first,
     open: {},
+  };
+}
+
+/** Form representation of the same preset the Simple launch encoder uses. */
+export function newSimpleProjectDraftStage(): DraftStage {
+  const preset = createSimpleProjectStage();
+  return {
+    ...newDraftStage(true),
+    durationValue: String(preset.duration),
+    issuanceRate: formatUnits(preset.weight, 18),
+    cutPct: String(preset.weightCutPercent / 1e7),
+    reservedPct: String(preset.reservedPercent / 100),
+    payouts: preset.payouts,
+    holdFees: preset.holdFees,
+    cashOuts: preset.cashOutTaxRate !== null,
+    cashOutTax: preset.cashOutTaxRate ?? 0,
+    ownerMinting: preset.allowOwnerMinting,
+    acceptPayments: !preset.pausePay,
+    pauseCreditTransfers: preset.pauseCreditTransfers,
+    pause721Transfers: preset.pause721Transfers,
+    metadataExtra: preset.metadataExtra,
+    powers: {
+      setTerminals: preset.allowSetTerminals,
+      setController: preset.allowSetController,
+      terminalMigration: preset.allowTerminalMigration,
+      setCustomToken: preset.allowSetCustomToken,
+      addAccountingContext: preset.allowAddAccountingContext,
+      addPriceFeed: preset.allowAddPriceFeed,
+    },
   };
 }
 

@@ -896,3 +896,57 @@ Refactor evidence: separate21a8f77 preserves ordinary card markup/callbacks;40te
 - [ ] Complete required checks, CI and actual deployment/media verification.
 
 Browser fixture correction: the new ordinary presentation-only fixture performs incidental hook-name and pricing RPC reads that its seeded fake inventory cannot authenticate. Those reads reached the shared fail-fast service and polluted the audit for unrelated alias tests. Scope the four new cosmetic rendering cases to explicit RPC unavailability at their own browser context, retaining seeded inventory and exact selection assertions. Do not add unknown-contract allowances to the shared service or change production transports. Existing real-reader browser journeys remain untouched; rerun the full browser gate on the already verified production build.
+
+# Explain blocked multichain launch — 2026-10-23
+
+## Plan refinement
+- **Objective:** Identify why the reported four-testnet draft cannot launch and ensure every launch validation blocker is visible with a path to its field.
+- **System fit:** CreateForm owns launch eligibility and wizard navigation; existing validation helpers own the rules. Preserve wallet authority, reviewed writes, Relayr and durable launch recovery. The new screenshot proves the existing-owner field is empty and uses the connected wallet, ruling out ENS for this report.
+- **Reuse and simplicity:** Replace the eligibility conjunction with one ordered list of the same checks and their messages, then render failed checks. Reuse existing sticky/feed messages and retry; do not introduce another validator or change financial rules. Restrict the LP stage scan to the custom/revnet stages actually encoded, retaining shop scans for every flavor.
+- **Evidence and unknowns:** All displayed fees resolve and owner defaults validate; screenshots cannot expose every saved ruleset/item value. The exported asdf.jb reproduces a Simple draft retaining an unfinished Fund market reserved split: lpHookOk scans ignored stages and rejects Optimism Sepolia, although the Simple encoder replaces those stages. Custom mode legitimately rejects the unfinished split. A pending feed check also blocks silently on Launch.
+- **Verification:** Render the real form with mocked wallet/RPC boundaries, check valid simple/custom four-testnet drafts, pending feed checks and invalid field diagnostics, navigation and restored-session admission. Run affected launch/feed tests, types and scoped lint. Inspect the diff for unchanged validation/recovery rules.
+- **Resource budget:** One read-only gate review and one focused component-test owner; no builds in the running dev cache, network transactions, publishing or speculative ENS changes. Replan when exported state identifies a different cause.
+
+- [x] Consolidate existing eligibility checks and diagnose the exported draft.
+- [x] Ignore saved custom-stage Fund market splits for Simple eligibility, preserving shop validation and saved rules.
+- [x] Show actionable failed checks on Launch, preserving feed retry and session resume.
+- [x] Reproduce exported draft and verify focused regressions, types and lint.
+
+Review: The exported draft contains an unfinished Fund market reserved split saved under Simple flavor. Optimism Sepolia has no LP hook, so the old validation incorrectly blocked launch despite the Simple encoder replacing all saved custom stages. The LP guard now skips those unencoded stages and still checks shop items. Custom rules remain subject to the original validations. One ordered check list now owns launch eligibility and user-visible reasons/navigation, including pending and failed feed checks with retry. Saved custom settings and launch recovery are preserved.
+
+Verification: The actual rendered form regression failed before the LP fix and passes afterward. Seven new rendered cases cover the reported Simple draft, valid four-testnet defaults, Custom refusal/navigation, active shop refusal, incomplete multisig/navigation and pending/failed feed recovery. All 294 tests across 10 affected component, launch, feed and recovery suites pass on Node26.7.0. Full TypeScript checking, changed-file ESLint and whitespace checks pass. Independent review confirms all16 prior eligibility checks and phase/resume semantics remain intact. Browser assertions were updated for the unified requirement list; full browser/build suites were not run. No publication, contract changes or transactions.
+
+
+# Preserve Custom rules while selecting the Simple preset — 2026-10-23
+
+## Plan refinement
+- **Objective:** Selecting Simple restores preset rules; selecting Custom restores saved Custom rules, including after reload and export/import, without destroying shared project details.
+- **System fit:** CreateForm owns flavor transitions and active rule state; stage-draft adapts the existing createSimpleProjectStage preset for the form; draft.ts owns sanitized persistence. Save editable project/revnet rules separately and retain existing pinned launch/session authority and recovery. Identity, chains, accounting tokens, owner and shop remain shared.
+- **Reuse and simplicity:** Reuse the existing Simple encoder preset and draft sanitizer rather than duplicate financial constants. Store only six rule fields: stages, issuanceBase, afterMode, approvalDeadline, approvalCustom and approvalPerChain. Extract existing rule sanitization unchanged and verify before adding savedRules parsing.
+- **Evidence and unknowns:** The supplied legacy Simple draft retains custom stages and USD issuance; buildPlans replaces stages but inherits issuanceBase. Existing flavor changes also mutate revnet cash-out flags in shared stages. Preserve legacy Simple rules as a Custom backup on migration, while activating preset Simple rules.
+- **Verification:** Render actual flavor switching, change custom rules, inspect autosaved active and backup state, remount and parse round trips. Assert preset issuance currency follows accounting and Custom restores all fields; preserve revnet state, shared settings and the earlier disabled-launch fix. Run parser/export, affected form/launch/recovery tests, types and lint plus independent review.
+- **Resource budget:** Delegate draft sanitizer/schema and tests to one owner, with a read-only integration review; main owns form/preset integration. No dependencies, deployment, transaction or production build. Replan for any snapshot that changes wallet authority or shop contents.
+
+- [x] Extract and verify existing rule sanitizer, then add bounded saved flavor rule parsing.
+- [x] Activate Simple preset and restore independent editable flavor rules on switching/import.
+- [x] Persist active plus saved rules and verify switching, reload, export/import and launch gates.
+
+Review: Simple now activates preset stages, follows the accounting denomination, clears custom approval settings and uses immediate rule changes. Custom and Revnet rules are saved independently and restored on return without overwriting shared project details. Both inactive rule snapshots survive autosave/reload and export/import. Legacy Simple drafts preserve their former active custom settings as the Custom backup; explicit savedRules:{} marks normalized drafts and prevents false migration. The preset form stage derives from createSimpleProjectStage, retaining the encoder as the financial owner. Pinned launch plans and recovery are unchanged.
+
+Verification: Existing rule sanitization was extracted first with33 parser/export cases passing before adding snapshot parsing. The final336 tests pass across12 component, draft/export, feed, launch and recovery suites, including10 rendered actual-form cases. Tests exercise edited Custom/Revnet isolation, all six rule fields, legacy Simple normalization, snapshot restoration through reload/export, explicit empty-marker reload, valid multichain launches and active split refusal. Full TypeScript, changed-file ESLint, source invariants, transaction inventory, whitespace and refinement gates pass. Independent read-only review found no blockers. Full browser/build suites were not run; changes remain local and unpublished.
+
+
+# Push Simple and Custom rule fixes on current main — 2026-10-23
+
+## Plan refinement
+- **Objective:** Push only the authorized launch validation and flavor-preservation fixes on a branch based on current remote main.
+- **System fit:** The original checkout is177 commits behind main and contains unrelated uncommitted work. An isolated worktree preserves those edits; current main owns newer SDK/review integration. Preserve its transaction boundaries and apply only this task patch.
+- **Reuse and simplicity:** Reuse the verified patch with a three-way apply, retaining remote task histories and app updates. Use root instructions at /Users/jango/Documents/jb/v6/evm/AGENTS.md, its workflow/ponytail/SKILL.md and README.md, docs/PLAN_REFINEMENT.md, tasks/lessons.md, and original JBM AGENTS.md.
+- **Evidence and unknowns:** Source merged cleanly; only task-log append conflicts require preserving both records. Current main uses Node26.12 and a newer locked SDK. Prior336 tests establish old-checkout behavior; rerun applicable checks against current locked dependencies before pushing.
+- **Verification:** Install the current locked dependency graph, run affected component/parser/launch/recovery suites, types, scoped lint and existing source/transaction gates. Review the staged diff, commit only owned files, push the branch and verify the remote commit.
+- **Resource budget:** One isolated checkout and locked install, no unrelated edits, contract changes, forced update or main rewrite. Delegate independent review only if integration exposes material changes; replan on changed launch semantics.
+
+- [x] Resolve task-log appends and qualify the patch on current main.
+- [x] Prepare only owned files for the authorized commit and branch push.
+
+Review: The patch applies cleanly to current remote main1aa7d8b, preserving its SDK4 reviewed-send integration. Kept both remote task histories and this task's appended records. A physical locked install with Node26.12.1/npm12.0.1 completed without dependency changes. All340 focused tests across12 suites, changed-file ESLint, Next route generation, full TypeScript, source invariants, transaction inventory, wallet checks and whitespace checks pass. The eight owned files are staged for a dedicated branch commit; unrelated original-checkout edits remain untouched. Push receipt and PR/CI links will be reported after submission.
