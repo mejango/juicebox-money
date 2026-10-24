@@ -3793,10 +3793,9 @@ export function CreateForm() {
               </select>
               {noticeSeconds > 0 ? (
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-                  Later rulesets start only after this notice period has elapsed
-                  from queueing, at the next eligible cycle boundary. Short cycles
-                  can therefore delay their start. The chart estimates these starts;
-                  the deployment time determines the exact schedule.
+                  Notice can delay later rulesets to the next eligible cycle
+                  boundary. The chart estimates starts; deployment timing sets
+                  the final schedule.
                 </p>
               ) : null}
               {approvalDeadline === "custom" ? (
@@ -3804,8 +3803,7 @@ export function CreateForm() {
                   <p className="mb-2 text-xs leading-relaxed text-smoke-700">
                     A JBRulesetApprovalHook contract that approves or rejects
                     queued changes. It must be deployed on every selected chain.
-                    Its conditions can change the schedule; the chart does not
-                    predict custom approval behavior.
+                    The chart does not predict custom approval conditions.
                   </p>
                   <AddressField
                     value={approvalCustom}
