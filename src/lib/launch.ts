@@ -270,12 +270,17 @@ export function deriveQueuedStartFrom(
 
 /** Seconds a deployed JBDeadline hook demands, by its address on `chainId`; 0 for no hook or a custom one. */
 export function deadlineSecondsForHook(hook: Address | undefined, chainId: number): number {
+  return knownDeadlineSeconds(hook, chainId) ?? 0
+}
+
+/** A known approval delay, or null when a custom hook's policy cannot be predicted. */
+export function knownDeadlineSeconds(hook: Address | undefined, chainId: number): number | null {
   if (!hook || hook === zeroAddress) return 0
   for (const key of Object.keys(DEADLINE_SECONDS) as (keyof typeof DEADLINE_SECONDS)[]) {
     const addr = v6Address(DEADLINE_CONTRACT[key], chainId as JBChainId)
     if (addr && addr.toLowerCase() === hook.toLowerCase()) return DEADLINE_SECONDS[key]
   }
-  return 0
+  return null
 }
 
 const DEADLINE_CONTRACT: Record<
