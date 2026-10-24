@@ -67,6 +67,13 @@ describe('project link preview balance', () => {
     ])).toBe('3 ETH')
   })
 
+  it('keeps native testnet balances separate from mainnet even with the same indexed symbol', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000000000000000', 18, 'ETH'),
+      { ...deployment('2000000000000000000', 18, 'ETH'), chainId: 11155111 },
+    ])).toBe('1 ETH + 2 ETH')
+  })
+
   it('keeps rows without token identity separate', () => {
     expect(formatProjectPreviewBalance([
       deployment('1000000', 6, 'CASH'),
