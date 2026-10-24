@@ -8,7 +8,7 @@ import { build721TierConfigs } from '@/lib/launch'
 import { loadProjectBatch, projectBatchScope, type ProjectBatchCall } from '@/lib/project-batch'
 import { storeItemsForChain, type PinnedStoreItemDraft } from '@/lib/store-items'
 import { buildAdjustTiersRequest, buildSet721TierMediaRequest } from '@/lib/transaction-builders'
-import { reservedSupplyOk } from '@/lib/shop-reserves'
+import { assertShopCallPolicy } from '@/lib/shop-call-policy'
 import { chainName } from '@/lib/urn'
 
 export type ShopWriteTarget = {
@@ -122,12 +122,8 @@ export async function reverifyShopCall(call: ProjectBatchCall, account: Address,
   const { snapshot } = call.context as ShopCallContext
   if (!snapshot || snapshot.target.chainId !== call.chainId || snapshot.target.projectId !== call.projectId || snapshot.target.hook.toLowerCase() !== call.target.toLowerCase() || snapshot.account?.toLowerCase() !== account.toLowerCase() || snapshot.authority?.toLowerCase() !== call.authority.toLowerCase()) throw new Error('The saved shop update has an inconsistent identity.')
   if (authorizing && snapshot.action === 'shop-add-items') {
-    const decoded = decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })
-    if (decoded.functionName !== 'adjustTiers') throw new Error('The saved shop update is not an item addition.')
-    for (const tier of decoded.args[0]) {
-      if (tier.flags.useVotingUnits) throw new Error('Rebuild price-based items; keep authorizations for recovery.')
-      if (!reservedSupplyOk(tier.initialSupply, tier.reserveFrequency)) throw new Error('Reserved inventory needs at least 2 items on every selected chain.')
-    }
+    if (decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data }).functionName !== 'adjustTiers') throw new Error('The saved shop update is not an item addition.')
+    assertShopCallPolicy(call.data, call.target)
   }
   const fresh = await readShopSnapshot(snapshot.target, account, snapshot.isRevnet, snapshot.action, snapshot.tierId)
   if (fingerprint(fresh) !== fingerprint(snapshot)) throw new Error(`The shop or item on ${chainName(call.chainId)} changed since review. This saved update cannot be signed against different settings.`)

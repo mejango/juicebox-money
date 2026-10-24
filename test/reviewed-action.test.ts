@@ -9,7 +9,7 @@ import { createElement, createRef, forwardRef, useImperativeHandle } from 'react
 import TestRenderer, { act } from 'react-test-renderer'
 import { decodeFunctionData, numberToHex, type Abi, type Address, type Hex } from 'viem'
 import { buildBorrowTx, buildCashOutTx, buildPayTx } from '@bananapus/nana-sdk-core/v6'
-import { payIntent, registerReviewHandler } from '@bananapus/nana-sdk-core/review'
+import { payIntent, registerReviewHandler, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import baseline from './fixtures/use-safe-tx-calldata.json'
@@ -63,6 +63,8 @@ const client = {
 /** What the wallet was asked to send, in order. */
 const walletSends: { chainId: number; to: Address; data: Hex; value: bigint }[] = []
 let currentWallet: typeof walletClient
+let activeAccount: Address = ALICE
+let acquireWallet: (() => Promise<typeof walletClient>) | undefined
 const walletClient = {
   chain: { id: 10 },
   sendTransaction: vi.fn(async (tx: { chain: { id: number }; to: Address; data: Hex; value: bigint }) => {
@@ -80,8 +82,8 @@ currentWallet = walletClient
 
 vi.mock('@wagmi/core', async importOriginal => ({
   ...(await importOriginal<typeof import('@wagmi/core')>()),
-  getAccount: () => ({ address: '0x1111111111111111111111111111111111111111', chainId: 10 }),
-  getWalletClient: async () => currentWallet,
+  getAccount: () => ({ address: activeAccount, chainId: 10 }),
+  getWalletClient: async () => acquireWallet ? acquireWallet() : currentWallet,
   getPublicClient: () => client,
   switchChain: vi.fn(),
 }))
@@ -113,6 +115,8 @@ afterEach(() => {
   while (unregister.length) unregister.pop()!()
   walletSends.length = 0
   currentWallet = walletClient
+  activeAccount = ALICE
+  acquireWallet = undefined
 })
 
 /** The review UI confirms every prompt. */
@@ -176,6 +180,28 @@ describe('useReviewedAction', () => {
     })
     expect(result?.status).toBe('done')
     expect(replacementSend).toHaveBeenCalledOnce()
+  })
+
+  it.each(['account', 'expiry'])('actual SDK hook displays %s refusal after clearing its acquisition-time unsent hold', async drift => {
+    confirmEveryReview()
+    let entered!: () => void, release!: () => void
+    const waiting = new Promise<void>(resolve => { entered = resolve })
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    acquireWallet = async () => { entered(); await blocked; return currentWallet }
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    let expired = false
+    const intent = `acquisition-${crypto.randomUUID()}`
+    const call = { chainId: 10, to: TERMINAL, data: baseline.pay.data as Hex, value: 10n ** 16n, intent }
+    let pending!: ReturnType<Action['run']>
+    await act(async () => { pending = ref.current!.run({ account: ALICE, calls: [call], assertWriteState: () => { if (expired) throw new ReviewLineError('The reviewed quote expired. Review again.') } }); await waiting })
+    await act(async () => { if (drift === 'account') activeAccount = '0x2222222222222222222222222222222222222222'; else expired = true; release(); await pending })
+    expect(ref.current!.error).toBe(drift === 'account' ? 'The connected account changed. Review again.' : 'The reviewed quote expired. Review again.')
+    expect(ref.current!.phase).toBe('error')
+    expect(walletSends).toEqual([])
+    expect(writeHolds.open({ chainId: 10, account: ALICE, safe: false, namespace: intent, call }).peek().status).toBe('clear')
+    await act(async () => renderer.unmount())
   })
 
   it('keeps intent and legacy hold namespaces', async () => {

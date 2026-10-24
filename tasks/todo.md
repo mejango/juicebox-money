@@ -1220,3 +1220,46 @@ test/transactions/wallet-context.test.ts
 
 
 Completed: final production artifact passes all 90 browser checks and the mandatory fixture audit (5.2 minutes, two workers). All unchanged budgets pass, including the exact aggregate measurement above. Full unit proof is 3293/3293 before the error-copy-only reduction; all 153 affected cases and affected-file lint pass again on final copy. Final build includes TypeScript checking. Earlier full lint, source, inventory, dead-code, dependency, advisory, container, offline schema and protocol registry checks passed, with no functional source changes afterward. Independent final configuration/recovery review approved the worktree overlay. Original dirty checkout preserved; no contracts, Plugin edits, push, merge, deployment or wallet transactions.
+
+# Resolve Astra wallet acquisition and generic Safe authorization findings
+
+## Plan refinement
+- **Objective:** Close the reproduced acquisition-time connector race and generic Safe old-tier authorization gap in JBM only, retaining historical status and receipt recovery. No contracts, SDK releases, dependency changes, merge or deployment.
+- **System fit:** The local WalletAdapter will acquire an explicit current connector, retry connector drift and invoke the wallet method synchronously after final account/chain/route checks in the same continuation. One decoded tier-policy owner will serve existing shop revalidation plus generic Safe new signing/execution/funding boundaries; passive recovery remains unchanged.
+- **Reuse and simplicity:** Reuse installed wagmi getWalletClient with explicit connector and the existing adapter interface, error types, Safe/MultiSend/forwarder decoders and reservedSupplyOk. Extract current shop byte checks into their owner before extending callers; avoid a new SDK or migration framework.
+- **Evidence and unknowns:** Astra actual installed wagmi/SDK acquisition proof invokes the stale connector, and actual confirmSafeTx proof signs legacy custom tier bytes. Existing callback mocks missed acquisition internals and shop-only checks missed the queue. Trace exact invocation and authorization boundaries before implementing.
+- **Verification:** Durable actual-wagmi held-acquisition tests for replacement/account/chain/route and definitely-unsent cleanup; actual generic Safe sign/execute wrapper cases and historical receipt recovery. Rerun original Astra proofs, focused/full owning checks with two workers, frozen production artifact budgets/browser and independent Astra re-review before committing or publishing.
+- **Resource budget:** Two bounded owner fixes in the existing physical locked checkout under Node 26.12.1. No further census; serialize artifact checks and measure the necessary guard footprint before any minimal justified budget rounding.
+
+- [x] Implement current-connector acquisition/invocation owner and actual acquisition regressions.
+- [x] Enforce shared decoded shop policy at generic Safe new authorization boundaries.
+- [x] Verify focused proofs, independent Astra approval and local candidate gates, then commit owned changes. Parent owns full exact-head CI before landing.
+
+## Plan refinement
+- **Objective:** Resolve the same two Astra blockers, including definitely-unsent cleanup and readable refusal lines across actual SDK signing, React sends and Relayr fee funding.
+- **System fit:** Local adapter brands only pre-invocation failures; sends temporarily expose SDK4's definite-rejection code for hold cleanup, while signatures retain ordinary refusal lines. The existing engine loader removes that code after cleanup but retains private provenance for fee-owner restoration; actual wallet errors stay outside the classification catch. Safe lifecycle inspection precedes new-funding revalidation, so historical reconciliation remains passive.
+- **Reuse and simplicity:** Reuse current loader injection, existing payment-not-sent restoration, shared decoded shop policy and official wrapper decoders. No per-widget error override, SDK release, journal migration or broad transport redesign.
+- **Evidence and unknowns:** Actual SDK contractWrite clears only code4001 after adapter entry, while signPrepared and React useReviewedRun otherwise hide such failures as cancellation. Independent Astra confirmed this distinction; actual acquisition and signature tests now exercise it.
+- **Verification:** Actual wagmi acquisition tests, actual SDK signReviewed and cleanup tests, actual hook visible-line/cleared-hold test and Relayr fee restoration cases; Safe sign/execute/new-funding tests include supported wrappers and preserved existing status proof.
+- **Resource budget:** Finish focused boundary regressions and freeze source for Astra re-review, then two-worker full tests and sequential artifact checks. Measure necessary guards before the minimal allowed budget adjustment.
+
+Astra final-boundary clarification: preserve each action's synchronous payload/deadline assertion across connector acquisition as well as account/chain/route checks. The existing engine loader will bind the action's guard/assertWriteState to an operation-specific derived adapter, which captures and reruns only that action's callback after acquisition. No global action list or cross-action rejection. Restore the shop editor's exact adjustTiers admission check alongside the shared economic policy. Source is refrozen after these necessary boundary checks and targeted expiry/isolation regressions.
+
+## Plan refinement
+- **Objective:** Finish the approved two-boundary fix with only the measured necessary budget rounding, then commit a candidate for exact-head CI and parent-managed landing.
+- **System fit:** All eight Astra-approved runtime file hashes remain unchanged. Budget policy records the real security guard/recognized Safe ABI footprint; full coverage/browser gates remain mandatory in GitHub CI before merge.
+- **Reuse and simplicity:** Keep existing guards, readable refusals and recovery. Round only account 417.5 KiB to 418 and aggregate 2677.6 KiB to 2678, leaving every other route/chunk/style/lazy assertion unchanged. No runtime optimization, rebuild or extra census.
+- **Evidence and unknowns:** Same-artifact pre-adjustment budget output measured account 417.5/411 and aggregate 2677.6/2672 while create improved to 399.2/400 and project passed 520.0/521. Parent explicitly approved these two whole-KiB caps, about 1.6% of the account route and 0.2% aggregate, to preserve the necessary guard's legibility.
+- **Verification:** Reuse successful production build/types, 443 focused local cases and independent Astra's 108 cases. Rerun same-artifact budgets, affected checker lint, plan checker and focused regressions; bind commit runtime hashes to Astra's approval. Do not claim stopped local full coverage or unrun full browser as current-head local proof.
+- **Resource budget:** No further runtime edits or rebuild, only bounded candidate checks and owned-file commit. Parent pushes and requires every exact-head CI check green before merging.
+
+
+## Astra amendment candidate review
+
+Both identified blockers are fixed. The app adapter now invokes the current connector after acquisition-time UID retry and final operation-specific guard/assertWriteState, account, chain, route and View-as checks in one continuation. Proven pre-invocation sends use the private SDK cleanup shim; the loader restores a readable refusal after cleanup, and fee funding returns to its existing unsent state. Signature refusals never receive cancellation code 4001, and actual wallet failures retain ambiguous-submission semantics.
+
+One decoded shop-policy owner protects new generic Safe signatures, onchain approvals/execution and fee funding through recognized MultiSend, Safe exec, ERC2771, project/omnichain/revnet deployment encodings. The original shop exact-adjustTiers admission check remains. Passive old queue reads and existing signed/funded reconciliation stay available. No new confirmations, SDK/dependency/contract changes or unrelated client work.
+
+Astra approved the eight frozen runtime files and independently passed 108 tests. Final local focused verification passed 443 tests in seven files, including the Base payment sibling; a further 371-case targeted run passed after the budget comments/caps. Final TypeScript, full lint, source invariants, transaction inventory, wallet inventory (nine reviewed sites, zero residuals), Knip, production artifact build and measured budget preflight pass. Account is 417.5/418 KiB and aggregate 2677.6/2678 KiB; only those parent-approved caps were minimally rounded, with other route/chunk/style/lazy checks unchanged. Runtime hashes remain exactly Astra-approved.
+
+At the parent's explicit efficiency direction, the newly started local full-coverage run was stopped after 79 seconds with no reported failure, and full local browser was not repeated for this amendment. This is a candidate handoff, not a claim of current-head full CI success: the parent requires all exact-head GitHub coverage/browser/container/other checks to succeed before merging. No push, merge, deployment or wallet transaction was performed here; the original dirty checkout remains untouched.

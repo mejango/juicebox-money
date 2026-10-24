@@ -1,5 +1,6 @@
 'use client'
 
+import { WalletNotInvokedError } from '@/lib/wallet-refusal'
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 
 import { getAccount } from '@wagmi/core'
@@ -1275,7 +1276,7 @@ export async function relayrPay({
     // A reverted payment is proven below, as its proof decides a reverted quote.
     if (hash && error instanceof ReviewedCallRevertedError) receipt = error.receipt
     else if (hash) throw error instanceof RelayrPaymentSubmittedError ? error : new RelayrPaymentSubmittedError(hash, chainId)
-    else if (walletOpened && !ready) {
+    else if (walletOpened && (!ready || error instanceof WalletNotInvokedError)) {
       // The saved marker can be withdrawn because the wallet has not been invoked.
       throw new RelayrPaymentNotSentError(error)
     } else if (walletOpened) {

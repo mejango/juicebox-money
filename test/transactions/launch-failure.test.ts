@@ -1,3 +1,4 @@
+import { assertShopCallPolicy } from '@/lib/shop-call-policy'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { buildHistoricalLaunchRequest, buildLaunchRequest, launchCallForRecovery, createSimpleProjectStage, DEFAULT_STORE_FLAGS, requireFinalizedLaunchFailure, type LaunchPlan } from '@/lib/launch'
@@ -53,6 +54,13 @@ describe('finalized direct launch failure release', () => {
     const validPlan = { ...oldPlan, store: { ...oldPlan.store, items: [{ ...oldPlan.store.items[0], supply: 2 }] } }
     const args = { ...direct, plan: validPlan, owner: ACCOUNT, creationFee: 123n }
     expect(encodeFunctionData(buildLaunchRequest(args) as Parameters<typeof encodeFunctionData>[0])).not.toBe(encodeFunctionData(buildHistoricalLaunchRequest(args) as Parameters<typeof encodeFunctionData>[0]))
+    for (const variant of [validPlan, { ...validPlan, chains: [8453, 10], linkChains: true }, { ...validPlan, flavor: 'revnet' as const, operator: ACCOUNT }]) {
+      const launchArgs = { ...args, plan: variant }
+      const historic = buildHistoricalLaunchRequest(launchArgs)
+      expect(() => assertShopCallPolicy(encodeFunctionData(historic as Parameters<typeof encodeFunctionData>[0]), historic.address)).toThrow('price-based')
+      const fresh = buildLaunchRequest(launchArgs)
+      expect(() => assertShopCallPolicy(encodeFunctionData(fresh as Parameters<typeof encodeFunctionData>[0]), fresh.address)).not.toThrow()
+    }
     for (const build of [buildLaunchRequest, buildHistoricalLaunchRequest]) {
       const candidate = build(args)
       const data = encodeFunctionData(candidate as Parameters<typeof encodeFunctionData>[0])

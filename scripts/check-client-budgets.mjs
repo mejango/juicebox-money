@@ -53,7 +53,8 @@ const routes = [
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   { route: '/[urn]', path: '/eth:1', kib: 521, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 411, text: 'Holdings' },
+  // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
+  { route: '/account/[address]', path: `/account/${account}`, kib: 418, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -69,7 +70,8 @@ const budgets = {
   // 2621 -> 2624: the onchain pair check (SDK resolveSuckers) and Next 16.4.2.
   // 2624 -> 2669: core's reviewed send, its hook and held view in lazy chunks of their own; SDK 4.0.0 review plan, Relayr rounds and late-settle handling.
   // Explicit stage ordering, bounded signatures and confirmed-result recovery: measured 2671.5 KiB.
-  allScripts: 2672 * KIB,
+  // Acquisition and generic Safe policy guards: measured 2677.6 KiB, rounded up only.
+  allScripts: 2678 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
