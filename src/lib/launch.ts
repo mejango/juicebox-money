@@ -791,12 +791,10 @@ export function buildLaunchRequest(args: {
 
   const stages = resolveStages(plan)
 
-  // The approval condition is shared across stages. It's meaningless when
-  // the last stage lasts forever — force address(0) then (website/ parity).
-  const lastForever =
-    stages[stages.length - 1].duration === FOREVER_SECONDS
+  // Each stage's hook protects its successor, including a final Terminate
+  // stage. A later long-duration stage must not erase earlier notice periods.
   const approvalHook =
-    plan.approvalDeadline === 'none' || lastForever
+    plan.approvalDeadline === 'none'
       ? zeroAddress
       : plan.approvalDeadline === 'custom'
         ? (plan.approvalCustomAddress ?? zeroAddress)
@@ -810,7 +808,7 @@ export function buildLaunchRequest(args: {
       duration: stage.duration,
       weight: stage.weight,
       weightCutPercent: stage.weightCutPercent,
-      approvalHook,
+      approvalHook: stage.duration === FOREVER_SECONDS ? zeroAddress : approvalHook,
       metadata: buildRulesetMetadata({
         baseCurrency,
         reservedPercent: stage.reservedPercent,
