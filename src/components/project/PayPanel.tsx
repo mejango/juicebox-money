@@ -571,7 +571,7 @@ export function PayPanel({
   const holdsNothing = defaultsToDollars({
     isConnected,
     balances: acceptedTokens.map(
-      token => acceptedBalances.get(token.address) ?? 0n,
+      token => acceptedBalances.get(token.address),
     ),
   });
 

@@ -86,3 +86,9 @@ Recipient, approval and payout overrides constrain only chains the current actio
 
 ## 2026-10-24 — Follow alignment corrections without combining fields
 When the user asks modal values to match the base page's left alignment, preserve separate Launching, Chains, Accounting and Rules labels. Do not infer that adjacent labels form a combined phrase. Keep label nowrap behavior while aligning all values at the existing column start.
+
+## 2026-10-24 — Wallet acquisition remains preparation
+A current-client getter can still resolve a connector captured before an awaited provider or chain read. Acquire the explicit current connector, retry UID drift, and invoke the actual wallet method synchronously after final account, chain and route checks. Test the installed wagmi implementation with acquisition held open, not only a ready-client mock. Mark only proven pre-invocation send failures for SDK cleanup; preserve visible refusal lines and never reclassify actual wallet errors or signature refusals as user cancellation.
+
+## 2026-10-24 — Draft policy must protect generic queued authorizations
+A correct shop compiler does not constrain a previously queued Safe transaction. Reuse the decoded shop policy for new generic Safe signatures, execution and funding, including supported wrappers. Keep passive signed/funded status and receipt reconciliation outside that guard. Actual-module queue and recovery regressions enforce the boundary.

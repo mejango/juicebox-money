@@ -77,7 +77,6 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
     if (!items.length) { setMessage('Add at least one item.'); return }
     const invalid = items.findIndex(item => !itemOk(item, selected))
     if (invalid >= 0) { setMessage(`Finish the required fields for item ${invalid + 1}.`); return }
-    if (items.some(item => item.reserveN.trim() && selected.some(chain => (item.perChainSupply[chain]?.trim() || item.supply.trim()) === '1'))) { setMessage('Reserved inventory needs at least 2 items on every selected chain.'); return }
     setPhase('checking')
     try {
       const chosen = distinctShopTargets(compatibleTargets.filter(target => selected.includes(target.chainId)))
@@ -113,7 +112,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
         scope = projectBatchScope('shop-add-items', calls[0].chainId, calls[0].projectId)
       }
       setPhase('writing')
-      const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
+      const result = await runProjectBatch({ scope: scope!, action: 'shop-add-items', account: address, calls: batch?.calls ?? calls, expectedBatchId: batch?.id, title: 'Add shop items', reverify: call => reverifyShopCall(call, address, true), signal: flowSignal(), onProgress: progress => { setMessage(progress.message); const saved = loadProjectBatch(scope!); if (saved) setBatch(saved) } })
       setBatch(result)
       await Promise.allSettled([queryClient.invalidateQueries({ queryKey: SHOP_721_QUERY_PREFIX }), queryClient.invalidateQueries({ queryKey: ['shop721Media'] })])
       setPhase(result.status === 'complete' ? 'done' : 'failed')

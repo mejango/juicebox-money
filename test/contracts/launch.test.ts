@@ -1068,14 +1068,19 @@ describe('launch helper invariants', () => {
       },
       perChainSupply: category === 2 ? { 1: null } : { 1: 9 },
     })
+    expect(() => build721TierConfigs([{ ...item(1, 1), perChainSupply: {} }], 1)).toThrow('at least 2')
+    expect(() => build721TierConfigs([{ ...item(1, 2), perChainSupply: { 1: 1 } }], 1)).toThrow('at least 2')
+    expect(build721TierConfigs([{ ...item(1, 1), reserveFrequency: 0, perChainSupply: {} }], 1)[0].initialSupply).toBe(1)
     const tiers = build721TierConfigs([item(2, 5), item(1, 4)], 1)
 
+    expect(tiers.map(tier => tier.votingUnits)).toEqual([0, 0])
+    expect(build721TierConfigs([{ ...item(1, 2), votingUnits: 0 }], 1)[0].flags.useVotingUnits).toBe(false)
     expect(tiers.map(tier => tier.category)).toEqual([1, 2])
     expect(tiers.map(tier => tier.initialSupply)).toEqual([9, TIER_UNLIMITED_SUPPLY])
     expect(tiers[0].flags).toEqual(
       expect.objectContaining({
         useReserveBeneficiaryAsDefault: true,
-        useVotingUnits: true,
+        useVotingUnits: false,
         cantIncreaseDiscountPercent: false,
         cantBuyWithCredits: false,
       }),

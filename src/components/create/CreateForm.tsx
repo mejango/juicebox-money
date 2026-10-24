@@ -87,6 +87,7 @@ import {
   chainsWithoutLpSplitHook,
   activeChainOverrides,
   autoIssuanceMintChain,
+  launchCallForRecovery,
   buildLaunchRequest,
   prepareLaunchSchedule,
   assertLaunchScheduleFresh,
@@ -1571,8 +1572,7 @@ export function CreateForm() {
           ? resolvedAddress(item.reserveBeneficiary)
           : null,
         category: item.category,
-        votingUnits:
-          item.votingUnits.trim() === "" ? 0 : Number(item.votingUnits),
+        votingUnits: 0,
         flags: {
           allowOwnerMint: item.allowOwnerMint,
           transfersPausable: item.transfersPausable,
@@ -1649,16 +1649,23 @@ export function CreateForm() {
           updateStatus(chainId, { phase: "confirming", error: undefined });
         } else if (launchMayBeOut(priorStatus)) {
           if (hash) updateStatus(chainId, { phase: "confirming", error: undefined });
-          // The pinned launch built purely (no fee read), as the last release held it: a saved hash is adopted against it.
+          // Adopt a saved hash only against exact current or historical bytes from its saved plan.
+          // The original transaction supplies its value; recovery never needs a fresh creation-fee read.
           let pinnedCall: { to: Address; data: Hex; value: bigint } | undefined;
-          try {
-            const pinnedRequest = buildLaunchRequest({
+          const transaction = hash ? await client.getTransaction({ hash }).catch(() => null) : null;
+          if (transaction) {
+            if (transaction.hash.toLowerCase() !== hash!.toLowerCase()) throw new Error("The saved transaction hash changed.");
+            pinnedCall = launchCallForRecovery({
               chainId: chainId as JBChainId, owner: address!, projectUri: pinned.projectUri,
-              creationFee: 0n, plan: pinned.plans[chainId], salt: pinned.salt,
-            });
-            pinnedCall = { to: pinnedRequest.address, data: encodeFunctionData(pinnedRequest as Parameters<typeof encodeFunctionData>[0]), value: 0n };
-          } catch {
-            pinnedCall = undefined;
+              plan: pinned.plans[chainId], salt: pinned.salt,
+            }, transaction);
+          } else if (!pinned.plans[chainId].store?.items.some(item => item.votingUnits > 0)) {
+            // With no legacy custom votes, both encodings are identical. Preserve unknown-hash recovery.
+            try {
+              const request = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!,
+                projectUri: pinned.projectUri, plan: pinned.plans[chainId], salt: pinned.salt, creationFee: 0n });
+              pinnedCall = { to: request.address, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), value: 0n };
+            } catch { /* Keep unread or unbuildable original requests held. */ }
           }
           const attempt = launchAttemptOf({ ...launch, client, status: priorStatus, pinnedCall });
           const outcome = await savedAttempts.recover(attempt, client as never);
@@ -4042,7 +4049,7 @@ export function CreateForm() {
                     [
                       "noNewTiersWithVotes",
                       "Lock voting items after launch",
-                      "New items added later can never carry custom voting power.",
+                      "New items added later must be free, since paid items carry price-based voting power.",
                     ],
                     [
                       "noNewTiersWithOwnerMinting",

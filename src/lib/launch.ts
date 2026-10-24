@@ -1,3 +1,4 @@
+import { reservedSupplyOk } from "@/lib/shop-reserves"
 import {
   JBUniswapV4LPSplitHookContracts,
   MappableAsset,
@@ -808,7 +809,7 @@ function scaleDecimals(amount: bigint, from: number, to: number): bigint {
  * branch below ALSO configures suckers (`suckerConfigFor`) — the plan is the
  * same on every chain, so the rulesets come out byte-identical either way.
  */
-export function buildLaunchRequest(args: {
+type LaunchRequestArgs = {
   chainId: JBChainId
   /** The sending wallet. Only used for sessions pinned before `plan.owner`
    *  became concrete — see `owner` below. */
@@ -818,7 +819,34 @@ export function buildLaunchRequest(args: {
   plan: LaunchPlan
   /** Unique per launch run (the hook's create2 salt). */
   salt: `0x${string}`
-}) {
+}
+
+export function buildLaunchRequest(args: LaunchRequestArgs) {
+  return compileLaunchRequest(args, false)
+}
+
+/** Reconstruct previously signed bytes only; never use this to authorize a new launch. */
+export function buildHistoricalLaunchRequest(args: LaunchRequestArgs) {
+  return compileLaunchRequest(args, true)
+}
+
+/** Bind recovery to exact current or historical bytes under the same saved plan. Never authorizes a new call. */
+export function launchCallForRecovery(
+  args: Omit<LaunchRequestArgs, 'creationFee'>,
+  transaction: { from: Address; to: Address | null; chainId?: number; input: Hex; value: bigint },
+): { to: Address; data: Hex; value: bigint } {
+  const original = { ...args, creationFee: transaction.value }
+  const historical = buildHistoricalLaunchRequest(original)
+  const encode = (request: ReturnType<typeof buildLaunchRequest>) => encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]).toLowerCase()
+  if (transaction.chainId !== args.chainId || transaction.from.toLowerCase() !== args.owner.toLowerCase() ||
+      transaction.to?.toLowerCase() !== historical.address.toLowerCase() ||
+      (transaction.input.toLowerCase() !== encode(historical) && transaction.input.toLowerCase() !== encode(buildLaunchRequest(original)))) {
+    throw new Error('Launch differs from saved plan; keep recovery data.')
+  }
+  return { to: historical.address, data: transaction.input, value: transaction.value }
+}
+
+function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean) {
   const { chainId, plan } = args
   const { accounting } = plan
   // The plan is the authority: its owner was frozen when the run was pinned.
@@ -885,7 +913,7 @@ export function buildLaunchRequest(args: {
       })
     })
 
-    const shop = build721HookConfig(plan.store, args.projectUri, accounting, chainId)
+    const shop = build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore)
     return buildDeployRevnetTx({
       chainId,
       config: {
@@ -1053,7 +1081,7 @@ export function buildLaunchRequest(args: {
       owner,
       projectUri: args.projectUri,
       deploy721Config: {
-        deployTiersHookConfig: build721HookConfig(plan.store, args.projectUri, accounting, chainId),
+        deployTiersHookConfig: build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore),
         useDataHookForCashOut: plan.store.itemsRedeem,
         salt: args.salt,
       },
@@ -1073,7 +1101,7 @@ export function buildLaunchRequest(args: {
     functionName: 'launchProjectFor' as const,
     args: [
       owner,
-      build721HookConfig(args.plan.store, args.projectUri, accounting, chainId),
+      build721HookConfig(args.plan.store, args.projectUri, accounting, chainId, historicalStore),
       {
         projectUri: args.projectUri,
         rulesetConfigurations,
@@ -1235,6 +1263,10 @@ export function build721TierConfigs(
   items: StoreItem[],
   chainId: JBChainId,
 ) {
+  return tierConfigs(items, chainId, false)
+}
+
+function tierConfigs(items: StoreItem[], chainId: JBChainId, historicalStore: boolean) {
   // Tiers must be sorted by category ascending; per-chain supply overrides
   // pick this chain's number (null = unlimited here).
   return [...items]
@@ -1244,10 +1276,13 @@ export function build721TierConfigs(
         chainId in item.perChainSupply
           ? item.perChainSupply[chainId]
           : item.supply
+      if (!historicalStore && !reservedSupplyOk(supply, item.reserveFrequency)) {
+        throw new Error("Reserved inventory needs at least 2 items on every selected chain.")
+      }
       return {
         price: item.price,
         initialSupply: supply ?? TIER_UNLIMITED_SUPPLY,
-        votingUnits: item.votingUnits,
+        votingUnits: historicalStore ? item.votingUnits : 0,
         reserveFrequency: item.reserveFrequency,
         reserveBeneficiary: item.reserveBeneficiary ?? zeroAddress,
         encodedIpfsUri: item.encodedIpfsUri,
@@ -1258,7 +1293,7 @@ export function build721TierConfigs(
           useReserveBeneficiaryAsDefault:
             item.reserveFrequency > 0 && item.reserveBeneficiary !== null,
           transfersPausable: item.flags.transfersPausable,
-          useVotingUnits: item.votingUnits > 0,
+          useVotingUnits: historicalStore && item.votingUnits > 0,
           cantBeRemoved: item.flags.cantBeRemoved,
           cantIncreaseDiscountPercent: !item.flags.ownerCanEditDiscount,
           cantBuyWithCredits: !item.flags.allowCredits,
@@ -1277,6 +1312,7 @@ function build721HookConfig(
   projectUri: string,
   accounting: AccountingConfig,
   chainId: JBChainId,
+  historicalStore = false,
 ) {
   // Tier pricing: a standard currency, or the custom accounting token
   // itself (token-keyed id, its own decimals — no feed needed).
@@ -1299,7 +1335,7 @@ function build721HookConfig(
         ? { currency: BASE_CURRENCY_USD }
         : { currency: BASE_CURRENCY_ETH },
   )
-  const tiers = build721TierConfigs(store.items, chainId)
+  const tiers = tierConfigs(store.items, chainId, historicalStore)
   return {
     name: store.name,
     symbol: store.symbol,
@@ -1349,12 +1385,11 @@ export async function requireFinalizedLaunchFailure(
   if (receipt.transactionHash.toLowerCase() !== hash.toLowerCase()) throw new Error(held)
   if (direct) {
     const tx = await client.getTransaction({ hash })
-    const expected = buildLaunchRequest({ ...direct, owner: direct.account, creationFee: tx.value })
+    try { launchCallForRecovery({ ...direct, owner: direct.account }, tx) }
+    catch { throw new Error(held) }
     if (receipt.status !== 'reverted' || tx.hash.toLowerCase() !== hash.toLowerCase() ||
         tx.chainId !== direct.chainId || tx.blockHash !== receipt.blockHash ||
-        tx.from.toLowerCase() !== direct.account.toLowerCase() ||
-        tx.to?.toLowerCase() !== expected.address.toLowerCase() ||
-        tx.input.toLowerCase() !== encodeFunctionData(expected as Parameters<typeof encodeFunctionData>[0]).toLowerCase()) {
+        tx.from.toLowerCase() !== direct.account.toLowerCase()) {
       throw new Error(held)
     }
   }

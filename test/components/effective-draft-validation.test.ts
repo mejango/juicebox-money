@@ -52,6 +52,17 @@ describe('effective draft validation', () => {
     expect(splitOk({ ...split, value: '1e4', perChainAmount: {} }, 'amount', [1])).toBe(false)
   })
 
+  it('rejects reserved single supply on each effective selected chain', () => {
+    const item = { ...newDraftItem(), name: 'Item', price: '1', supply: '1', reserveN: '2', reserveBeneficiary: address, perChainSupply: { 1: '2', 10: '1' } }
+    expect(itemOk({ ...item, votingUnits: 'legacy custom value' }, [1])).toBe(true)
+    expect(itemOk(item, [1])).toBe(true)
+    expect(itemOk(item, [10])).toBe(false)
+    expect(itemOk(item, [1, 10])).toBe(false)
+    expect(itemOk({ ...item, perChainSupply: {} }, [1])).toBe(false)
+    expect(itemOk({ ...item, perChainSupply: { 1: 'unlimited' } }, [1])).toBe(true)
+    expect(itemOk({ ...item, reserveN: '' }, [10])).toBe(true)
+  })
+
   it('preserves inherited later-stage issuance', () => {
     expect(stageIssuanceOk({ ...newDraftStage(false), issuanceRate: '' }, false)).toBe(true)
     expect(stageIssuanceOk({ ...newDraftStage(true), issuanceRate: '' }, true)).toBe(false)

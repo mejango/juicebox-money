@@ -68,6 +68,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
 }))
 vi.mock('@/lib/launch', async original => ({
   ...(await original<typeof import('@/lib/launch')>()),
+  launchCallForRecovery: (_args: unknown, tx: { to: string; input: string; value: bigint }) => ({ to: tx.to, data: tx.input, value: tx.value }),
   buildLaunchRequest: () => ({
     chainId: 1, address: DEPLOYER, abi: parseAbi(['function launch(uint256 salt)']), functionName: 'launch', args: [1n], value: 0n,
   }),

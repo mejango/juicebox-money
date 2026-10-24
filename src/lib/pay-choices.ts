@@ -21,8 +21,8 @@ export function defaultsToDollars({
   balances,
 }: {
   isConnected: boolean
-  /** One balance per accepted token. Empty while they are still being read. */
-  balances: bigint[]
+  /** One balance per accepted token. Undefined while a read is pending or failed. */
+  balances: (bigint | undefined)[]
 }): boolean {
   if (!isConnected || balances.length === 0) return false
   return balances.every(balance => balance === 0n)

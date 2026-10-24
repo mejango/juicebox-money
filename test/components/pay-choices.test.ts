@@ -69,3 +69,7 @@ describe('what a payer should buy to pay this project', () => {
     expect(buyableAsset({ accepted: ['DAI'] })).toBe('ETH')
   })
 })
+
+it.each([[undefined], [0n, undefined], [undefined, 0n]])('keeps pending or failed balances unknown (case %#)', (...balances) => {
+  expect(defaultsToDollars({ isConnected: true, balances })).toBe(false)
+})

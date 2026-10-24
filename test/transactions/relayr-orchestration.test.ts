@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   account: undefined as Address | undefined,
   chainId: 1,
   connectorUid: 'ordinary-wallet',
+  acquisitionFailure: undefined as Error | undefined,
   /** The status the chain mines a payment with, unless `paymentStatuses` names its hash. */
   paymentStatus: 'success' as 'success' | 'reverted',
   paymentStatuses: new Map<string, 'success' | 'reverted'>(),
@@ -58,8 +59,10 @@ vi.mock('@/lib/preload-review', async () => {
   const engine = fakeEngine({
     safe: () => mocks.isSafeConnection(),
     switchChain: async chainId => { await mocks.connectedWallet(chainId, {}) },
-    send: async ({ chainId, to, data, value, gas }) =>
-      mocks.wallet.sendTransaction({ account: mocks.account, chain: { id: chainId }, to, data, value, gas }),
+    send: async ({ chainId, to, data, value, gas }) => {
+      if (mocks.acquisitionFailure) throw mocks.acquisitionFailure
+      return mocks.wallet.sendTransaction({ account: mocks.account, chain: { id: chainId }, to, data, value, gas })
+    },
     receipt: async hash => mocks.client.waitForTransactionReceipt({ hash }),
     sign: async typedData => mocks.wallet.signTypedData({ account: mocks.account, ...typedData }),
     proof: chainId => (mocks.clientOn?.(chainId) ?? mocks.client) as never,
@@ -74,6 +77,7 @@ vi.mock('@/lib/safe-connector', () => ({
 }))
 
 import {
+  RelayrPaymentNotSentError,
   RELAYR_NATIVE_TOKEN,
   RELAYR_PAYMENT_ADDRESS,
   RELAYR_PAYMENT_CODE_HASH,
@@ -234,11 +238,11 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done })
   return { promise, resolve }
 }
-const WALLET_CHANGES = ['account', 'chain', 'connector', 'safe', 'view-as'] as const
+const WALLET_CHANGES = ['account', 'chain', 'disconnected', 'safe', 'view-as'] as const
 function changeWallet(change: typeof WALLET_CHANGES[number]) {
   if (change === 'account') mocks.account = BOB
   if (change === 'chain') mocks.chainId = 10
-  if (change === 'connector') mocks.connectorUid = 'replacement-wallet'
+  if (change === 'disconnected') mocks.account = undefined
   if (change === 'safe') mocks.isSafeConnection.mockReturnValue(true)
   if (change === 'view-as') setViewAs(BOB)
 }
@@ -302,6 +306,7 @@ beforeEach(() => {
   mocks.account = ALICE
   mocks.chainId = 1
   mocks.connectorUid = 'ordinary-wallet'
+  mocks.acquisitionFailure = undefined
   mocks.getAccount.mockImplementation(() => ({
     address: mocks.account,
     chainId: mocks.chainId,
@@ -342,6 +347,18 @@ beforeEach(() => {
 })
 
 describe('Relayr quote and payment boundaries', () => {
+  it('restores a quoted fee attempt after a proven acquisition failure, without opening the wallet', async () => {
+    const { WalletNotInvokedError } = await import('@/lib/wallet-refusal')
+    const { ReviewLineError } = await import('@bananapus/nana-sdk-core/review')
+    mocks.acquisitionFailure = new WalletNotInvokedError(new ReviewLineError('Connected account changed. Review again.'), false)
+    const onSending = vi.fn()
+    const error = await pay(payment, [1], { onSending }).catch(error => error)
+    expect(onSending).toHaveBeenCalledOnce()
+    expect(error).toBeInstanceOf(RelayrPaymentNotSentError)
+    expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+  })
+
   it.each(WALLET_CHANGES)('refuses a %s change while the final bundle check is pending', async change => {
     const entered = deferred(), release = deferred()
     const onSending = vi.fn()
@@ -393,7 +410,7 @@ describe('Relayr quote and payment boundaries', () => {
     const onSending = vi.fn()
     const result = pay(payment, [1], { sent, onSending }).catch(error => error)
     await entered.promise
-    changeWallet('connector'); release.resolve()
+    changeWallet('disconnected'); release.resolve()
     expect(await result).toBeInstanceOf(Error)
     expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: HASH })
     expect(fetch).toHaveBeenCalledOnce()

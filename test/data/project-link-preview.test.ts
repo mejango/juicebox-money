@@ -161,6 +161,20 @@ describe('project link preview balance', () => {
     ).toBe('Unavailable')
   })
 
+  it.each(['', 'not-a-number', undefined])('does not present an incomplete balance as a complete sum (%s)', balance => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000', 6, 'USDC'),
+      { ...deployment('0', 18, 'ETH'), balance: balance as string },
+    ])).toBe('Unavailable')
+  })
+
+  it('does not treat a missing USD fallback as zero', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000', 6, 'USDC'),
+      { ...deployment('3', 18, ''), balanceUsd: undefined },
+    ])).toBe('Unavailable')
+  })
+
   it('uses a plain-text description when a project has no dedicated tagline', () => {
     expect(projectPreviewSlogan(null, '<p>Join our <b>creative</b> mission.</p>')).toBe(
       'Join our creative mission.',

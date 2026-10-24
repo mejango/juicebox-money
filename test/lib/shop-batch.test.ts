@@ -1,5 +1,5 @@
 import { jb721TiersHookAbi } from '@bananapus/nana-sdk-core'
-import { decodeFunctionData, parseUnits, zeroAddress, type Address, type Hex } from 'viem'
+import { decodeFunctionData, encodeFunctionData, parseUnits, zeroAddress, type Address, type Hex } from 'viem'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({ shop: vi.fn(), permissions: vi.fn(), client: vi.fn(), load: vi.fn(), identity: vi.fn() }))
@@ -67,11 +67,29 @@ describe('shop batch destination review', () => {
     expect(configs[0].functionName).toBe('adjustTiers')
     const first = configs[0].args![0] as unknown as { price: bigint; initialSupply: number }[]
     const second = configs[1].args![0] as unknown as { price: bigint; initialSupply: number }[]
-    expect(first[0]).toMatchObject({ price: parseUnits(draft.price, 18), initialSupply: 9, encodedIpfsUri: URI, votingUnits: 19, reserveFrequency: 3, reserveBeneficiary: ACCOUNT, category: 4, discountPercent: 25, flags: { allowOwnerMint: true, useReserveBeneficiaryAsDefault: true } })
+    expect(first[0]).toMatchObject({ price: parseUnits(draft.price, 18), initialSupply: 9, encodedIpfsUri: URI, votingUnits: 0, reserveFrequency: 3, reserveBeneficiary: ACCOUNT, category: 4, discountPercent: 25, flags: { allowOwnerMint: true, useReserveBeneficiaryAsDefault: true, useVotingUnits: false } })
     expect(first[0]).toMatchObject({ splitPercent: 300000000, splits: [{ projectId: 15n, beneficiary: ACCOUNT, preferAddToBalance: true, lockedUntil: 1893456000, hook: zeroAddress }, { projectId: 17n, beneficiary: PEER_RECIPIENT, hook: PEER_HOOK }] })
     expect(second[0]).toMatchObject({ price: parseUnits(draft.price, 6), initialSupply: 23, splits: [{ projectId: 29n, beneficiary: PEER_RECIPIENT, preferAddToBalance: true, lockedUntil: 1893456000, hook: zeroAddress }, { projectId: 17n, beneficiary: PEER_RECIPIENT, hook: PEER_HOOK }] })
     expect(configs.map(config => config.args![1])).toEqual([[], []])
     expect(snapshots.map(snapshot => snapshot.maxTierId)).toEqual(['19', '38'])
+  })
+  it('rejects paid tiers in a voting-locked collection without changing the price-based flag', async () => {
+    const snapshot = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-add-items')
+    const value = JSON.parse(snapshot.state)
+    value.flags.noNewTiersWithVotes = true
+    snapshot.state = JSON.stringify(value)
+    const draft = { ...newDraftItem(), name: 'One', price: '1', votingUnits: '19' }
+    expect(() => buildShopAddCalls([snapshot], ACCOUNT, [{ draft, encodedIpfsUri: URI }])).toThrow('new paid items')
+  })
+  it.each(['custom-votes', 'reserved-single'] as const)('refuses new authorization of legacy %s bytes but allows passive revalidation', async policy => {
+    const snapshot = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-add-items')
+    const call = buildShopAddCalls([snapshot], ACCOUNT, [{ draft: { ...newDraftItem(), name: 'One', price: '1', supply: '2' }, encodedIpfsUri: URI }])[0]
+    const decoded = decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })
+    if (decoded.functionName !== 'adjustTiers') throw new Error('wrong builder')
+    const tiers = decoded.args[0].map(tier => ({ ...tier, flags: { ...tier.flags, useVotingUnits: policy === 'custom-votes' }, ...(policy === 'reserved-single' ? { initialSupply: 1, reserveFrequency: 2 } : {}) }))
+    call.data = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'adjustTiers', args: [tiers, []] })
+    await expect(reverifyShopCall(call, ACCOUNT)).resolves.toBeUndefined()
+    await expect(reverifyShopCall(call, ACCOUNT, true)).rejects.toThrow(policy === 'custom-votes' ? 'price-based' : 'at least 2')
   })
   it('rejects excess destination price precision rather than allowing parseUnits to round', async () => {
     const snapshot = await readShopSnapshot(targets[1], ACCOUNT, false, 'shop-add-items')

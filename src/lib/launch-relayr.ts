@@ -22,7 +22,7 @@ import {
   type TransactionReceipt,
 } from 'viem'
 import { wagmiConfig } from '@/providers/Providers'
-import { assertLaunchScheduleFresh, buildLaunchRequest, launchScheduleDescription, projectIdFromReceipt, resolveStages, type LaunchPlan } from '@/lib/launch'
+import { assertLaunchScheduleFresh, buildLaunchRequest, launchCallForRecovery, launchScheduleDescription, projectIdFromReceipt, resolveStages, type LaunchPlan } from '@/lib/launch'
 import { assertRulesetReceiptOrder } from '@/lib/ruleset-receipt'
 import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { gasWithHeadroom, intent, writeIntentKey, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
@@ -288,11 +288,9 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
     }
     const pinnedRequest = (signed: SignedLaunch) => {
       const request = requestOf(signed, current.plans[signed.chainId])
-      const expected = buildLaunchRequest({ chainId: signed.chainId as JBChainId, owner: account,
-        projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt,
-        creationFee: request.value })
-      if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address) ||
-          request.data.toLowerCase() !== launchData(expected)) throw new Error('The saved signature does not match this pinned launch.')
+      launchCallForRecovery({ chainId: signed.chainId as JBChainId, owner: account,
+        projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt },
+      { from: request.from, to: request.to, chainId: signed.chainId, input: request.data, value: request.value })
       return request
     }
     for (const signed of journal?.signed ?? []) pinnedRequest(signed)

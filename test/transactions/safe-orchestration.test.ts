@@ -122,6 +122,7 @@ import {
   safeTransactionHash,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
+import { erc2771ForwarderAbi, jb721TiersHookAbi } from '@bananapus/nana-sdk-core'
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { coreReviews } from '../support/core-review'
 
@@ -1123,7 +1124,7 @@ describe('Safe final wallet context', () => {
     expect(mocks.wallet.writeContract).toHaveBeenCalledOnce()
   })
 
-  it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)('does not publish a signature after %s changes while the wallet signs', async drift => {
+  it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)('does not publish a signature after %s changes while the wallet signs', async drift => {
     let release!: (signature: Hex) => void
     mocks.wallet.signTypedData.mockImplementationOnce(() => new Promise<Hex>(resolve => { release = resolve }))
     const run = confirmSafeTx(1, SAFE, queued([]), ALICE)
@@ -1131,7 +1132,7 @@ describe('Safe final wallet context', () => {
     await vi.waitFor(() => expect(mocks.wallet.signTypedData).toHaveBeenCalledOnce())
     if (drift === 'account') mocks.account = BOB
     if (drift === 'chain') mocks.chainId = 10
-    if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+    if (drift === 'disconnected') mocks.account = undefined
     if (drift === 'view-as') setViewAs(BOB)
     if (drift === 'route') mocks.safe = true
     release(`0x${'11'.repeat(65)}`)
@@ -1142,7 +1143,7 @@ describe('Safe final wallet context', () => {
   })
 
   for (const operation of ['signature', 'execution'] as const) {
-    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`refuses %s drift during the last ${operation} preparation`, async drift => {
+    it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)(`refuses %s drift during the last ${operation} preparation`, async drift => {
       let release!: () => void
       const blocked = new Promise<void>(resolve => { release = resolve })
       let reached = false
@@ -1158,7 +1159,7 @@ describe('Safe final wallet context', () => {
       await vi.waitFor(() => expect(reached).toBe(true))
       if (drift === 'account') mocks.account = BOB
       if (drift === 'chain') mocks.chainId = 10
-      if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+      if (drift === 'disconnected') mocks.account = undefined
       if (drift === 'view-as') setViewAs(BOB)
       if (drift === 'route') mocks.safe = true
       release()
@@ -1169,4 +1170,44 @@ describe('Safe final wallet context', () => {
       } finally { clearViewAs() }
     })
   }
+})
+
+
+describe('new Safe authorizations honor shop policy without blocking history', () => {
+  function obsolete(policy: string) {
+    const tier = { price: 100n, initialSupply: policy === 'reserve' ? 1 : 10, votingUnits: 42, reserveFrequency: policy === 'reserve' ? 2 : 0,
+      reserveBeneficiary: zeroAddress, encodedIpfsUri: HASH, category: 0, discountPercent: 0, splitPercent: 0, splits: [],
+      flags: { allowOwnerMint: false, useReserveBeneficiaryAsDefault: false, transfersPausable: false,
+        useVotingUnits: policy === 'votes', cantBeRemoved: false, cantIncreaseDiscountPercent: false, cantBuyWithCredits: false } }
+    return encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'adjustTiers', args: [[tier], []] })
+  }
+  function wrapped(data: Hex, wrapper: string): SafeQueuedTransaction {
+    if (wrapper === 'multisend') return { ...queued([]), to: MULTI_SEND_CALL_ONLY, value: '0', operation: 1, data: encodeMultiSend([{ to: TARGET, data, value: 0n }]) }
+    if (wrapper === 'forwarder') return { ...queued([]), value: '0', data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: ALICE, to: TARGET, value: 0n, gas: 1000000n, deadline: 1900000000, data, signature: '0x' }] }) }
+    if (wrapper === 'safe-exec') return { ...queued([]), value: '0', data: safeExecRelayrEntry(1, SAFE, { ...queued(), value: '0', data }, [ALICE]).data }
+    return { ...queued([]), value: '0', data }
+  }
+  for (const wrapper of ['direct', 'multisend', 'forwarder', 'safe-exec']) {
+    for (const policy of ['votes', 'reserve']) {
+      it(`refuses ${policy} inside ${wrapper} before new signing, execution or funding`, async () => {
+        const tx = wrapped(obsolete(policy), wrapper)
+        const line = policy === 'votes' ? 'price-based' : 'at least 2'
+        await expect(confirmSafeTx(1, SAFE, tx, ALICE)).rejects.toThrow(line)
+        await expect(executeSafeTx(1, SAFE, { ...tx, confirmations: queued().confirmations }, { signal: flow })).rejects.toThrow(line)
+        await expect(simulateSafeExecution(1, SAFE, { ...tx, confirmations: queued().confirmations })).rejects.toThrow(line)
+        const entry = safeExecRelayrEntry(1, SAFE, { ...tx, confirmations: queued().confirmations }, [ALICE])
+        await expect(simulateFrozenSafeExecution(1, SAFE, tx.nonce, entry.data)).rejects.toThrow(line)
+        expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+        expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+      })
+    }
+  }
+  it('keeps a previously signed custom-vote proposal visible through passive queue reads', async () => {
+    const tx = { ...queued(), value: '0', data: obsolete('votes') }
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ results: [{ ...tx, safe: SAFE, safeTxHash: canonicalSafeTxHash(1, SAFE, tx) }], next: null }), { status: 200 })))
+    const result = await readSafeQueue(1, SAFE)
+    expect(result.pending[0].data).toBe(tx.data)
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+    expect(mocks.wallet.writeContract).not.toHaveBeenCalled()
+  })
 })

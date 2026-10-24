@@ -37,7 +37,7 @@ const targets: ShopWriteTarget[] = [
   { chainId: 8453, projectId: 202, hook: PEER, pricing: { currency: 2, decimals: 6, symbol: 'USD' } },
 ]
 function snapshot(target: ShopWriteTarget, action: ShopAction): ShopSnapshot {
-  return { target: { ...target, hook: target.hook!, pricing: target.pricing! }, isRevnet: false, action, account: ACCOUNT, owner: ACCOUNT, authority: ACCOUNT, store: HOOK, metadataIdTarget: HOOK, state: 'frozen', ...(action === 'shop-add-items' ? { maxTierId: '20' } : { tierId: 7, encodedIpfsUri: URI }) }
+  return { target: { ...target, hook: target.hook!, pricing: target.pricing! }, isRevnet: false, action, account: ACCOUNT, owner: ACCOUNT, authority: ACCOUNT, store: HOOK, metadataIdTarget: HOOK, state: JSON.stringify({ maxTierId: '20', flags: { noNewTiersWithVotes: false } }), ...(action === 'shop-add-items' ? { maxTierId: '20' } : { tierId: 7, encodedIpfsUri: URI }) }
 }
 function journal(action: ShopAction, calls: ProjectBatchCall[]): ProjectBatch {
   return { version: 1, id: 'saved', scope: `${action}:1:101`, action, account: ACCOUNT, title: 'Saved shop update', status: 'pending', calls, completedIds: [calls[0].id], rounds: [calls.map(call => call.id)], submissions: {}, relayrRounds: [0] }

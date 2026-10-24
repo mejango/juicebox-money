@@ -1358,7 +1358,7 @@ describe('authority final wallet context', () => {
   })
 
   for (const viaSafe of [false, true]) {
-    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`refuses %s drift while ${viaSafe ? 'Safe' : 'direct'} persistence waits`, async drift => {
+    it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)(`refuses %s drift while ${viaSafe ? 'Safe' : 'direct'} persistence waits`, async drift => {
       const account = viaSafe ? SAFE : ALICE
       mocks.account = account
       mocks.isSafeConnection.mockReturnValue(viaSafe)
@@ -1373,7 +1373,7 @@ describe('authority final wallet context', () => {
       await vi.waitFor(() => expect(onSending).toHaveBeenCalledOnce())
       if (drift === 'account') mocks.account = TARGET
       if (drift === 'chain') mocks.chainId = 10
-      if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+      if (drift === 'disconnected') mocks.account = undefined
       if (drift === 'view-as') setViewAs(TARGET)
       if (drift === 'route') mocks.isSafeConnection.mockReturnValue(!viaSafe)
       release()

@@ -287,21 +287,20 @@ describe('direct launch Safe setup', () => {
     expect(setup()?.phase).not.toBe('signing')
   })
 
-  it('blocks a wallet connector change before crossing the signing boundary', async () => {
+  it('blocks an execution route change before crossing the signing boundary', async () => {
     const args = options()
     mocks.estimateGas.mockImplementation(async () => { mocks.safe.mockReturnValue(true); return 1n })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Wallet connection changed')
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/wallet.*changed/i)
     expect(mocks.write).not.toHaveBeenCalled()
   })
 
-  it('retains the original connector across asynchronous setup checks before review', async () => {
+  it('accepts a replacement same-account connector across asynchronous setup checks before review', async () => {
     const args = options()
     mocks.preflight.mockImplementation(async () => {
       mocks.account.mockReturnValue({ address: ACCOUNT, chainId: CHAIN, connector: { uid: 'wallet-2' } })
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Connected wallet changed')
-    expect(mocks.write).not.toHaveBeenCalled()
-    expect(setup()).toEqual({ phase: 'failed' })
+    await expect(prepareLaunchMultisigs(args)).resolves.toBeUndefined()
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('rechecks the account after persisting the signing marker', async () => {
@@ -471,14 +470,14 @@ describe('direct launch Safe setup', () => {
   })
 
 
-  it.each(['chain', 'connector', 'view-as'] as const)('blocks %s drift caused by the persisted signing callback', async kind => {
+  it.each(['chain', 'disconnected', 'view-as'] as const)('blocks %s drift caused by the persisted signing callback', async kind => {
     const args = options()
     args.onSetup.mockImplementation(value => {
       if (value.phase !== 'signing') return
       if (kind === 'view-as') mocks.viewAs.mockImplementation(() => { throw new Error('View-as is read-only') })
-      else mocks.account.mockReturnValue({ address: ACCOUNT, chainId: kind === 'chain' ? 1 : CHAIN, connector: { uid: kind === 'connector' ? 'wallet-2' : 'wallet-1' } })
+      else mocks.account.mockReturnValue({ address: kind === 'disconnected' ? undefined : ACCOUNT, chainId: kind === 'chain' ? 1 : CHAIN, connector: { uid: 'wallet-1' } })
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(kind === 'view-as' ? 'View-as' : 'Connected wallet changed')
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(kind === 'view-as' ? /View-as/ : /(?:wallet|account) changed/i)
     expect(mocks.write).not.toHaveBeenCalled()
     expect(setup()).toEqual({ phase: 'failed' })
   })

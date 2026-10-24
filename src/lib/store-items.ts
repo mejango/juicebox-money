@@ -1,3 +1,4 @@
+import { reservedSupplyOk } from "@/lib/shop-reserves"
 import { parseUnits } from 'viem'
 import type {
   DraftItem,
@@ -125,7 +126,7 @@ export function storeItemsForChain(
     const supply = item.supply.trim() === '' ? null : Number(item.supply)
     const effectiveSupply =
       chainId in perChainSupply ? perChainSupply[chainId] : supply
-    if (reserveOn && effectiveSupply === 1) {
+    if (!reservedSupplyOk(effectiveSupply, reserveOn ? Number(item.reserveN) : 0)) {
       throw new Error(
         `“${item.name.trim()}” needs at least 2 items on every chain when inventory is reserved.`,
       )
@@ -145,8 +146,7 @@ export function storeItemsForChain(
         ? resolvedAddress(item.reserveBeneficiary)
         : null,
       category: item.category,
-      votingUnits:
-        item.votingUnits.trim() === '' ? 0 : Number(item.votingUnits),
+      votingUnits: 0,
       flags: {
         allowOwnerMint: item.allowOwnerMint,
         transfersPausable: item.transfersPausable,

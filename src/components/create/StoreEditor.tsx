@@ -12,7 +12,6 @@ import {
   itemSupplyOk,
   itemDiscountOk,
   itemReserveOk,
-  itemVotingOk,
   type DraftItem,
   type StoreCategory,
 } from "./store-draft";
@@ -383,7 +382,7 @@ export function StoreEditor({
                     disabled={disabled}
                     placeholder="—"
                     className={`input-well min-h-[44px] w-16 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      itemReserveOk(item) ? "" : "!border-red-400"
+                      itemReserveOk(item, chainIds) ? "" : "!border-red-400"
                     }`}
                   />
                   <span className="text-sm text-smoke-700">sold goes to</span>
@@ -402,26 +401,8 @@ export function StoreEditor({
               <div>
                 <span className="field-label">Voting power</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Give each of this item a custom number of governance votes.
+                  Voting power for each item is based on its price.
                 </p>
-                <div className="mt-2 flex items-center gap-2.5">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    value={item.votingUnits}
-                    onChange={(e) =>
-                      update(item.id, {
-                        votingUnits: e.target.value.slice(0, 10),
-                      })
-                    }
-                    disabled={disabled}
-                    placeholder="0"
-                    className={`input-well min-h-[44px] w-28 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      itemVotingOk(item) ? "" : "!border-red-400"
-                    }`}
-                  />
-                  <span className="text-sm text-smoke-700">votes each</span>
-                </div>
               </div>
 
               <div className="space-y-2">

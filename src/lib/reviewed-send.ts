@@ -1,10 +1,10 @@
-import { getAccount, getPublicClient, getWalletClient, switchChain } from '@wagmi/core'
+import { getPublicClient } from '@wagmi/core'
 import type { PublicClient } from 'viem'
 import {
-  viemWalletAdapter,
   type ReviewedAction,
   type ReviewedSendDeps,
 } from '@bananapus/nana-sdk-core/review'
+import { currentWalletAdapter } from '@/lib/current-wallet'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { writeHolds } from '@/lib/write-holds'
@@ -13,13 +13,7 @@ import { wagmiConfig } from '@/providers/Providers'
 
 /** jbm's wallet, chains and write hold, as core's reviewed send takes them. */
 export const reviewedSendDeps: ReviewedSendDeps = {
-  adapter: viemWalletAdapter({
-    walletClient: () => getWalletClient(wagmiConfig),
-    account: () => getAccount(wagmiConfig).address,
-    chainId: () => getAccount(wagmiConfig).chainId,
-    isSafe: () => isSafeConnection(wagmiConfig),
-    switchChain: target => switchChain(wagmiConfig, { chainId: target as never }),
-  }),
+  adapter: currentWalletAdapter(wagmiConfig, () => isSafeConnection(wagmiConfig)),
   clientFor: target => getPublicClient(wagmiConfig, { chainId: target as never }) as PublicClient,
   hold: writeHolds,
 }

@@ -31,10 +31,38 @@
     },
     {
       "file": "src/lib/relayr.ts",
-      "line": 124,
+      "line": 125,
       "api": "request",
       "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
       "test": "test/transactions/relayr-orchestration.test.ts"
+    },
+    {
+      "file": "src/lib/current-wallet.ts",
+      "line": 54,
+      "api": "sendTransaction",
+      "boundary": "Reviewed adapter resolves the explicit current connector, retries acquisition drift and synchronously invokes after final account, chain, route and view-as checks. Only proven pre-invocation send failures release holds; actual wallet errors remain ambiguous.",
+      "test": "test/transactions/current-wallet-acquisition.test.ts"
+    },
+    {
+      "file": "src/lib/current-wallet.ts",
+      "line": 60,
+      "api": "signTypedData",
+      "boundary": "Reviewed adapter resolves the explicit current connector, retries acquisition drift and synchronously invokes after final account, chain, route and view-as checks. Only proven pre-invocation send failures release holds; actual wallet errors remain ambiguous.",
+      "test": "test/transactions/current-wallet-acquisition.test.ts"
+    },
+    {
+      "file": "src/lib/current-wallet.ts",
+      "line": 62,
+      "api": "signMessage",
+      "boundary": "Reviewed adapter resolves the explicit current connector, retries acquisition drift and synchronously invokes after final account, chain, route and view-as checks. Only proven pre-invocation send failures release holds; actual wallet errors remain ambiguous.",
+      "test": "test/transactions/current-wallet-acquisition.test.ts"
+    },
+    {
+      "file": "src/lib/current-wallet.ts",
+      "line": 63,
+      "api": "sendCalls",
+      "boundary": "Reviewed adapter resolves the explicit current connector, retries acquisition drift and synchronously invokes after final account, chain, route and view-as checks. Only proven pre-invocation send failures release holds; actual wallet errors remain ambiguous.",
+      "test": "test/transactions/current-wallet-acquisition.test.ts"
     }
   ]
 }

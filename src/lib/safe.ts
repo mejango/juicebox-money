@@ -1,5 +1,7 @@
 'use client'
 
+import { assertShopCallPolicy } from '@/lib/shop-call-policy'
+
 import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
 
 import { getAccount } from '@wagmi/core'
@@ -262,6 +264,7 @@ export async function simulateFrozenSafeExecution(
   data: Hex,
   expectedPolicy?: string,
 ): Promise<string> {
+  assertShopCallPolicy(data, safe)
   const before = await readLiveSafeState(chainId, safe)
   const policy = safePolicyFingerprint(before.identity)
   if (before.nonce !== nonce || (expectedPolicy && expectedPolicy !== policy)) {
@@ -321,6 +324,7 @@ async function signSafeTx(
   label?: string,
   reverifyAuthority?: () => Promise<void>,
 ): Promise<Hex> {
+  assertShopCallPolicy(tx.data as Hex, tx.to, Number(tx.operation ?? 0))
   const assertWallet = captureWalletContext(wagmiConfig, { account: signer, chainId })
   const viaSafe = isSafeConnection(wagmiConfig)
   const activeAccount = getAccount(wagmiConfig).address
@@ -348,6 +352,7 @@ async function signSafeTx(
       if (canonicalSafeTxHash(chainId, safe, tx) !== expectedHash) {
         throw new Error('The queued Safe transaction changed during review.')
       }
+      assertShopCallPolicy(tx.data as Hex, tx.to, Number(tx.operation ?? 0))
       assertWallet()
       if (isSafeConnection(wagmiConfig) !== viaSafe) throw new Error('Connected wallet changed. Review the Safe transaction again.')
     },
@@ -632,6 +637,7 @@ async function sendContractAndConfirm({
           if (succeeds !== true) throw new Error('Safe simulation reported that the transaction would fail.')
         }
         await reverifyAuthority?.()
+        if (safeContext) assertShopCallPolicy(safeContext.tx.data as Hex, safeContext.tx.to, Number(safeContext.tx.operation ?? 0))
         if (safeContext && before) {
           assertSafeStateUnchanged(before, await verifySafeWriteContext(chainId, address, expectedAccount, safeContext))
         }
@@ -766,6 +772,7 @@ export async function simulateSafeExecution(
   reverifyAuthority?: () => Promise<void>,
 ): Promise<SafeExecutionSnapshot> {
   refuseRefund(tx)
+  assertShopCallPolicy(tx.data as Hex, tx.to, Number(tx.operation ?? 0))
   await reverifyAuthority?.()
   const state = await readLiveSafeState(chainId, safe)
   const safeTxHash = canonicalSafeTxHash(chainId, safe, tx)
