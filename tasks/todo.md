@@ -950,3 +950,19 @@ Verification: Existing rule sanitization was extracted first with33 parser/expor
 - [x] Prepare only owned files for the authorized commit and branch push.
 
 Review: The patch applies cleanly to current remote main1aa7d8b, preserving its SDK4 reviewed-send integration. Kept both remote task histories and this task's appended records. A physical locked install with Node26.12.1/npm12.0.1 completed without dependency changes. All340 focused tests across12 suites, changed-file ESLint, Next route generation, full TypeScript, source invariants, transaction inventory, wallet checks and whitespace checks pass. The eight owned files are staged for a dedicated branch commit; unrelated original-checkout edits remain untouched. Push receipt and PR/CI links will be reported after submission.
+
+
+# Qualify and merge PR154 — 2026-10-23
+
+## Plan refinement
+- **Objective:** Complete the authorized PR154 merge after all required CI checks pass.
+- **System fit:** Hosted CI on32cc150 passed units, production compilation and OCI smoke; its existing create-page budget blocks browser qualification. Preserve the current validation, flavor snapshots, wallet review and recovery owners.
+- **Reuse and simplicity:** Shorten the newly added explanatory copy without changing the checks or existing budget. Avoid introducing another lazy chunk or a new dependency for a small overage.
+- **Evidence and unknowns:** Failed CI40055087048 measured create398.1KiB against398KiB; all-script2668.8KiB against2669KiB and all lazy boundaries pass. The exact improvement requires a measured build.
+- **Verification:** Recheck affected rendered tests and lint, build with current locked Node26.12.1 dependencies, run the unchanged budget check, push the fix and require all hosted CI jobs including browsers before exact-head merge.
+- **Resource budget:** One bounded copy refinement and isolated production build; preserve failed logs and all budget thresholds. Replan if shortening the new copy cannot recover the small overage.
+
+- [x] Reduce added copy and verify unchanged budgets and semantics.
+- [ ] Push the fix, require green CI, merge and verify main.
+
+Review: Reduced only the new validation and flavor description copy, preserving every check and the unchanged398KiB create-page ceiling. The isolated final production build and all budget/lazy-loading checks pass; aggregate scripts2668.6KiB remain under2669KiB. Ten actual-form regressions and changed-file lint pass; the build also verifies full types. The earlier failed hosted run and local build/measurement logs are retained under /private/tmp. Hosted requalification and exact-head merge follow the pushed fix.

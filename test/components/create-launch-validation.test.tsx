@@ -159,7 +159,7 @@ describe('multichain launch validation', () => {
     const root = await mountDraft(saved)
     expect(launchButton(root).props.disabled).toBe(true)
     const requirements = launchSection(root).findByProps({ 'aria-label': 'Launch requirements' })
-    expect(textOf(requirements)).toContain('Complete the owner multisig with unique wallet addresses and a valid approval policy.')
+    expect(textOf(requirements)).toContain('Complete the owner multisig with unique signers and a valid approval policy.')
     const edit = requirements.findAllByType('button').find(node => textOf(node) === 'Edit Flavor')!
     await act(async () => edit.props.onClick())
     expect(root.findByProps({ 'aria-label': 'Flavor' }).props['aria-current']).toBe('step')

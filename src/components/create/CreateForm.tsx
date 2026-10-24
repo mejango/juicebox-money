@@ -959,23 +959,23 @@ export function CreateForm() {
   // launch always names the settings that need attention.
   const launchChecks: [ok: boolean, message: string, step: number][] = [
     [nameOk, "Give your project a name.", 1],
-    [tosAccepted, "Acknowledge the launch risks below.", launchStep],
-    [accountingOk, customChainError ?? "Choose accounting tokens and verify any custom token on every selected chain.", 0],
+    [tosAccepted, "Acknowledge the risks.", launchStep],
+    [accountingOk, customChainError ?? "Choose accounting tokens and verify any custom token.", 0],
     [feedsOk, feedBlock ?? "Checking price feeds on every selected chain…", 0],
-    [approvalOk, "Enter a valid approval contract address for every selected chain.", 2],
+    [approvalOk, "Verify each chain's approval contract.", 2],
     [ownerOk, createsAuthoritySafe
-      ? `Complete the ${flavor === "revnet" ? "operator" : "owner"} multisig with unique wallet addresses and a valid approval policy.`
-      : `Enter a valid ${flavor === "revnet" ? "operator" : "owner"} address or a resolved ENS name, including any per-chain addresses. Leave the main field empty to use your connected wallet.`, 0],
-    [tickerOk, "Set a revnet ticker using 1–11 letters or numbers.", 1],
-    [bridgeOk, "Native linking requires Ethereum and one supported L2 with ETH accounting. Choose CCIP or adjust the selected chains.", 0],
+      ? `Complete the ${flavor === "revnet" ? "operator" : "owner"} multisig with unique signers and a valid approval policy.`
+      : `Set the ${flavor === "revnet" ? "operator" : "owner"} on each chain, or leave empty for your wallet.`, 0],
+    [tickerOk, "Ticker: 1–11 letters or numbers.", 1],
+    [bridgeOk, "Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.", 0],
     [lpHookOk, `Fund market is unavailable on ${missingLpHookChains.map(chainName).join(", ")}. Remove its recipients or change chains.`, 0],
-    [fundMarketPlacedOk, "Fund market can receive reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
+    [fundMarketPlacedOk, "Fund market accepts reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
     [stickyOk, stickyBlock ?? "Checking Sticky recipients on every selected chain…", items.some(item => item.splits.some(isStickyRow)) ? storeStep : 2],
     [selected.length > 0, "Choose at least one chain.", 0],
-    [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings, including recipient amounts and addresses.`, 2],
-    [badStage === -1, `Ruleset #${badStage + 1} needs a duration so the following ruleset can start.`, 2],
-    [noticeClash === null, "A queued ruleset starts before the required notice period ends. Adjust its timing or the notice period.", 2],
-    [itemsOk, "Complete each shop item's name, price and recipient settings, or remove unfinished items.", storeStep],
+    [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
+    [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
+    [noticeClash === null, "Allow the notice period before the next ruleset starts.", 2],
+    [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
   const launchIssues = launchChecks.filter(([ok]) => !ok);
   const canLaunch =
@@ -2927,7 +2927,7 @@ export function CreateForm() {
           </select>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
             {flavor === "simple"
-              ? "Launch with preset, flexible rules the project owner can adjust at any time. Your custom rules are saved separately when you switch flavors."
+              ? "Use flexible preset rules. Your Custom rules stay saved."
               : flavor === "revnet"
                 ? "A revnet commits to its token rules and stages at launch. Money it receives backs token cash outs and loans. Returns depend on available funds and the rules."
                 : "The project owner sets how funds are paid out and tokens are created or cashed out. They can change the rules or lock them."}
