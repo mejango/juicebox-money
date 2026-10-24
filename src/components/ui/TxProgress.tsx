@@ -244,7 +244,7 @@ function LinkedText({ text }: { text: string }) {
 function TxConfirmRowItem({ row }: { row: TxConfirmRow }) {
   return (
     <>
-      <span className="text-smoke-500">{row.label}</span>
+      <span className="whitespace-nowrap text-smoke-500">{row.label}</span>
       <span
         className={`min-w-0 text-right text-ink ${
           row.mono ? 'break-all font-mono text-xs' : 'break-words'

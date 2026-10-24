@@ -46,6 +46,38 @@
     @apply rounded-xl border border-smoke-200 bg-white;
   }
 
+  .launch-summary {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: start;
+    gap: 0.625rem 1rem;
+  }
+
+  .launch-summary > div {
+    display: contents;
+  }
+
+  .launch-summary > div > dt {
+    white-space: nowrap;
+  }
+
+  .launch-summary > div > dd {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .launch-summary dt {
+    font-weight: 400;
+  }
+
+  .launch-summary dd {
+    @apply font-medium text-ink;
+  }
+
+  .launch-summary summary {
+    list-style-position: outside;
+  }
+
   /* --- Modals: one native <dialog> chrome for every overlay ---
      `showModal()` promotes the element into the top layer, which is what makes
      the page behind it inert and unreachable by assistive technology. The top

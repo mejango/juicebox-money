@@ -77,3 +77,6 @@ Live native acceptance found owner/account ENS names still used publicnode throu
 
 ## 2026-10-23 — Validate the configuration that will be encoded
 A Simple launch must activate preset rule settings, including issuance denomination, while saving Custom rules separately for restoration. Preserve that separation through reload and export/import. Scope stage-specific checks to the active flavor; continue validating shop settings that every flavor encodes. Derive visible launch requirements from the same checks that disable the button. Reproduce disabled actions with the exported draft rather than inferring hidden values from review labels. Rendered launch regressions enforce this boundary.
+
+## 2026-10-24 — Make summary layout consistent and distinguish launch prerequisites
+Keep labels on one line in modal summaries, align values in one column including rule lists, and show one creation-fee total with an accessible per-chain disclosure. A combined wallet/forwarder error cannot identify the failed condition: read each prerequisite and distinguish exact EIP-7702 delegation from arbitrary contract code before deciding supported execution paths. Preserve signature, canonical transaction and recovery proofs.

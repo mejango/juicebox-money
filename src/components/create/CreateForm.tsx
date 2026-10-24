@@ -716,6 +716,14 @@ export function CreateForm() {
     return total;
   }, [fees, selected]);
 
+  const creationFeeSummary = totalFee === null
+    ? "…"
+    : `${formatTokenAmount(totalFee, 18, 6)} ${
+        selected.length === 1
+          ? JB_CHAINS[selected[0] as JBChainId]?.nativeTokenSymbol ?? "ETH"
+          : "ETH"
+      }`;
+
   const nameOk = name.trim().length > 0;
   const isSimpleProject = flavor === "simple";
   const wizardSteps = isSimpleProject
@@ -2575,15 +2583,7 @@ export function CreateForm() {
       : []),
     {
       label: selected.length > 1 ? "Creation fees" : "Creation fee",
-      value:
-        totalFee !== null
-          ? `${formatTokenAmount(totalFee, 18, 6)} ${
-              selected.length === 1
-                ? (JB_CHAINS[selected[0] as JBChainId]?.nativeTokenSymbol ??
-                  "ETH")
-                : "ETH"
-            }`
-          : "…",
+      value: creationFeeSummary,
       strong: true,
     },
   ];
@@ -4121,18 +4121,18 @@ export function CreateForm() {
           <h2 className="font-agrandir text-xl font-medium">Ready to launch?</h2>
         </div>
 
-        <dl className="mt-5 space-y-2.5 text-sm">
-          <div className="flex items-center justify-between gap-3">
+        <dl aria-label="Launch summary" className="launch-summary mt-5 text-sm">
+          <div>
             <dt className="text-smoke-700">
               {flavor === "revnet" ? "Revnet operator" : "Project owner"}
             </dt>
-            <dd className="min-w-0 font-medium text-ink">
+            <dd>
               {ownerValue}
             </dd>
           </div>
-          <div className="flex items-center justify-between gap-3">
+          <div>
             <dt className="text-smoke-700">Launching</dt>
-            <dd className="font-medium text-ink">
+            <dd>
               {flavor === "simple"
                 ? "Simple project"
                 : flavor === "revnet"
@@ -4140,9 +4140,9 @@ export function CreateForm() {
                   : "Project"}
             </dd>
           </div>
-          <div className="flex items-center justify-between gap-3">
+          <div>
             <dt className="text-smoke-700">Accounting</dt>
-            <dd className="font-medium text-ink">
+            <dd>
               {customOn
                 ? `$${customMeta?.symbol ?? "TOKEN"}`
                 : accepts
@@ -4154,17 +4154,17 @@ export function CreateForm() {
           {/* Both levers default to on and every other line here reads as if
               they are, so call them out only when this launch turns one off. */}
           {anyTokenAccepted ? null : (
-            <div className="flex items-center justify-between gap-3">
+            <div>
               <dt className="text-smoke-700">Payments</dt>
-              <dd className="font-medium text-ink">
+              <dd>
                 Accounting tokens only — no any-token swaps
               </dd>
             </div>
           )}
           {selected.length > 1 && !linkChains ? (
-            <div className="flex items-center justify-between gap-3">
+            <div>
               <dt className="text-smoke-700">Chains</dt>
-              <dd className="font-medium text-ink">
+              <dd>
                 Not linked — {selected.length} independent projects
               </dd>
             </div>
@@ -4172,8 +4172,8 @@ export function CreateForm() {
           {isSimpleProject ? (
             <div>
               <dt className="text-smoke-700">Rules</dt>
-              <dd className="mt-1">
-                <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
+              <dd>
+                <ul className="list-disc space-y-0.5 pl-5">
                   <li>Starts at launch and lasts until changed</li>
                   <li>Issues 10,000 tokens per {unitLabel}</li>
                   <li>Unlimited owner withdrawals; cash outs off</li>
@@ -4188,8 +4188,8 @@ export function CreateForm() {
                 <dt className="text-smoke-700">
                   {flavor === "revnet" ? "Stage" : "Ruleset"} #{i + 1}
                 </dt>
-                <dd className="mt-1">
-                  <ul className="list-disc space-y-0.5 pl-5 font-medium text-ink">
+                <dd>
+                  <ul className="list-disc space-y-0.5 pl-5">
                     {stageSummaryParts(
                       stage,
                       i,
@@ -4205,9 +4205,9 @@ export function CreateForm() {
             ))
           )}
           {!isSimpleProject && flavor !== "revnet" && afterApplies ? (
-            <div className="flex items-center justify-between gap-3">
+            <div>
               <dt className="text-smoke-700">Afterwards</dt>
-              <dd className="font-medium text-ink">
+              <dd>
                 {afterMode === "wait"
                   ? "Wait for new rules"
                   : afterMode === "terminal"
@@ -4217,9 +4217,9 @@ export function CreateForm() {
             </div>
           ) : null}
           {!isSimpleProject && flavor !== "revnet" && deadlineApplies ? (
-            <div className="flex items-center justify-between gap-3">
+            <div>
               <dt className="text-smoke-700">Rule changes</dt>
-              <dd className="font-medium text-ink">
+              <dd>
                 {approvalDeadline === "none"
                   ? "Immediate"
                   : approvalDeadline === "custom"
@@ -4229,41 +4229,35 @@ export function CreateForm() {
             </div>
           ) : null}
           {items.length > 0 ? (
-            <div className="flex items-center justify-between gap-3">
+            <div>
               <dt className="text-smoke-700">Shop</dt>
-              <dd className="font-medium text-ink">
+              <dd>
                 {items.length} item{items.length === 1 ? "" : "s"}
               </dd>
             </div>
           ) : null}
-          {selected.map((chainId) => (
-            <div
-              key={chainId}
-              className="flex items-center justify-between gap-3"
-            >
-              <dt className="text-smoke-700">
-                Creation fee on {chainName(chainId)}
-              </dt>
-              <dd className="font-medium tabular-nums text-ink">
-                {fees?.[chainId] !== undefined && fees?.[chainId] !== null
-                  ? `${formatTokenAmount(fees[chainId]!, 18, 6)} ${
-                      JB_CHAINS[chainId as JBChainId]?.nativeTokenSymbol ??
-                      "ETH"
-                    }`
-                  : "…"}
-              </dd>
-            </div>
-          ))}
-          {selected.length > 1 ? (
-            <div className="flex items-center justify-between gap-3 border-t border-smoke-200 pt-2.5">
-              <dt className="font-medium text-ink">Total</dt>
-              <dd className="font-bold tabular-nums text-ink">
-                {totalFee !== null
-                  ? `${formatTokenAmount(totalFee, 18, 6)} ETH`
-                  : "…"}
-              </dd>
-            </div>
-          ) : null}
+          <div>
+            <dt className="text-smoke-700">Creation fees</dt>
+            <dd>
+              <details>
+                <summary className="tabular-nums">
+                  {creationFeeSummary}
+                </summary>
+                <dl className="mt-2 space-y-2 text-xs">
+                  {selected.map((chainId) => (
+                    <div key={chainId}>
+                      <dt className="text-smoke-700">{chainName(chainId)}</dt>
+                      <dd className="tabular-nums">
+                        {fees?.[chainId] !== undefined && fees?.[chainId] !== null
+                          ? `${formatTokenAmount(fees[chainId]!, 18, 6)} ${JB_CHAINS[chainId as JBChainId]?.nativeTokenSymbol ?? "ETH"}`
+                          : "…"}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            </dd>
+          </div>
         </dl>
 
         <div className="mt-5">

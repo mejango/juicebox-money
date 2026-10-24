@@ -25,7 +25,7 @@ export default function TallConfirmProofPage() {
           activeIndex={-1}
           next={{ label: 'Try again', onClick: () => {} }}
           onClose={() => {}}
-          rows={Array.from({ length: 30 }, (_, index) => ({ label: `Row ${index + 1}`, value: `Value ${index + 1}` }))}
+          rows={[{ label: 'Project owner', value: '0x1111111111111111111111111111111111111111', mono: true }, ...Array.from({ length: 30 }, (_, index) => ({ label: `Row ${index + 1}`, value: `Value ${index + 1}` }))]}
         />
       ) : null}
     </main>

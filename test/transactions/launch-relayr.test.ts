@@ -110,7 +110,7 @@ function sentFor(payment: RelayrPayment, hash: Hex) {
 }
 function makeClient(chainId: number) {
   return {
-    getCode: vi.fn(async ({ address }: { address: Address }) => address === ACCOUNT ? '0x' : '0x6000'),
+    getCode: vi.fn(async ({ address }: { address: Address }): Promise<Hex | undefined> => address === ACCOUNT ? '0x' : '0x6000'),
     readContract: vi.fn(async ({ functionName }: { functionName: string }): Promise<bigint | boolean> => functionName === 'nonces' ? 0n : true),
     estimateGas: vi.fn(async (_request: unknown) => 2_000_000n),
     call: vi.fn(async () => ({ data: '0x' })),
@@ -234,6 +234,98 @@ describe('saved launch payments', () => {
 })
 
 describe('relayed launch execution and recovery', () => {
+  it('launches across four testnets from mixed ordinary and exact EIP-7702-delegated EOAs with one payment', async () => {
+    const value = session(TESTNETS, 84532)
+    saveLaunchSession(value)
+    m.chainId = 84532
+    offeredPaymentChains = [84532, 11155111]
+    m.funding.mockResolvedValue(84532)
+    const delegated = '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b' as Hex
+    for (const chainId of TESTNETS) {
+      clients.get(chainId)!.getCode.mockImplementation(async ({ address }) =>
+        address === ACCOUNT ? ([11155111, 84532].includes(chainId) ? delegated : '0x') : '0x6000')
+    }
+    await run(value)
+    expect(m.forward).toHaveBeenCalledTimes(4)
+    expect(m.quote).toHaveBeenCalledTimes(1)
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    for (const chainId of TESTNETS) {
+      expect(loadLaunchSession()?.statuses[chainId]).toMatchObject({ phase: 'done' })
+      const signed = loadLaunchSession()?.relayr?.signed.find(item => item.chainId === chainId)
+      expect(signed).toBeDefined()
+      const decoded = decodeFunctionData({ abi: erc2771ForwarderAbi, data: signed!.entry.data })
+      expect(decoded.args?.[0]).toMatchObject({ from: ACCOUNT, to: TARGET })
+    }
+  })
+
+  it.each([
+    '0x6000', '0xef0100',
+    '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b00',
+  ])('refuses unsupported signer runtime %s before any signatures or quote', async code => {
+    clients.get(1)!.getCode.mockImplementation(async ({ address }) => address === ACCOUNT ? code as Hex : '0x6000')
+    await expect(run()).rejects.toThrow('unsupported contract code on Ethereum')
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('identifies an unavailable forwarder independently of wallet classification', async () => {
+    clients.get(1)!.getCode.mockResolvedValue('0x')
+    await expect(run()).rejects.toThrow('canonical forwarder is unavailable on Ethereum')
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('still refuses an untrusted target for an exactly delegated wallet', async () => {
+    const client = clients.get(1)!
+    client.getCode.mockImplementation(async ({ address }) => address === ACCOUNT
+      ? '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b' : '0x6000')
+    client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 0n : false)
+    await expect(run()).rejects.toThrow('launch contract does not trust the canonical forwarder on Ethereum')
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+  })
+
+  it('still verifies delegated-wallet signatures before publishing or paying', async () => {
+    const client = clients.get(1)!
+    client.getCode.mockImplementation(async ({ address }) => address === ACCOUNT
+      ? '0xef010063c0c19a282a1b52b07dd5a65b58948a07dae32b' : '0x6000')
+    client.readContract.mockImplementation(async ({ functionName }) => functionName === 'nonces' ? 0n : functionName !== 'verify')
+    await expect(run()).rejects.toThrow('wallet, forwarder, or launch authorization changed')
+    expect(m.forward).toHaveBeenCalledTimes(2)
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.signed).toHaveLength(2)
+  })
+
+  it('retains signed authorizations if account code becomes an ordinary contract before verification', async () => {
+    const forward = m.forward.getMockImplementation()!
+    m.forward.mockImplementationOnce(async (...args) => {
+      const entry = await forward(...args)
+      clients.get(1)!.getCode.mockResolvedValue('0x6000')
+      return entry
+    })
+    await expect(run()).rejects.toThrow('wallet, forwarder, or launch authorization changed')
+    expect(m.quote).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
+    expect(loadLaunchSession()?.relayr?.signed).toHaveLength(2)
+  })
+
+  it('refuses payment and retains the original quote if signer code changes after publication', async () => {
+    const quoted = m.quote.getMockImplementation()!
+    m.quote.mockImplementationOnce(async (...args) => {
+      const quote = await quoted(...args)
+      clients.get(1)!.getCode.mockResolvedValue('0x6000')
+      return quote
+    })
+    await expect(run()).rejects.toThrow('wallet, forwarder, or launch authorization changed')
+    expect(m.pay).toHaveBeenCalledTimes(1)
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'quoted', published: true })
+    expect(loadLaunchSession()?.relayr?.paymentHash).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.payments).toBeUndefined()
+    expect(loadLaunchSession()?.relayr?.signed).toHaveLength(2)
+  })
+
   it.each(['project', 'revnet'] as const)('wallet-action:create-an-owner-or-operator-safe-during-launch bundles a single-chain %s Safe with the exact signed launch and one payment', async flavor => {
     const value = multisigSession(flavor)
     expect(canRelayrLaunch(value)).toBe(true)

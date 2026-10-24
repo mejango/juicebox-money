@@ -78,6 +78,7 @@ import {
   bundleLaunchMultisigs,
   checkLaunchMultisigs,
   launchMultisigReview,
+  isRelayrLaunchSignerCode,
   unbundleLaunchMultisigs,
   validateLaunchMultisigs,
   verifyCreatedLaunchMultisigs,
@@ -584,7 +585,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         if (request.deadline < Math.floor(Date.now() / 1000) + RELAYR_REQUEST_REFRESH_SECONDS) {
           throw new LaunchSignaturesNeedRefresh('Launch signatures are about to expire. Review fresh authorizations before payment.')
         }
-        if (!trusted || !valid || (code && code !== '0x')) {
+        if (!trusted || !valid || !isRelayrLaunchSignerCode(code)) {
           throw new Error('The wallet, forwarder, or launch authorization changed. Check the original bundle before continuing.')
         }
         // Simulate the exact signed forwarder execution as well as its authorization.
@@ -615,8 +616,14 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         client.readContract({ address: request.address, abi: TRUSTED_FORWARDER_ABI, functionName: 'isTrustedForwarder', args: [forwarder] }),
         client.readContract({ address: forwarder, abi: erc2771ForwarderAbi, functionName: 'nonces', args: [account] }),
       ])
-      if ((code && code !== '0x') || !forwarderCode || forwarderCode === '0x' || !trusted) {
-        throw new Error(`An ordinary wallet and the canonical trusted forwarder are required on ${chainName(chainId)}.`)
+      if (!isRelayrLaunchSignerCode(code)) {
+        throw new Error(`This wallet uses unsupported contract code on ${chainName(chainId)}. Use a key-controlled wallet for relayed launches.`)
+      }
+      if (!forwarderCode || forwarderCode === '0x') {
+        throw new Error(`The canonical forwarder is unavailable on ${chainName(chainId)}.`)
+      }
+      if (!trusted) {
+        throw new Error(`The launch contract does not trust the canonical forwarder on ${chainName(chainId)}.`)
       }
       if (journal.retryNonces?.[chainId] !== undefined && nonce !== BigInt(journal.retryNonces[chainId])) {
         throw new Error('An earlier launch authorization may have executed. Check its original destination before signing again.')
