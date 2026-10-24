@@ -152,15 +152,25 @@ describe('inline Safe launch account transport', () => {
   })
 
   it.each([
-    { kind: 'contract wallet', index: 0, code: fixture.contracts.proxy.runtime as Hex },
-    { kind: 'contract wallet', index: 1, code: fixture.contracts.proxy.runtime as Hex },
-    { kind: 'EIP-7702 delegated EOA', index: 0, code: concatHex(['0xef0100', FORWARDED_LAUNCH.target]) },
-    { kind: 'EIP-7702 delegated EOA', index: 1, code: concatHex(['0xef0100', FORWARDED_LAUNCH.target]) },
-  ])('uses direct setup for a $kind on selected chain $index', async ({ index, code }) => {
+    { kind: 'contract wallet', index: 0, code: fixture.contracts.proxy.runtime as Hex, expected: false },
+    { kind: 'contract wallet', index: 1, code: fixture.contracts.proxy.runtime as Hex, expected: false },
+    { kind: 'EIP-7702 delegated EOA', index: 0, code: concatHex(['0xef0100', FORWARDED_LAUNCH.target]), expected: true },
+    { kind: 'EIP-7702 delegated EOA', index: 1, code: concatHex(['0xef0100', FORWARDED_LAUNCH.target]), expected: true },
+  ])('classifies Relayr setup for a $kind on selected chain $index', async ({ index, code, expected }) => {
     const chains = [rpc(), rpc()]
     chains[index].codes.set(OWNERS[0], code)
-    await expect(canRelayrCreateFromAccount(OWNERS[0], chains.map(chain => chain.client))).resolves.toBe(false)
+    await expect(canRelayrCreateFromAccount(OWNERS[0], chains.map(chain => chain.client))).resolves.toBe(expected)
     for (const chain of chains) expect(chain.getCode).toHaveBeenCalledExactlyOnceWith({ address: OWNERS[0] })
+  })
+
+  it.each([
+    '0xef0100',
+    concatHex(['0xef0100', FORWARDED_LAUNCH.target, '0x00']),
+    concatHex(['0xef0200', FORWARDED_LAUNCH.target]),
+  ])('refuses malformed delegation runtime %s', async code => {
+    const chain = rpc()
+    chain.codes.set(OWNERS[0], code as Hex)
+    await expect(canRelayrCreateFromAccount(OWNERS[0], [chain.client])).resolves.toBe(false)
   })
 
   it('does not authorize Relayr without a selected network', async () => {

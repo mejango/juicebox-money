@@ -315,3 +315,35 @@ describe('Simple preset and saved editable flavor rules', () => {
     expect(rulesOf(await persistedDraft())).toEqual(revnet)
   })
 })
+
+
+describe('launch summary creation fees', () => {
+  it('shows one total and keeps every native chain amount in a closed disclosure', async () => {
+    mocks.readContract.mockResolvedValue(100_000_000_000_000n)
+    const root = await mountDraft(draft())
+    const summary = root.findByProps({ 'aria-label': 'Launch summary' })
+    expect(summary.findAllByType('dt').map(textOf)).toEqual([
+      'Project owner', 'Launching', 'Accounting', 'Rules', 'Creation fees',
+      'Sepolia', 'Optimism Sepolia', 'Arbitrum Sepolia', 'Base Sepolia',
+    ])
+    const details = summary.findByType('details')
+    expect(details.props.open).toBeUndefined()
+    expect(textOf(details.findByType('summary'))).toContain('0.0004 ETH')
+    expect(details.findAllByType('dd').map(textOf)).toEqual([
+      '0.0001 SepETH', '0.0001 OPSepETH', '0.0001 ArbSepETH', '0.0001 BaseSepETH',
+    ])
+    expect(textOf(summary)).not.toContain('Creation fee on')
+  })
+
+  it('keeps unavailable fees unknown instead of displaying a zero total', async () => {
+    mocks.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
+      if (functionName === 'creationFee') throw new Error('Fee unavailable')
+      return 10n ** 18n
+    })
+    const root = await mountDraft(draft())
+    const details = root.findByProps({ 'aria-label': 'Launch summary' }).findByType('details')
+    expect(textOf(details.findByType('summary'))).toContain('…')
+    expect(textOf(details.findByType('summary'))).not.toContain('0 ETH')
+    expect(details.findAllByType('dd').map(textOf)).toEqual(['…', '…', '…', '…'])
+  })
+})

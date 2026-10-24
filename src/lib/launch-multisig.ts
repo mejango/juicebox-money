@@ -1,5 +1,6 @@
 import {
   MULTICALL3,
+  isEip7702DelegatedEoaRuntime,
   buildSafeInitializer,
   resolveSafeAddress,
   validateSafeDeploymentPlan,
@@ -29,11 +30,16 @@ export function validateAuthorityPolicy(owners: string[], threshold: number): bo
   try { authorityPolicy(owners, threshold); return true } catch { return false }
 }
 
-/** Contract wallets, including delegated EOAs, use the direct setup path. */
+/** These launches use the account's key; arbitrary contract signatures are unsupported. */
+export function isRelayrLaunchSignerCode(code: Hex | undefined): boolean {
+  return code === undefined || code === '0x' || isEip7702DelegatedEoaRuntime(code)
+}
+
+/** Ordinary and exactly delegated EOAs can sign the forwarder's EIP-712 request. */
 export async function canRelayrCreateFromAccount(account: Address, clients: PublicClient[]): Promise<boolean> {
   if (!clients.length) return false
   const codes = await Promise.all(clients.map(client => client.getCode({ address: account })))
-  return codes.every(code => !code || code === '0x')
+  return codes.every(isRelayrLaunchSignerCode)
 }
 
 async function requireCreationBatch(client: PublicClient): Promise<void> {
