@@ -15,6 +15,8 @@ export const DRAFT_KEY = 'jbm-create-draft'
 export type CreateDraft = {
   v: 1
   flavor: 'simple' | 'project' | 'revnet'
+  /** Inactive editable rules survive selecting the fixed Simple preset. */
+  savedRules?: Partial<Record<'project' | 'revnet', DraftRules>>
   name: string
   ticker: string
   tagline: string
@@ -60,6 +62,16 @@ export type CreateDraft = {
   storeCategories: { id: number; name: string }[]
   items: Omit<DraftItem, 'mediaFile' | 'mediaPreview'>[]
 }
+
+export type DraftRules = Pick<
+  CreateDraft,
+  | 'stages'
+  | 'issuanceBase'
+  | 'afterMode'
+  | 'approvalDeadline'
+  | 'approvalCustom'
+  | 'approvalPerChain'
+>
 
 export function draftFileName(name: string): string {
   const slug =
@@ -251,6 +263,52 @@ function sanitizeItem(raw: unknown): Omit<DraftItem, 'mediaFile' | 'mediaPreview
   }
 }
 
+function sanitizeRules(d: Record<string, unknown>): DraftRules {
+  const stages = (Array.isArray(d.stages) ? d.stages : []).map(sanitizeStage)
+  if (stages.length === 0) throw new Error('No stages found in that file.')
+  stages[0].expanded = true
+  return {
+    stages,
+    approvalCustom: str(d.approvalCustom, 64),
+    approvalPerChain: sanitizeChainMap(d.approvalPerChain),
+    issuanceBase:
+      d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
+    afterMode: ['wait', 'terminal', 'cycle'].includes(d.afterMode as string)
+      ? (d.afterMode as CreateDraft['afterMode'])
+      : 'wait',
+    // 'custom' belongs here: it's a legal ApprovalDeadline the wizard and the
+    // project exporter both produce. Dropping it rewrote a configured
+    // JBRulesetApprovalHook to a 1-day deadline on every round trip — including
+    // the localStorage rehydrate that runs on page load.
+    approvalDeadline: [
+      'none',
+      '3hours',
+      '1day',
+      '3days',
+      '7days',
+      'custom',
+    ].includes(d.approvalDeadline as string)
+      ? (d.approvalDeadline as ApprovalDeadline)
+      : '1day',
+  }
+}
+
+function sanitizeSavedRules(source: unknown): CreateDraft['savedRules'] {
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return
+  const savedRules: NonNullable<CreateDraft['savedRules']> = {}
+  for (const flavor of ['project', 'revnet'] as const) {
+    const raw = (source as Record<string, unknown>)[flavor]
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const rules = raw as Record<string, unknown>
+    if (!Array.isArray(rules.stages) || rules.stages.length === 0) continue
+    savedRules[flavor] = sanitizeRules({ ...rules, stages: rules.stages.slice(0, 100) })
+  }
+  // An explicit empty map marks a normalized draft with no saved edits.
+  return Object.keys(source).length === 0 || Object.keys(savedRules).length > 0
+    ? savedRules
+    : undefined
+}
+
 /** Parse untrusted .jb JSON into a sanitized draft, or throw a friendly
  *  error. Every field is whitelisted; arrays are capped. */
 export function parseDraft(text: string): CreateDraft {
@@ -280,9 +338,8 @@ export function parseDraft(text: string): CreateDraft {
   ]) {
     links[key] = str(rawLinks[key], 300)
   }
-  const stages = d.stages.map(sanitizeStage)
-  if (stages.length === 0) throw new Error('No stages found in that file.')
-  stages[0].expanded = true
+  const rules = sanitizeRules(d)
+  const savedRules = sanitizeSavedRules(d.savedRules)
   const customAddress = str(d.customAddress, 64)
   return {
     v: 1,
@@ -292,6 +349,7 @@ export function parseDraft(text: string): CreateDraft {
         : d.flavor === 'revnet'
           ? 'revnet'
           : 'project',
+    ...(savedRules ? { savedRules } : {}),
     name: str(d.name, 100),
     ticker: str(d.ticker, 11).toUpperCase().replace(/[^A-Z0-9]/g, ''),
     tagline: str(d.tagline, 100),
@@ -323,8 +381,6 @@ export function parseDraft(text: string): CreateDraft {
     // Only a literal `true` reads as on, so any present-but-not-true value
     // turns the lever off rather than inheriting the default.
     allowAnyToken: d.allowAnyToken === undefined ? true : bool(d.allowAnyToken),
-    approvalCustom: str(d.approvalCustom, 64),
-    approvalPerChain: sanitizeChainMap(d.approvalPerChain),
     accepts: ((): TreasuryCurrency[] => {
       const accepts = (Array.isArray(d.accepts) ? d.accepts : ['eth'])
         .filter((t): t is TreasuryCurrency => t === 'eth' || t === 'usdc')
@@ -332,31 +388,12 @@ export function parseDraft(text: string): CreateDraft {
       return accepts.length ? accepts : ['eth']
     })(),
     customAddress,
-    issuanceBase:
-      d.issuanceBase === 'eth' ? 'eth' : d.issuanceBase === 'usd' ? 'usd' : null,
     linkChains: d.linkChains === undefined ? true : bool(d.linkChains),
     bridge: d.bridge === 'native' || d.bridge === 'both' ? d.bridge : 'ccip',
     chains: (Array.isArray(d.chains) ? d.chains : [])
       .filter(c => Number.isInteger(c))
       .slice(0, 16) as number[],
-    stages,
-    afterMode: ['wait', 'terminal', 'cycle'].includes(d.afterMode as string)
-      ? (d.afterMode as CreateDraft['afterMode'])
-      : 'wait',
-    // 'custom' belongs here: it's a legal ApprovalDeadline the wizard and the
-    // project exporter both produce. Dropping it rewrote a configured
-    // JBRulesetApprovalHook to a 1-day deadline on every round trip — including
-    // the localStorage rehydrate that runs on page load.
-    approvalDeadline: [
-      'none',
-      '3hours',
-      '1day',
-      '3days',
-      '7days',
-      'custom',
-    ].includes(d.approvalDeadline as string)
-      ? (d.approvalDeadline as ApprovalDeadline)
-      : '1day',
+    ...rules,
     // 'token' prices shop items in the custom accounting token. Without one
     // the encoder has no token to price against and falls back to ETH at 18
     // decimals — "10 TOKEN" would launch as 10 ETH — so it only survives

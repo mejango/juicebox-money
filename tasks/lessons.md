@@ -74,3 +74,6 @@ Live native acceptance found owner/account ENS names still used publicnode throu
 
 ## 2026-10-12 — Image availability requires actual decode evidence
 - Live preview acceptance found valid JSON and a returned SVG URI did not imply the SVG would decode: middle-tier images had naturalWidth zero. Verify each visible image's actual browser decode or a graceful named fallback, including selected thumbnails. Keep malformed untrusted metadata unchanged and place cosmetic failure handling in the shared presentation owner.
+
+## 2026-10-23 — Validate the configuration that will be encoded
+A Simple launch must activate preset rule settings, including issuance denomination, while saving Custom rules separately for restoration. Preserve that separation through reload and export/import. Scope stage-specific checks to the active flavor; continue validating shop settings that every flavor encodes. Derive visible launch requirements from the same checks that disable the button. Reproduce disabled actions with the exported draft rather than inferring hidden values from review labels. Rendered launch regressions enforce this boundary.

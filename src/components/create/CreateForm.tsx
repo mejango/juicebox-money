@@ -9,7 +9,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import Image from "next/image";
 import dynamic from "next/dynamic";
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import congratsIllustration from "@/assets/illustrations/congrats.png";
 import createIllustration from "@/assets/illustrations/create.png";
 import {
@@ -64,6 +64,7 @@ import {
   parseDraft,
   warnOnDraftDrift,
   type CreateDraft,
+  type DraftRules,
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
@@ -108,6 +109,7 @@ import { AddressField } from "./AddressField";
 import { validateAuthorityPolicy } from "@/lib/launch-multisig";
 import {
   newDraftStage,
+  newSimpleProjectDraftStage,
   stageCashOutTax,
   secondsLabel,
   stageDurationSeconds,
@@ -318,6 +320,21 @@ function StepBadge({ n }: { n: number }) {
   );
 }
 
+function defaultFlavorRules(flavor: CreateDraft["flavor"]): DraftRules {
+  return {
+    stages: [
+      flavor === "simple"
+        ? newSimpleProjectDraftStage()
+        : newDraftStage(true, flavor),
+    ],
+    issuanceBase: null,
+    afterMode: "wait",
+    approvalDeadline: flavor === "simple" ? "none" : "1day",
+    approvalCustom: "",
+    approvalPerChain: {},
+  };
+}
+
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
@@ -415,12 +432,15 @@ export function CreateForm() {
   const [ticker, setTicker] = useState("");
 
   // --- 2: Rules (one entry per queued ruleset/stage) ---
-  const [stages, setStages] = useState<DraftStage[]>([newDraftStage(true)]);
+  const [stages, setStages] = useState<DraftStage[]>(() => [
+    newSimpleProjectDraftStage(),
+  ]);
   const [afterMode, setAfterMode] = useState<"wait" | "terminal" | "cycle">(
     "wait",
   );
   const [approvalDeadline, setApprovalDeadline] =
-    useState<ApprovalDeadline>("1day");
+    useState<ApprovalDeadline>("none");
+  const [savedRules, setSavedRules] = useState<NonNullable<CreateDraft["savedRules"]>>({});
   // Pinned at mount so the chart's stage 1 start never drifts past the
   // ladder's own mount-time "now" and reads as "no issuance".
   const chartNow = useMemo(() => Math.floor(Date.now() / 1000), []);
@@ -698,6 +718,17 @@ export function CreateForm() {
 
   const nameOk = name.trim().length > 0;
   const isSimpleProject = flavor === "simple";
+  const wizardSteps = isSimpleProject
+    ? ["Flavor", "Look & Feel", "Shop", "Launch"]
+    : [
+        "Flavor",
+        "Look & Feel",
+        flavor === "revnet" ? "Stages" : "Rules",
+        "Shop",
+        "Launch",
+      ];
+  const storeStep = isSimpleProject ? 2 : 3;
+  const launchStep = isSimpleProject ? 3 : 4;
   const rulesFlavor = flavor === "revnet" ? "revnet" : "project";
   const anyCashOuts = !isSimpleProject && stages.some((s) => s.cashOuts);
   const accountingOk = customOn
@@ -800,9 +831,10 @@ export function CreateForm() {
     const index = all.findIndex((s, i) => i > 0 && s - now < noticeSeconds);
     return index === -1 ? null : { index, lead: all[index] - now };
   })();
-  const stagesOk =
-    isSimpleProject ||
-    stages.every((s, i) => stageOk(s, i === 0, rulesFlavor, multiToken));
+  const invalidStage = isSimpleProject
+    ? -1
+    : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken));
+  const stagesOk = invalidStage === -1;
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage =
     flavor === "revnet" || isSimpleProject
@@ -829,14 +861,17 @@ export function CreateForm() {
   // A "Fund market" recipient encodes the Uniswap V4 LP split hook, which is not deployed
   // on every chain the create flow offers. A reserved split at a codeless address reverts
   // split processing, so the launch is blocked rather than shipped broken on that chain.
+  const missingLpHookChains = chainsWithoutLpSplitHook(selected);
   const lpHookOk =
-    chainsWithoutLpSplitHook(selected).length === 0 ||
+    missingLpHookChains.length === 0 ||
     !(
-      stages.some(stage =>
-        [...stage.reservedSplits, ...stage.payoutSplits].some(
-          split => split.kind === "hook" && split.hookKind === "fundmarket",
-        ),
-      ) ||
+      // Simple projects encode fixed rules, retaining custom drafts only for editing.
+      (!isSimpleProject &&
+        stages.some(stage =>
+          [...stage.reservedSplits, ...stage.payoutSplits].some(
+            split => split.kind === "hook" && split.hookKind === "fundmarket",
+          ),
+        )) ||
       items.some(item =>
         item.splits.some(
           split => split.kind === "hook" && split.hookKind === "fundmarket",
@@ -920,25 +955,61 @@ export function CreateForm() {
   // A restored multichain session resumes on its persisted plans; the form
   // (validated when the launch originally started) no longer gates it.
   const canResume = phase === "failed" && restoredSessionRef.current !== null;
+  // Eligibility and its explanation share the same checks, so a disabled
+  // launch always names the settings that need attention.
+  const launchChecks: [ok: boolean, message: string, step: number][] = [
+    [nameOk, "Give your project a name.", 1],
+    [tosAccepted, "Acknowledge the risks.", launchStep],
+    [accountingOk, customChainError ?? "Choose accounting tokens and verify any custom token.", 0],
+    [feedsOk, feedBlock ?? "Checking price feeds on every selected chain…", 0],
+    [approvalOk, "Verify each chain's approval contract.", 2],
+    [ownerOk, createsAuthoritySafe
+      ? `Complete the ${flavor === "revnet" ? "operator" : "owner"} multisig with unique signers and a valid approval policy.`
+      : `Set the ${flavor === "revnet" ? "operator" : "owner"} on each chain, or leave empty for your wallet.`, 0],
+    [tickerOk, "Ticker: 1–11 letters or numbers.", 1],
+    [bridgeOk, "Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.", 0],
+    [lpHookOk, `Fund market is unavailable on ${missingLpHookChains.map(chainName).join(", ")}. Remove its recipients or change chains.`, 0],
+    [fundMarketPlacedOk, "Fund market accepts reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
+    [stickyOk, stickyBlock ?? "Checking Sticky recipients on every selected chain…", items.some(item => item.splits.some(isStickyRow)) ? storeStep : 2],
+    [selected.length > 0, "Choose at least one chain.", 0],
+    [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
+    [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
+    [noticeClash === null, "Allow the notice period before the next ruleset starts.", 2],
+    [itemsOk, "Complete or remove unfinished shop items.", storeStep],
+  ];
+  const launchIssues = launchChecks.filter(([ok]) => !ok);
   const canLaunch =
     canResume ||
-    (nameOk &&
-      tosAccepted &&
-      accountingOk &&
-      feedsOk &&
-      approvalOk &&
-      ownerOk &&
-      tickerOk &&
-      bridgeOk &&
-      lpHookOk &&
-      fundMarketPlacedOk &&
-      stickyOk &&
-      selected.length > 0 &&
-      stagesOk &&
-      badStage === -1 &&
-      noticeClash === null &&
-      itemsOk &&
-      (phase === "form" || phase === "failed"));
+    (launchIssues.length === 0 && (phase === "form" || phase === "failed"));
+
+  const currentRules = (): DraftRules => ({
+    stages,
+    issuanceBase,
+    afterMode,
+    approvalDeadline,
+    approvalCustom,
+    approvalPerChain,
+  });
+  const applyRules = useCallback((rules: DraftRules) => {
+    setStages(rules.stages);
+    setIssuanceBase(rules.issuanceBase);
+    setAfterMode(rules.afterMode);
+    setApprovalDeadline(rules.approvalDeadline);
+    setApprovalCustom(rules.approvalCustom);
+    setApprovalPerChain(rules.approvalPerChain);
+  }, []);
+  const selectFlavor = (next: CreateDraft["flavor"]) => {
+    if (busy || next === flavor) return;
+    if (flavor !== "simple") {
+      setSavedRules(previous => ({ ...previous, [flavor]: currentRules() }));
+    }
+    applyRules(
+      next === "simple"
+        ? defaultFlavorRules(next)
+        : savedRules[next] ?? defaultFlavorRules(next),
+    );
+    setFlavor(next);
+  };
 
   const toggleChain = (id: number) => {
     if (busy) return;
@@ -2165,6 +2236,7 @@ export function CreateForm() {
   const buildDraft = (): CreateDraft => ({
     v: 1,
     flavor,
+    savedRules,
     name,
     ticker,
     tagline,
@@ -2195,7 +2267,7 @@ export function CreateForm() {
     items: items.map(({ mediaFile, mediaPreview, ...rest }) => rest),
   });
 
-  const applyDraft = (draft: CreateDraft) => {
+  const applyDraft = useCallback((draft: CreateDraft) => {
     setFlavor(draft.flavor);
     setName(draft.name);
     setTicker(draft.ticker);
@@ -2216,13 +2288,10 @@ export function CreateForm() {
     setAuthorityMode(draft.authorityMode ?? "existing");
     setAuthoritySigners(draft.authoritySigners ?? ["", "", ""]);
     setAuthorityThreshold(draft.authorityThreshold ?? 2);
-    setApprovalCustom(draft.approvalCustom);
-    setApprovalPerChain(draft.approvalPerChain);
     setAccepts(draft.accepts);
     setAllowAnyToken(draft.allowAnyToken);
     setCustomOn(draft.customAddress !== "");
     setCustomAddress(draft.customAddress);
-    setIssuanceBase(draft.issuanceBase);
     setLinkChains(draft.linkChains);
     setBridge(draft.bridge);
     const validChains = draft.chains.filter((id) =>
@@ -2242,9 +2311,21 @@ export function CreateForm() {
         ? compatibleChains
         : nextEnvironmentChains.map((chain) => chain.id),
     );
-    setStages(draft.stages);
-    setAfterMode(draft.afterMode);
-    setApprovalDeadline(draft.approvalDeadline);
+    const backups = { ...draft.savedRules };
+    // Legacy Simple drafts stored their custom rules in the active fields.
+    // Keep those edits once, then activate the actual Simple preset.
+    if (draft.flavor === "simple" && draft.savedRules === undefined) {
+      backups.project = {
+        stages: draft.stages,
+        issuanceBase: draft.issuanceBase,
+        afterMode: draft.afterMode,
+        approvalDeadline: draft.approvalDeadline,
+        approvalCustom: draft.approvalCustom,
+        approvalPerChain: draft.approvalPerChain,
+      };
+    }
+    setSavedRules(backups);
+    applyRules(draft.flavor === "simple" ? defaultFlavorRules("simple") : draft);
     setStoreCurrency(draft.storeCurrency);
     setStoreConfig(draft.storeConfig);
     setStoreCategories(draft.storeCategories);
@@ -2256,7 +2337,7 @@ export function CreateForm() {
       })),
     );
     setStep(0);
-  };
+  }, [applyRules]);
 
   const [importError, setImportError] = useState<string | null>(null);
   const importDraftFile = async (file: File | null) => {
@@ -2331,7 +2412,7 @@ export function CreateForm() {
             : "This launch was interrupted before every chain finished. Press Try again to resume — chains that already launched are kept, and the rest continue as the same project.",
       );
     }
-  }, []);
+  }, [applyDraft]);
   useEffect(() => {
     if (!hydratedRef.current || busy) return;
     const t = setTimeout(() => {
@@ -2347,6 +2428,7 @@ export function CreateForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     flavor,
+    savedRules,
     name,
     ticker,
     tagline,
@@ -2376,18 +2458,6 @@ export function CreateForm() {
     items,
     busy,
   ]);
-
-  const wizardSteps = isSimpleProject
-    ? ["Flavor", "Look & Feel", "Shop", "Launch"]
-    : [
-        "Flavor",
-        "Look & Feel",
-        flavor === "revnet" ? "Stages" : "Rules",
-        "Shop",
-        "Launch",
-      ];
-  const storeStep = isSimpleProject ? 2 : 3;
-  const launchStep = isSimpleProject ? 3 : 4;
 
   // ---- Summaries (shown on collapsed subsections / review) ----
   const linkCount = Object.values(links).filter((v) => v.trim()).length;
@@ -2847,21 +2917,7 @@ export function CreateForm() {
           <select
             aria-label="Project flavor"
             value={flavor}
-            onChange={(e) => {
-              if (busy) return;
-              const next = e.target.value as CreateDraft["flavor"];
-              setFlavor(next);
-              if (next === "revnet") {
-                // Revnets default to cash outs on with a 10% tax.
-                setStages((prev) =>
-                  prev.map((s) => ({
-                    ...s,
-                    cashOuts: true,
-                    cashOutTax: s.cashOutTax === 0 ? 1000 : s.cashOutTax,
-                  })),
-                );
-              }
-            }}
+            onChange={(e) => selectFlavor(e.target.value as CreateDraft["flavor"])}
             disabled={busy}
             className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
           >
@@ -2871,7 +2927,7 @@ export function CreateForm() {
           </select>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
             {flavor === "simple"
-              ? "Launch with flexible defaults the project owner can adjust at any time."
+              ? "Use flexible preset rules. Your Custom rules stay saved."
               : flavor === "revnet"
                 ? "A revnet commits to its token rules and stages at launch. Money it receives backs token cash outs and loans. Returns depend on available funds and the rules."
                 : "The project owner sets how funds are paid out and tokens are created or cashed out. They can change the rules or lock them."}
@@ -4232,39 +4288,32 @@ export function CreateForm() {
           </p>
         ) : null}
 
-        {createsAuthoritySafe && !ownerOk && !canResume ? (
-          <div role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
-            <p>
-              Complete the {flavor === "revnet" ? "operator" : "owner"} multisig
-              with unique wallet addresses and a valid approval policy.
-            </p>
-            <button
-              type="button"
-              onClick={() => goToStep(0)}
-              disabled={busy}
-              className="mt-1 font-medium underline underline-offset-2 disabled:opacity-60"
-            >
-              {flavor === "revnet" ? "Edit revnet operator" : "Edit project owner"}
-            </button>
-          </div>
-        ) : null}
-
-        {stickyBlock && !canResume ? (
-          <p role="alert" className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
-            {stickyBlock}
-          </p>
-        ) : null}
-
-        {feedBlock && !canResume ? (
-          <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm leading-relaxed text-red-700">
-            <p>{feedBlock}</p>
-            {feedCheck?.status === "unavailable" ? (
+        {!canResume && launchIssues.length > 0 && (phase === "form" || phase === "failed") ? (
+          <div role="status" aria-label="Launch requirements" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
+            <ul className="space-y-2">
+              {launchIssues.map(([, message, targetStep]) => (
+                <li key={message}>
+                  <p>{message}</p>
+                  {targetStep !== launchStep ? (
+                    <button
+                      type="button"
+                      onClick={() => goToStep(targetStep)}
+                      disabled={busy}
+                      className="font-medium underline underline-offset-2 disabled:opacity-60"
+                    >
+                      Edit {wizardSteps[targetStep]}
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+            {!feedsOk && feedCheck?.status === "unavailable" ? (
               <button
                 type="button"
                 onClick={() => setFeedRetry((n) => n + 1)}
                 className="mt-1 font-medium underline underline-offset-2"
               >
-                Retry
+                Retry price feeds
               </button>
             ) : null}
           </div>
