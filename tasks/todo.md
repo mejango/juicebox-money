@@ -989,3 +989,22 @@ Read-only live evidence: All four actual JBOmnichainDeployer targets trust the c
 UI: All main launch values, including rule lists, share one left-aligned column. Creation fees show one native expandable total with every per-chain symbol/amount retained, and unavailable reads remain unknown. Page/modal total formatting shares one owner. Shared modal labels do not wrap and values remain free to wrap. Desktop/mobile screenshots were inspected; at320px the owner label remains one line while its address wraps safely. A test initially measured the stretched grid item's box rather than text; corrected it to use actual text range geometry without changing the layout assertion or production rule. Native top-layer modal screenshots use page capture.
 
 Verification: Baseline delegated-account regression failed with the exact Sepolia message; final649 focused tests across14 suites pass. Complete production-browser suite passes all88 tests plus fixture audit, including320/1280 summary alignment, collapsed/expanded fee amounts, and modal labels/scrolling at320/640/900/1280. Full production build/types, scoped lint, source invariants, transaction inventory, wallet checker and whitespace checks pass. Every original bundle limit passes, including create398KiB and aggregate2669KiB. A proposed threshold increase was rejected by automatic approval review; no budget file was changed. Static layout/value styles moved into the existing stylesheet and the disclosure uses its native marker, removing the overage. Evidence logs: /private/tmp/jbm-launch-wallet-summary-{tests-final,browser-final}.log and build logs. Changes remain local and unpublished.
+
+# Effective draft validation — 2026-10-24
+
+## Plan refinement
+- **Objective:** Validate only encoded split recipients and active approval fields; reject issuance numbers unsupported by encoding before launch.
+- **System fit:** SplitsEditor owns recipient admission, stage/store draft owners thread selected chains, CreateForm binds admission and encoding; saved inactive settings remain restorable. Wallet execution is unchanged.
+- **Reuse and simplicity:** Add selected-chain context to existing split validator and its callers, reuse decimal syntax validation in numeric owner without introducing a framework.
+- **Evidence and unknowns:** Prior source reproduction establishes deselected overrides and hidden approval blockers plus exponent issuance encoding failure; notice policy correction is owned separately by parent.
+- **Verification:** Focused split and numeric unit regressions plus rendered launch approval and chain cases, lint/typecheck and affected transaction tests. No wallet sends.
+- **Resource budget:** One isolated branch based on merged PR155; existing installed locked dependencies, targeted tests first and required gates next.
+
+- [x] Scope split validation to effective chain values through admission and encoding.
+- [x] Scope custom approval validation to active condition.
+- [x] Reject unsupported numeric strings and add regressions.
+- [x] Verify and commit owned changes.
+
+Refinement evidence: contract scheduling investigation established that prior timed stages retain notice even when followed by Terminate; deadline visibility now follows any non-FOREVER configured stage, with encoder correction owned by the parent branch. Tracing sibling parseUnits callers found the same unsupported syntax in shop prices and payout amounts, so decimal syntax has one small shared owner used by stage, split and shop admission. Selected-chain amount overrides use the same effective-context validation as recipients. Added regressions exercise all three money input paths.
+
+Review: Effective selected-chain split recipients and payout amounts now share fallback resolution through admission and materialization. Inactive approval values are ignored and all-overridden fallback values do not block launch. Notice visibility follows configured non-FOREVER stages, matching the parent contract fix. One decimal syntax owner protects issuance, autoissuance, shop price and payout amounts while preserving Number-encoded percentage shares. Verification: 112 focused launch/editor regressions passed; final rendered/draft suite32 passed after approval override refinement; final shared-resolver smoke16 passed. Full lint and final changed-file lint, final typecheck, source and transaction inventory checks passed. Parent integrates notice scheduling/encoder and runs combined release gates. No push or wallet action.

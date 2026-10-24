@@ -778,23 +778,23 @@ export function CreateForm() {
     : selected.length > 0 &&
       (selected.length > 1 || createsAuthoritySafe) &&
       !safeConnection;
-  const approvalOk =
-    isSimpleProject ||
-    approvalDeadline !== "custom" ||
-    (resolvedAddress(approvalCustom) !== null &&
-      activeChainOverrides(approvalPerChain, selected).every(
-        (v) => resolvedAddress(v) !== null,
-      ));
   const tickerOk =
     flavor !== "revnet" || /^[A-Z0-9]{1,11}$/.test(ticker.trim());
   const lastStage = stages[stages.length - 1];
   const lastDuration = stageDurationSeconds(lastStage);
   // "Afterwards" applies only when the last stage is timed (website/ parity).
   const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
-  // The approval condition is meaningless when rules end in a forever stage.
-  const deadlineApplies =
-    lastDuration !== FOREVER_SECONDS &&
-    !(afterApplies && afterMode === "terminal");
+  // The final long-duration stage has no near-term successor; earlier stages still use notice.
+  const deadlineApplies = stages.some(
+    stage => stageDurationSeconds(stage) !== FOREVER_SECONDS,
+  );
+  const approvalOk =
+    isSimpleProject ||
+    !deadlineApplies ||
+    approvalDeadline !== "custom" ||
+    selected.every(chainId =>
+      resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom) !== null,
+    );
   /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
    *  previous stage's next cycle boundary) and the start it lands on, chained
    *  from stage 1's known start — its scheduled time, the multichain pin, or
@@ -841,7 +841,7 @@ export function CreateForm() {
   })();
   const invalidStage = isSimpleProject
     ? -1
-    : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken));
+    : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken, selected));
   const stagesOk = invalidStage === -1;
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage =
@@ -850,7 +850,7 @@ export function CreateForm() {
       : stages.findIndex(
           (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
         );
-  const itemsOk = items.every(itemOk);
+  const itemsOk = items.every(item => itemOk(item, selected));
   // Revnets always accept any token — REVDeployer attaches the router terminal
   // itself — so the wizard states it as a fact there instead of offering a
   // switch the encoder would ignore.
@@ -926,7 +926,7 @@ export function CreateForm() {
         ? "Shop items can't pay Sticky holders. Remove the Sticky recipient from the item."
         : null;
   const stickyTargets = stickySplits
-    .filter(({ row }) => splitOk(row, "percent") || splitOk(row, "amount"))
+    .filter(({ row }) => splitOk(row, "percent", selected) || splitOk(row, "amount", selected))
     .map(({ row }) => ({
       beneficiary: resolvedAddress(row.beneficiary)!,
       projectId: stickyDraftGroupId(row),
@@ -1053,7 +1053,7 @@ export function CreateForm() {
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
   const toSplitConfigs = (rows: DraftSplit[], chainId: number): SplitConfig[] =>
     rows
-      .filter((s) => splitOk(s, "percent"))
+      .filter((s) => splitOk(s, "percent", [chainId]))
       .map((row) => ({
         percent: Math.round(Number(row.value) * 1e7),
         ...draftSplitRecipient(row, chainId),
@@ -1066,7 +1066,7 @@ export function CreateForm() {
     rows: DraftSplit[],
     chainId: number,
   ): { percent: number; splits: SplitConfig[] } => {
-    const valid = rows.filter((s) => splitOk(s, "percent"));
+    const valid = rows.filter((s) => splitOk(s, "percent", [chainId]));
     const total = valid.reduce((sum, row) => sum + Number(row.value), 0);
     if (total <= 0) return { percent: 0, splits: [] };
 
@@ -1094,7 +1094,7 @@ export function CreateForm() {
     if (routedMode === "all") {
       return { splits: toSplitConfigs(rows, chainId), limit: null };
     }
-    const valid = rows.filter((s) => splitOk(s, "amount"));
+    const valid = rows.filter((s) => splitOk(s, "amount", [chainId]));
     const values = valid.map((row) =>
       parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
     );
@@ -1495,7 +1495,7 @@ export function CreateForm() {
     const projectUri = projectPin.uri;
 
     const pinned: StoreItem[] = [];
-    for (const item of items.filter(itemOk)) {
+    for (const item of items.filter(item => itemOk(item, selected))) {
       // Any media type pins as-is; images become `image`, everything else
       // `animation_url` (website/ parity).
       let imageUri: string | undefined;
@@ -1526,7 +1526,7 @@ export function CreateForm() {
       // Split-sales rows: user enters % of the sale. splitPercent is the
       // summed share (of 1e9); each split's percent is its relative share of
       // that bucket, with the last row absorbing rounding.
-      const splitRows = item.splits.filter((s) => splitOk(s, "percent"));
+      const splitRows = item.splits.filter((s) => splitOk(s, "percent", selected));
       const totalSplitPct = splitRows.reduce((s, r) => s + Number(r.value), 0);
       let splitPercent = 0;
       let splits: SplitConfig[] = [];

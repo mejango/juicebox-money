@@ -1,5 +1,6 @@
 'use client'
 
+import { decimalOk } from '@/lib/decimal'
 import { resolvedAddress } from '@/lib/ens'
 import { toLocalDateTimeInput, truncateAddress } from '@/lib/format'
 import { chainName } from '@/lib/urn'
@@ -93,7 +94,7 @@ export function newDraftSplit(): DraftSplit {
 
 function splitValueOk(value: string, mode: SplitsMode): boolean {
   const n = Number(value)
-  if (!Number.isFinite(n) || n <= 0) return false
+  if (!Number.isFinite(n) || n <= 0 || (mode === 'amount' && !decimalOk(value))) return false
   return mode === 'percent' ? n <= 100 : true
 }
 
@@ -104,16 +105,20 @@ function projectIdOk(projectId: string): boolean {
   )
 }
 
-export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
-  if (!splitValueOk(split.value, mode)) return false
+export function splitOk(split: DraftSplit, mode: SplitsMode, chainIds?: readonly number[]): boolean {
+  // Check the same fallback/override values the selected chains will encode.
+  // Keep inactive overrides saved so selecting that chain restores its draft.
+  const effective = (values: Record<number, string>, fallback: string) =>
+    chainIds
+      ? chainIds.map(id => values[id]?.trim() || fallback)
+      : [fallback, ...Object.values(values).filter(v => v.trim() !== '')]
+  if (!effective(mode === 'amount' ? split.perChainAmount : {}, split.value)
+    .every(value => splitValueOk(value, mode))) return false
   if (split.lockedUntil && Number.isNaN(new Date(split.lockedUntil).getTime()))
     return false
-  const overrides = Object.values(split.perChain).filter(v => v.trim() !== '')
+  const recipients = effective(split.perChain, split.kind === 'address' ? split.recipient : split.projectId)
   if (split.kind === 'address') {
-    return (
-      resolvedAddress(split.recipient) !== null &&
-      overrides.every(v => resolvedAddress(v) !== null)
-    )
+    return recipients.every(v => resolvedAddress(v) !== null)
   }
   if (split.kind === 'hook') {
     if (split.hookKind === 'sticky') {
@@ -133,15 +138,11 @@ export function splitOk(split: DraftSplit, mode: SplitsMode): boolean {
         resolvedAddress(split.beneficiary) !== null)
     )
   }
-  const beneficiaryOverrides = Object.values(split.perChainBeneficiary).filter(
-    v => v.trim() !== '',
-  )
+  const beneficiaries = effective(split.perChainBeneficiary, split.beneficiary)
   return (
-    projectIdOk(split.projectId) &&
+    recipients.every(projectIdOk) &&
     (split.preferAddToBalance ||
-      resolvedAddress(split.beneficiary) !== null) &&
-    overrides.every(projectIdOk) &&
-    beneficiaryOverrides.every(v => resolvedAddress(v) !== null)
+      beneficiaries.every(v => resolvedAddress(v) !== null))
   )
 }
 

@@ -95,7 +95,7 @@ export function storeItemsForChain(
       throw new Error(`The price of “${item.name.trim()}” is too large.`)
     }
 
-    const splitRows = item.splits.filter(split => splitOk(split, 'percent'))
+    const splitRows = item.splits.filter(split => splitOk(split, 'percent', [chainId]))
     const totalSplitPct = splitRows.reduce(
       (total, split) => total + Number(split.value),
       0,
