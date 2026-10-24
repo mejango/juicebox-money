@@ -98,6 +98,48 @@ const day = 86_400
 // Ruleset #1 is queued on the live parent, so its start is the parent's next
 // cycle boundary; a follower's "N cycles" counts from THAT start.
 describe('queueStageStarts', () => {
+  it('preserves a near-term explicit first date instead of moving it for a future preparation horizon', () => {
+    const now = 2_000_000_000
+    const requested = now + day + 300
+    const timing = queueStageStarts({
+      parent: { start: requested - 3 * day, duration: 3 * day, noticeSeconds: day },
+      firstMust: requested,
+      latestRulesetId: now - 1,
+      stages: [{ duration: 3 * day, noticeSeconds: day }, { duration: 0 }],
+      now,
+    })
+    expect(timing.musts[0]).toBe(requested)
+    expect(timing.starts).toEqual([requested, requested + 3 * day])
+    expect(timing.validUntil).toBe(now + 300)
+  })
+
+  it('keeps a replacement in its intended cycle when approval closes inside the preparation horizon', () => {
+    const now = 2_000_000_000
+    const targetStart = now + day + 300
+    const timing = queueStageStarts({
+      parent: { start: targetStart - 3 * day, duration: 3 * day, noticeSeconds: day },
+      firstMust: targetStart,
+      latestRulesetId: now - 1,
+      stages: [{ duration: 3 * day, noticeSeconds: day }, { duration: 0 }],
+      now,
+      validUntil: now + 299,
+    })
+    expect(timing.musts[0]).toBe(targetStart)
+    expect(timing.starts).toEqual([targetStart, targetStart + 3 * day])
+    expect(timing.validUntil).toBe(now + 299)
+  })
+
+  it('refuses a replacement whose execution window has already closed', () => {
+    const now = 2_000_000_000
+    expect(() => queueStageStarts({
+      parent: { start: now, duration: day },
+      firstMust: now + day,
+      stages: [{ duration: day }, { duration: 0 }],
+      now,
+      validUntil: now,
+    })).toThrow(/expired|closed/i)
+  })
+
   it('includes the live parent notice and monotonic queue IDs before snapping followers', () => {
     const now = 1_800_000_000
     const { starts } = queueStageStarts({
@@ -126,10 +168,10 @@ describe('queueStageStarts', () => {
       now,
     })
     expect(starts[0]).toBe(parent.start + 4 * day)
-    expect(musts).toEqual([0, parent.start + 4 * day + 3 * day])
+    expect(musts).toEqual([parent.start + 4 * day, parent.start + 4 * day + 3 * day])
     expect(starts[1]).toBe(parent.start + 7 * day)
   })
-  it('keeps one cycle as 0 and snaps a date up to a boundary', () => {
+  it('pins one-cycle followers and snaps a date up to an explicit boundary', () => {
     const now = 1_800_000_000
     const parent = { start: now - 100, duration: day }
     const date = new Date((now + 2 * day + 500) * 1000).toISOString()
@@ -143,10 +185,43 @@ describe('queueStageStarts', () => {
       ],
       now,
     })
-    expect(musts[1]).toBe(0)
+    expect(musts[0]).toBe(starts[0])
+    expect(musts[1]).toBe(parent.start + 2 * day)
     expect(starts[1]).toBe(parent.start + 2 * day)
-    expect(musts[2]).toBe(now + 2 * day + 500)
+    expect(musts[2]).toBe(parent.start + 3 * day)
     expect(starts[2]).toBe(parent.start + 3 * day)
+  })
+
+  it('pins every follower including a closing stage beyond its real predecessor', () => {
+    const now = 1_800_000_000
+    const { musts, starts } = queueStageStarts({
+      parent: { start: now, duration: 3 * day },
+      firstMust: 0,
+      stages: [{ duration: 3 * day }, { duration: 3 * day }, { duration: 4_294_967_295 }],
+      now,
+    })
+    expect(musts).toEqual(starts)
+    expect(starts).toEqual([now + 3 * day, now + 6 * day, now + 9 * day])
+    expect(musts[2]).toBeGreaterThanOrEqual(starts[1] + 3 * day)
+  })
+
+  it('refuses batched custom approval hooks instead of silently skipping stages', () => {
+    expect(() => queueStageStarts({
+      parent: { start: 1_800_000_000, duration: day },
+      firstMust: 0,
+      stages: [{ duration: day, noticeSeconds: null }, { duration: day }],
+      now: 1_800_000_000,
+    })).toThrow(/custom|approval/i)
+  })
+
+  it('keeps singleton custom-hook queueing on its existing path', () => {
+    const now = 1_800_000_000
+    expect(queueStageStarts({
+      parent: { start: now, duration: day, noticeSeconds: null },
+      firstMust: 0,
+      stages: [{ duration: day, noticeSeconds: null }],
+      now,
+    })).toEqual({ musts: [0], starts: [now + day] })
   })
 })
 

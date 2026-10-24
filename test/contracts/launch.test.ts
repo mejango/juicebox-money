@@ -32,6 +32,9 @@ import {
   nativeBridgeViable,
   requiredFeedPairs,
   resolveStages,
+  orderedRulesetSchedule,
+  prepareLaunchSchedule,
+  assertLaunchScheduleFresh,
   type LaunchPlan,
   type SplitConfig,
   type StageRules,
@@ -142,6 +145,50 @@ function split(overrides: Partial<SplitConfig> = {}): SplitConfig {
 }
 
 describe('project launch encoding', () => {
+  it.each(['wait', 'terminal'] as const)('pins every stage including %s before signing', (afterMode) => {
+    const now = 1_000_001
+    const timed = { ...createSimpleProjectStage(), duration: 3 * 86_400 }
+    const prepared = prepareLaunchSchedule(plan({ stages: [timed, timed], afterMode,
+      approvalDeadline: '1day' }), 1, now)
+    const starts = [now + 3600, now + 3600 + 3 * 86_400, now + 3600 + 6 * 86_400]
+    expect(prepared.stageStarts).toEqual(starts)
+    expect(projectConfig(requestFor(prepared)).rulesetConfigurations.map(stage => Number(stage.mustStartAtOrAfter))).toEqual(starts)
+    expect(prepareLaunchSchedule(prepared, 1, now + 100_000)).toBe(prepared)
+    expect(() => assertLaunchScheduleFresh(prepared, prepared.scheduleValidUntil! - 1)).not.toThrow()
+    expect(() => assertLaunchScheduleFresh(prepared, prepared.scheduleValidUntil!)).toThrow('fresh schedule')
+  })
+
+  it('models long notice before pinning followers and refuses unknown batched approval policies', () => {
+    const timed = { ...createSimpleProjectStage(), duration: 86_400 }
+    const prepared = prepareLaunchSchedule(plan({ stages: [timed, timed], afterMode: 'terminal', approvalDeadline: '7days' }), 1, 1_000_001)
+    expect(prepared.stageStarts).toEqual([1_003_601, 1_003_601 + 7 * 86_400, 1_003_601 + 8 * 86_400])
+    expect(prepared.scheduleValidUntil).toBe(1_003_600)
+    expect(() => prepareLaunchSchedule(plan({ stages: [timed, timed], approvalDeadline: 'custom', approvalCustomAddress: CUSTOM }), 1, 1_000_001)).toThrow('one ruleset at a time')
+  })
+
+  it('keeps no-hook dates stable, retains explicit later choices and leaves a Simple launch immediate', () => {
+    const now = 1_000_001
+    const timed = { ...createSimpleProjectStage(), duration: 86_400 }
+    const prepared = prepareLaunchSchedule(plan({ stages: [timed, { ...timed, mustStartAtOrAfter: now + 30 * 86_400 }] }), 1, now)
+    expect(prepared.stageStarts).toEqual([now + 600, now + 600 + 30 * 86_400])
+    expect(prepared.scheduleValidUntil).toBeUndefined()
+    expect(() => assertLaunchScheduleFresh(prepared, now + 100 * 86_400)).not.toThrow()
+    const simple = plan()
+    expect(prepareLaunchSchedule(simple, 1, now)).toBe(simple)
+    expect(() => assertLaunchScheduleFresh(simple, now)).not.toThrow()
+    expect(() => assertLaunchScheduleFresh(plan({ stages: [timed, timed] }), now)).toThrow('fresh schedule')
+  })
+
+  it('accounts for queue IDs already ahead of wall time and pins zero-duration followers', () => {
+    const schedule = orderedRulesetSchedule({ firstStart: 1_000,
+      parent: { start: 100, duration: 100, noticeSeconds: 30 },
+      queuedAt: 1_100, latestRulesetId: 1_150,
+      stages: [{ duration: 100, noticeSeconds: 30 }, { duration: 0, startCycles: 2 }],
+    })
+    expect(schedule.starts).toEqual([1_200, 1_400])
+    expect(schedule.musts).toEqual(schedule.starts)
+    expect(schedule.validUntil).toBe(1_170)
+  })
   it.each([1, 2])('retains notice on %i timed stages before Terminate', (count) => {
     const timed = { ...createSimpleProjectStage(), duration: 86_400 }
     const config = projectConfig(requestFor(plan({

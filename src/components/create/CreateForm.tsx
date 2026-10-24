@@ -82,14 +82,22 @@ import {
 import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
-  DEADLINE_SECONDS,
-  deriveQueuedStartFrom,
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
   activeChainOverrides,
   autoIssuanceMintChain,
   buildLaunchRequest,
+  prepareLaunchSchedule,
+  assertLaunchScheduleFresh,
+  launchScheduleDescription,
+  resolveStages,
+  knownDeadlineSeconds,
+  orderedRulesetSchedule,
+  deriveStartFrom,
+  SCHEDULE_PREPARATION_SECONDS,
+  LAUNCH_START_DELAY_SECONDS,
+  launchApprovalNotice,
   createSimpleProjectStage,
   launchAcceptsAnyToken,
   nativeBridgeViable,
@@ -104,6 +112,7 @@ import {
   type TreasuryCurrency,
 } from "@/lib/launch";
 import { erc20Abi } from "viem";
+import { assertRulesetReceiptOrder } from "@/lib/ruleset-receipt";
 import { isStickyRow, splitOk, type DraftSplit } from "./SplitsEditor";
 import { AddressField } from "./AddressField";
 import { validateAuthorityPolicy } from "@/lib/launch-multisig";
@@ -112,7 +121,7 @@ import {
   newSimpleProjectDraftStage,
   stageCashOutTax,
   stageDurationSeconds,
-  stageMustStartAtOrAfter,
+  revnetCutFrequency,
   stageOk,
   stageRoutesEverything,
   stageSummary,
@@ -795,38 +804,47 @@ export function CreateForm() {
     selected.every(chainId =>
       resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom) !== null,
     );
+  const stagedApprovalOk = flavor !== "project" || approvalDeadline !== "custom" ||
+    stages.length + (afterApplies && afterMode !== "cycle" ? 1 : 0) < 2 ||
+    selected.every(chainId => knownDeadlineSeconds(
+      resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom) ?? undefined, chainId,
+    ) !== null);
   const noticeSeconds =
     flavor !== "revnet" && !isSimpleProject && deadlineApplies
-      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
+      ? Math.max(0, ...selected.map(chainId => launchApprovalNotice({
+        flavor: "project", approvalDeadline,
+        approvalCustomAddress: resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom),
+      }, chainId) ?? 0))
       : 0;
-  /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
-   *  previous stage's next cycle boundary) and the start it lands on, chained
-   *  from stage 1's known start — its scheduled time, the multichain pin, or
-   *  `now` for a single chain whose stage 1 starts at the deploy block. */
+  /** The chart and encoder use the same explicit stage boundaries, including Afterwards. */
   const projectStageStarts = (
-    deployStart: number,
     now: number,
+    notice = noticeSeconds,
   ): { musts: number[]; starts: number[] } => {
     const first = stages[0];
+    const closes = afterApplies && afterMode !== "cycle";
+    const count = stages.length + Number(closes);
     const firstMust =
       first.scheduleOn && first.schedule
         ? Math.floor(new Date(first.schedule).getTime() / 1000)
-        : selected.length > 1
-          ? deployStart
+        : selected.length > 1 || count > 1
+          ? now + (count > 1 && notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS)
           : 0;
-    const musts = [firstMust];
-    const starts = [firstMust || now];
-    for (let i = 1; i < stages.length; i++) {
-      const prevStart = starts[i - 1];
-      const prevDuration = stageDurationSeconds(stages[i - 1]);
-      const must = stageMustStartAtOrAfter(stages[i], prevStart, prevDuration);
-      musts.push(must);
-      starts.push(deriveQueuedStartFrom(
-        prevStart, prevDuration, must || now, now + i,
-        prevDuration === FOREVER_SECONDS ? 0 : noticeSeconds,
-      ));
-    }
-    return { musts, starts };
+    if (count < 2) return { musts: [firstMust], starts: [firstMust || now] };
+    return orderedRulesetSchedule({
+      firstStart: firstMust,
+      queuedAt: now,
+      stages: [
+        ...stages.map(stage => ({
+          duration: stageDurationSeconds(stage),
+          noticeSeconds: stageDurationSeconds(stage) === FOREVER_SECONDS ? 0 : notice,
+          startCycles: stage.startMode === "cycles" ? Number(stage.startCycles) || 1 : 1,
+          mustStartAtOrAfter: stage.startMode === "date" && stage.startDate
+            ? Math.floor(new Date(stage.startDate).getTime() / 1000) : 0,
+        })),
+        ...(closes ? [{ duration: afterMode === "terminal" ? FOREVER_SECONDS : 0, noticeSeconds: 0 }] : []),
+      ],
+    });
   };
   const invalidStage = isSimpleProject
     ? -1
@@ -971,6 +989,7 @@ export function CreateForm() {
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
     [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
+    [stagedApprovalOk, "Custom approval contracts need rulesets queued one at a time. Use a standard notice to launch several together.", 2],
     [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
   const launchIssues = launchChecks.filter(([ok]) => !ok);
@@ -1255,9 +1274,7 @@ export function CreateForm() {
       allowSetCustomToken: false,
       allowAddAccountingContext: false,
       allowAddPriceFeed: false,
-      issuanceCutFrequency: cutOn
-        ? Math.round(Number(stage.cutFreqDays || "0") * 86_400)
-        : 0,
+      issuanceCutFrequency: revnetCutFrequency(stage),
     };
   };
 
@@ -1268,13 +1285,8 @@ export function CreateForm() {
     prevStage: DraftStage,
     stage: DraftStage,
   ): number => {
-    let days = Math.max(1, Math.round(Number(stage.daysAfter) || 1));
-    const prevFreq =
-      Number(prevStage.cutPct) > 0 ? Number(prevStage.cutFreqDays) || 0 : 0;
-    if (prevFreq >= 1) {
-      days = Math.ceil(days / prevFreq) * prevFreq;
-    }
-    return prevStart + days * 86_400;
+    return deriveStartFrom(prevStart, revnetCutFrequency(prevStage),
+      prevStart + Math.round(Math.max(1, Number(stage.daysAfter) || 1) * 86_400));
   };
 
   /** The draft schedule as chart input (weights display-grade; the plan
@@ -1294,7 +1306,7 @@ export function CreateForm() {
         starts.push(start);
       });
     } else {
-      starts = projectStageStarts(now, now).starts;
+      starts = projectStageStarts(now).starts;
     }
     const drafted = stages.map((stage, i) => {
       const cutOn = flavor !== "revnet" || stage.cutOn;
@@ -1306,9 +1318,7 @@ export function CreateForm() {
         start: starts[i],
         duration:
           flavor === "revnet"
-            ? cutOn
-              ? Math.round(Number(stage.cutFreqDays || "0") * 86_400)
-              : 0
+            ? revnetCutFrequency(stage)
             : stageDurationSeconds(stage),
         weight,
         weightCutPercent: cutOn ? Math.round(Number(stage.cutPct || "0") * 1e7) : 0,
@@ -1319,9 +1329,7 @@ export function CreateForm() {
     const last = drafted[drafted.length - 1];
     if (flavor === "revnet" || !afterApplies || afterMode === "cycle")
       return drafted;
-    const start = deriveQueuedStartFrom(
-      last.start, last.duration, now, now + stages.length, noticeSeconds,
-    );
+    const start = starts[stages.length];
     return [
       ...drafted,
       afterMode === "terminal"
@@ -1349,8 +1357,7 @@ export function CreateForm() {
     // begins with stage 1 already in the past. Inherent to the hash requirement, so the
     // review step warns Safe users rather than trying to re-derive it at execution time.
     const now = Math.floor(Date.now() / 1000);
-    const deployStart = now + 600;
-    const { musts: projectMusts } = projectStageStarts(deployStart, now);
+    const deployStart = now + LAUNCH_START_DELAY_SECONDS;
     return Object.fromEntries(
       selected.map((chainId) => {
         let planStages: StageRules[];
@@ -1367,13 +1374,19 @@ export function CreateForm() {
         } else if (isSimpleProject) {
           planStages = [createSimpleProjectStage()];
         } else {
+          const notice = launchApprovalNotice({ flavor: "project", approvalDeadline,
+            approvalCustomAddress: resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom),
+          }, chainId) ?? 0;
+          const { musts: projectMusts } = projectStageStarts(
+            now, notice,
+          );
           planStages = stages.map((stage, i) =>
             toStageRules(stage, i, projectMusts[i], chainId),
           );
         }
         return [
           chainId,
-          {
+          prepareLaunchSchedule({
             chains: selected,
             linkChains,
             bridge,
@@ -1411,7 +1424,7 @@ export function CreateForm() {
             afterMode: isSimpleProject ? "wait" : afterMode,
             approvalDeadline: isSimpleProject ? "none" : approvalDeadline,
             store,
-          },
+          }, chainId, now),
         ];
       }),
     );
@@ -1730,13 +1743,15 @@ export function CreateForm() {
               intent: launchNamespace(launch),
             }],
             title: `Review launch on ${chainName(chainId)}`,
-            ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: "Agree & continue to Safe" } : {}),
+            description: [launchScheduleDescription(pinned.plans[chainId]), viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join("\n\n"),
+            ...(viaSafe ? { confirmLabel: "Agree & continue to Safe" } : {}),
             assertWriteState: () => {
               assertWalletContext();
               if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
             },
             // Under the hold's reservation: another tab resuming this launch is refused before its wallet opens.
             beforeWallet: () => {
+              assertLaunchScheduleFresh(pinned.plans[chainId], undefined, chainId);
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
               if (saved?.salt !== pinned.salt || (saved.account && saved.account.toLowerCase() !== address?.toLowerCase()) ||
@@ -1745,7 +1760,7 @@ export function CreateForm() {
                 throw new Error("The saved launch changed. Recover the original launch before continuing.");
               }
               const savedRequest = buildLaunchRequest({ chainId: chainId as JBChainId, owner: address!, projectUri: saved.projectUri, creationFee, plan: saved.plans[chainId], salt: saved.salt });
-              if (savedRequest.address !== request.address || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]) !== launchCall.data) {
+              if (savedRequest.address.toLowerCase() !== request.address.toLowerCase() || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]).toLowerCase() !== launchCall.data.toLowerCase()) {
                 throw new Error("The saved launch changed. Review the original launch before continuing.");
               }
               updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
@@ -1849,6 +1864,7 @@ export function CreateForm() {
           setPhase("failed");
           return;
         }
+        assertRulesetReceiptOrder(chainId, projectId, resolveStages(pinned.plans[chainId]).length, receipt);
         updateStatus(chainId, { phase: "done", projectId, safeProposalHash: undefined });
       } catch (e) {
         if (heldShown) {
@@ -2499,7 +2515,10 @@ export function CreateForm() {
   ) : (
     "Wallet connected at launch"
   );
+  const scheduleDescription = Object.values(pinnedRef.current?.plans ?? restoredSessionRef.current?.plans ?? {})
+    .map(launchScheduleDescription).find(Boolean);
   const launchRows: TxConfirmRow[] = [
+    ...(scheduleDescription ? [{ label: "Schedule", value: scheduleDescription }] : []),
     {
       label: flavor === "revnet" ? "Revnet operator" : "Project owner",
       value: ownerValue,
@@ -4256,18 +4275,6 @@ export function CreateForm() {
             blurb="Juicebox is experimental onchain software. Your project is controlled by its rules and project owner — not by Juicebox — and launches are irreversible."
           />
         </div>
-
-        {safeConnection ? (
-          // The start time is pinned now because every chain must encode the same value —
-          // that shared value is what links the chains. A multisig executing days later
-          // therefore launches with stage 1 already begun.
-          <p className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">
-            This launch pins its start time now (about 10 minutes out) so every chain encodes
-            the same value. If your Safe executes days later, the first stage will already
-            have begun and some of its scheduled issuance cuts may have passed — execute
-            promptly, or re-create the launch when you’re ready to sign.
-          </p>
-        ) : null}
 
         {!canResume && launchIssues.length > 0 && (phase === "form" || phase === "failed") ? (
           <div role="status" aria-label="Launch requirements" className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-sm leading-relaxed text-amber-900">

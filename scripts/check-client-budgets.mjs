@@ -45,7 +45,8 @@ const routes = [
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
   // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.
   // 399 -> 398: SDK 4.0.0 Relayr round plan, measured 397.0.
-  { route: '/create', path: '/create', kib: 398, text: 'Start a project' },
+  // Ordered stage preparation and receipt verification: measured 399.4 KiB.
+  { route: '/create', path: '/create', kib: 400, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
@@ -67,7 +68,8 @@ const budgets = {
   // assertions below are what protect first paint. History: git log -p.
   // 2621 -> 2624: the onchain pair check (SDK resolveSuckers) and Next 16.4.2.
   // 2624 -> 2669: core's reviewed send, its hook and held view in lazy chunks of their own; SDK 4.0.0 review plan, Relayr rounds and late-settle handling.
-  allScripts: 2669 * KIB,
+  // Explicit stage ordering, bounded signatures and confirmed-result recovery: measured 2671.5 KiB.
+  allScripts: 2672 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
