@@ -234,11 +234,11 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done })
   return { promise, resolve }
 }
-const WALLET_CHANGES = ['account', 'chain', 'connector', 'safe', 'view-as'] as const
+const WALLET_CHANGES = ['account', 'chain', 'disconnected', 'safe', 'view-as'] as const
 function changeWallet(change: typeof WALLET_CHANGES[number]) {
   if (change === 'account') mocks.account = BOB
   if (change === 'chain') mocks.chainId = 10
-  if (change === 'connector') mocks.connectorUid = 'replacement-wallet'
+  if (change === 'disconnected') mocks.account = undefined
   if (change === 'safe') mocks.isSafeConnection.mockReturnValue(true)
   if (change === 'view-as') setViewAs(BOB)
 }
@@ -393,7 +393,7 @@ describe('Relayr quote and payment boundaries', () => {
     const onSending = vi.fn()
     const result = pay(payment, [1], { sent, onSending }).catch(error => error)
     await entered.promise
-    changeWallet('connector'); release.resolve()
+    changeWallet('disconnected'); release.resolve()
     expect(await result).toBeInstanceOf(Error)
     expect(mocks.client.getTransactionReceipt).toHaveBeenCalledWith({ hash: HASH })
     expect(fetch).toHaveBeenCalledOnce()

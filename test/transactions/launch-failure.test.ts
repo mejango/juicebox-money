@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
-import { buildLaunchRequest, createSimpleProjectStage, DEFAULT_STORE_FLAGS, requireFinalizedLaunchFailure, type LaunchPlan } from '@/lib/launch'
+import { buildHistoricalLaunchRequest, buildLaunchRequest, launchCallForRecovery, createSimpleProjectStage, DEFAULT_STORE_FLAGS, requireFinalizedLaunchFailure, type LaunchPlan } from '@/lib/launch'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as const
 const OTHER = '0x2222222222222222222222222222222222222222' as const
@@ -37,6 +37,29 @@ describe('finalized direct launch failure release', () => {
     await requireFinalizedLaunchFailure(client, receipt, HASH, direct)
     expect(getTransaction).toHaveBeenCalledWith({ hash: HASH })
     expect(getBlock.mock.calls).toEqual([[{ blockTag: 'finalized' }], [{ blockNumber: 120n }], [{ blockNumber: 125n }]])
+  })
+
+  it('authenticates historical custom-vote and reserved single-tier bytes only for finalized failure recovery', async () => {
+    const oldPlan: LaunchPlan = { ...plan, store: { ...plan.store, items: [{
+      price: 100n, supply: 1, votingUnits: 19, reserveFrequency: 2, reserveBeneficiary: ACCOUNT,
+      encodedIpfsUri: HASH, category: 0, discountPercent: 0, splitPercent: 0, splits: [], perChainSupply: {},
+      flags: { allowOwnerMint: false, transfersPausable: false, cantBeRemoved: false, allowCredits: true, ownerCanEditDiscount: true },
+    }] } }
+    const oldDirect = { ...direct, plan: oldPlan }
+    const historical = buildHistoricalLaunchRequest({ ...oldDirect, owner: ACCOUNT, creationFee: 123n })
+    getTransaction.mockResolvedValue({ ...transaction, to: historical.address, input: encodeFunctionData(historical as Parameters<typeof encodeFunctionData>[0]) })
+    await expect(requireFinalizedLaunchFailure(client, receipt, HASH, oldDirect)).resolves.toBeUndefined()
+    expect(() => buildLaunchRequest({ ...oldDirect, owner: ACCOUNT, creationFee: 123n })).toThrow('at least 2')
+    const validPlan = { ...oldPlan, store: { ...oldPlan.store, items: [{ ...oldPlan.store.items[0], supply: 2 }] } }
+    const args = { ...direct, plan: validPlan, owner: ACCOUNT, creationFee: 123n }
+    expect(encodeFunctionData(buildLaunchRequest(args) as Parameters<typeof encodeFunctionData>[0])).not.toBe(encodeFunctionData(buildHistoricalLaunchRequest(args) as Parameters<typeof encodeFunctionData>[0]))
+    for (const build of [buildLaunchRequest, buildHistoricalLaunchRequest]) {
+      const candidate = build(args)
+      const data = encodeFunctionData(candidate as Parameters<typeof encodeFunctionData>[0])
+      expect(launchCallForRecovery(args, { from: ACCOUNT, chainId: 8453, to: candidate.address, input: data, value: 123n })).toEqual({ to: candidate.address, data, value: 123n })
+      expect(() => launchCallForRecovery(args, { from: OTHER, chainId: 8453, to: candidate.address, input: data, value: 123n })).toThrow('saved plan')
+      expect(() => launchCallForRecovery(args, { from: ACCOUNT, chainId: 8453, to: candidate.address, input: '0x1234', value: 123n })).toThrow('saved plan')
+    }
   })
 
   it('requires finalized canonical inclusion after the caller proves Safe inner failure', async () => {

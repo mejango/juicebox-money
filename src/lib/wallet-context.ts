@@ -3,6 +3,7 @@
 import { getAccount, type Config } from '@wagmi/core'
 import type { Address } from 'viem'
 import { REVIEWED_ACCOUNT_CHANGED_LINE, ReviewLineError } from '@bananapus/nana-sdk-core/review'
+import { isSafeConnection } from '@/lib/safe-connector'
 import { getViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 
 /**
@@ -18,7 +19,7 @@ export function assertReviewedAccountConnected(
   if (connected?.toLowerCase() !== reviewed.toLowerCase()) throw new ReviewLineError(message)
 }
 
-/** Capture the reviewed connector before preparation; check live authority
+/** Capture the reviewed execution route before preparation; check live authority
  * synchronously after the last await, immediately before signing or sending. */
 export function captureWalletContext(
   config: Config,
@@ -28,12 +29,12 @@ export function captureWalletContext(
     message?: string
   },
 ): () => void {
-  const connectorUid = getAccount(config).connector?.uid
+  const viaSafe = isSafeConnection(config)
   return () => {
     if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
     const live = getAccount(config)
     if (!account || !live.address || live.address.toLowerCase() !== account.toLowerCase() ||
-        live.chainId !== chainId || live.connector?.uid !== connectorUid) {
+        live.chainId !== chainId || isSafeConnection(config) !== viaSafe) {
       throw new ReviewLineError(message)
     }
   }

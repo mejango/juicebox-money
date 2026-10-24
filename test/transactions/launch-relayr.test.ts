@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   safe: false,
   fee: vi.fn(),
   build: vi.fn(),
+  recovery: vi.fn(),
   projectId: vi.fn(),
   forward: vi.fn(),
   quote: vi.fn(),
@@ -52,7 +53,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/v6')>()),
   getProjectCreationFee: m.fee,
 }))
-vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, projectIdFromReceipt: m.projectId,
+vi.mock('@/lib/launch', () => ({ buildLaunchRequest: m.build, launchCallForRecovery: m.recovery, projectIdFromReceipt: m.projectId,
   assertLaunchScheduleFresh: m.scheduleGuard,
   launchScheduleDescription: () => undefined,
   resolveStages: (plan: LaunchPlan) => Array.from({ length: plan.stageStarts?.length ?? 1 }, () => ({})),
@@ -196,6 +197,11 @@ beforeEach(() => {
   m.funding.mockResolvedValue(8453)
   m.build.mockImplementation(({ chainId, owner, salt, creationFee }) => ({ chainId, address: TARGET,
     abi: ABI, functionName: 'deploy', args: [owner, salt], value: creationFee }))
+  m.recovery.mockImplementation((args, transaction) => {
+    const expected = m.build({ ...args, creationFee: transaction.value })
+    if (expected.address.toLowerCase() !== transaction.to.toLowerCase() || encodeFunctionData(expected).toLowerCase() !== transaction.input.toLowerCase()) throw new Error('The saved signature does not match this pinned launch.')
+    return { to: transaction.to, data: transaction.input, value: transaction.value }
+  })
   m.projectId.mockImplementation((_receipt, chainId) => chainId + 100)
   m.forward.mockImplementation(async (call, account, nonce) => {
     expect(nonce).toBe(0n)
@@ -246,6 +252,36 @@ describe('saved launch payments', () => {
     expect(m.forward).toHaveBeenCalledTimes(4)
     expect(m.pay).toHaveBeenCalledTimes(1)
     expect(loadLaunchSession()?.statuses).toMatchObject(Object.fromEntries(TESTNETS.map(chainId => [chainId, { phase: 'done' }])))
+  })
+
+  it.each([false, true])('keeps historical custom-vote signatures recoverable with funded=%s while refusing new funding', async funded => {
+    const actual = await vi.importActual<typeof import('@/lib/launch')>('@/lib/launch')
+    const value = realSimpleSession(actual)
+    for (const savedPlan of Object.values(value.plans)) savedPlan.store.items = [{
+      price: 100n, supply: 2, votingUnits: 19, reserveFrequency: 0, reserveBeneficiary: null,
+      encodedIpfsUri: `0x${'11'.repeat(32)}`, category: 0, discountPercent: 0, splitPercent: 0, splits: [], perChainSupply: {},
+      flags: { allowOwnerMint: false, transfersPausable: false, cantBeRemoved: false, allowCredits: true, ownerCanEditDiscount: true },
+    }]
+    saveLaunchSession(value)
+    offeredPaymentChains = [84532, 11155111]
+    m.funding.mockResolvedValue(84532)
+    m.build.mockImplementation(actual.buildHistoricalLaunchRequest)
+    m.recovery.mockImplementation(actual.launchCallForRecovery)
+    if (funded) m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
+      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+    })
+    else m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run(value)).rejects.toThrow(funded ? 'reload after funding submission' : 'Funding selection cancelled')
+    m.build.mockImplementation(actual.buildLaunchRequest)
+    m.forward.mockClear(); m.pay.mockClear(); m.quote.mockClear()
+    if (funded) {
+      await run()
+      expect(m.quote).not.toHaveBeenCalled()
+    } else await expect(run()).rejects.toMatchObject({
+      cause: expect.objectContaining({ message: expect.stringContaining('no longer matches the reviewed launch') }),
+    })
+    expect(m.forward).not.toHaveBeenCalled()
+    expect(m.pay).not.toHaveBeenCalled()
   })
 
   it('reports the chain and old/new amounts for a genuine fee change using the real SDK', async () => {

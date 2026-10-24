@@ -62,6 +62,7 @@ const client = {
 
 /** What the wallet was asked to send, in order. */
 const walletSends: { chainId: number; to: Address; data: Hex; value: bigint }[] = []
+let currentWallet: typeof walletClient
 const walletClient = {
   chain: { id: 10 },
   sendTransaction: vi.fn(async (tx: { chain: { id: number }; to: Address; data: Hex; value: bigint }) => {
@@ -75,10 +76,12 @@ const walletClient = {
   }),
 }
 
+currentWallet = walletClient
+
 vi.mock('@wagmi/core', async importOriginal => ({
   ...(await importOriginal<typeof import('@wagmi/core')>()),
   getAccount: () => ({ address: '0x1111111111111111111111111111111111111111', chainId: 10 }),
-  getWalletClient: async () => walletClient,
+  getWalletClient: async () => currentWallet,
   getPublicClient: () => client,
   switchChain: vi.fn(),
 }))
@@ -109,6 +112,7 @@ const unregister: (() => void)[] = []
 afterEach(() => {
   while (unregister.length) unregister.pop()!()
   walletSends.length = 0
+  currentWallet = walletClient
 })
 
 /** The review UI confirms every prompt. */
@@ -156,6 +160,22 @@ describe('useReviewedAction', () => {
         value: baseline[name].value,
       })
     }
+  })
+
+  it('uses the current same-account wallet after awaited preparation', async () => {
+    confirmEveryReview()
+    const replacementSend = vi.fn(walletClient.sendTransaction.getMockImplementation()!)
+    const built = REQUESTS.pay as Built
+    const result = await runOnce({
+      account: ALICE,
+      calls: [{ chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n }],
+      reverify: async () => {
+        await Promise.resolve()
+        currentWallet = { ...walletClient, sendTransaction: replacementSend }
+      },
+    })
+    expect(result?.status).toBe('done')
+    expect(replacementSend).toHaveBeenCalledOnce()
   })
 
   it('keeps intent and legacy hold namespaces', async () => {

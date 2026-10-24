@@ -1,3 +1,4 @@
+import { reservedSupplyOk } from "@/lib/shop-reserves";
 import { decimalOk } from "@/lib/decimal";
 import { resolvedAddress } from "@/lib/ens";
 import { splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
@@ -80,14 +81,18 @@ export function itemDiscountOk(discountPct: string): boolean {
   return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
-export function itemReserveOk(item: DraftItem): boolean {
+export function itemReserveOk(item: DraftItem, chainIds?: readonly number[]): boolean {
   if (item.reserveN.trim() === "") return true;
   const n = Number(item.reserveN);
   return (
     Number.isInteger(n) &&
     n >= 1 &&
     n <= 65_535 &&
-    resolvedAddress(item.reserveBeneficiary) !== null
+    resolvedAddress(item.reserveBeneficiary) !== null &&
+    (chainIds ?? [undefined, ...Object.keys(item.perChainSupply).map(Number)]).every(chainId => {
+      const supply = (chainId === undefined ? "" : item.perChainSupply[chainId]?.trim()) || item.supply.trim();
+      return reservedSupplyOk(Number(supply), n);
+    })
   );
 }
 
@@ -98,21 +103,14 @@ function itemSplitsOk(item: DraftItem, chainIds?: readonly number[]): boolean {
   );
 }
 
-export function itemVotingOk(item: DraftItem): boolean {
-  if (item.votingUnits.trim() === "") return true;
-  const n = Number(item.votingUnits);
-  return Number.isInteger(n) && n >= 0 && n <= 4_294_967_295;
-}
-
 export function itemOk(item: DraftItem, chainIds?: readonly number[]): boolean {
   return (
     item.name.trim().length > 0 &&
     itemPriceOk(item.price) &&
     itemSupplyOk(item.supply) &&
     itemDiscountOk(item.discountPct) &&
-    itemReserveOk(item) &&
+    itemReserveOk(item, chainIds) &&
     itemSplitsOk(item, chainIds) &&
-    itemVotingOk(item) &&
     (chainIds ? chainIds.map(id => item.perChainSupply[id] ?? "") : Object.values(item.perChainSupply)).every(
       (v) => v.trim() === "" || v.trim() === "unlimited" || itemSupplyOk(v),
     )

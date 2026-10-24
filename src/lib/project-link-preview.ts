@@ -67,9 +67,10 @@ export function formatProjectPreviewBalance(
     const rows = deployment.projectTokenBalances?.items
     if (!rows?.length && (deployment.accountingTokenCount ?? 1) > 1) {
       try {
-        usdOnly += BigInt(deployment.balanceUsd || '0')
+        if (deployment.balanceUsd == null || deployment.balanceUsd.trim() === '') return 'Unavailable'
+        usdOnly += BigInt(deployment.balanceUsd)
       } catch {
-        // Omit a malformed indexed balance rather than inventing a zero.
+        return 'Unavailable'
       }
       continue
     }
@@ -81,9 +82,11 @@ export function formatProjectPreviewBalance(
       const decimals = row.decimals
       try {
         if (!symbol || decimals == null || !Number.isSafeInteger(decimals) || decimals < 0) {
-          usdOnly += BigInt(row.balanceUsd || '0')
+          if (row.balanceUsd == null || row.balanceUsd.trim() === '') return 'Unavailable'
+          usdOnly += BigInt(row.balanceUsd)
           continue
         }
+        if (row.balance == null || row.balance.trim() === '') return 'Unavailable'
         const chain = JB_CHAINS[deployment.chainId as JBChainId]
         const token = row.token?.toLowerCase()
         // Symbols are labels, not identities. Only configured native/USDC
@@ -100,10 +103,10 @@ export function formatProjectPreviewBalance(
         buckets.set(key, {
           symbol,
           decimals,
-          amount: (current?.amount ?? 0n) + BigInt(row.balance || '0'),
+          amount: (current?.amount ?? 0n) + BigInt(row.balance),
         })
       } catch {
-        // Omit a malformed indexed balance rather than inventing a zero.
+        return 'Unavailable'
       }
     }
   }
@@ -132,10 +135,10 @@ export const getProjectLinkPreview = cache(
     const [metadata, siblings] = await Promise.all([
       getProjectMetadata(project.metadataUri),
       !result.degraded && project.suckerGroupId
-        ? getProjectSiblings(chainId, projectId, project.suckerGroupId).catch(() => [])
-        : Promise.resolve([]),
+        ? getProjectSiblings(chainId, projectId, project.suckerGroupId).catch(() => null)
+        : Promise.resolve(result.degraded && project.suckerGroupId ? null : []),
     ])
-    const deployments = resolveProjectDeployments(project, siblings)
+    const deployments = resolveProjectDeployments(project, siblings ?? [])
     const name = metadata?.name?.trim() || project.name || `Project ${project.projectId}`
 
     return {
@@ -146,7 +149,7 @@ export const getProjectLinkPreview = cache(
         project.projectTagline,
       ),
       logoUri: metadata?.logoUri?.trim() || project.logoUri,
-      balance: formatProjectPreviewBalance(deployments),
+      balance: siblings === null ? 'Unavailable' : formatProjectPreviewBalance(deployments),
       paymentsCount: projectGroupPaymentsCount(deployments),
     }
   },

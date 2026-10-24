@@ -1,6 +1,6 @@
 import { bytes32ToCidV0, jb721TiersHookAbi, jb721TiersHookStoreAbi, type JBChainId } from '@bananapus/nana-sdk-core'
 import { getProjectNftInventory, hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
-import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { decodeFunctionData, encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { clientFor } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { ipfsUrl } from '@/lib/format'
@@ -8,6 +8,7 @@ import { build721TierConfigs } from '@/lib/launch'
 import { loadProjectBatch, projectBatchScope, type ProjectBatchCall } from '@/lib/project-batch'
 import { storeItemsForChain, type PinnedStoreItemDraft } from '@/lib/store-items'
 import { buildAdjustTiersRequest, buildSet721TierMediaRequest } from '@/lib/transaction-builders'
+import { reservedSupplyOk } from '@/lib/shop-reserves'
 import { chainName } from '@/lib/urn'
 
 export type ShopWriteTarget = {
@@ -117,9 +118,17 @@ export async function readShopSnapshot(target: ShopWriteTarget, account: Address
   return { ...common, state: fingerprint({ configuration, resolver, baseURI }), tierId, encodedIpfsUri: tier.encodedIpfsUri }
 }
 
-export async function reverifyShopCall(call: ProjectBatchCall, account: Address) {
+export async function reverifyShopCall(call: ProjectBatchCall, account: Address, authorizing = false) {
   const { snapshot } = call.context as ShopCallContext
   if (!snapshot || snapshot.target.chainId !== call.chainId || snapshot.target.projectId !== call.projectId || snapshot.target.hook.toLowerCase() !== call.target.toLowerCase() || snapshot.account?.toLowerCase() !== account.toLowerCase() || snapshot.authority?.toLowerCase() !== call.authority.toLowerCase()) throw new Error('The saved shop update has an inconsistent identity.')
+  if (authorizing && snapshot.action === 'shop-add-items') {
+    const decoded = decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })
+    if (decoded.functionName !== 'adjustTiers') throw new Error('The saved shop update is not an item addition.')
+    for (const tier of decoded.args[0]) {
+      if (tier.flags.useVotingUnits) throw new Error('Rebuild price-based items; keep authorizations for recovery.')
+      if (!reservedSupplyOk(tier.initialSupply, tier.reserveFrequency)) throw new Error('Reserved inventory needs at least 2 items on every selected chain.')
+    }
+  }
   const fresh = await readShopSnapshot(snapshot.target, account, snapshot.isRevnet, snapshot.action, snapshot.tierId)
   if (fingerprint(fresh) !== fingerprint(snapshot)) throw new Error(`The shop or item on ${chainName(call.chainId)} changed since review. This saved update cannot be signed against different settings.`)
 }
@@ -134,6 +143,10 @@ export function buildShopAddCalls(snapshots: ShopSnapshot[], account: Address, p
       if (fraction.length > target.pricing.decimals) throw new Error(`“${draft.name.trim()}” has too many decimal places for ${chainName(target.chainId)}.`)
     }
     const tiers = build721TierConfigs(storeItemsForChain(pinned, target.pricing.decimals, target.chainId), target.chainId)
+    const { flags } = JSON.parse(snapshot.state) as { flags: { noNewTiersWithVotes: boolean } }
+    if (flags.noNewTiersWithVotes && tiers.some(tier => tier.price > 0n)) {
+      throw new Error(`${chainName(target.chainId)}: voting rules block new paid items.`)
+    }
     const request = buildAdjustTiersRequest({ chainId: target.chainId, hook: target.hook, tiers })
     const items = [...pinned].sort((a, b) => a.draft.category - b.draft.category).map(({ draft }, index) => ({ name: draft.name.trim(), price: draft.price, supply: draft.perChainSupply[target.chainId]?.trim() || draft.supply, tierId: (BigInt(snapshot.maxTierId ?? '0') + BigInt(index) + 1n).toString() }))
     return { id: `${target.chainId}:${target.hook}:add`, projectId: target.projectId, chainId: target.chainId, authority: snapshot.authority, target: target.hook, data: encodeFunctionData(request), abi: request.abi, functionName: request.functionName, args: request.args, contractName: 'JB721TiersHook', label: 'Add shop items', context: { snapshot, items } satisfies ShopCallContext }

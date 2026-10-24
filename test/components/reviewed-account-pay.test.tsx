@@ -64,6 +64,7 @@ const m = vi.hoisted(() => ({
   realCart: false,
   /** Offer buying ETH with dollars in the token select. */
   onRamp: false,
+  acceptedBalances: undefined as Map<string, bigint> | undefined,
   /** The onchain sucker group the SDK reads from the registries. */
   resolveSuckers: (async () => []) as (...args: unknown[]) => Promise<unknown>,
   /** The chain the fake wallet is on; a switch moves it. */
@@ -142,7 +143,7 @@ vi.mock('@/hooks/useProjectTokenSymbol', () => ({
 vi.mock('@/hooks/useTokenBalance', () => ({ useTokenBalance: () => ({ balance: 10n ** 24n }) }))
 vi.mock('@/hooks/useTokenBalances', () => ({
   useTokenBalances: () => ({
-    balances: new Map([
+    balances: m.acceptedBalances ?? new Map([
       ['0x000000000000000000000000000000000000EEEe', 10n ** 24n],
       ['0x4444444444444444444444444444444444444444', 10n ** 24n],
     ]),
@@ -213,6 +214,7 @@ beforeEach(() => {
   m.resolveSuckers = async () => []
   m.walletChain = 1
   clearSuckerGroups()
+  m.acceptedBalances = undefined
   displayQueries.clear()
   prepareQueries.clear()
   localStorage.clear()
@@ -1463,6 +1465,15 @@ describe("a payment whose pool price couldn't be read", () => {
     await act(async () => answer(FAILED))
     await waitUntil(panelNotice)
     expect(panelNotice()).toBe(true)
+  })
+
+  it('keeps unread or failed accepted balances from selecting buy-first', async () => {
+    m.onRamp = true
+    m.acceptedBalances = new Map()
+    await enterAmount()
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Payment token"]')!
+    expect(select.value).not.toBe('buy')
+    expect(button('Pay').disabled).toBe(false)
   })
 
   it('says nothing while the payer buys ETH with dollars', async () => {

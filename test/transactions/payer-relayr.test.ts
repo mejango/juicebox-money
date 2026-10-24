@@ -1085,7 +1085,7 @@ it('shared raw lifecycle rechecks the owner before publishing and again before f
 
 describe('payer final wallet context', () => {
   for (const viaSafe of [false, true]) {
-    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`restores the ready intent after %s changes in ${viaSafe ? 'Safe' : 'direct'} persistence`, async drift => {
+    it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)(`restores the ready intent after %s changes in ${viaSafe ? 'Safe' : 'direct'} persistence`, async drift => {
       mocks.safe = viaSafe
       review = makeReview([1])
       let changed = false
@@ -1094,7 +1094,7 @@ describe('payer final wallet context', () => {
         changed = true
         if (drift === 'account') mocks.address = ADMIN
         if (drift === 'chain') mocks.chainId = 10
-        if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+        if (drift === 'disconnected') mocks.address = '' as Address
         if (drift === 'view-as') setViewAs(ADMIN)
         if (drift === 'route') mocks.safe = !viaSafe
       }

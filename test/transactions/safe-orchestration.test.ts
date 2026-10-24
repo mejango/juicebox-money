@@ -1123,7 +1123,7 @@ describe('Safe final wallet context', () => {
     expect(mocks.wallet.writeContract).toHaveBeenCalledOnce()
   })
 
-  it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)('does not publish a signature after %s changes while the wallet signs', async drift => {
+  it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)('does not publish a signature after %s changes while the wallet signs', async drift => {
     let release!: (signature: Hex) => void
     mocks.wallet.signTypedData.mockImplementationOnce(() => new Promise<Hex>(resolve => { release = resolve }))
     const run = confirmSafeTx(1, SAFE, queued([]), ALICE)
@@ -1131,7 +1131,7 @@ describe('Safe final wallet context', () => {
     await vi.waitFor(() => expect(mocks.wallet.signTypedData).toHaveBeenCalledOnce())
     if (drift === 'account') mocks.account = BOB
     if (drift === 'chain') mocks.chainId = 10
-    if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+    if (drift === 'disconnected') mocks.account = undefined
     if (drift === 'view-as') setViewAs(BOB)
     if (drift === 'route') mocks.safe = true
     release(`0x${'11'.repeat(65)}`)
@@ -1142,7 +1142,7 @@ describe('Safe final wallet context', () => {
   })
 
   for (const operation of ['signature', 'execution'] as const) {
-    it.each(['account', 'chain', 'connector', 'view-as', 'route'] as const)(`refuses %s drift during the last ${operation} preparation`, async drift => {
+    it.each(['account', 'chain', 'disconnected', 'view-as', 'route'] as const)(`refuses %s drift during the last ${operation} preparation`, async drift => {
       let release!: () => void
       const blocked = new Promise<void>(resolve => { release = resolve })
       let reached = false
@@ -1158,7 +1158,7 @@ describe('Safe final wallet context', () => {
       await vi.waitFor(() => expect(reached).toBe(true))
       if (drift === 'account') mocks.account = BOB
       if (drift === 'chain') mocks.chainId = 10
-      if (drift === 'connector') mocks.connectorUid = 'wallet-b'
+      if (drift === 'disconnected') mocks.account = undefined
       if (drift === 'view-as') setViewAs(BOB)
       if (drift === 'route') mocks.safe = true
       release()

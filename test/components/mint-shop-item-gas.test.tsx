@@ -161,7 +161,7 @@ describe('a free mint through the reviewed run', () => {
     expect(text()).toContain("Your earlier transaction hasn't confirmed yet. Check your wallet.")
   })
 
-  it('refuses a connector replacement before the wallet opens', async () => {
+  it('allows a same-account connector replacement before the wallet opens', async () => {
     let owners = 0
     wallet.client.readContract.mockImplementation(async ({ functionName }: { functionName: string }) => {
       // The final eligibility read lands after another wallet took over the same address.
@@ -172,8 +172,7 @@ describe('a free mint through the reviewed run', () => {
     })
     await mint()
     expect(owners).toBeGreaterThanOrEqual(2)
-    expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(text()).toContain('Connected wallet changed')
+    expect(wallet.writes()).toEqual([{ functionName: 'mintFor', account: ACCOUNT }])
   })
 
   it('stops before the wallet when the Safe connection changes after review', async () => {
@@ -184,6 +183,6 @@ describe('a free mint through the reviewed run', () => {
     })
     await mint()
     expect(wallet.writeContract).not.toHaveBeenCalled()
-    expect(text()).toContain('Wallet connection changed. Review the transaction again.')
+    expect(text()).toContain('Connected wallet changed. Review the transaction again.')
   })
 })

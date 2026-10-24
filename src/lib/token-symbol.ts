@@ -27,9 +27,8 @@ export function knownTokenSymbol(
   // When the `symbol()` call fails (a blocked RPC), the truncated address never matches
   // "USDC", and the pay panel then tells a USDC project's payer to buy ETH.
   if (
-    Object.values(USDC_ADDRESSES).some(
-      usdc => usdc?.toLowerCase() === token.toLowerCase(),
-    )
+    opts.chainId !== undefined &&
+    USDC_ADDRESSES[opts.chainId as JBChainId]?.toLowerCase() === token.toLowerCase()
   )
     return 'USDC'
   return null
@@ -46,7 +45,7 @@ export async function tokenSymbol(
   token: Address,
   opts: { chainId?: JBChainId; nativeSymbol?: string } = {},
 ): Promise<string> {
-  const known = knownTokenSymbol(token, opts)
+  const known = knownTokenSymbol(token, { ...opts, chainId: opts.chainId ?? client.chain?.id })
   if (known) return known
   return client
     .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })

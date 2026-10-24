@@ -949,7 +949,7 @@ Verification: Existing rule sanitization was extracted first with33 parser/expor
 - [x] Resolve task-log appends and qualify the patch on current main.
 - [x] Prepare only owned files for the authorized commit and branch push.
 
-Review: The patch applies cleanly to current remote main1aa7d8b, preserving its SDK4 reviewed-send integration. Kept both remote task histories and this task's appended records. A physical locked install with Node26.12.1/npm12.0.1 completed without dependency changes. All340 focused tests across12 suites, changed-file ESLint, Next route generation, full TypeScript, source invariants, transaction inventory, wallet checks and whitespace checks pass. The eight owned files are staged for a dedicated branch commit; unrelated original-checkout edits remain untouched. Push receipt and PR/CI links will be reported after submission.
+Review: The patch applies cleanly to current remote main1aa7d8b, preserving its SDK4 reviewed-send integration. Kept both remote task histories and this task's appended records. A physical locked install with Node 26.12.1/npm12.0.1 completed without dependency changes. All340 focused tests across12 suites, changed-file ESLint, Next route generation, full TypeScript, source invariants, transaction inventory, wallet checks and whitespace checks pass. The eight owned files are staged for a dedicated branch commit; unrelated original-checkout edits remain untouched. Push receipt and PR/CI links will be reported after submission.
 
 
 # Qualify and merge PR154 — 2026-10-23
@@ -959,7 +959,7 @@ Review: The patch applies cleanly to current remote main1aa7d8b, preserving its 
 - **System fit:** Hosted CI on32cc150 passed units, production compilation and OCI smoke; its existing create-page budget blocks browser qualification. Preserve the current validation, flavor snapshots, wallet review and recovery owners.
 - **Reuse and simplicity:** Shorten the newly added explanatory copy without changing the checks or existing budget. Avoid introducing another lazy chunk or a new dependency for a small overage.
 - **Evidence and unknowns:** Failed CI40055087048 measured create398.1KiB against398KiB; all-script2668.8KiB against2669KiB and all lazy boundaries pass. The exact improvement requires a measured build.
-- **Verification:** Recheck affected rendered tests and lint, build with current locked Node26.12.1 dependencies, run the unchanged budget check, push the fix and require all hosted CI jobs including browsers before exact-head merge.
+- **Verification:** Recheck affected rendered tests and lint, build with current locked Node 26.12.1 dependencies, run the unchanged budget check, push the fix and require all hosted CI jobs including browsers before exact-head merge.
 - **Resource budget:** One bounded copy refinement and isolated production build; preserve failed logs and all budget thresholds. Replan if shortening the new copy cannot recover the small overage.
 
 - [x] Reduce added copy and verify unchanged budgets and semantics.
@@ -1128,3 +1128,95 @@ Separate GPT Astra independently reviewed final scheduling, queue recovery, Rela
 The live false fee-change error was reproduced with the real SDK on all4testchains: hex letter case differed while bytes and fees matched. Canonical byte comparison fixes fresh/resumed/direct checks, rejects real byte changes, and genuine fee changes show chain plus old/new amounts after validating the signed old-fee payload. Launch suite92tests pass. Modal labels remain separate and nowrap; values share a left-aligned column, verified visually and by320/1280browser assertions.
 
 Final full unit run passes3274tests/254files with existing coverage thresholds. Type/build/source/transaction/wallet checks pass. Two explicit measured bundle baselines are updated for the reviewed client safety code: /create399.4KiB measured under400KiB, aggregate2671.5KiB measured under2672KiB; all other route/lazy/style/large-chunk limits remain. Bounded reuse inspection found no small safe global reduction; unrelated shop-pin refactoring was rejected. Initial90browser assertions passed but fixture audit saw extra account documents on shared4399; final isolated14439build/budget/browser audit is running to identify interference. Final lint/dead-code rerun follows the unused-export cleanup. No new PR merge is authorized by this task.
+
+# Client correctness convergence, 2026-10-24
+
+## Plan refinement
+- **Objective:** Enforce current-wallet execution, chain-qualified custom tokens, reserved single-supply rejection and unknown balances throughout JBM; hold voting changes pending explicit flag scope. No contracts, Plugin, deployment or merge.
+- **System fit:** Store draft validation and launch/add-item compilers own item admissibility; reviewed wallet adapters own final invocation, token/balance owners feed previews and payment ordering. Existing review, authority and recovery stay intact.
+- **Reuse and simplicity:** Reuse shared validators, current-wallet getters and balance collections; consolidate duplicate reserve validation before changing behavior. No dependencies or broad framework changes.
+- **Evidence and unknowns:** Fresh origin/main9b18e2bfdf0445ca7078014f9fc9922caf5600d9, audit reproductions and actual caller tracing govern evidence. Original dirty checkout remains untouched; voting scope awaits parent/user clarification.
+- **Verification:** Add runnable reserve and incomplete-balance regressions, inspect comparable wallet/token paths, run focused and required source/type/lint/unit/build/browser checks where feasible and report exact limits.
+- **Resource budget:** One isolated checkout with physical locked dependencies; bounded searches across five rules and existing tests. Replan only for material shared-owner or voting-policy changes.
+
+- [x] Trace every applicable owner and consumer.
+- [x] Implement validated rules and durable regressions.
+- [x] Run verification and record results.
+
+## Plan refinement
+- **Objective:** Apply all five client correctness rules, now including the user's explicit always price-based shop voting instruction. Every newly encoded tier sets useVotingUnits=false regardless saved custom-vote values.
+- **System fit:** Shared build721TierConfigs owns launch/add tier flags; StoreEditor displays price-based voting without a custom control. Existing onchain tiers remain unchanged, and drafts retain legacy data harmlessly.
+- **Reuse and simplicity:** Reuse the shared encoder and remove the obsolete voting input and validation instead of adding migration logic. Existing wallet, reserve, balance and token changes remain scoped to their owners.
+- **Evidence and unknowns:** Parent relayed explicit user confirmation on2026-10-24: always price-based. Legacy nonzero drafts must encode false; deployed store price units govern actual votes.
+- **Verification:** Regress zero and nonzero stored votes through the actual shared compiler; run focused and full checks against physical dependencies matching package-lock exactly and pinned Node 26.12.1.
+- **Resource budget:** Small voting edit atop existing four-rule implementation, no new abstractions or dependencies; full unit/static/build gates once final source is frozen.
+
+## Plan refinement
+- **Objective:** Preserve the five correctness rules through saved unsigned requests while retaining exact historical signed/funded launch recovery. New signatures and new funding cannot reuse custom-vote tiers.
+- **System fit:** Fresh buildLaunchRequest/build721TierConfigs enforce new policy; separate buildHistoricalLaunchRequest reconstructs exact saved plans solely for pinned-signature and finalized-failure authentication. Shop reverify distinguishes passive snapshot checks from authorization checks, with funded Relayr reconciliation preceding the latter in its existing owner.
+- **Reuse and simplicity:** Share one private launch compiler with an explicit historical reconstruction entry point instead of rewriting journal data. Decode saved adjustTiers bytes in the existing shop revalidator when authorizing. No journal migration, resets or new recovery framework.
+- **Evidence and unknowns:** Independent review traced historical rebuild comparisons and actual Relayr resume-before-reverify ordering. Already-published authorization remains live; rejection of new funding never claims revocation.
+- **Verification:** Actual calldata tests cover legacy custom flags and reserved single supply, passive shop validation, refused new authorization and finalized original failure authentication. Full coverage, final type/lint/static checks and deterministic browser build follow source freeze.
+- **Resource budget:** Finish bounded recovery surfaces, independent review, then sequential suites with at most two Vitest workers to avoid shared-host saturation. Preserve all original journals and original dirty checkout.
+
+
+## Review, frozen source
+
+| Rule | JBM result |
+| --- | --- |
+| Price-based shop votes | Fresh launch/add compilers always encode useVotingUnits=false and votingUnits=0, legacy inputs remain harmless, custom editor removed. Voting-locked collections reject paid additions. |
+| Current wallet | SDK4 adapter resolves the current client at invocation; account/chain/View-as/Safe-route guards remain, same-account connector changes are permitted. |
+| Token identity | Preview buckets already qualify custom assets by chain/address/decimals and homepage maps are per-chain. Known USDC labels now require its configured chain, with actual custom-token reads otherwise. |
+| Reserve admissibility | One shared reserve rule covers effective selected-chain form values and launch/add encoders; legacy unsigned adjustTiers bytes are checked before new authorization too. |
+| Unknown balances | Payment defaults retain undefined reads, preview totals refuse missing/malformed components, and failed sibling discovery cannot present a partial group treasury as complete. Existing ProjectStats completeness guard remains. |
+
+Historical signed/funded requests are reconstructed and bound to the exact saved plan, chain, sender, target, calldata and actual transaction value. New authorizations/funding continue to require the current compiler policy. No signed bytes or journals are rewritten. Unknown hash recovery retains its prior behavior when current/historical encodings are identical; ambiguous legacy custom-vote transactions remain held until readable.
+
+Verified so far: all 3293 tests in 255 files pass under pinned Node 26.12.1 with coverage and maxWorkers=2. TypeScript, lint, source invariants, transaction inventory, raw-wallet inventory, Knip, locked production dependency graph, existing production advisory policy, container definition, offline schema and pinned protocol registry pass. Physical dependency clone has byte-identical package-lock to the prior npm-ci installation. Independent shop/recovery review found no remaining blockers and separately exercised both historical funded/unfunded Relayr cases. Frozen production build, budgets and browser gates are finishing.
+
+Copy-only budget follow-up: after the full suite, three new error messages were shortened without changing guards, bindings or recovery behavior. All 153 affected tests in five files and affected-file lint pass on the final wording. The preceding production artifact passes all 90 browser checks. Its aggregate gzip size was 21 bytes above the unchanged 2672 KiB cap, while every route, lazy-load and style ceiling passed; final-wording build/budget and targeted launch/recovery browser checks are running. No unrelated refactor or threshold change.
+
+
+Final production artifact: build and all unchanged budgets pass. Aggregate emitted JavaScript is 2,736,103 gzip bytes against 2,736,128, with 25 bytes of headroom; create is 399.8/400 KiB, project 519.8/521 KiB. All 13 targeted launch/recovery browser cases pass, but the repository's mandatory fixture audit requires full-site GraphQL/ABI coverage, so the complete 90-case browser gate is running again rather than weakening teardown.
+
+Exact owned diff files:
+
+```
+src/components/create/CreateForm.tsx
+src/components/create/StoreEditor.tsx
+src/components/create/store-draft.ts
+src/components/project/AddShopItemsModal.tsx
+src/components/project/PayPanel.tsx
+src/lib/launch-relayr.ts
+src/lib/launch.ts
+src/lib/pay-choices.ts
+src/lib/project-link-preview.ts
+src/lib/shop-batch.ts
+src/lib/shop-reserves.ts
+src/lib/store-items.ts
+src/lib/token-symbol.ts
+src/lib/wallet-context.ts
+tasks/todo.md
+test/components/create-launch-recovery.test.tsx
+test/components/effective-draft-validation.test.ts
+test/components/mint-shop-item-gas.test.tsx
+test/components/pay-choices.test.ts
+test/components/reviewed-account-pay.test.tsx
+test/components/shop-batch-journeys.test.tsx
+test/contracts/launch.test.ts
+test/data/project-link-preview.test.ts
+test/lib/shop-batch.test.ts
+test/lib/token-symbol.test.ts
+test/reviewed-action.test.ts
+test/transactions/authority-gas.test.ts
+test/transactions/launch-failure.test.ts
+test/transactions/launch-multisig-direct.test.ts
+test/transactions/launch-relayr.test.ts
+test/transactions/payer-relayr.test.ts
+test/transactions/relayr-orchestration.test.ts
+test/transactions/safe-orchestration.test.ts
+test/transactions/wallet-context.test.ts
+```
+
+
+Completed: final production artifact passes all 90 browser checks and the mandatory fixture audit (5.2 minutes, two workers). All unchanged budgets pass, including the exact aggregate measurement above. Full unit proof is 3293/3293 before the error-copy-only reduction; all 153 affected cases and affected-file lint pass again on final copy. Final build includes TypeScript checking. Earlier full lint, source, inventory, dead-code, dependency, advisory, container, offline schema and protocol registry checks passed, with no functional source changes afterward. Independent final configuration/recovery review approved the worktree overlay. Original dirty checkout preserved; no contracts, Plugin edits, push, merge, deployment or wallet transactions.
