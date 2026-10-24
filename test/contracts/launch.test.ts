@@ -27,6 +27,7 @@ import {
   buildLaunchRequest,
   createSimpleProjectStage,
   deriveStartFrom,
+  deriveQueuedStartFrom,
   launchAcceptsAnyToken,
   nativeBridgeViable,
   requiredFeedPairs,
@@ -849,6 +850,21 @@ describe('launch helper invariants', () => {
     expect(nativeBridgeViable([1, 10, 8453], ['eth'], false)).toBe(false)
     expect(nativeBridgeViable([1, 10], ['usdc'], false)).toBe(false)
     expect(nativeBridgeViable([1, 10], ['eth'], true)).toBe(false)
+  })
+
+  it('applies predecessor notice before cycle alignment, including incremented queue IDs', () => {
+    const now = 1_000_000
+    const day = 86_400
+    // Stage #2 is queued with id now+1. An exact one-day notice therefore
+    // misses the first one-day boundary and starts at the second boundary.
+    expect(deriveQueuedStartFrom(now, day, now, now + 1, day)).toBe(now + 2 * day)
+    expect(deriveQueuedStartFrom(now, day, now, now + 1, 0)).toBe(now + day)
+    expect(deriveQueuedStartFrom(now, 0, now, now + 1, day)).toBe(now + day + 1)
+    expect(deriveQueuedStartFrom(now, day, now + 4 * day, now + 1, day)).toBe(now + 4 * day)
+    // A future scheduled first stage can already provide sufficient notice.
+    expect(deriveQueuedStartFrom(now + day, day, now, now + 1, day)).toBe(now + 2 * day)
+    // The appended Terminate stage obeys its timed predecessor's notice too.
+    expect(deriveQueuedStartFrom(now, day, now, now + 1, 3 * day)).toBe(now + 4 * day)
   })
 
   // Mirrors JBRulesets.deriveStartFrom: a later ruleset lands on the base's

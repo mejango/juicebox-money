@@ -113,6 +113,20 @@ function launchSection(root: ReactTestInstance) {
 }
 
 describe('multichain launch validation', () => {
+  it('allows short preset-notice schedules because the contract delays them', async () => {
+    const saved = draft('project')
+    saved.afterMode = 'wait'
+    saved.approvalDeadline = '7days'
+    saved.stages = [
+      { ...newDraftStage(true), durationValue: '86400' },
+      { ...newDraftStage(false), durationValue: '86400' },
+    ]
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+    expect(textOf(root)).not.toContain('notice would reject')
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
   it('launches the reported Simple draft despite an unfinished hidden market split', async () => {
     const root = await mountDraft(draft('simple', true))
     expect(launchButton(root).props.disabled).toBe(false)

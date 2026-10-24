@@ -83,7 +83,7 @@ import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
   DEADLINE_SECONDS,
-  deriveStartFrom,
+  deriveQueuedStartFrom,
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
@@ -111,7 +111,6 @@ import {
   newDraftStage,
   newSimpleProjectDraftStage,
   stageCashOutTax,
-  secondsLabel,
   stageDurationSeconds,
   stageMustStartAtOrAfter,
   stageOk,
@@ -795,6 +794,10 @@ export function CreateForm() {
     selected.every(chainId =>
       resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom) !== null,
     );
+  const noticeSeconds =
+    flavor !== "revnet" && !isSimpleProject && deadlineApplies
+      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
+      : 0;
   /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
    *  previous stage's next cycle boundary) and the start it lands on, chained
    *  from stage 1's known start — its scheduled time, the multichain pin, or
@@ -817,28 +820,13 @@ export function CreateForm() {
       const prevDuration = stageDurationSeconds(stages[i - 1]);
       const must = stageMustStartAtOrAfter(stages[i], prevStart, prevDuration);
       musts.push(must);
-      starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+      starts.push(deriveQueuedStartFrom(
+        prevStart, prevDuration, must || now, now + i,
+        prevDuration === FOREVER_SECONDS ? 0 : noticeSeconds,
+      ));
     }
     return { musts, starts };
   };
-  // A stage queued at launch that starts sooner than the notice deadline is
-  // rejected by the hook (JBDeadline → Failed) and silently never takes
-  // effect. Covers the standby/terminal stage "Afterwards" appends too.
-  const noticeSeconds =
-    flavor !== "revnet" && !isSimpleProject && deadlineApplies
-      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
-      : 0;
-  const noticeClash = (() => {
-    if (!noticeSeconds) return null;
-    const now = Math.floor(Date.now() / 1000);
-    const { starts } = projectStageStarts(now + 600, now);
-    const all =
-      afterApplies && afterMode !== "cycle"
-        ? [...starts, starts[starts.length - 1] + lastDuration]
-        : starts;
-    const index = all.findIndex((s, i) => i > 0 && s - now < noticeSeconds);
-    return index === -1 ? null : { index, lead: all[index] - now };
-  })();
   const invalidStage = isSimpleProject
     ? -1
     : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken, selected));
@@ -982,7 +970,6 @@ export function CreateForm() {
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
     [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
-    [noticeClash === null, "Allow the notice period before the next ruleset starts.", 2],
     [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
   const launchIssues = launchChecks.filter(([ok]) => !ok);
@@ -1331,7 +1318,9 @@ export function CreateForm() {
     const last = drafted[drafted.length - 1];
     if (flavor === "revnet" || !afterApplies || afterMode === "cycle")
       return drafted;
-    const start = last.start + last.duration;
+    const start = deriveQueuedStartFrom(
+      last.start, last.duration, now, now + stages.length, noticeSeconds,
+    );
     return [
       ...drafted,
       afterMode === "terminal"
@@ -3801,15 +3790,12 @@ export function CreateForm() {
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
-              {noticeClash ? (
-                <p className="mt-2 text-xs text-red-600">
-                  {noticeClash.index < stages.length
-                    ? `Ruleset #${noticeClash.index + 1}`
-                    : "The closing ruleset (Afterwards)"}{" "}
-                  would start {secondsLabel(Math.floor(noticeClash.lead / 3600) * 3600)} after launch,
-                  sooner than the {APPROVAL_LABELS[approvalDeadline as keyof typeof APPROVAL_LABELS]} notice, so the
-                  notice would reject it and it would never take effect.
-                  Shorten the notice or make the earlier rules run longer.
+              {noticeSeconds > 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  Later rulesets start only after this notice period has elapsed
+                  from queueing, at the next eligible cycle boundary. Short cycles
+                  can therefore delay their start. The chart estimates these starts;
+                  the deployment time determines the exact schedule.
                 </p>
               ) : null}
               {approvalDeadline === "custom" ? (
@@ -3817,6 +3803,8 @@ export function CreateForm() {
                   <p className="mb-2 text-xs leading-relaxed text-smoke-700">
                     A JBRulesetApprovalHook contract that approves or rejects
                     queued changes. It must be deployed on every selected chain.
+                    Its conditions can change the schedule; the chart does not
+                    predict custom approval behavior.
                   </p>
                   <AddressField
                     value={approvalCustom}

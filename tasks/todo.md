@@ -1023,3 +1023,19 @@ Review: Effective selected-chain split recipients and payout amounts now share f
 
 ## Notice encoding correction from deployed core source
 The deployed core-v6@1.0.2 JBRulesets source matches bce6a4eea9f2442b328128e9861e3cee68704622. Its approval gate consults the predecessor's hook, including before a final long-duration ruleset. Preserve configured notice on each non-FOREVER stage and zero only the FOREVER stage itself. Encoded request regressions cover one and two timed stages followed by Terminate and a sole FOREVER stage. All47 launch encoding tests pass. Separate UI work aligns the applicable notice editor and contract-derived schedule.
+# Contract-correct notice scheduling — 2026-10-24
+
+## Plan refinement
+- **Objective:** Show preset notice-delayed stage starts rather than block valid launch schedules as silently rejected; preserve configured notice and custom-hook uncertainty.
+- **System fit:** JBRulesets owns actual queue timestamps, predecessor approval and cycle alignment; CreateForm previews/materializes selected starts and must follow those rules. Parent separately fixes per-stage hook encoding.
+- **Reuse and simplicity:** Reuse deriveStartFrom and stageMustStartAtOrAfter, adding only the queued-id notice lower bound; remove the false noticeClash blocking rule.
+- **Evidence and unknowns:** Deployed core-v6@1.0.2 JBRulesets source metadata matches git bce6a4eea9f2442b328128e9861e3cee68704622. Preset deadline duration is known; custom approval behavior remains unknown.
+- **Verification:** Exercise preset notice cycle snapping, no-notice and scheduled starts, chart/appended-stage timing and rendered valid launch admission. Run typecheck and affected existing tests.
+- **Resource budget:** One isolated worktree, bounded schedule-owner/caller reads and focused tests; no contract source changes or transactions.
+
+- [x] Align schedule calculation and displayed copy.
+- [x] Verify regressions and record result.
+
+The same stale notice rejection assumption appeared in QueueRulesetFlow. Removed that false rejection gate and retained its actual authority/source/date checks. The shared queued-start helper now drives per-destination queue schedule estimates with live parent hooks, monotonic queue IDs and follower hooks. Preview copy marks queue-time estimates and unknown custom-hook conditions. Scope frozen to these callers.
+
+Review: scoped ESLint and npm run ts:check pass. Four affected test files pass94 tests, with an additional named run proving all3 new regressions execute (3passed,66filtered). Existing real-contract RulesetApprovalExpectedLifecycle passes3tests and is identical at the metadata-matched deployed source revision. No contract source changes or transactions.

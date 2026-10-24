@@ -98,6 +98,21 @@ const day = 86_400
 // Ruleset #1 is queued on the live parent, so its start is the parent's next
 // cycle boundary; a follower's "N cycles" counts from THAT start.
 describe('queueStageStarts', () => {
+  it('includes the live parent notice and monotonic queue IDs before snapping followers', () => {
+    const now = 1_800_000_000
+    const { starts } = queueStageStarts({
+      parent: { start: now, duration: day, noticeSeconds: day },
+      firstMust: 0,
+      latestRulesetId: now,
+      stages: [
+        { duration: day, noticeSeconds: 3 * day },
+        { duration: 4_294_967_295 },
+      ],
+      now,
+    })
+    expect(starts).toEqual([now + 2 * day, now + 4 * day])
+  })
+
   it('anchors followers on the parent-snapped start of ruleset #1', () => {
     const now = 1_800_000_000
     const parent = { start: now - 3 * day - 1_000, duration: day }

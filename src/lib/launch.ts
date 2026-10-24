@@ -222,9 +222,9 @@ export type ApprovalDeadline =
   | '7days'
   | 'custom'
 
-/** Seconds each deadline hook demands between queueing and start. A stage
- *  queued at launch that starts sooner than this is REJECTED by the hook
- *  (JBDeadline.approvalStatusOf → Failed) and silently never takes effect. */
+/** Seconds each deadline hook demands between queueing and start.
+ *  JBRulesets enforces this predecessor-hook delay before snapping the next
+ *  stage to an eligible cycle boundary. */
 export const DEADLINE_SECONDS: Record<
   Exclude<ApprovalDeadline, 'none' | 'custom'>,
   number
@@ -249,6 +249,23 @@ export function deriveStartFrom(
     mustStartAtOrAfter - ((mustStartAtOrAfter - nextImmediate) % baseDuration)
   while (mustStartAtOrAfter > start) start += baseDuration
   return start
+}
+
+/** JBRulesets._configureIntrinsicPropertiesFor first enforces the predecessor's
+ *  notice from the new ruleset's queue ID, then snaps to its cycle boundary.
+ *  `queuedAt` includes the incremented ID for stages queued in one transaction. */
+export function deriveQueuedStartFrom(
+  baseStart: number,
+  baseDuration: number,
+  mustStartAtOrAfter: number,
+  queuedAt: number,
+  noticeSeconds: number,
+): number {
+  return deriveStartFrom(
+    baseStart,
+    baseDuration,
+    Math.max(baseStart, mustStartAtOrAfter, noticeSeconds > 0 ? queuedAt + noticeSeconds : 0),
+  )
 }
 
 /** Seconds a deployed JBDeadline hook demands, by its address on `chainId`; 0 for no hook or a custom one. */
