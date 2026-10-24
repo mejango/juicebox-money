@@ -1,4 +1,5 @@
 import { cache } from 'react'
+import { JB_CHAINS, NATIVE_TOKEN, USDC_ADDRESSES, type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   projectGroupPaymentsCount,
   resolveProjectDeployments,
@@ -61,6 +62,7 @@ export function formatProjectPreviewBalance(
 ): string {
   const buckets = new Map<string, BalanceBucket>()
   let usdOnly = 0n
+  let unidentified = 0
   for (const deployment of deployments) {
     const rows = deployment.projectTokenBalances?.items
     if (!rows?.length && (deployment.accountingTokenCount ?? 1) > 1) {
@@ -82,7 +84,18 @@ export function formatProjectPreviewBalance(
           usdOnly += BigInt(row.balanceUsd || '0')
           continue
         }
-        const key = `${symbol.toUpperCase()}:${decimals}`
+        const chain = JB_CHAINS[deployment.chainId as JBChainId]
+        const token = row.token?.toLowerCase()
+        // Symbols are labels, not identities. Only configured native/USDC
+        // deployments establish equivalence across chains.
+        const asset = token === NATIVE_TOKEN.toLowerCase() && chain
+          ? `native:${chain.nativeTokenSymbol}`
+          : token && token === USDC_ADDRESSES[deployment.chainId as JBChainId]?.toLowerCase() && chain
+            ? `usdc:${chain.chain.testnet ? deployment.chainId : 'mainnet'}`
+            : token
+              ? `${deployment.chainId}:${token}`
+              : `unknown:${unidentified++}`
+        const key = `${asset}:${decimals}`
         const current = buckets.get(key)
         buckets.set(key, {
           symbol,
