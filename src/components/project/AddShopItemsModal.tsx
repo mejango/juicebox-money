@@ -75,7 +75,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
     setMessage(null)
     if (!selected.length) { setMessage('Select at least one chain.'); return }
     if (!items.length) { setMessage('Add at least one item.'); return }
-    const invalid = items.findIndex(item => !itemOk(item))
+    const invalid = items.findIndex(item => !itemOk(item, selected))
     if (invalid >= 0) { setMessage(`Finish the required fields for item ${invalid + 1}.`); return }
     if (items.some(item => item.reserveN.trim() && selected.some(chain => (item.perChainSupply[chain]?.trim() || item.supply.trim()) === '1'))) { setMessage('Reserved inventory needs at least 2 items on every selected chain.'); return }
     setPhase('checking')

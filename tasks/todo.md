@@ -989,3 +989,57 @@ Read-only live evidence: All four actual JBOmnichainDeployer targets trust the c
 UI: All main launch values, including rule lists, share one left-aligned column. Creation fees show one native expandable total with every per-chain symbol/amount retained, and unavailable reads remain unknown. Page/modal total formatting shares one owner. Shared modal labels do not wrap and values remain free to wrap. Desktop/mobile screenshots were inspected; at320px the owner label remains one line while its address wraps safely. A test initially measured the stretched grid item's box rather than text; corrected it to use actual text range geometry without changing the layout assertion or production rule. Native top-layer modal screenshots use page capture.
 
 Verification: Baseline delegated-account regression failed with the exact Sepolia message; final649 focused tests across14 suites pass. Complete production-browser suite passes all88 tests plus fixture audit, including320/1280 summary alignment, collapsed/expanded fee amounts, and modal labels/scrolling at320/640/900/1280. Full production build/types, scoped lint, source invariants, transaction inventory, wallet checker and whitespace checks pass. Every original bundle limit passes, including create398KiB and aggregate2669KiB. A proposed threshold increase was rejected by automatic approval review; no budget file was changed. Static layout/value styles moved into the existing stylesheet and the disclosure uses its native marker, removing the overage. Evidence logs: /private/tmp/jbm-launch-wallet-summary-{tests-final,browser-final}.log and build logs. Changes remain local and unpublished.
+
+# Effective draft validation — 2026-10-24
+
+## Plan refinement
+- **Objective:** Validate only encoded split recipients and active approval fields; reject issuance numbers unsupported by encoding before launch.
+- **System fit:** SplitsEditor owns recipient admission, stage/store draft owners thread selected chains, CreateForm binds admission and encoding; saved inactive settings remain restorable. Wallet execution is unchanged.
+- **Reuse and simplicity:** Add selected-chain context to existing split validator and its callers, reuse decimal syntax validation in numeric owner without introducing a framework.
+- **Evidence and unknowns:** Prior source reproduction establishes deselected overrides and hidden approval blockers plus exponent issuance encoding failure; notice policy correction is owned separately by parent.
+- **Verification:** Focused split and numeric unit regressions plus rendered launch approval and chain cases, lint/typecheck and affected transaction tests. No wallet sends.
+- **Resource budget:** One isolated branch based on merged PR155; existing installed locked dependencies, targeted tests first and required gates next.
+
+- [x] Scope split validation to effective chain values through admission and encoding.
+- [x] Scope custom approval validation to active condition.
+- [x] Reject unsupported numeric strings and add regressions.
+- [x] Verify and commit owned changes.
+
+Refinement evidence: contract scheduling investigation established that prior timed stages retain notice even when followed by Terminate; deadline visibility now follows any non-FOREVER configured stage, with encoder correction owned by the parent branch. Tracing sibling parseUnits callers found the same unsupported syntax in shop prices and payout amounts, so decimal syntax has one small shared owner used by stage, split and shop admission. Selected-chain amount overrides use the same effective-context validation as recipients. Added regressions exercise all three money input paths.
+
+Review: Effective selected-chain split recipients and payout amounts now share fallback resolution through admission and materialization. Inactive approval values are ignored and all-overridden fallback values do not block launch. Notice visibility follows configured non-FOREVER stages, matching the parent contract fix. One decimal syntax owner protects issuance, autoissuance, shop price and payout amounts while preserving Number-encoded percentage shares. Verification: 112 focused launch/editor regressions passed; final rendered/draft suite32 passed after approval override refinement; final shared-resolver smoke16 passed. Full lint and final changed-file lint, final typecheck, source and transaction inventory checks passed. Parent integrates notice scheduling/encoder and runs combined release gates. No push or wallet action.
+# Preserve asset identity in project previews — 2026-10-24
+
+## Plan refinement
+- **Objective:** Prevent unrelated assets with matching symbols/decimals from being summed while preserving aggregation of verified equivalent native/USDC assets.
+- **System fit:** The project preview balance formatter owns these display buckets; transaction encoding is unaffected. Chain and token address establish identity, with symbol retained for presentation.
+- **Reuse and simplicity:** Reuse SDK native-token sentinel, chain metadata and chain-specific USDC addresses. Add only formatter-local key selection because no shared identity owner exists in this client.
+- **Evidence and unknowns:** Existing tests aggregate symbol-only fixtures; replace those fixtures with actual token identities. Unidentified rows must remain separate rather than establish equivalence by display text.
+- **Verification:** Focused preview regressions cover symbol collisions, same address on different chains, spoofed known symbols, verified native/USDC equivalence and absent addresses; run related data tests, lint and type checks.
+- **Resource budget:** One formatter and its existing test file, with installed locked dependencies reused from the PR155 worktree; no dependency additions or framework changes.
+
+- [x] Fix asset bucket identity and add regressions.
+- [x] Run focused checks and report reviewed diff to parent.
+
+## Notice encoding correction from deployed core source
+The deployed core-v6@1.0.2 JBRulesets source matches bce6a4eea9f2442b328128e9861e3cee68704622. Its approval gate consults the predecessor's hook, including before a final long-duration ruleset. Preserve configured notice on each non-FOREVER stage and zero only the FOREVER stage itself. Encoded request regressions cover one and two timed stages followed by Terminate and a sole FOREVER stage. All47 launch encoding tests pass. Separate UI work aligns the applicable notice editor and contract-derived schedule.
+# Contract-correct notice scheduling — 2026-10-24
+
+## Plan refinement
+- **Objective:** Show preset notice-delayed stage starts rather than block valid launch schedules as silently rejected; preserve configured notice and custom-hook uncertainty.
+- **System fit:** JBRulesets owns actual queue timestamps, predecessor approval and cycle alignment; CreateForm previews/materializes selected starts and must follow those rules. Parent separately fixes per-stage hook encoding.
+- **Reuse and simplicity:** Reuse deriveStartFrom and stageMustStartAtOrAfter, adding only the queued-id notice lower bound; remove the false noticeClash blocking rule.
+- **Evidence and unknowns:** Deployed core-v6@1.0.2 JBRulesets source metadata matches git bce6a4eea9f2442b328128e9861e3cee68704622. Preset deadline duration is known; custom approval behavior remains unknown.
+- **Verification:** Exercise preset notice cycle snapping, no-notice and scheduled starts, chart/appended-stage timing and rendered valid launch admission. Run typecheck and affected existing tests.
+- **Resource budget:** One isolated worktree, bounded schedule-owner/caller reads and focused tests; no contract source changes or transactions.
+
+- [x] Align schedule calculation and displayed copy.
+- [x] Verify regressions and record result.
+
+The same stale notice rejection assumption appeared in QueueRulesetFlow. Removed that false rejection gate and retained its actual authority/source/date checks. The shared queued-start helper now drives per-destination queue schedule estimates with live parent hooks, monotonic queue IDs and follower hooks. Preview copy marks queue-time estimates and unknown custom-hook conditions. Scope frozen to these callers.
+
+Review: scoped ESLint and npm run ts:check pass. Four affected test files pass94 tests, with an additional named run proving all3 new regressions execute (3passed,66filtered). Existing real-contract RulesetApprovalExpectedLifecycle passes3tests and is identical at the metadata-matched deployed source revision. No contract source changes or transactions.
+
+## Follow-up: inactive imported Revnet approval
+Source confirms sanitizeRules preserves custom approval fields for every flavor, the Revnet editor hides them, and buildLaunchRequest returns through REVDeployer before reading project approval hooks. Extend the same active-field invariant with a Revnet bypass and a rendered imported-draft regression; rerun targeted tests/lint before follow-up commit.
+Follow-up review: imported Revnet custom-approval regression passes alongside all existing launch-validation cases (17 total); changed-file lint passes. Project active approval validation remains enforced by prior timed-stage tests. Parent integrates this one-line guard with the same hidden-field fix.

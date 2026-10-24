@@ -76,7 +76,7 @@ import { DateTimeField } from "@/components/ui/DateTimeField";
 import {
   FOREVER_SECONDS,
   deadlineSecondsForHook,
-  deriveStartFrom,
+  deriveQueuedStartFrom,
 } from "@/lib/launch";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
@@ -171,21 +171,25 @@ export function queueStageStarts({
   firstMust,
   stages,
   now,
+  latestRulesetId = 0,
 }: {
-  parent: { start: number; duration: number } | null;
+  parent: { start: number; duration: number; noticeSeconds?: number } | null;
   firstMust: number;
   stages: {
     duration: number;
+    noticeSeconds?: number;
     startMode?: "cycles" | "date";
     startCycles?: string;
     startDate?: string;
   }[];
   now: number;
+  latestRulesetId?: number;
 }): { musts: number[]; starts: number[] } {
+  const queuedAt = Math.max(now, latestRulesetId + 1);
   const musts = [firstMust];
   const starts = [
     parent
-      ? deriveStartFrom(parent.start, parent.duration, firstMust || now)
+      ? deriveQueuedStartFrom(parent.start, parent.duration, firstMust || now, queuedAt, parent.noticeSeconds ?? 0)
       : firstMust || now,
   ];
   for (let i = 1; i < stages.length; i++) {
@@ -202,7 +206,7 @@ export function queueStageStarts({
       if (n > 1) must = prevStart + n * prevDuration;
     }
     musts.push(must);
-    starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+    starts.push(deriveQueuedStartFrom(prevStart, prevDuration, must || now, queuedAt + i, stages[i - 1].noticeSeconds ?? 0));
   }
   return { musts, starts };
 }
@@ -999,10 +1003,7 @@ export function reviewedQueueCalls(review: Reviewed, action: QueueAction): Autho
           if (destination.source.option.requiresStartDate && destination.configs[0].mustStartAtOrAfter < Math.max(now + 60, Number(liveSource!.entry.ruleset.start) + 1)) {
             throw new Error("The chosen start is no longer safely in the future. Choose a later time and review again.");
           }
-          const parent = action === "replace" ? BigInt(destination.source.entry.ruleset.basedOnId) === BigInt(live.data.current.ruleset.id) ? live.data.current.ruleset : null : liveSource!.entry.ruleset;
-          const starts = queueStageStarts({ parent: parent ? { start: Number(parent.start), duration: Number(parent.duration) } : null, firstMust: destination.configs[0].mustStartAtOrAfter,
-            stages: destination.configs.map((config, index) => ({ duration: config.duration, ...(index > 0 ? { startMode: "date" as const, startDate: new Date((config.mustStartAtOrAfter || now) * 1000).toISOString() } : {}) })), now }).starts;
-          assertQueueNotice(destination.chainId, liveSource!, parent?.approvalHook as Address | undefined, starts, now);
+
         },
       }));
 }
@@ -1066,7 +1067,6 @@ function RulesetEditorForm({
   const flowSignal = useUnmountSignal();
 
   const { access } = source;
-  const r = source.entry.ruleset;
 
   const baseline = useMemo(() => rulesFromSource(source), [source]);
 
@@ -1183,69 +1183,10 @@ function RulesetEditorForm({
     ? scheduledStartSeconds
     : (source.option.mustStartAtOrAfter ?? 0);
 
-  // The ruleset the queued Ruleset #1 is based on: the source itself when
-  // basing on current or appending after the tail; when replacing, the
-  // replaced ruleset's own parent (unknown here unless it is current).
-  const parentRuleset =
-    action === "replace"
-      ? BigInt(r.basedOnId) === BigInt(data.current.ruleset.id)
-        ? data.current.ruleset
-        : null
-      : r;
-  const allStages = expandAfterwards(stagesRules, afterMode);
-  const stageStarts = (now: number) =>
-    queueStageStarts({
-      parent: parentRuleset
-        ? {
-            start: Number(parentRuleset.start),
-            duration: Number(parentRuleset.duration),
-          }
-        : null,
-      firstMust: mustStartAtOrAfter,
-      stages: allStages.map((rules, i) => ({
-        duration: rules.duration,
-        ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}),
-      })),
-      now,
-    });
-  // A ruleset queued now that starts sooner than its approval hook's deadline
-  // is rejected (JBDeadline → Failed) and silently never takes effect. The
-  // parent's hook governs Ruleset #1; #1's hook (carried from the source)
-  // governs everything queued after it.
-  const noticeClash = (() => {
-    const now = Math.floor(Date.now() / 1000);
-    const { starts } = stageStarts(now);
-    const parentSecs = deadlineSecondsForHook(
-      parentRuleset?.approvalHook as Address | undefined,
-      chainId,
-    );
-    const hourly = (secs: number) =>
-      formatDuration(Math.max(0, Math.floor(secs / 3600) * 3600), {
-        exact: true,
-        zeroLabel: "moments",
-      });
-    if (parentSecs && starts[0] - now < parentSecs) {
-      return `Ruleset #1 would start ${hourly(starts[0] - now)} after queueing, sooner than the parent ruleset's ${formatDuration(parentSecs, { exact: true })} rule-change notice, so its approval hook would reject it and it would never take effect. Choose a later start.`;
-    }
-    const secs = deadlineSecondsForHook(r.approvalHook as Address, chainId);
-    if (!secs) return null;
-    for (let i = 1; i < starts.length; i++) {
-      if (starts[i] - now < secs) {
-        const who =
-          i < stagesRules.length
-            ? `Ruleset #${i + 1}`
-            : "The closing ruleset (Afterwards)";
-        return `${who} would start ${hourly(starts[i] - now)} after queueing, sooner than the ${formatDuration(secs, { exact: true })} rule-change notice, so the approval hook would reject it and it would never take effect. Shorten the earlier cycles' count or make them run longer.`;
-      }
-    }
-    return null;
-  })();
-
-
   const handleReview = async () => {
     if (!isConnected || !address) { openSignIn(); return; }
     if (!weightValid || !limitsValid || !startValid || busy) return;
-    if (!followersValid || nonFinalOpenEnded || (selectedChains.size === 1 && noticeClash)) return;
+    if (!followersValid || nonFinalOpenEnded) return;
     if (limitBlock) { setFlowError(limitBlock); return; }
     if (changes.length === 0 && followers.length === 0) {
       setFlowError("Nothing changed — edit a rule to queue an update."); return;
@@ -1299,12 +1240,12 @@ function RulesetEditorForm({
           : peer.entry.ruleset;
         if (multi && !peerParent) throw new Error(`The replaced ruleset's parent could not be verified on ${chainName(destination.chainId)}. Edit this chain separately.`);
         const timing = queueStageStarts({
-          parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration) } : null,
+          parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration), noticeSeconds: deadlineSecondsForHook(peerParent.approvalHook as Address, destination.chainId) } : null,
+          latestRulesetId: Number(destination.data.latest.ruleset.id),
           firstMust: commonMust,
-          stages: peerStages.map((rules, i) => ({ duration: rules.duration, ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
+          stages: peerStages.map((rules, i) => ({ duration: rules.duration, noticeSeconds: deadlineSecondsForHook(peer.entry.ruleset.approvalHook as Address, destination.chainId), ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
           now,
         });
-        assertQueueNotice(destination.chainId, peer, peerParent?.approvalHook as Address | undefined, timing.starts, now);
         return { ...destination, source: peer, configs: peerStages.map((rules, i) => buildQueueDestinationConfig(rules, timing.musts[i], peer)), starts: timing.starts,
           changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
         };
@@ -1626,9 +1567,11 @@ function RulesetEditorForm({
         </div>
       ) : null}
 
-      {noticeClash && selectedChains.size === 1 ? (
-        <p className="mt-4 text-xs font-medium text-red-700">{noticeClash}</p>
-      ) : null}
+      <p className="mt-4 text-xs leading-relaxed text-smoke-700">
+        Notice periods can delay starts to a later cycle boundary. Reviewed
+        starts are estimates based on queueing now; custom approval hooks may
+        impose additional conditions.
+      </p>
 
       {limitBlock ? (
         <p className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
@@ -1647,7 +1590,6 @@ function RulesetEditorForm({
               !startValid ||
               !followersValid ||
               nonFinalOpenEnded ||
-              (selectedChains.size === 1 && !!noticeClash) ||
               !!limitBlock))
         }
         className="btn-primary min-h-[44px] px-5 text-sm"
@@ -1969,13 +1911,6 @@ function formatRulesetDate(seconds: number): string {
 
 export function queueSourceFingerprint(source: PrefillSource | undefined): string {
   return JSON.stringify(source, (_key, value) => typeof value === "bigint" ? value.toString() : value);
-}
-
-function assertQueueNotice(chainId: JBChainId, source: PrefillSource, parentHook: Address | undefined, starts: number[], now: number) {
-  starts.forEach((start, index) => {
-    const notice = deadlineSecondsForHook(index === 0 ? parentHook : source.entry.ruleset.approvalHook as Address, chainId);
-    if (notice && start - now < notice) throw new Error(`Ruleset #${index + 1} starts too soon for ${chainName(chainId)}'s rule-change notice. Choose a later start.`);
-  });
 }
 
 function queueSuccessCopy(action: QueueAction, start: number): string {

@@ -80,3 +80,6 @@ A Simple launch must activate preset rule settings, including issuance denominat
 
 ## 2026-10-24 — Make summary layout consistent and distinguish launch prerequisites
 Keep labels on one line in modal summaries, align values in one column including rule lists, and show one creation-fee total with an accessible per-chain disclosure. A combined wallet/forwarder error cannot identify the failed condition: read each prerequisite and distinguish exact EIP-7702 delegation from arbitrary contract code before deciding supported execution paths. Preserve signature, canonical transaction and recovery proofs.
+
+## 2026-10-24 — Validate effective chain values and encoding syntax
+Recipient, approval and payout overrides constrain only chains the current action encodes. Preserve inactive drafts, but validate each selected chain's override-or-default value instead of every saved override or an unused fallback. Money fields passed to parseUnits reject exponent/hex syntax at admission; percentage splits use Number and must retain tiny scientific-notation shares loaded from existing splits. Focused rendered launch and draft regressions enforce these boundaries.

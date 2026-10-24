@@ -83,7 +83,7 @@ import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
   DEADLINE_SECONDS,
-  deriveStartFrom,
+  deriveQueuedStartFrom,
   splitShares,
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
@@ -111,7 +111,6 @@ import {
   newDraftStage,
   newSimpleProjectDraftStage,
   stageCashOutTax,
-  secondsLabel,
   stageDurationSeconds,
   stageMustStartAtOrAfter,
   stageOk,
@@ -778,23 +777,28 @@ export function CreateForm() {
     : selected.length > 0 &&
       (selected.length > 1 || createsAuthoritySafe) &&
       !safeConnection;
-  const approvalOk =
-    isSimpleProject ||
-    approvalDeadline !== "custom" ||
-    (resolvedAddress(approvalCustom) !== null &&
-      activeChainOverrides(approvalPerChain, selected).every(
-        (v) => resolvedAddress(v) !== null,
-      ));
   const tickerOk =
     flavor !== "revnet" || /^[A-Z0-9]{1,11}$/.test(ticker.trim());
   const lastStage = stages[stages.length - 1];
   const lastDuration = stageDurationSeconds(lastStage);
   // "Afterwards" applies only when the last stage is timed (website/ parity).
   const afterApplies = lastDuration > 0 && lastDuration !== FOREVER_SECONDS;
-  // The approval condition is meaningless when rules end in a forever stage.
-  const deadlineApplies =
-    lastDuration !== FOREVER_SECONDS &&
-    !(afterApplies && afterMode === "terminal");
+  // The final long-duration stage has no near-term successor; earlier stages still use notice.
+  const deadlineApplies = stages.some(
+    stage => stageDurationSeconds(stage) !== FOREVER_SECONDS,
+  );
+  const approvalOk =
+    flavor === "revnet" ||
+    isSimpleProject ||
+    !deadlineApplies ||
+    approvalDeadline !== "custom" ||
+    selected.every(chainId =>
+      resolvedAddress(approvalPerChain[chainId]?.trim() || approvalCustom) !== null,
+    );
+  const noticeSeconds =
+    flavor !== "revnet" && !isSimpleProject && deadlineApplies
+      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
+      : 0;
   /** Project stages: each stage's encoded mustStartAtOrAfter (0 = the
    *  previous stage's next cycle boundary) and the start it lands on, chained
    *  from stage 1's known start — its scheduled time, the multichain pin, or
@@ -817,31 +821,16 @@ export function CreateForm() {
       const prevDuration = stageDurationSeconds(stages[i - 1]);
       const must = stageMustStartAtOrAfter(stages[i], prevStart, prevDuration);
       musts.push(must);
-      starts.push(deriveStartFrom(prevStart, prevDuration, must || now));
+      starts.push(deriveQueuedStartFrom(
+        prevStart, prevDuration, must || now, now + i,
+        prevDuration === FOREVER_SECONDS ? 0 : noticeSeconds,
+      ));
     }
     return { musts, starts };
   };
-  // A stage queued at launch that starts sooner than the notice deadline is
-  // rejected by the hook (JBDeadline → Failed) and silently never takes
-  // effect. Covers the standby/terminal stage "Afterwards" appends too.
-  const noticeSeconds =
-    flavor !== "revnet" && !isSimpleProject && deadlineApplies
-      ? (DEADLINE_SECONDS as Record<string, number>)[approvalDeadline] ?? 0
-      : 0;
-  const noticeClash = (() => {
-    if (!noticeSeconds) return null;
-    const now = Math.floor(Date.now() / 1000);
-    const { starts } = projectStageStarts(now + 600, now);
-    const all =
-      afterApplies && afterMode !== "cycle"
-        ? [...starts, starts[starts.length - 1] + lastDuration]
-        : starts;
-    const index = all.findIndex((s, i) => i > 0 && s - now < noticeSeconds);
-    return index === -1 ? null : { index, lead: all[index] - now };
-  })();
   const invalidStage = isSimpleProject
     ? -1
-    : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken));
+    : stages.findIndex((s, i) => !stageOk(s, i === 0, rulesFlavor, multiToken, selected));
   const stagesOk = invalidStage === -1;
   // A 0-duration non-final stage never advances (website/'s badStageIndex).
   const badStage =
@@ -850,7 +839,7 @@ export function CreateForm() {
       : stages.findIndex(
           (s, i) => i < stages.length - 1 && stageDurationSeconds(s) === 0,
         );
-  const itemsOk = items.every(itemOk);
+  const itemsOk = items.every(item => itemOk(item, selected));
   // Revnets always accept any token — REVDeployer attaches the router terminal
   // itself — so the wizard states it as a fact there instead of offering a
   // switch the encoder would ignore.
@@ -926,7 +915,7 @@ export function CreateForm() {
         ? "Shop items can't pay Sticky holders. Remove the Sticky recipient from the item."
         : null;
   const stickyTargets = stickySplits
-    .filter(({ row }) => splitOk(row, "percent") || splitOk(row, "amount"))
+    .filter(({ row }) => splitOk(row, "percent", selected) || splitOk(row, "amount", selected))
     .map(({ row }) => ({
       beneficiary: resolvedAddress(row.beneficiary)!,
       projectId: stickyDraftGroupId(row),
@@ -982,7 +971,6 @@ export function CreateForm() {
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
     [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
-    [noticeClash === null, "Allow the notice period before the next ruleset starts.", 2],
     [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
   const launchIssues = launchChecks.filter(([ok]) => !ok);
@@ -1053,7 +1041,7 @@ export function CreateForm() {
   /** Percent-mode rows → SplitConfigs (percent out of 1e9). */
   const toSplitConfigs = (rows: DraftSplit[], chainId: number): SplitConfig[] =>
     rows
-      .filter((s) => splitOk(s, "percent"))
+      .filter((s) => splitOk(s, "percent", [chainId]))
       .map((row) => ({
         percent: Math.round(Number(row.value) * 1e7),
         ...draftSplitRecipient(row, chainId),
@@ -1066,7 +1054,7 @@ export function CreateForm() {
     rows: DraftSplit[],
     chainId: number,
   ): { percent: number; splits: SplitConfig[] } => {
-    const valid = rows.filter((s) => splitOk(s, "percent"));
+    const valid = rows.filter((s) => splitOk(s, "percent", [chainId]));
     const total = valid.reduce((sum, row) => sum + Number(row.value), 0);
     if (total <= 0) return { percent: 0, splits: [] };
 
@@ -1094,7 +1082,7 @@ export function CreateForm() {
     if (routedMode === "all") {
       return { splits: toSplitConfigs(rows, chainId), limit: null };
     }
-    const valid = rows.filter((s) => splitOk(s, "amount"));
+    const valid = rows.filter((s) => splitOk(s, "amount", [chainId]));
     const values = valid.map((row) =>
       parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
     );
@@ -1331,7 +1319,9 @@ export function CreateForm() {
     const last = drafted[drafted.length - 1];
     if (flavor === "revnet" || !afterApplies || afterMode === "cycle")
       return drafted;
-    const start = last.start + last.duration;
+    const start = deriveQueuedStartFrom(
+      last.start, last.duration, now, now + stages.length, noticeSeconds,
+    );
     return [
       ...drafted,
       afterMode === "terminal"
@@ -1495,7 +1485,7 @@ export function CreateForm() {
     const projectUri = projectPin.uri;
 
     const pinned: StoreItem[] = [];
-    for (const item of items.filter(itemOk)) {
+    for (const item of items.filter(item => itemOk(item, selected))) {
       // Any media type pins as-is; images become `image`, everything else
       // `animation_url` (website/ parity).
       let imageUri: string | undefined;
@@ -1526,7 +1516,7 @@ export function CreateForm() {
       // Split-sales rows: user enters % of the sale. splitPercent is the
       // summed share (of 1e9); each split's percent is its relative share of
       // that bucket, with the last row absorbing rounding.
-      const splitRows = item.splits.filter((s) => splitOk(s, "percent"));
+      const splitRows = item.splits.filter((s) => splitOk(s, "percent", selected));
       const totalSplitPct = splitRows.reduce((s, r) => s + Number(r.value), 0);
       let splitPercent = 0;
       let splits: SplitConfig[] = [];
@@ -3801,15 +3791,11 @@ export function CreateForm() {
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
-              {noticeClash ? (
-                <p className="mt-2 text-xs text-red-600">
-                  {noticeClash.index < stages.length
-                    ? `Ruleset #${noticeClash.index + 1}`
-                    : "The closing ruleset (Afterwards)"}{" "}
-                  would start {secondsLabel(Math.floor(noticeClash.lead / 3600) * 3600)} after launch,
-                  sooner than the {APPROVAL_LABELS[approvalDeadline as keyof typeof APPROVAL_LABELS]} notice, so the
-                  notice would reject it and it would never take effect.
-                  Shorten the notice or make the earlier rules run longer.
+              {noticeSeconds > 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-smoke-700">
+                  Notice can delay later rulesets to the next eligible cycle
+                  boundary. The chart estimates starts; deployment timing sets
+                  the final schedule.
                 </p>
               ) : null}
               {approvalDeadline === "custom" ? (
@@ -3817,6 +3803,7 @@ export function CreateForm() {
                   <p className="mb-2 text-xs leading-relaxed text-smoke-700">
                     A JBRulesetApprovalHook contract that approves or rejects
                     queued changes. It must be deployed on every selected chain.
+                    The chart does not predict custom approval conditions.
                   </p>
                   <AddressField
                     value={approvalCustom}

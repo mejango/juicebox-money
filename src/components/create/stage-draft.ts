@@ -1,4 +1,6 @@
 import { formatUnits } from "viem";
+import { decimalOk as numOk } from "@/lib/decimal";
+export { decimalOk as numOk } from "@/lib/decimal";
 import { createSimpleProjectStage, FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
 import { resolvedAddress } from "@/lib/ens";
 import { formatDateTime } from "@/lib/format";
@@ -234,11 +236,6 @@ export function stageTaxOk(stage: DraftStage): boolean {
   return Number.isFinite(n) && n >= 0 && n <= 99.99;
 }
 
-export const numOk = (value: string, max = Infinity) => {
-  const n = Number(value);
-  return Number.isFinite(n) && n >= 0 && n <= max;
-};
-
 export function stageIssuanceOk(stage: DraftStage, isFirst: boolean): boolean {
   if (stage.issuanceRate.trim() === "") return !isFirst; // later stages inherit
   return numOk(stage.issuanceRate);
@@ -249,11 +246,12 @@ export function stageOk(
   isFirst: boolean,
   flavor: "project" | "revnet" = "project",
   multiToken = false,
+  chainIds?: readonly number[],
 ): boolean {
   const payoutsMode = stage.routedMode === "all" ? "percent" : "amount";
   const issuanceOk = stageIssuanceOk(stage, isFirst);
   const splitsValid =
-    stage.reservedSplits.every((s) => splitOk(s, "percent")) &&
+    stage.reservedSplits.every((s) => splitOk(s, "percent", chainIds)) &&
     splitsTotal(stage.reservedSplits, "percent") <= 100;
   const common =
     issuanceOk &&
@@ -273,19 +271,19 @@ export function stageOk(
       stage.autoIssuances.every(
         (a) =>
           (a.count.trim() === "" && a.address.trim() === "") ||
-          (Number(a.count) > 0 && resolvedAddress(a.address) !== null),
+          (Number(a.count) > 0 && numOk(a.count) && resolvedAddress(a.address) !== null),
       )
     );
   }
   return (
     common &&
     (stage.payouts !== "routed" ||
-      (stage.payoutSplits.every((s) => splitOk(s, payoutsMode)) &&
+      (stage.payoutSplits.every((s) => splitOk(s, payoutsMode, chainIds)) &&
         (payoutsMode !== "percent" ||
           splitsTotal(stage.payoutSplits, "percent") <= 100) &&
         (!multiToken ||
           (stage.payoutSplitsUsdc.every((s) =>
-            splitOk(s, stage.routedModeUsdc === "all" ? "percent" : "amount"),
+            splitOk(s, stage.routedModeUsdc === "all" ? "percent" : "amount", chainIds),
           ) &&
             (stage.routedModeUsdc !== "all" ||
               splitsTotal(stage.payoutSplitsUsdc, "percent") <= 100))))) &&

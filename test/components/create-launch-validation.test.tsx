@@ -43,6 +43,7 @@ import { newDraftItem } from '@/components/create/store-draft'
 import { newDraftStage } from '@/components/create/stage-draft'
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 import { DRAFT_KEY, parseDraft, type CreateDraft } from '@/lib/draft'
+import { FOREVER_SECONDS } from '@/lib/launch'
 
 const chains = [11155111, 11155420, 421614, 84532]
 let renderer: TestRenderer.ReactTestRenderer | undefined
@@ -112,6 +113,20 @@ function launchSection(root: ReactTestInstance) {
 }
 
 describe('multichain launch validation', () => {
+  it('allows short preset-notice schedules because the contract delays them', async () => {
+    const saved = draft('project')
+    saved.afterMode = 'wait'
+    saved.approvalDeadline = '7days'
+    saved.stages = [
+      { ...newDraftStage(true), durationValue: '86400' },
+      { ...newDraftStage(false), durationValue: '86400' },
+    ]
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+    expect(textOf(root)).not.toContain('notice would reject')
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
   it('launches the reported Simple draft despite an unfinished hidden market split', async () => {
     const root = await mountDraft(draft('simple', true))
     expect(launchButton(root).props.disabled).toBe(false)
@@ -119,6 +134,54 @@ describe('multichain launch validation', () => {
       functionName: 'pricePerUnitOf', args: [0n, 61166n, 1n, 18n],
     }))
     expect(mocks.write).not.toHaveBeenCalled()
+  })
+
+  it('ignores hidden project approval fields restored in an imported Revnet draft', async () => {
+    const saved = parseDraft(JSON.stringify({ ...draft('revnet'), ticker: 'REV',
+      approvalDeadline: 'custom', approvalCustom: 'unfinished',
+      approvalPerChain: { 11155111: 'unfinished too' } }))
+    expect(saved.approvalDeadline).toBe('custom')
+    expect(saved.approvalCustom).toBe('unfinished')
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
+  it('ignores an unused custom approval on a single forever ruleset', async () => {
+    const saved = draft('project')
+    // Use the same FOREVER sentinel as the editor and encoder.
+    saved.stages[0].durationValue = String(FOREVER_SECONDS)
+    saved.approvalDeadline = 'custom'
+    saved.approvalCustom = ''
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
+  it('validates only effective custom approval values when every selected chain overrides', async () => {
+    const saved = draft('project')
+    saved.approvalDeadline = 'custom'
+    saved.approvalCustom = 'unfinished'
+    saved.approvalPerChain = Object.fromEntries(chains.map(chainId => [chainId, '0x2222222222222222222222222222222222222222']))
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+  })
+
+  it('keeps an active invalid custom approval blocked', async () => {
+    const saved = draft('project')
+    saved.approvalDeadline = 'custom'
+    saved.approvalCustom = ''
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(true)
+    expect(textOf(launchSection(root))).toContain("Verify each chain's approval contract.")
+  })
+
+  it('ignores a deselected-chain override while retaining selected-chain validation', async () => {
+    const saved = draft('project')
+    saved.stages[0].reservedSplits = [{ ...newDraftSplit(), value: '10',
+      recipient: '0x1111111111111111111111111111111111111111', perChain: { 10: 'unfinished' } }]
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
   })
 
   it('keeps a valid four-testnet draft launchable', async () => {

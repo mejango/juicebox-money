@@ -17,7 +17,7 @@
     },
     {
       "file": "src/components/project/QueueRulesetFlow.tsx",
-      "line": 705,
+      "line": 709,
       "api": "request",
       "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
       "test": "test/components/queue-ruleset-multichain.test.tsx"

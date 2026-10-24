@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
 import {
   formatProjectPreviewBalance,
   projectPreviewSlogan,
@@ -10,7 +11,7 @@ const ETH = '0x000000000000000000000000000000000000eeee'
 function deployment(balance: string, decimals: number | null, tokenSymbol: string, rows?: { token: string; tokenSymbol: string | null; decimals: number; balance: string }[]) {
   return {
     chainId: 1,
-    token: null,
+    token: tokenSymbol === 'ETH' ? ETH : tokenSymbol === 'USDC' ? USDC : null,
     balance,
     decimals,
     tokenSymbol,
@@ -23,9 +24,61 @@ describe('project link preview balance', () => {
     expect(
       formatProjectPreviewBalance([
         deployment('1250000', 6, 'USDC'),
-        deployment('2750000', 6, 'USDC'),
+        { ...deployment('2750000', 6, 'USDC'), chainId: 10, token: USDC_ADDRESSES[10] },
       ]),
     ).toBe('4 USDC')
+  })
+
+  it('keeps unrelated addresses with identical symbols separate', () => {
+    expect(formatProjectPreviewBalance([
+      { ...deployment('1000000', 6, 'CASH'), token: '0x00000000000000000000000000000000000000aa' },
+      { ...deployment('2000000', 6, 'CASH'), token: '0x00000000000000000000000000000000000000bb' },
+    ])).toBe('1 CASH + 2 CASH')
+  })
+
+  it('does not infer cross-chain identity from an identical custom-token address', () => {
+    const token = '0x00000000000000000000000000000000000000aa'
+    expect(formatProjectPreviewBalance([
+      { ...deployment('1000000', 6, 'CASH'), token },
+      { ...deployment('2000000', 6, 'CASH'), token, chainId: 10 },
+    ])).toBe('1 CASH + 2 CASH')
+  })
+
+  it.each(['ETH', 'USDC'])('does not merge a token claiming the known symbol %s', symbol => {
+    const decimals = symbol === 'ETH' ? 18 : 6
+    const unit = 10n ** BigInt(decimals)
+    expect(formatProjectPreviewBalance([
+      deployment(String(unit), decimals, symbol),
+      { ...deployment(String(2n * unit), decimals, symbol), token: '0x00000000000000000000000000000000000000aa' },
+    ])).toBe(`1 ${symbol} + 2 ${symbol}`)
+  })
+
+  it('requires the configured chain for a known USDC address', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000', 6, 'USDC'),
+      { ...deployment('2000000', 6, 'USDC'), chainId: 10 },
+    ])).toBe('1 USDC + 2 USDC')
+  })
+
+  it('aggregates verified equivalent native assets', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000000000000000', 18, 'ETH'),
+      { ...deployment('2000000000000000000', 18, 'ETH'), chainId: 10 },
+    ])).toBe('3 ETH')
+  })
+
+  it('keeps native testnet balances separate from mainnet even with the same indexed symbol', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000000000000000', 18, 'ETH'),
+      { ...deployment('2000000000000000000', 18, 'ETH'), chainId: 11155111 },
+    ])).toBe('1 ETH + 2 ETH')
+  })
+
+  it('keeps rows without token identity separate', () => {
+    expect(formatProjectPreviewBalance([
+      deployment('1000000', 6, 'CASH'),
+      deployment('2000000', 6, 'CASH'),
+    ])).toBe('1 CASH + 2 CASH')
   })
 
   it('keeps unlike accounting tokens visibly separate', () => {

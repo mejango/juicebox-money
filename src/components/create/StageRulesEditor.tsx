@@ -248,7 +248,7 @@ export function StageRulesEditor({
     : "—";
 
   const validPayoutSplits = stage.payoutSplits.filter((s) =>
-    splitOk(s, payoutsMode),
+    splitOk(s, payoutsMode, chainIds),
   ).length;
   const payoutsSummary =
     (stage.payouts === "none"
