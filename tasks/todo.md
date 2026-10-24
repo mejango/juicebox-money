@@ -1008,3 +1008,18 @@ Verification: Baseline delegated-account regression failed with the exact Sepoli
 Refinement evidence: contract scheduling investigation established that prior timed stages retain notice even when followed by Terminate; deadline visibility now follows any non-FOREVER configured stage, with encoder correction owned by the parent branch. Tracing sibling parseUnits callers found the same unsupported syntax in shop prices and payout amounts, so decimal syntax has one small shared owner used by stage, split and shop admission. Selected-chain amount overrides use the same effective-context validation as recipients. Added regressions exercise all three money input paths.
 
 Review: Effective selected-chain split recipients and payout amounts now share fallback resolution through admission and materialization. Inactive approval values are ignored and all-overridden fallback values do not block launch. Notice visibility follows configured non-FOREVER stages, matching the parent contract fix. One decimal syntax owner protects issuance, autoissuance, shop price and payout amounts while preserving Number-encoded percentage shares. Verification: 112 focused launch/editor regressions passed; final rendered/draft suite32 passed after approval override refinement; final shared-resolver smoke16 passed. Full lint and final changed-file lint, final typecheck, source and transaction inventory checks passed. Parent integrates notice scheduling/encoder and runs combined release gates. No push or wallet action.
+# Preserve asset identity in project previews — 2026-10-24
+
+## Plan refinement
+- **Objective:** Prevent unrelated assets with matching symbols/decimals from being summed while preserving aggregation of verified equivalent native/USDC assets.
+- **System fit:** The project preview balance formatter owns these display buckets; transaction encoding is unaffected. Chain and token address establish identity, with symbol retained for presentation.
+- **Reuse and simplicity:** Reuse SDK native-token sentinel, chain metadata and chain-specific USDC addresses. Add only formatter-local key selection because no shared identity owner exists in this client.
+- **Evidence and unknowns:** Existing tests aggregate symbol-only fixtures; replace those fixtures with actual token identities. Unidentified rows must remain separate rather than establish equivalence by display text.
+- **Verification:** Focused preview regressions cover symbol collisions, same address on different chains, spoofed known symbols, verified native/USDC equivalence and absent addresses; run related data tests, lint and type checks.
+- **Resource budget:** One formatter and its existing test file, with installed locked dependencies reused from the PR155 worktree; no dependency additions or framework changes.
+
+- [x] Fix asset bucket identity and add regressions.
+- [x] Run focused checks and report reviewed diff to parent.
+
+## Notice encoding correction from deployed core source
+The deployed core-v6@1.0.2 JBRulesets source matches bce6a4eea9f2442b328128e9861e3cee68704622. Its approval gate consults the predecessor's hook, including before a final long-duration ruleset. Preserve configured notice on each non-FOREVER stage and zero only the FOREVER stage itself. Encoded request regressions cover one and two timed stages followed by Terminate and a sole FOREVER stage. All47 launch encoding tests pass. Separate UI work aligns the applicable notice editor and contract-derived schedule.
