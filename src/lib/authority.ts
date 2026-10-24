@@ -69,6 +69,8 @@ import {
 } from '@/lib/safe-connector'
 
 export type AuthorityCall = {
+  /** Latest inclusion time for a prepared staged schedule. */
+  deadline?: number
   chainId: JBChainId
   /**
    * Optional chain on which this authority's account type is authoritative.
@@ -110,6 +112,8 @@ export type AuthorityProgress = {
 
 export type AuthorityResult = {
   directResults: Hex[]
+  /** Destination identity for each direct or executed Safe-connector hash. */
+  directResultDetails?: Array<{ chainId: JBChainId; hash: Hex }>
   relayrGroups: number
   relayrResults: Array<{
     bundleUuid: string
@@ -265,6 +269,7 @@ export function toggleInSet<T>(set: Set<T>, value: T): Set<T> {
  */
 function toRelayrCalls(calls: AuthorityCall[]): RelayrCall[] {
   return calls.map(call => ({
+    deadline: call.deadline,
     chainId: call.chainId,
     target: call.target,
     data: call.data,
@@ -549,6 +554,7 @@ export async function runAuthorityCalls({
 
   let relayrGroups = 0
   const directResults: Hex[] = []
+  const directResultDetails: NonNullable<AuthorityResult['directResultDetails']> = []
   const relayrResults: AuthorityResult['relayrResults'] = []
   const safeResults: SafeCallResult[] = []
 
@@ -767,6 +773,7 @@ export async function runAuthorityCalls({
       }
       await requireHeldSettlement(hold, holdClient, receipt, { calls: [sentCall] })
       directResults.push(executionHash)
+      directResultDetails.push({ chainId: call.chainId, hash: executionHash })
       continue
     }
     if (reviewed.mode === 'safe') {
@@ -836,6 +843,7 @@ export async function runAuthorityCalls({
       }, reviewedSendDeps)
       if (result.status !== 'done') throw new Error('Connected wallet changed. Review this project action again.')
       directResults.push(...result.hashes)
+      directResultDetails.push(...result.hashes.map(hash => ({ chainId: group[0].chainId, hash })))
       continue
     }
 
@@ -863,5 +871,5 @@ export async function runAuthorityCalls({
     relayrGroups += 1
   }
 
-  return { directResults, relayrGroups, relayrResults, safeResults }
+  return { directResults, relayrGroups, relayrResults, safeResults, ...(directResultDetails.length ? { directResultDetails } : {}) }
 }

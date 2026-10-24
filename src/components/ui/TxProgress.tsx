@@ -246,7 +246,7 @@ function TxConfirmRowItem({ row }: { row: TxConfirmRow }) {
     <>
       <span className="whitespace-nowrap text-smoke-500">{row.label}</span>
       <span
-        className={`min-w-0 text-right text-ink ${
+        className={`min-w-0 text-left text-ink ${
           row.mono ? 'break-all font-mono text-xs' : 'break-words'
         } ${row.strong ? 'font-medium' : ''}`}
       >

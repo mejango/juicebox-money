@@ -225,7 +225,7 @@ export type ApprovalDeadline =
 /** Seconds each deadline hook demands between queueing and start.
  *  JBRulesets enforces this predecessor-hook delay before snapping the next
  *  stage to an eligible cycle boundary. */
-export const DEADLINE_SECONDS: Record<
+const DEADLINE_SECONDS: Record<
   Exclude<ApprovalDeadline, 'none' | 'custom'>,
   number
 > = {
@@ -270,12 +270,71 @@ export function deriveQueuedStartFrom(
 
 /** Seconds a deployed JBDeadline hook demands, by its address on `chainId`; 0 for no hook or a custom one. */
 export function deadlineSecondsForHook(hook: Address | undefined, chainId: number): number {
+  return knownDeadlineSeconds(hook, chainId) ?? 0
+}
+
+/** A known approval delay, or null when a custom hook's policy cannot be predicted. */
+export function knownDeadlineSeconds(hook: Address | undefined, chainId: number): number | null {
   if (!hook || hook === zeroAddress) return 0
   for (const key of Object.keys(DEADLINE_SECONDS) as (keyof typeof DEADLINE_SECONDS)[]) {
     const addr = v6Address(DEADLINE_CONTRACT[key], chainId as JBChainId)
     if (addr && addr.toLowerCase() === hook.toLowerCase()) return DEADLINE_SECONDS[key]
   }
-  return 0
+  return null
+}
+
+/** Time to prepare a staged launch before its automatic first start. */
+export const SCHEDULE_PREPARATION_SECONDS = 3600
+/** No-hook schedules need no notice-expiry padding. */
+export const LAUNCH_START_DELAY_SECONDS = 600
+
+/** A known delay for the chosen policy; custom contracts remain unknown until explicitly supported. */
+export function launchApprovalNotice(plan: Pick<LaunchPlan, 'flavor' | 'approvalDeadline' | 'approvalCustomAddress'>, chainId: number): number | null {
+  return plan.flavor === 'revnet' || plan.approvalDeadline === 'none' ? 0
+    : plan.approvalDeadline === 'custom'
+      ? plan.approvalCustomAddress ? knownDeadlineSeconds(plan.approvalCustomAddress, chainId) : null
+      : DEADLINE_SECONDS[plan.approvalDeadline]
+}
+
+/** A reviewed absolute schedule. Each follower must select the preceding stage as its base. */
+export function orderedRulesetSchedule({
+  firstStart, stages, queuedAt, latestRulesetId = 0, parent,
+}: {
+  firstStart: number
+  stages: readonly {
+    duration: number
+    noticeSeconds?: number | null
+    mustStartAtOrAfter?: number
+    startCycles?: number
+  }[]
+  queuedAt: number
+  latestRulesetId?: number
+  parent?: { start: number; duration: number; noticeSeconds?: number | null }
+}): { musts: number[]; starts: number[]; validUntil?: number } {
+  if (!stages.length) throw new Error('Add a ruleset before preparing its schedule.')
+  if ((!parent && firstStart <= 0) || !Number.isSafeInteger(firstStart)) {
+    throw new Error('A staged launch needs a fixed start. Prepare the launch again.')
+  }
+  if (parent?.noticeSeconds === null || stages.slice(0, -1).some(stage => stage.noticeSeconds === null)) {
+    throw new Error('This custom approval contract cannot safely queue several rulesets together. Queue one ruleset at a time.')
+  }
+  const firstId = Math.max(queuedAt, latestRulesetId + 1)
+  const first = parent
+    ? deriveQueuedStartFrom(parent.start, parent.duration, firstStart || firstId, firstId, parent.noticeSeconds ?? 0)
+    : firstStart
+  const starts = [first]
+  let validUntil = parent?.noticeSeconds ? first - parent.noticeSeconds : undefined
+  for (let i = 1; i < stages.length; i++) {
+    const previous = stages[i - 1]
+    const previousStart = starts[i - 1]
+    const requested = stages[i].mustStartAtOrAfter ?? 0
+    const floor = Math.max(requested, previousStart + previous.duration * Math.max(1, stages[i].startCycles ?? 1))
+    const notice = previous.noticeSeconds ?? 0
+    const start = deriveQueuedStartFrom(previousStart, previous.duration, floor, firstId + i, notice)
+    starts.push(start)
+    if (notice) validUntil = Math.min(validUntil ?? Infinity, start - notice - i)
+  }
+  return { musts: [...starts], starts, ...(validUntil === undefined ? {} : { validUntil }) }
 }
 
 const DEADLINE_CONTRACT: Record<
@@ -373,6 +432,10 @@ export type AccountingConfig = {
 }
 
 export type LaunchPlan = {
+  /** Prepared absolute starts, including the Afterwards stage, retained through recovery. */
+  stageStarts?: number[]
+  /** Latest inclusion time that preserves known notice-hook timing. */
+  scheduleValidUntil?: number
   /** Exact inline Safe deployment for this chain, frozen with the launch authority. */
   multisigs?: SafeDeploymentPlan[]
   accounting: AccountingConfig
@@ -509,6 +572,11 @@ export const DEFAULT_STORE_FLAGS = {
  * website/'s resolveStages: only applies when the last stage is timed.
  */
 export function resolveStages(plan: LaunchPlan): StageRules[] {
+  if (plan.stageStarts) {
+    const stages = resolveStages({ ...plan, stageStarts: undefined })
+    if (stages.length !== plan.stageStarts.length) throw new Error('The prepared ruleset schedule changed. Prepare the launch again.')
+    return stages.map((stage, index) => ({ ...stage, mustStartAtOrAfter: plan.stageStarts![index] }))
+  }
   const last = plan.stages[plan.stages.length - 1]
   const lastTimed = last.duration > 0 && last.duration !== FOREVER_SECONDS
   if (!lastTimed || plan.afterMode === 'cycle') return plan.stages
@@ -525,6 +593,52 @@ export function resolveStages(plan: LaunchPlan): StageRules[] {
       cashOutTaxRate: last.cashOutTaxRate,
     },
   ]
+}
+
+/** Freeze a staged launch before review so later signatures and retries encode the same sequence. */
+export function prepareLaunchSchedule(plan: LaunchPlan, chainId: number, now: number): LaunchPlan {
+  if (plan.stageStarts) return plan
+  const stages = resolveStages(plan)
+  if (stages.length < 2) return plan
+  const notice = launchApprovalNotice(plan, chainId)
+  const schedule = orderedRulesetSchedule({
+    firstStart: stages[0].mustStartAtOrAfter || now + (notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS),
+    queuedAt: now,
+    stages: launchScheduleStages(plan, chainId),
+  })
+  return { ...plan, stageStarts: schedule.starts, scheduleValidUntil: schedule.validUntil }
+}
+
+function launchScheduleStages(plan: LaunchPlan, chainId: number) {
+  const notice = launchApprovalNotice(plan, chainId)
+  return resolveStages(plan).map(stage => ({
+    duration: plan.flavor === 'revnet' ? stage.issuanceCutFrequency : stage.duration,
+    noticeSeconds: stage.duration === FOREVER_SECONDS ? 0 : notice,
+    mustStartAtOrAfter: stage.mustStartAtOrAfter,
+  }))
+}
+
+/** Expiration is enforced by Relayr; direct/Safe callers must re-review before invoking a wallet. */
+export function assertLaunchScheduleFresh(plan: LaunchPlan, now = Math.floor(Date.now() / 1000), chainId = plan.chains[0]): void {
+  if (resolveStages(plan).length < 2) return
+  if (!plan.stageStarts || (plan.scheduleValidUntil !== undefined && now >= plan.scheduleValidUntil)) {
+    throw new Error('This staged launch needs a fresh schedule. Cancel this deployment and review it again; your draft will be kept.')
+  }
+  const checked = orderedRulesetSchedule({ firstStart: plan.stageStarts[0], queuedAt: now,
+    stages: launchScheduleStages(plan, chainId) })
+  if (checked.starts.some((start, index) => start !== plan.stageStarts![index]) || checked.validUntil !== plan.scheduleValidUntil) {
+    throw new Error('The saved ruleset schedule changed. Recover the original launch before signing another request.')
+  }
+}
+
+/** Prepared dates stay fixed when a wallet or Safe executes later. */
+export function launchScheduleDescription(plan: LaunchPlan): string | undefined {
+  if (!plan.stageStarts || plan.stageStarts.length < 2) return undefined
+  const date = (timestamp: number) => new Date(timestamp * 1000).toISOString().replace('T', ' ').replace('.000Z', ' UTC')
+  const first = `Rules begin ${date(plan.stageStarts[0])}.`
+  return plan.scheduleValidUntil === undefined
+    ? `${first} Executing later does not shift these dates.`
+    : `${first} Execute before ${date(plan.scheduleValidUntil)} to preserve this schedule. Rebuild if unexecuted after that time; Safe proposals do not expire automatically.`
 }
 
 /**
@@ -726,7 +840,7 @@ export function buildLaunchRequest(args: {
     // splitPercent / splits; the split bucket must total exactly 1e9, so
     // any unallocated remainder goes to the operator.
     const operator = plan.operator ?? owner
-    const stageConfigurations = plan.stages.map(stage => {
+    const stageConfigurations = resolveStages(plan).map(stage => {
       const splits = [...toJbSplits(stage.reservedSplits)]
       const allocated = splits.reduce((sum, split) => sum + split.percent, 0)
       if (stage.reservedPercent > 0 && allocated < 1_000_000_000) {

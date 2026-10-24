@@ -192,7 +192,8 @@ const resume = async () => {
 const journal = (statuses: Record<number, unknown>, chains = Object.keys(statuses).map(Number)) =>
   localStorage.setItem(LAUNCH_SESSION_KEY, JSON.stringify({
     transport: 'direct', account: ALICE, salt: SALT, projectUri: 'ipfs://launch', store: {},
-    plans: Object.fromEntries(chains.map(chain => [chain, { projectName: 'Launch' }])), chains, statuses, createdAt: Date.now(),
+    // The mocked launch call has one immediate ruleset; include that metadata for schedule admission.
+    plans: Object.fromEntries(chains.map(chain => [chain, { projectName: 'Launch', stages: [{ duration: 0 }], afterMode: 'cycle' }])), chains, statuses, createdAt: Date.now(),
   }))
 
 describe('a saved launch restored on the create page', () => {

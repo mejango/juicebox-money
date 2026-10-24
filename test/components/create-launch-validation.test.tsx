@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
+import type { TxConfirmRow } from '@/components/ui/TxProgress'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -11,7 +12,14 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: mocks.config, IS_DETERMINISTIC_BROWSER: false }))
-vi.mock('next/dynamic', () => ({ default: () => () => null }))
+vi.mock('next/dynamic', () => ({ default: (load: () => unknown) =>
+  // Inspect the real create form's confirmation rows without starting a wallet action.
+  String(load).includes('TxProgress')
+    ? ({ rows, open }: { rows?: TxConfirmRow[]; open: boolean }) => open
+      ? <section data-tx-confirm>{rows?.map((row, index) => <p key={index} data-row={String(row.label)}>{row.value}</p>)}</section>
+      : null
+    : () => null,
+}))
 vi.mock('next/image', () => ({ default: () => null }))
 vi.mock('wagmi', () => ({
   useConfig: () => mocks.config,
@@ -113,6 +121,19 @@ function launchSection(root: ReactTestInstance) {
 }
 
 describe('multichain launch validation', () => {
+  it('keeps Launching, Chains, Accounting and Rules as separate confirmation rows with their values', async () => {
+    const root = await mountDraft(draft())
+    await act(async () => launchButton(root).props.onClick())
+    const modal = root.findByProps({ 'data-tx-confirm': true })
+    expect(modal.findAll(node => typeof node.props['data-row'] === 'string').map(node => node.props['data-row']))
+      .toEqual(['Project owner', 'Launching', 'Chains', 'Accounting', 'Rules', 'Creation fees'])
+    expect(textOf(modal.findByProps({ 'data-row': 'Launching' }))).toBe('Simple project')
+    expect(textOf(modal.findByProps({ 'data-row': 'Chains' }))).toContain('Optimism Sepolia')
+    expect(textOf(modal.findByProps({ 'data-row': 'Accounting' }))).toBe('ETH')
+    expect(textOf(modal.findByProps({ 'data-row': 'Rules' }))).toContain('Issues 10,000 tokens per ETH')
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
   it('allows short preset-notice schedules because the contract delays them', async () => {
     const saved = draft('project')
     saved.afterMode = 'wait'
@@ -160,11 +181,21 @@ describe('multichain launch validation', () => {
 
   it('validates only effective custom approval values when every selected chain overrides', async () => {
     const saved = draft('project')
+    saved.afterMode = 'cycle'
     saved.approvalDeadline = 'custom'
     saved.approvalCustom = 'unfinished'
     saved.approvalPerChain = Object.fromEntries(chains.map(chainId => [chainId, '0x2222222222222222222222222222222222222222']))
     const root = await mountDraft(saved)
     expect(launchButton(root).props.disabled).toBe(false)
+  })
+
+  it('refuses unknown custom approval policies for a staged batch while keeping singleton custom rules available', async () => {
+    const saved = draft('project')
+    saved.approvalDeadline = 'custom'
+    saved.approvalCustom = '0x2222222222222222222222222222222222222222'
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(true)
+    expect(textOf(launchSection(root))).toContain('Custom approval contracts need rulesets queued one at a time')
   })
 
   it('keeps an active invalid custom approval blocked', async () => {

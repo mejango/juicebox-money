@@ -83,3 +83,6 @@ Keep labels on one line in modal summaries, align values in one column including
 
 ## 2026-10-24 — Validate effective chain values and encoding syntax
 Recipient, approval and payout overrides constrain only chains the current action encodes. Preserve inactive drafts, but validate each selected chain's override-or-default value instead of every saved override or an unused fallback. Money fields passed to parseUnits reject exponent/hex syntax at admission; percentage splits use Number and must retain tiny scientific-notation shares loaded from existing splits. Focused rendered launch and draft regressions enforce these boundaries.
+
+## 2026-10-24 — Follow alignment corrections without combining fields
+When the user asks modal values to match the base page's left alignment, preserve separate Launching, Chains, Accounting and Rules labels. Do not infer that adjacent labels form a combined phrase. Keep label nowrap behavior while aligning all values at the existing column start.

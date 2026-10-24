@@ -347,8 +347,26 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       { chainId: 11155111, authority: ALICE, target: TARGET, data: '0x1234' },
     ] })
     expect(result.directResults).toEqual([HASH])
+    expect(result.directResultDetails).toEqual([{ chainId: 11155111, hash: HASH }])
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ account: ALICE }))
+  })
+
+  it('retains the direct hash chain when another authority queues a Safe proposal', async () => {
+    mocks.readAuthorityIdentity.mockImplementation(async (_client, authority) => authority === SAFE
+      ? { kind: 'safe', threshold: 2, owners: [ALICE] }
+      : { kind: 'eoa' })
+    const safeResult = { chainId: 8453 as const, mode: 'service' as const, status: 'queued' as const, nonce: 0, safeTxHash: HASH }
+    mocks.runSafeCalls.mockResolvedValueOnce([safeResult])
+    const result = await runAuthorityCalls({ signal: flow, calls: [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 8453, authority: SAFE, target: TARGET, data: '0x5678' },
+    ] })
+    expect(result.directResults).toEqual([HASH])
+    expect(result.directResultDetails).toEqual([{ chainId: 1, hash: HASH }])
+    expect(result.safeResults).toEqual([safeResult])
+    expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })
 
   it('recovers a submitted bundle before callbacks inspect already changed project state', async () => {
@@ -721,6 +739,7 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       { signal: flow },
     )
     expect(result.directResults).toEqual([DESTINATION_HASH])
+    expect(result.directResultDetails).toEqual([{ chainId: 1, hash: DESTINATION_HASH }])
   })
 
   it("ends a Safe app proposal's wait with its flow, the proposal saved as submitted and nothing more sent", async () => {

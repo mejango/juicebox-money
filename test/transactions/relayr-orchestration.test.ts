@@ -433,6 +433,22 @@ describe('Relayr quote and payment boundaries', () => {
     expect(relayrPaymentAttemptOutcome(error, { sending: true, paid: false })).toBe('unpaid')
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
   })
+  it('binds the actual forwarded signature to a shorter prepared schedule deadline', async () => {
+    const deadline = Math.floor(Date.now() / 1000) + 3600
+    const entry = await buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234', deadline }, ALICE)
+    const request = relayrCore.relayrForwardRequest(entry)
+    expect(request?.deadline).toBe(deadline)
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
+      message: expect.objectContaining({ deadline }),
+    }))
+  })
+
+  it('refuses an expired prepared schedule before invoking the signature wallet', async () => {
+    await expect(buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234',
+      deadline: Math.floor(Date.now() / 1000) + 1 }, ALICE)).rejects.toThrow('schedule expires too soon')
+    expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
   it('reviews prerequisite deployment rows alongside the exact forwarded authorization without adding a wallet prompt', async () => {
     const call = { chainId: 1 as JBChainId, target: TARGET, data: '0x1234' as Hex, value: 5n,
       gas: 700_000n, label: 'Launch project' }
@@ -1670,6 +1686,14 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(relayrSessionExpiresAt(saved)).toBe(deadline * 1000)
     // A session whose requests can't be read may have been signed for 47 hours.
     expect(relayrSessionExpiresAt({ createdAt: 1_000 })).toBe(1_000 + 47 * 3600 * 1000)
+  })
+
+  it('accepts byte-identical mixed-case calldata before funding and after restoring an unpaid quote', async () => {
+    installSuccessfulBundle()
+    const options = { calls: [{ ...calls[0], data: '0xaBcDEF' as Hex }], account: ALICE, pendingScope: 'hex-case-equivalence' }
+    await declinedPayment(() => runRelayrCalls(options))
+    await expect(runRelayrCalls(options)).resolves.toMatchObject({ paymentHash: HASH })
+    expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
   })
 
   it('waits out a saved publication with under 45 minutes left instead of quoting it with no payable option', async () => {
