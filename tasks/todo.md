@@ -1039,3 +1039,7 @@ The deployed core-v6@1.0.2 JBRulesets source matches bce6a4eea9f2442b328128e9861
 The same stale notice rejection assumption appeared in QueueRulesetFlow. Removed that false rejection gate and retained its actual authority/source/date checks. The shared queued-start helper now drives per-destination queue schedule estimates with live parent hooks, monotonic queue IDs and follower hooks. Preview copy marks queue-time estimates and unknown custom-hook conditions. Scope frozen to these callers.
 
 Review: scoped ESLint and npm run ts:check pass. Four affected test files pass94 tests, with an additional named run proving all3 new regressions execute (3passed,66filtered). Existing real-contract RulesetApprovalExpectedLifecycle passes3tests and is identical at the metadata-matched deployed source revision. No contract source changes or transactions.
+
+## Follow-up: inactive imported Revnet approval
+Source confirms sanitizeRules preserves custom approval fields for every flavor, the Revnet editor hides them, and buildLaunchRequest returns through REVDeployer before reading project approval hooks. Extend the same active-field invariant with a Revnet bypass and a rendered imported-draft regression; rerun targeted tests/lint before follow-up commit.
+Follow-up review: imported Revnet custom-approval regression passes alongside all existing launch-validation cases (17 total); changed-file lint passes. Project active approval validation remains enforced by prior timed-stage tests. Parent integrates this one-line guard with the same hidden-field fix.

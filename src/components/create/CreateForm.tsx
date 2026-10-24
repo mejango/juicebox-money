@@ -788,6 +788,7 @@ export function CreateForm() {
     stage => stageDurationSeconds(stage) !== FOREVER_SECONDS,
   );
   const approvalOk =
+    flavor === "revnet" ||
     isSimpleProject ||
     !deadlineApplies ||
     approvalDeadline !== "custom" ||

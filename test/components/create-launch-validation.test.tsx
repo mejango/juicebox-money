@@ -136,6 +136,17 @@ describe('multichain launch validation', () => {
     expect(mocks.write).not.toHaveBeenCalled()
   })
 
+  it('ignores hidden project approval fields restored in an imported Revnet draft', async () => {
+    const saved = parseDraft(JSON.stringify({ ...draft('revnet'), ticker: 'REV',
+      approvalDeadline: 'custom', approvalCustom: 'unfinished',
+      approvalPerChain: { 11155111: 'unfinished too' } }))
+    expect(saved.approvalDeadline).toBe('custom')
+    expect(saved.approvalCustom).toBe('unfinished')
+    const root = await mountDraft(saved)
+    expect(launchButton(root).props.disabled).toBe(false)
+    expect(mocks.write).not.toHaveBeenCalled()
+  })
+
   it('ignores an unused custom approval on a single forever ruleset', async () => {
     const saved = draft('project')
     // Use the same FOREVER sentinel as the editor and encoder.
