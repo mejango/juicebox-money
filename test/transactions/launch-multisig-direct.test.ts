@@ -36,7 +36,7 @@ vi.mock('@wagmi/core', async () => {
   return {
     getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt,
     getPublicClient: (_config: unknown, { chainId }: { chainId: number }) => publicClient(chainId as never),
-    getWalletClient: async () => ({ chain: { id: 8453 }, sendTransaction: mocks.write }),
+    getWalletClient: async () => (await import('../support/viem-wallet')).viemWallet(tx => mocks.write(tx), () => mocks.account()?.chainId),
     switchChain: (_config: unknown, { chainId }: { chainId: number }) => mocks.switchChain(chainId),
   }
 })
@@ -375,9 +375,9 @@ describe('direct launch Safe setup', () => {
   })
 
   it('keeps the submitted hash when receipt tracking is temporarily unavailable', async () => {
-    // Core's own wait sees the receipt; the setup's domain read then can't.
+    // Core's own wait sees the receipt; the hold's own read then can't, so the setup is still confirming.
     mocks.receipt.mockResolvedValueOnce({ status: 'success', blockNumber: 123n }).mockRejectedValue(new Error('RPC unavailable'))
-    await expect(prepareLaunchMultisigs(options())).rejects.toThrow('RPC unavailable')
+    await expect(prepareLaunchMultisigs(options())).rejects.toThrow('Confirming your transaction.')
     expect(setup()).toEqual({ phase: 'confirming', txHash: HASH })
     expect(mocks.verifyCreated).not.toHaveBeenCalled()
   })

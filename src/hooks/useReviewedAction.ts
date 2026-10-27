@@ -101,8 +101,9 @@ export function useReviewedAction(chainId?: number) {
         description: reviewDescription(action.description, viaSafe ? SAFE_NONCE_GUIDANCE : null),
         ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
       })
-      // A failed run shows its line through `error` and its value through `failure`.
-      const done = ended?.status === 'failed' ? null : ended
+      // A failed run shows its line through `error` and its value through `failure`. A sent step whose
+      // receipt is still being verified is pending (`phase`), never failed: the hook ends it done itself.
+      const done = ended?.status === 'failed' || ended?.status === 'receipt' ? null : ended
       setResult(done)
       setCancelled(ended === null && !unmounted().aborted)
       return done

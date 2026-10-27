@@ -114,7 +114,7 @@ describe('native Defifa checkout through the reviewed engine', () => {
     controls.prepare.mockResolvedValue(prepared(TOKEN))
     wallet.client.readContract.mockResolvedValue(0n)
     await openReview(); await answer()
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    await vi.waitFor(() => expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }]))
     expect(findReviewedSequence(legacy.scope, ALICE)).toEqual(legacy)
     expect(findReviewedSequence(defifaSequenceScope({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' }), ALICE)?.calls.every(call => call.chainId === 1)).toBe(true)
   })

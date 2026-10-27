@@ -147,7 +147,8 @@ describe('a shop redemption reviewed for one account', () => {
   it('redeems from the account that reviewed it, to that account', async () => {
     await click(renderer, 'Redeem 1 item')
 
-    expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }])
+    // The wallet is asked once viem has read its chain.
+    await vi.waitFor(() => expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }]))
     const [request] = wallet.writeContract.mock.calls[0] as unknown as [{ args: readonly unknown[] }]
     expect(request.args[0]).toBe(ALICE)
     expect(request.args[5]).toBe(ALICE)

@@ -271,7 +271,8 @@ describe('a cash out reviewed for one account', () => {
     })
     await click(renderer, 'Cash out 2 JBT')
 
-    expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }])
+    // The wallet is asked once viem has read its chain.
+    await vi.waitFor(() => expect(wallet.writes()).toEqual([{ functionName: 'cashOutTokensOf', account: ALICE }]))
   })
 })
 

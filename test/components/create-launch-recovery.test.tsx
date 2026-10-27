@@ -47,7 +47,7 @@ vi.mock('@wagmi/core', async original => ({
   getAccount: () => ({ address: ALICE, chainId: 1, connector: { uid: 'reviewed-wallet' } }),
   getPublicClient: () => m.client,
   // Core's reviewed send: what reaches the wallet is `m.writeContract`.
-  getWalletClient: async () => ({ chain: { id: 1 }, sendTransaction: (tx: unknown) => m.writeContract(tx) }),
+  getWalletClient: async () => (await import('../support/viem-wallet')).viemWallet(tx => m.writeContract(tx), () => 1),
   switchChain: async () => undefined,
 }))
 vi.mock('@/lib/wallet-core', async original => ({
@@ -418,6 +418,8 @@ describe('the normal path, click for click as main', () => {
     journal({ 1: { phase: 'pending' } })
     m.review.mockReset().mockResolvedValue(undefined)
     m.writeContract.mockResolvedValue(HASH)
+    // The node shows the launch mined, so the hold verifies it before the launch reads done.
+    m.client = minedNode(HASH)
     Object.assign(m.client, {
       // Core's simulation: the launch's eth_call returns.
       request: async ({ method }: { method: string }) => method === 'eth_call' ? '0x' : null,

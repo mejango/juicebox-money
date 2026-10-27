@@ -83,7 +83,10 @@ currentWallet = walletClient
 vi.mock('@wagmi/core', async importOriginal => ({
   ...(await importOriginal<typeof import('@wagmi/core')>()),
   getAccount: () => ({ address: activeAccount, chainId: 10 }),
-  getWalletClient: async () => acquireWallet ? acquireWallet() : currentWallet,
+  getWalletClient: async () => {
+    const wallet = acquireWallet ? await acquireWallet() : currentWallet
+    return (await import('./support/viem-wallet')).viemWallet(tx => wallet.sendTransaction(tx as never), () => 10)
+  },
   getPublicClient: () => client,
   switchChain: vi.fn(),
 }))

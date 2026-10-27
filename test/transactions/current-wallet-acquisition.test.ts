@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config, Connector } from '@wagmi/core'
 import { mainnet, optimism } from 'viem/chains'
 import { currentWalletAdapter } from '@/lib/current-wallet'
-import { clearViewAs } from '@/lib/viewAs'
-import { type WalletAdapter, submitReviewedContractWrite, signReviewed, registerReviewHandler, ReviewLineError } from '@bananapus/nana-sdk-core/review'
+import { clearViewAs, setViewAs } from '@/lib/viewAs'
+import { type WalletAdapter, submitReviewedContractWrite, signReviewed, registerReviewHandler, ReviewLineError, WalletNotInvokedError, isDefiniteWalletRejection } from '@bananapus/nana-sdk-core/review'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as const
 const BOB = '0x2222222222222222222222222222222222222222' as const
@@ -16,7 +16,14 @@ function harness(at: 'chain' | 'provider' = 'provider') {
   const waiting = new Promise<void>(resolve => { entered = resolve })
   const blocked = new Promise<void>(resolve => { release = resolve })
   const requests: string[] = []
-  const state = { safe: false, failure: undefined as Error | undefined }
+  const state = {
+    safe: false,
+    failure: undefined as Error | undefined,
+    /** Runs inside viem's own chain read, after every check before the viem call. */
+    onChainId: () => {},
+    /** Answers each wallet request; a throw is its answer. */
+    respond: (_method: string) => {},
+  }
   const connector = (id: string, hold = false) => ({
     id, uid: id,
     getAccounts: async () => [ALICE],
@@ -24,9 +31,10 @@ function harness(at: 'chain' | 'provider' = 'provider') {
     getProvider: async () => {
       if (hold && at === 'provider') { entered(); await blocked }
       return { request: async ({ method }: { method: string }) => {
-        if (method === 'eth_chainId') return '0x1'
+        if (method === 'eth_chainId') { state.onChainId(); return '0x1' }
         requests.push(`${id}:${method}`)
         if (state.failure) throw state.failure
+        state.respond(method)
         return method === 'wallet_sendCalls' ? { id: HASH } : HASH
       } }
     },
@@ -71,9 +79,12 @@ describe('actual wagmi connector acquisition', () => {
     const first = run(guarded, 'send').catch(error => error)
     const second = run(independent, 'send')
     await h.waiting; expired = true; h.release()
-    expect(await first).toMatchObject({ message: 'The reviewed quote expired. Review again.', walletNotInvoked: true, code: 4001 })
+    const refused = await first
+    expect(refused).toBeInstanceOf(WalletNotInvokedError)
+    expect(refused).toMatchObject({ message: 'The reviewed quote expired. Review again.' })
     await second
-    expect(otherChecks).toBe(1)
+    // The other run's own check ran at each of its reads, and only its own.
+    expect(otherChecks).toBeGreaterThan(0)
     expect(h.requests).toEqual(['old:eth_sendTransaction'])
   })
   it.each(['account', 'chain', 'route'] as const)('refuses %s drift before any actual wallet request', async change => {
@@ -84,7 +95,7 @@ describe('actual wagmi connector acquisition', () => {
     if (change === 'chain') h.connection.chainId = 10
     if (change === 'route') h.state.safe = true
     h.release()
-    expect(await pending).toMatchObject({ walletNotInvoked: true, code: 4001 })
+    expect(await pending).toBeInstanceOf(WalletNotInvokedError)
     expect(h.requests).toEqual([])
   })
   it('preserves a useful signature refusal line without cancellation classification', async () => {
@@ -129,13 +140,42 @@ describe('actual wagmi connector acquisition', () => {
     const error = await pending
     if (invoked) {
       expect(error.message).toContain('Wallet transport lost')
-      expect(error.walletNotInvoked).toBeUndefined()
+      expect(error).not.toBeInstanceOf(WalletNotInvokedError)
       expect(rejected).not.toHaveBeenCalled()
       expect(uncertain).toHaveBeenCalledOnce()
     } else {
-      expect(error.walletNotInvoked).toBe(true)
+      expect(error).toBeInstanceOf(WalletNotInvokedError)
       expect(rejected).toHaveBeenCalledOnce()
       expect(uncertain).not.toHaveBeenCalled()
     }
+  })
+
+  it.each(['connector', 'account', 'route', 'view-as'] as const)('refuses as unsent when the %s changes while viem awaits its chain read', async change => {
+    const h = harness()
+    h.release()
+    h.state.onChainId = () => {
+      if (change === 'connector') h.config.state.current = 'current'
+      if (change === 'account') h.connection.accounts = [BOB]
+      if (change === 'route') h.state.safe = true
+      if (change === 'view-as') setViewAs(BOB)
+    }
+    const error = await run(h.adapter, 'send').catch(caught => caught)
+    expect(error).toBeInstanceOf(WalletNotInvokedError)
+    expect(h.requests).toEqual([])
+  })
+  it('never lets the transport retry a send past the check, nor releases it on a later 4001', async () => {
+    const h = harness()
+    h.release()
+    let sends = 0
+    h.state.respond = method => {
+      if (method !== 'eth_sendTransaction') return
+      sends++
+      h.config.state.current = 'current'
+      throw Object.assign(new Error('Internal error'), { code: sends === 1 ? -32603 : 4001 })
+    }
+    const error = await run(h.adapter, 'send').catch(caught => caught)
+    expect(h.requests).toEqual(['old:eth_sendTransaction'])
+    expect(isDefiniteWalletRejection(error)).toBe(false)
+    expect(error).not.toBeInstanceOf(WalletNotInvokedError)
   })
 })

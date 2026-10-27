@@ -1,6 +1,5 @@
 'use client'
 
-import { WalletNotInvokedError } from '@/lib/wallet-refusal'
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 
 import { getAccount } from '@wagmi/core'
@@ -29,6 +28,7 @@ import { loadReviewEngine, loadReviewedSendDeps } from '@/lib/preload-review'
 import type { ReviewContextRow, ReviewedPlan } from '@bananapus/nana-sdk-core/review'
 import {
   isDefiniteWalletRejection,
+  WalletNotInvokedError,
   relayrDiscardLine,
   relayrHeldMessage as sharedRelayrHeldMessage,
   simulateStateChangingTransaction,
