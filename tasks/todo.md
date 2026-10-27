@@ -1263,3 +1263,27 @@ One decoded shop-policy owner protects new generic Safe signatures, onchain appr
 Astra approved the eight frozen runtime files and independently passed 108 tests. Final local focused verification passed 443 tests in seven files, including the Base payment sibling; a further 371-case targeted run passed after the budget comments/caps. Final TypeScript, full lint, source invariants, transaction inventory, wallet inventory (nine reviewed sites, zero residuals), Knip, production artifact build and measured budget preflight pass. Account is 417.5/418 KiB and aggregate 2677.6/2678 KiB; only those parent-approved caps were minimally rounded, with other route/chunk/style/lazy checks unchanged. Runtime hashes remain exactly Astra-approved.
 
 At the parent's explicit efficiency direction, the newly started local full-coverage run was stopped after 79 seconds with no reported failure, and full local browser was not repeated for this amendment. This is a candidate handoff, not a claim of current-head full CI success: the parent requires all exact-head GitHub coverage/browser/container/other checks to succeed before merging. No push, merge, deployment or wallet transaction was performed here; the original dirty checkout remains untouched.
+
+# Scoped client follow-up — 2026-10-27
+
+## Plan refinement
+- **Objective:** Exact source-token loan units in tables and fresh repayment review, plus hide ignored Revnet-only split-credit control. User authorizes client push and merge after confidence gates; parent owns release.
+- **System fit:** Contract source-token context, minimum-output bounds and REVDeployer split policy own behavior. Preserve raw economics, saved recovery, final wallet guards and smooth UX; contracts/SDK/dependencies unchanged.
+- **Reuse and simplicity:** Use existing domain owners and UI flavor guards, one home per rule. Separate any behavior-preserving extraction before changes. Parent alone owns task notes.
+- **Evidence and unknowns:** Current main pinned, prior actual-source repro confirms symptom; authoritative contract semantics checked. Original dirty trees preserved in isolated checkout. No live transaction or deployment claim.
+- **Verification:** Owner adds focused actual-consumer regression, static checks then staggered production artifact checks. Independent Astra approval and mandatory exact-head full CI precede matched-head merge with readback.
+- **Resource budget:** One owner per client, max2 test workers each, Node26/npm12 physical locked dependencies. No broad census, dependency changes or redundant full local suites; parent coordinates expensive builds and publication.
+
+- [x] Implement scoped fixes and focused regressions.
+- [x] Complete independent review and local preflight.
+- [ ] Publish, pass exact-head full CI and merge with readback.
+
+## Plan refinement
+- **Objective:** Complete the approved loan-unit fix with the smallest measured aggregate bundle baseline adjustment.
+- **System fit:** Keep all three Astra-approved runtime files frozen; existing checker remains the artifact gate and exact-head full CI remains release proof.
+- **Reuse and simplicity:** Round only the aggregate ceiling2678 to2679KiB; keep route, largest-chunk, style and lazy-load checks unchanged. No runtime refactor or dependency changes.
+- **Evidence and unknowns:** Production artifact passes every route and lazy/style gate, aggregate2678.0KiB is slightly above2678. Previous baseline2677.6KiB; the source-token review adds approximately0.4KiB. Local artifact proof precedes full CI.
+- **Verification:** Rerun the same artifact checker, verify frozen runtime hashes and obtain Astra allowance approval. Require exact-head full CI before matched-head merge.
+- **Resource budget:** One measured constant adjustment, no rebuild or unrelated optimization; existing artifact check provides direct enforcement evidence without a test that merely mirrors a constant.
+
+Review: Unknown custom loan units remain unavailable with context retry. Fresh repayment source metadata is resolved authoritatively and frozen with review; raw repayment amounts/ABI calls are preserved. Revnet-only ineffective shop choice hidden, ordinary control retained. Owner38focusedtests pass; independent Astra36tests across4suites pass onNode26. Typecheck, full lint, dead-code, source/protocol252entries8chains, offline registry41documents, wallet/transaction inventories, dependency audit and production build pass. Exact built artifact passes all checks with only measured aggregate2678 to2679KiB rounding, independently approved by Astra; all routes and lazy/style checks unchanged. All three runtime hashes match approval artifact /private/tmp/astra-client-followup-approved-20261027.json. No contract, SDK or dependency changes. Full exact-head CI remains required before authorized matched-head merge.

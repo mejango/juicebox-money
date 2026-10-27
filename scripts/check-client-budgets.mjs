@@ -71,7 +71,8 @@ const budgets = {
   // 2624 -> 2669: core's reviewed send, its hook and held view in lazy chunks of their own; SDK 4.0.0 review plan, Relayr rounds and late-settle handling.
   // Explicit stage ordering, bounded signatures and confirmed-result recovery: measured 2671.5 KiB.
   // Acquisition and generic Safe policy guards: measured 2677.6 KiB, rounded up only.
-  allScripts: 2678 * KIB,
+  // Exact loan-source units and frozen repayment metadata: measured 2678.0 KiB, just above2678.
+  allScripts: 2679 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
