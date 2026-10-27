@@ -104,10 +104,11 @@ export function largestBalanceProject(projects: readonly BsProject[]): BsProject
   return best
 }
 
-export async function getHomepageBalanceGroups(): Promise<BalanceGroup[]> {
+export async function getHomepageBalanceGroups({ strict = false } = {}): Promise<BalanceGroup[]> {
   try {
     return await cachedBalanceGroups()
-  } catch {
+  } catch (error) {
+    if (strict) throw error
     return []
   }
 }
