@@ -125,7 +125,7 @@ export function GetLoanFlow({
     ctxs.find(c => c.token === ctxToken) ?? ctxs[0] ?? undefined
   const meta = ctx
     ? tokenMeta(ctxs, ctx.token, chainId)
-    : { symbol: 'ETH', decimals: 18 }
+    : null
 
   const collateral = useMemo(() => {
     try {
@@ -190,7 +190,7 @@ export function GetLoanFlow({
   }
 
   /** What the loan's review shows above its calls. */
-  const loanRows = (r: ReviewedBorrow): TxConfirmRow[] => [
+  const loanRows = (r: ReviewedBorrow): TxConfirmRow[] => meta ? [
     {
       label: 'Tokens locked for the loan',
       value: `${formatTokenAmount(r.collateral)} ${collateralSymbol}`,
@@ -212,7 +212,7 @@ export function GetLoanFlow({
       strong: true,
     },
     { label: 'On', value: chainName(chainId) },
-  ]
+  ] : []
 
   /**
    * The permission (when missing) and the borrow are one review and one run:
@@ -298,7 +298,7 @@ export function GetLoanFlow({
       openSignIn()
       return
     }
-    if (!publicClient || !ctx || collateral <= 0n || busy) return
+    if (!publicClient || !ctx || !meta || collateral <= 0n || busy) return
     setFlowError(null)
     setQuoting(true)
     try {
@@ -513,7 +513,7 @@ export function GetLoanFlow({
               >
                 {ctxs.map(c => (
                   <option key={c.token} value={c.token}>
-                    {tokenMeta(ctxs, c.token, chainId).symbol}
+                    {tokenMeta(ctxs, c.token, chainId)?.symbol ?? 'Unavailable'}
                   </option>
                 ))}
               </select>
@@ -526,7 +526,7 @@ export function GetLoanFlow({
                 ? 'Checking how much you can borrow…'
                 : borrowableNow === undefined
                   ? 'Could not read the live loan quote — try again shortly.'
-                  : borrowableNow > 0n
+                  : borrowableNow > 0n && meta
                     ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
                     : 'Loans are locked until this revnet’s cash-out delay passes.'}
             </p>

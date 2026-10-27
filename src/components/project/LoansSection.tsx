@@ -6,9 +6,9 @@ import { approvalIntent, loanIntent } from '@bananapus/nana-sdk-core/review'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
-  JB_CHAINS,
   NATIVE_TOKEN,
   jbV6ContractAddress,
+  jbMultiTerminalAbi,
   revLoansAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -17,7 +17,7 @@ import {
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
-import { tokenSymbol } from '@/lib/token-symbol'
+import { knownTokenSymbol, tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
@@ -49,8 +49,9 @@ export function revLoansAddress(chainId: JBChainId): Address {
   return jbV6ContractAddress['REVLoans'][chainId] as Address
 }
 
-/** The loan's source-token symbol/decimals, looked up from the revnet's own
- *  accounting contexts (a loan can only be denominated in one of them). */
+type LoanTokenMeta = { symbol: string; decimals: number }
+
+/** The loan's source-token units, from its context or verified canonical identity. */
 export function tokenMeta(
   contexts: readonly JBAccountingContext[],
   token: string,
@@ -58,20 +59,16 @@ export function tokenMeta(
   /** Resolved ERC-20 symbols keyed by lowercased address. Without it an ERC-20 falls back to
    *  a truncated address, which is a correct label for nothing anyone recognises. */
   symbols?: Record<string, string>,
-): { symbol: string; decimals: number } {
-  const ctx = contexts.find(
-    c => c.token.toLowerCase() === token.toLowerCase(),
-  )
-  const isNative = token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-  if (isNative) {
-    return {
-      symbol: JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
-      decimals: ctx?.decimals ?? 18,
-    }
-  }
+): LoanTokenMeta | null {
+  const ctx = contexts.find(c => c.token.toLowerCase() === token.toLowerCase())
+  const known = knownTokenSymbol(token, { chainId })
+  const decimals = known
+    ? token.toLowerCase() === NATIVE_TOKEN.toLowerCase() ? 18 : 6
+    : ctx?.decimals
+  if (decimals == null || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) return null
   return {
-    symbol: symbols?.[token.toLowerCase()] ?? truncateAddress(token),
-    decimals: ctx?.decimals ?? 18,
+    symbol: known ?? symbols?.[token.toLowerCase()] ?? truncateAddress(token),
+    decimals,
   }
 }
 
@@ -91,7 +88,7 @@ export function LoansSection({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
 
-  const { data: contexts } = useQuery({
+  const { data: contexts, isFetching: contextsFetching, refetch: retryContexts } = useQuery({
     ...accountingContextsQuery(publicClient!, { chainId, projectId: BigInt(projectId) }),
     enabled: !!publicClient,
   })
@@ -130,6 +127,8 @@ export function LoansSection({
         contexts={contexts ?? []}
         symbols={symbols}
         collateralSymbol={collateralSymbol}
+        contextsFetching={contextsFetching}
+        retryContexts={() => void retryContexts()}
       />
     </div>
   )
@@ -143,12 +142,16 @@ function LoansTables({
   contexts,
   symbols,
   collateralSymbol,
+  contextsFetching,
+  retryContexts,
 }: {
   chainId: JBChainId
   projectId: number
   contexts: readonly JBAccountingContext[]
   symbols?: Record<string, string>
   collateralSymbol: string
+  contextsFetching: boolean
+  retryContexts: () => void
 }) {
   const { address } = useViewedAccount()
   const [mounted, setMounted] = useState(false)
@@ -176,6 +179,14 @@ function LoansTables({
 
   return (
     <>
+      {loans.some(loan => !tokenMeta(contexts, loan.token, chainId, symbols)) ? (
+        <p className="text-sm text-smoke-700" role="status">
+          Some loan amounts are unavailable until their token units can be read.{' '}
+          <button type="button" className="underline" disabled={contextsFetching} onClick={retryContexts}>
+            {contextsFetching ? 'Reading token units…' : 'Retry token data'}
+          </button>
+        </p>
+      ) : null}
       {mounted && address && yourLoans.length > 0 ? (
         <div className="card p-5">
           <span className="field-label">Your loans</span>
@@ -262,7 +273,7 @@ function LoanTable({
             return (
               <tr key={loan.id} className="border-t border-smoke-100">
                 <td className="py-1.5 pr-3">
-                  {explorerTokenUrl(chainId, loan.token) && !isNative ? (
+                  {!meta ? "Unavailable" : explorerTokenUrl(chainId, loan.token) && !isNative ? (
                     <a
                       href={explorerTokenUrl(chainId, loan.token)!}
                       target="_blank"
@@ -290,8 +301,6 @@ function LoanTable({
                     <RepayFlow
                       chainId={chainId}
                       loan={loan}
-                      contexts={contexts}
-                      symbols={symbols}
                       collateralSymbol={collateralSymbol}
                       holder={holder}
                       onRepaid={onRepaid}
@@ -326,6 +335,9 @@ type RepayPlan = {
   account: Address
   request: ReturnType<typeof buildRepayLoanTx>
   amount: bigint
+  /** Units and identity read for the fresh loan, frozen with this repayment. */
+  sourceToken: Address
+  meta: LoanTokenMeta
   maxRepay: bigint
   collateral: bigint
   isNative: boolean
@@ -340,16 +352,12 @@ type RepayPlan = {
 function RepayFlow({
   chainId,
   loan,
-  contexts,
-  symbols,
   collateralSymbol,
   holder,
   onRepaid,
 }: {
   chainId: JBChainId
   loan: BsLoan
-  contexts: readonly JBAccountingContext[]
-  symbols?: Record<string, string>
   collateralSymbol: string
   holder: Address
   onRepaid?: () => void
@@ -368,7 +376,6 @@ function RepayFlow({
   const [plan, setPlan] = useState<RepayPlan | null>(null)
 
   const loans = revLoansAddress(chainId)
-  const meta = tokenMeta(contexts, loan.token, chainId, symbols)
 
   const busy = tx.busy
   const repaid = tx.phase === 'success' && repaySent
@@ -406,6 +413,27 @@ function RepayFlow({
           'This loan is no longer open. Refresh the project and try again.',
         )
       }
+      // Canonical token units are established by chain/address. A custom loan
+      // needs its own terminal context, never the indexer's possibly stale token.
+      let meta = tokenMeta([], fresh.sourceToken, chainId)
+      if (!meta) {
+        try {
+          const [terminal, revnetId] = await Promise.all([
+            publicClient.readContract({ abi: revLoansAbi, address: loans, functionName: 'TERMINAL' }),
+            publicClient.readContract({ abi: revLoansAbi, address: loans, functionName: 'revnetIdOfLoanWith', args: [BigInt(loan.id)] }),
+          ])
+          const context = await publicClient.readContract({
+            abi: jbMultiTerminalAbi, address: terminal, functionName: 'accountingContextForTokenOf',
+            args: [revnetId, fresh.sourceToken],
+          })
+          if (context.token.toLowerCase() !== fresh.sourceToken.toLowerCase()) throw new Error('Mismatched loan token')
+          const symbol = await tokenSymbol(publicClient, fresh.sourceToken, { chainId })
+          meta = tokenMeta([context], fresh.sourceToken, chainId, { [fresh.sourceToken.toLowerCase()]: symbol })
+          if (!meta) throw new Error('Unknown loan token units')
+        } catch {
+          throw new Error("Couldn't read this loan's token units. Try Repay again.")
+        }
+      }
       const fee = (await publicClient.readContract({
         abi: revLoansAbi,
         address: loans,
@@ -442,6 +470,8 @@ function RepayFlow({
         account: holder,
         request,
         amount: fresh.amount,
+        sourceToken: fresh.sourceToken,
+        meta,
         maxRepay,
         collateral: fresh.collateral,
         isNative,
@@ -472,8 +502,8 @@ function RepayFlow({
 
   /** The plan's summary: shown on its progress, and in its one review. */
   const repayRows = (current: RepayPlan) => [
-    { label: 'Loan', value: `${formatTokenAmount(current.amount, meta.decimals)} ${meta.symbol}` },
-    { label: 'Repay up to', value: `${formatTokenAmount(current.maxRepay, meta.decimals)} ${meta.symbol}`, strong: true },
+    { label: 'Loan', value: `${formatTokenAmount(current.amount, current.meta.decimals)} ${current.meta.symbol}` },
+    { label: 'Repay up to', value: `${formatTokenAmount(current.maxRepay, current.meta.decimals)} ${current.meta.symbol}`, strong: true },
     { label: 'Collateral returned', value: `${formatTokenAmount(current.collateral)} ${collateralSymbol}` },
     { label: 'On', value: chainName(chainId) },
   ]
@@ -533,7 +563,7 @@ function RepayFlow({
           ? [
               {
                 key: 'approve',
-                title: `Approve ${meta.symbol} for REVLoans`,
+                title: `Approve ${plan.meta.symbol} for REVLoans`,
                 detail: 'Covers the amount borrowed plus the current repayment cost.',
               },
             ]
@@ -556,7 +586,7 @@ function RepayFlow({
       next={(!!error || approvalOnly) && !busy ? { label: approvalOnly ? 'Continue' : 'Retry', onClick: () => void handleConfirm() } : null}
     >
       <p className="text-xs leading-relaxed text-smoke-700">
-        The limit covers the amount borrowed plus the current repayment cost in {meta.symbol},
+        The limit covers the amount borrowed plus the current repayment cost in {plan?.meta.symbol ?? 'the loan token'},
         with room for changes before confirmation. Anything unused is refunded.
       </p>
     </TxProgress>
