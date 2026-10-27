@@ -1,5 +1,8 @@
+// @vitest-environment jsdom
+import { createElement, act } from "react"
+import { createRoot } from "react-dom/client"
 import { NATIVE_TOKEN, USDC_ADDRESSES } from '@bananapus/nana-sdk-core'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const USDC = USDC_ADDRESSES[1]!.toLowerCase()
 const ETH = NATIVE_TOKEN.toLowerCase()
@@ -44,42 +47,63 @@ const addToBalances = [
 
 let volumeHistoryFails = false
 let balancesFail = false
+let groupsFail = false
+let historyFails = false
+let inflowsFail = false
+let empty = false
 
-vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
+const revalidate = vi.hoisted(() => vi.fn())
+vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn, revalidatePath: revalidate }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (items: unknown) => items }))
 vi.mock('@/lib/bendystraw', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/bendystraw')>()),
-  bendystraw: async () => ({ suckerGroups: { items: groups, totalCount: groups.length } }),
+  bendystraw: async () => {
+    if (groupsFail) throw new Error('indexer down')
+    return { suckerGroups: { items: empty ? [] : groups, totalCount: empty ? 0 : groups.length } }
+  },
   getProjectTokenBalances: async () => {
     if (balancesFail) throw new Error('indexer down')
-    return balances
+    return empty ? [] : balances
   },
-  getProjectTokenBalanceMoments: async () => tokenMoments,
+  getProjectTokenBalanceMoments: async () => {
+    if (historyFails) throw new Error('indexer down')
+    return empty ? [] : tokenMoments
+  },
   getGroupVolumeMoments: async () => {
     if (volumeHistoryFails) throw new Error('indexer down')
-    return volumeMoments
+    return empty ? [] : volumeMoments
   },
-  getAddToBalanceInflows: async () => addToBalances,
+  getAddToBalanceInflows: async () => {
+    if (inflowsFail) throw new Error('indexer down')
+    return empty ? [] : addToBalances
+  },
 }))
 
-const { getTopBalanceProjects } = await import('@/lib/top-projects')
+const refresh = vi.hoisted(() => vi.fn())
+vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }))
+vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
+vi.mock('@/components/SecuredReserveChart', () => ({ SecuredReserveChart: () => null }))
+import * as homepageRefresh from '@/app/actions/homepage-reserves'
+import { SecuredReserves } from '@/components/SecuredReserves'
+const { getTopBalanceProjects, getHomepageBalanceGroups } = await import('@/lib/top-projects')
 const { getHomepageReserves } = await import('@/lib/homepage-reserves')
 
 describe('homepage per-token data', () => {
+  beforeEach(() => { revalidate.mockReset(); refresh.mockReset(); volumeHistoryFails = balancesFail = groupsFail = historyFails = inflowsFail = empty = false })
   it('counts a multi-token project in the Secured total, one line per token', async () => {
     const reserves = await getHomepageReserves()
     expect(reserves.totalUsd).toBeCloseTo(2_005.2)
-    expect(reserves.chains.find(chain => chain.chainId === 1)?.tokens).toEqual([
+    expect(reserves.chains?.find(chain => chain.chainId === 1)?.tokens).toEqual([
       { symbol: 'ETH', amount: 1.0001 },
       { symbol: 'USDC', amount: 5 },
     ])
-    expect(reserves.chains.find(chain => chain.chainId === 8453)?.tokens).toEqual([])
+    expect(reserves.chains?.find(chain => chain.chainId === 8453)?.tokens).toEqual([])
   })
 
   it('charts each token at its own rate, split by chain', async () => {
     const reserves = await getHomepageReserves()
-    expect(reserves.points.map(point => point.valueUsd)).toEqual([10, 2_010, 2_015, 2_005, 2_025])
-    expect(reserves.points.at(-1)?.chains).toEqual([
+    expect(reserves.points?.map(point => point.valueUsd)).toEqual([10, 2_010, 2_015, 2_005, 2_025])
+    expect(reserves.points?.at(-1)?.chains).toEqual([
       { chainId: 1, valueUsd: 2_005 },
       { chainId: 42161, valueUsd: 0 },
       { chainId: 8453, valueUsd: 20 },
@@ -89,13 +113,13 @@ describe('homepage per-token data', () => {
 
   it('counts only fee-project balance increases, valued when they arrived', async () => {
     const reserves = await getHomepageReserves()
-    expect(reserves.feePoints.map(point => point.valueUsd)).toEqual([10, 10, 30])
+    expect(reserves.feePoints?.map(point => point.valueUsd)).toEqual([10, 10, 30])
     expect(reserves.feesUsd).toBe(30)
   })
 
   it('sums USD volume and every addition into the passed-through total', async () => {
     const reserves = await getHomepageReserves()
-    expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([2_000, 2_005, 2_006, 2_007])
+    expect(reserves.volumePoints?.map(point => point.valueUsd)).toEqual([2_000, 2_005, 2_006, 2_007])
     expect(reserves.passedThroughUsd).toBe(2_007)
   })
 
@@ -103,7 +127,7 @@ describe('homepage per-token data', () => {
     volumeHistoryFails = true
     try {
       const reserves = await getHomepageReserves()
-      expect(reserves.volumePoints.map(point => point.valueUsd)).toEqual([1, 2])
+      expect(reserves.volumePoints).toBeNull()
       expect(reserves.passedThroughUsd).toBe(2_007)
     } finally {
       volumeHistoryFails = false
@@ -116,10 +140,44 @@ describe('homepage per-token data', () => {
       const reserves = await getHomepageReserves()
       expect(reserves.totalUsd).toBeCloseTo(2_005.2)
       expect(reserves.passedThroughUsd).toBe(2_007)
-      expect(reserves.chains.every(chain => chain.tokens.length === 0)).toBe(true)
+      expect(reserves.chains).toBeNull()
     } finally {
       balancesFail = false
     }
+  })
+
+  it('keeps a required group failure unavailable without changing legacy fallback', async () => {
+    groupsFail = true
+    expect(await getHomepageBalanceGroups()).toEqual([])
+    await expect(getHomepageBalanceGroups({ strict: true })).rejects.toThrow('indexer down')
+    const reserves = await getHomepageReserves()
+    expect(reserves.totalUsd).toBeNull()
+    expect(reserves.passedThroughUsd).toBeNull()
+    expect(reserves.points).toBeNull()
+    groupsFail = false
+    expect((await getHomepageReserves()).totalUsd).toBeCloseTo(2005.2)
+  })
+
+  it('keeps independent headlines when history or inflows fail', async () => {
+    historyFails = true
+    const history = await getHomepageReserves()
+    expect(history.totalUsd).toBeCloseTo(2005.2)
+    expect(history.feesUsd).toBeNull()
+    expect(history.points).toBeNull()
+    historyFails = false
+    inflowsFail = true
+    const inflows = await getHomepageReserves()
+    expect(inflows.totalUsd).toBeCloseTo(2005.2)
+    expect(inflows.feesUsd).toBe(30)
+    expect(inflows.passedThroughUsd).toBeNull()
+    expect(inflows.volumePoints).toBeNull()
+  })
+
+  it('preserves valid empty reads as zero', async () => {
+    empty = true
+    const reserves = await getHomepageReserves()
+    expect([reserves.totalUsd, reserves.passedThroughUsd, reserves.feesUsd]).toEqual([0, 0, 0])
+    expect([reserves.points, reserves.volumePoints, reserves.feePoints]).toEqual([[], [], []])
   })
 
   it('ranks Top by the group USD balance', async () => {
@@ -129,4 +187,84 @@ describe('homepage per-token data', () => {
       ['g12', 5.2],
     ])
   })
+  it("renders failed reads as unavailable, refreshes, and recovers without inventing zero", async () => {
+    groupsFail = true
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      const failed = await getHomepageReserves()
+      await act(async () => root.render(createElement(SecuredReserves, { data: failed })))
+      expect(host.textContent).toContain('Unavailable')
+      expect(host.textContent).not.toContain('$0.00')
+      const retry = host.querySelector('button')!
+      expect(retry.textContent).toBe('Refresh')
+      await act(async () => retry.click())
+      expect(revalidate).toHaveBeenCalledExactlyOnceWith('/')
+      expect(refresh).toHaveBeenCalled()
+      groupsFail = false
+      const recovered = await getHomepageReserves()
+      await act(async () => root.render(createElement(SecuredReserves, { data: recovered })))
+      expect(host.textContent).toContain('$2,005.20')
+      expect(host.textContent).not.toContain('Unavailable')
+      empty = true
+      const zero = await getHomepageReserves()
+      await act(async () => root.render(createElement(SecuredReserves, { data: zero })))
+      expect(host.textContent).toContain('$0.00')
+      expect(host.textContent).not.toContain('Unavailable')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it("shows pending refresh feedback and permits retry after a failed refresh", async () => {
+    groupsFail = true
+    const data = await getHomepageReserves()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    const action = vi.spyOn(homepageRefresh, 'refreshHomepageReserves').mockReturnValueOnce(pending)
+    try {
+      await act(async () => root.render(createElement(SecuredReserves, { data })))
+      const retry = host.querySelector('button')!
+      act(() => retry.click())
+      expect(retry.disabled).toBe(true)
+      expect(retry.textContent).toContain('Refreshing…')
+      await act(async () => { finish(); await pending })
+      expect(retry.disabled).toBe(false)
+      revalidate.mockImplementationOnce(() => { throw new Error('network unavailable') })
+      await act(async () => retry.click())
+      expect(host.textContent).toContain('Unavailable')
+      expect(retry.disabled).toBe(false)
+      await act(async () => retry.click())
+      expect(revalidate).toHaveBeenCalledTimes(2)
+      expect(refresh).toHaveBeenCalledTimes(3)
+    } finally {
+      action.mockRestore()
+      await act(async () => root.unmount())
+    }
+  })
+
+  it("renders a missing volume input independently from a known secured total", async () => {
+    inflowsFail = true
+    const data = await getHomepageReserves()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(createElement(SecuredReserves, { data })))
+      expect(host.textContent).toContain('$2,005.20')
+      const select = host.querySelector('select')!
+      await act(async () => {
+        select.value = 'passedThrough'
+        select.dispatchEvent(new Event('change', { bubbles: true }))
+      })
+      expect(host.textContent).toContain('Unavailable')
+      expect(host.textContent).toContain('Refresh')
+    } finally {
+      await act(async () => root.unmount())
+    }
+  })
+
 })

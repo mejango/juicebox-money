@@ -5,7 +5,6 @@ import {
   getGroupVolumeMoments,
   getProjectTokenBalanceMoments,
   getProjectTokenBalances,
-  type BsAddToBalance,
 } from './bendystraw'
 import { truncateAddress } from './format'
 import { getHomepageBalanceGroups } from './top-projects'
@@ -23,18 +22,18 @@ type ChainReserveBreakdown = {
   tokens: Array<{ symbol: string; amount: number }>
 }
 export type HomepageReserves = {
-  totalUsd: number
-  chains: ChainReserveBreakdown[]
-  points: ReservePoint[]
+  totalUsd: number | null
+  chains: ChainReserveBreakdown[] | null
+  points: ReservePoint[] | null
   /** All-time payments plus funds added to balances, each valued in USD at its own time. */
-  passedThroughUsd: number
-  volumePoints: ReservePoint[]
+  passedThroughUsd: number | null
+  volumePoints: ReservePoint[] | null
   /** JBP6's cumulative inflows — the fees it collects from payouts, cash outs,
    *  used allowances, and project creation. Measured as the sum of project 1's
    *  balance increases, each valued at its own time, so its own payouts and
    *  cash outs don't subtract. */
-  feesUsd: number
-  feePoints: ReservePoint[]
+  feesUsd: number | null
+  feePoints: ReservePoint[] | null
 }
 
 const RESERVE_CHAIN_IDS = [1, 42161, 8453, 10] as const
@@ -50,16 +49,21 @@ function downsample(points: ReservePoint[]): ReservePoint[] {
 const usd18 = (raw: string | null | undefined) =>
   raw ? Number(formatUnits(BigInt(raw), 18)) : 0
 
+/** Failed snapshots must not become a fresh cached financial total. Keep any independent reads. */
+class PartialHomepageReserves extends Error {
+  constructor(readonly data: HomepageReserves) { super('Homepage financial data is incomplete') }
+}
+
 const cachedHomepageReserves = unstable_cache(
   async (): Promise<HomepageReserves> => {
     const [balances, groups, tokenMoments, volumeMoments, addToBalances] =
       await Promise.all([
         // A missing breakdown or history leaves the headlines standing.
-        getProjectTokenBalances().catch(() => []),
-        getHomepageBalanceGroups(),
-        getProjectTokenBalanceMoments().catch(() => []),
-        getGroupVolumeMoments().catch(() => []),
-        getAddToBalanceInflows().catch(() => [] as BsAddToBalance[]),
+        getProjectTokenBalances().catch(() => null),
+        getHomepageBalanceGroups({ strict: true }).catch(() => null),
+        getProjectTokenBalanceMoments().catch(() => null),
+        getGroupVolumeMoments().catch(() => null),
+        getAddToBalanceInflows().catch(() => null),
       ])
 
     let rowsUsd = 0
@@ -69,7 +73,7 @@ const cachedHomepageReserves = unstable_cache(
         new Map<string, { symbol: string; amount: number; usd: number }>(),
       ]),
     )
-    for (const row of balances) {
+    for (const row of balances ?? []) {
       const usd = usd18(row.balanceUsd)
       rowsUsd += usd
       const tokens = perChain.get(row.chainId)
@@ -88,7 +92,7 @@ const cachedHomepageReserves = unstable_cache(
       tokens.set(key, line)
     }
     // The groups carry the same total; they stand in when no rows arrived.
-    const totalUsd = balances.length
+    const totalUsd = groups === null ? null : balances?.length
       ? rowsUsd
       : groups.reduce((sum, group) => sum + usd18(group.balanceUsd), 0)
 
@@ -99,7 +103,7 @@ const cachedHomepageReserves = unstable_cache(
     let feesUsd = 0
     const rawPoints: ReservePoint[] = []
     const rawFeePoints: ReservePoint[] = []
-    for (const moment of tokenMoments) {
+    for (const moment of tokenMoments ?? []) {
       const key = `${moment.chainId}:${moment.projectId}:${moment.token.toLowerCase()}`
       const amount = Number(formatUnits(BigInt(moment.balance), moment.decimals))
       const rate = usd18(moment.tokenUsdRate)
@@ -130,12 +134,12 @@ const cachedHomepageReserves = unstable_cache(
     // the curve ends on the headline, which stands on the groups' current
     // totals even when the history cannot be read.
     const volumeEvents = [
-      ...volumeMoments.map(moment => ({
+      ...(volumeMoments ?? []).map(moment => ({
         timestamp: moment.timestamp,
         groupId: moment.suckerGroupId as string | null,
         usd: usd18(moment.volumeUsd),
       })),
-      ...addToBalances.map(event => ({
+      ...(addToBalances ?? []).map(event => ({
         timestamp: event.timestamp,
         groupId: null,
         usd: usd18(event.amountUsd),
@@ -152,42 +156,45 @@ const cachedHomepageReserves = unstable_cache(
         valueUsd: [...groupVolume.values()].reduce((sum, value) => sum + value, added),
       })
     }
-    const passedThroughUsd = groups.reduce(
+    const passedThroughUsd = groups === null || addToBalances === null ? null : groups.reduce(
       (sum, group) => sum + usd18(group.volumeUsd),
       addToBalances.reduce((sum, event) => sum + usd18(event.amountUsd), 0),
     )
 
-    return {
+    const result: HomepageReserves = {
       totalUsd,
-      chains: RESERVE_CHAIN_IDS.map(chainId => ({
+      chains: balances === null ? null : RESERVE_CHAIN_IDS.map(chainId => ({
         chainId,
         tokens: [...perChain.get(chainId)!.values()]
           .sort((a, b) => b.usd - a.usd)
           .map(({ symbol, amount }) => ({ symbol, amount })),
       })),
-      points: downsample(rawPoints),
+      points: groups === null || tokenMoments === null ? null : downsample(rawPoints),
       passedThroughUsd,
-      volumePoints: downsample(rawVolumePoints),
-      feesUsd,
-      feePoints: downsample(rawFeePoints),
+      volumePoints: groups === null || volumeMoments === null || addToBalances === null ? null : downsample(rawVolumePoints),
+      feesUsd: tokenMoments === null ? null : feesUsd,
+      feePoints: tokenMoments === null ? null : downsample(rawFeePoints),
     }
+    if ([balances, groups, tokenMoments, volumeMoments, addToBalances].some(value => value === null)) throw new PartialHomepageReserves(result)
+    return result
   },
-  ['juicebox-homepage-reserves-v7'],
+  ['juicebox-homepage-reserves-v8'],
   { revalidate: 600 },
 )
 
 export async function getHomepageReserves(): Promise<HomepageReserves> {
   try {
     return await cachedHomepageReserves()
-  } catch {
+  } catch (error) {
+    if (error instanceof PartialHomepageReserves) return error.data
     return {
-      totalUsd: 0,
-      chains: RESERVE_CHAIN_IDS.map(chainId => ({ chainId, tokens: [] })),
-      points: [],
-      passedThroughUsd: 0,
-      volumePoints: [],
-      feesUsd: 0,
-      feePoints: [],
+      totalUsd: null,
+      chains: null,
+      points: null,
+      passedThroughUsd: null,
+      volumePoints: null,
+      feesUsd: null,
+      feePoints: null,
     }
   }
 }
