@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, erc20Abi, TransactionNotFoundError, type Address, type Hex } from 'viem'
-import { createBrowserWriteRecovery, createHeldWriteStorage } from '@bananapus/nana-sdk-core/review'
-import { clearDefifaWriteRecovery, defifaWriteNamespace, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
+import { createBrowserWriteRecovery, createHeldWriteStorage, findReviewedSequence } from '@bananapus/nana-sdk-core/review'
+// Use the installed serializer to construct legacy fixtures, not a copy of its storage format.
+import { readReviewedSequence, saveReviewedSequence, type ReviewedSequenceRecord } from '../../node_modules/@bananapus/nana-sdk-core/dist/esm/review/sequence.js'
+import { clearDefifaWriteRecovery, defifaSequenceCalls, defifaSequenceScope, defifaWriteNamespace, finishDefifaSequence, readDefifaWriteRecovery, runRecoverableDefifaWrite } from '@/lib/defifa-write-recovery'
 import { writeHolds } from '@/lib/write-holds'
 import { reviewedCall, type TxRequest } from '@/lib/reviewed-call'
 import type { ReviewedRun } from '@/hooks/useReviewedAction'
@@ -78,7 +80,7 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
     await runRecoverableDefifaWrite({ scope, onRecord, action: { account: ACCOUNT, calls: [approval, reviewedCall(request, { dependsOnPrior: true })] }, run })
     const [sent] = run.mock.calls[0]
     expect(sent.calls.map(one => one.intent)).toEqual(['approval-key', 'defifa:pay:27'])
-    expect(sent.scope).toBe('defifa:pay:27')
+    expect(sent.scope).toBe('defifa:pay:27:chain-8453')
     expect(onRecord.mock.calls.every(([record]) => record === null)).toBe(true)
   })
 
@@ -132,5 +134,81 @@ describe('Defifa writes held by the SDK hold of their namespace', () => {
     // Already gone (the hold settled it): nothing is written back.
     await clearDefifaWriteRecovery(scope, original)
     expect(readDefifaWriteRecovery(scope)).toBeNull()
+  })
+})
+
+describe('Defifa sequence identity and legacy recovery', () => {
+  const planned = (chainId: number) => [
+    reviewedCall({ ...request, chainId }, { intent: 'defifa-approval' }),
+    reviewedCall({ ...request, chainId, address: TARGET }, { intent: defifaWriteNamespace(scope), dependsOnPrior: true }),
+  ]
+  async function sequence(chainId: number, phase: 'approval' | 'approved' | 'mint' = 'approval', namespace = defifaWriteNamespace(scope)) {
+    const calls = planned(chainId)
+    const record: ReviewedSequenceRecord = { version: 1, id: crypto.randomUUID(), account: ACCOUNT, scope: namespace, modelId: HASH, calls, completed: phase === 'approval' ? [] : [HASH] }
+    if (phase !== 'approved') {
+      const step = phase === 'approval' ? 0 : 1
+      const call = calls[step]
+      const journal = createBrowserWriteRecovery({ chainId, account: ACCOUNT, safe: false, namespace: call.intent!, call }, { storage: createHeldWriteStorage() })
+      await journal.withLock(async () => { const held = journal.reserve(); journal.submitted(HASH, held); record.sending = { step, reservation: held.id } })
+    }
+    await saveReviewedSequence(record, createHeldWriteStorage(), null)
+    return record
+  }
+
+  it('keeps another chain’s pending legacy approval untouched while the same project/account starts its own checkout', async () => {
+    const original = await sequence(10)
+    const fresh = planned(scope.chainId)
+    const selected = await defifaSequenceCalls(scope, fresh)
+    expect(selected).toMatchObject({ calls: fresh, saved: false, scope: defifaSequenceScope(scope) })
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toEqual(original)
+    const run = vi.fn(async (_action: ReviewedRun) => null)
+    await runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: selected.calls, scope: selected.scope }, run })
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ scope: defifaSequenceScope(scope), calls: fresh }))
+    await finishDefifaSequence(scope)
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toEqual(original)
+  })
+
+  it('continues the exact same-chain legacy approval and mint under their original sequence key', async () => {
+    const original = await sequence(scope.chainId)
+    const selected = await defifaSequenceCalls(scope, planned(scope.chainId).map(call => ({ ...call, value: 5n })))
+    expect(selected).toMatchObject({ calls: original.calls, saved: true, scope: original.scope, held: 0 })
+    const run = vi.fn(async (_action: ReviewedRun) => null)
+    await runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: selected.calls, scope: selected.scope }, run })
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ scope: original.scope, calls: original.calls }))
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toEqual(original)
+  })
+
+  it('starts a retry under the qualified scope after a same-chain legacy approval completed and no mint was submitted', async () => {
+    const original = await sequence(scope.chainId, 'approved')
+    const selected = await defifaSequenceCalls(scope, planned(scope.chainId))
+    expect(selected).toMatchObject({ saved: false, scope: defifaSequenceScope(scope) })
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toBeNull()
+    const retry = await sequence(scope.chainId, 'approval', defifaSequenceScope(scope))
+    expect(await defifaSequenceCalls(scope, planned(scope.chainId))).toMatchObject({ saved: true, calls: retry.calls, scope: retry.scope })
+  })
+
+  it('keeps an unverified same-chain legacy mint and its original write journal pending', async () => {
+    const original = await sequence(scope.chainId, 'mint')
+    const before = readDefifaWriteRecovery(scope)
+    const selected = await defifaSequenceCalls(scope, planned(scope.chainId))
+    expect(selected).toMatchObject({ saved: true, scope: original.scope, held: 1 })
+    const run = vi.fn()
+    await expect(runRecoverableDefifaWrite({ scope, action: { account: ACCOUNT, calls: selected.calls, scope: selected.scope }, run })).rejects.toThrow('NFT action')
+    expect(run).not.toHaveBeenCalled()
+    await finishDefifaSequence(scope)
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toEqual(original)
+    expect(readDefifaWriteRecovery(scope)).toEqual(before)
+  })
+
+  it.each([false, true])('does not adopt or discard a mixed-chain record even when its first call matches (qualified %s)', async qualified => {
+    const original = await sequence(scope.chainId, 'approved', qualified ? defifaSequenceScope(scope) : defifaWriteNamespace(scope))
+    original.calls[1].chainId = 10
+    const storage = createHeldWriteStorage()
+    const current = findReviewedSequence(original.scope, ACCOUNT)!
+    // Replace only this fixture’s snapshot through the SDK’s normal guarded writer.
+    await saveReviewedSequence(original, storage, readReviewedSequence(current.scope, ACCOUNT, storage).raw)
+    expect(await defifaSequenceCalls(scope, planned(scope.chainId))).toMatchObject({ saved: false, scope: defifaSequenceScope(scope) })
+    await finishDefifaSequence(scope)
+    expect(findReviewedSequence(original.scope, ACCOUNT)).toEqual(original)
   })
 })

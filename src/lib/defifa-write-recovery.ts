@@ -21,6 +21,23 @@ export const notifyRecovery = () => { globalThis.dispatchEvent?.(new Event(DEFIF
 
 /** Approval and mint are successive legs of one pay intent, never two holds. */
 export const defifaWriteNamespace = (scope: DefifaRecoveryScope) => `defifa:${scope.action}:${scope.projectId}`
+/** Sequence storage is scoped by account, so chain belongs here (held-write namespaces already include it). */
+export const defifaSequenceScope = (scope: DefifaRecoveryScope) => `${defifaWriteNamespace(scope)}:chain-${scope.chainId}`
+const matchesChain = (scope: DefifaRecoveryScope) => (calls: readonly { chainId: number }[]) => calls.every(call => call.chainId === scope.chainId)
+
+/** Keep exact same-chain legacy runs recoverable, leaving another chain's saved sequence untouched. */
+export async function defifaSequenceCalls<Call>(scope: DefifaRecoveryScope, calls: Call[]) {
+  const { sequenceCalls } = await import('@/lib/reviewed-send')
+  const legacy = await sequenceCalls(defifaWriteNamespace(scope), scope.account, calls, matchesChain(scope))
+  return legacy.saved ? legacy : sequenceCalls(defifaSequenceScope(scope), scope.account, calls, matchesChain(scope))
+}
+
+/** A proven mint can finish its own legacy sequence, never another chain's run under that old key. */
+export async function finishDefifaSequence(scope: DefifaRecoveryScope) {
+  const { finishSequence } = await import('@/lib/reviewed-send')
+  await finishSequence(defifaSequenceScope(scope), scope.account, matchesChain(scope))
+  await finishSequence(defifaWriteNamespace(scope), scope.account, matchesChain(scope))
+}
 
 /**
  * The site's copy of a sent Defifa action's record, kept until its NFT effects
@@ -61,7 +78,7 @@ export class PendingDefifaWriteError extends Error {
  * Run a Defifa action under the SDK hold of its namespace: the hold reserves,
  * records and follows it. Its last call is the action (the mint, cash-out or
  * transfer); calls before it (its payment approval) are steps of the same
- * review, held by their own keys, saved as one sequence under the namespace
+ * review, held by their own keys, saved as one chain-qualified sequence
  * so a reload resumes them. A saved earlier attempt goes to its recovery card
  * first, and `onRecord` hears of the action's hold record as it changes.
  */
@@ -89,7 +106,7 @@ export async function runRecoverableDefifaWrite({ scope, action, run, onRecord }
   const result = await run({
     ...action,
     calls: action.calls.map((call, step) => (step === last ? { ...call, intent: namespace } : call)),
-    ...(last > 0 ? { scope: namespace } : {}),
+    ...(last > 0 ? { scope: action.scope ?? defifaSequenceScope(scope) } : {}),
     beforeWallet: async (reviewed, step) => {
       // The hold reserved the action just before: its record is the recovery record.
       if (step === last) told(readDefifaWriteRecovery(scope))

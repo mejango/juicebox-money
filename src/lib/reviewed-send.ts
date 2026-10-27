@@ -2,6 +2,7 @@ import { getPublicClient } from '@wagmi/core'
 import type { PublicClient } from 'viem'
 import {
   type ReviewedAction,
+  type ReviewedCall,
   type ReviewedSendDeps,
 } from '@bananapus/nana-sdk-core/review'
 import { currentWalletAdapter } from '@/lib/current-wallet'
@@ -29,10 +30,10 @@ export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
 }
 
 /** Drop the run saved under `scope` once its last step is proven: nothing of it is left to continue. A step still held keeps it. */
-export async function finishSequence(scope: string, account: `0x${string}`) {
+export async function finishSequence(scope: string, account: `0x${string}`, matches?: (calls: readonly ReviewedCall[]) => boolean) {
   const engine = await loadReviewEngine()
   const saved = engine.findReviewedSequence(scope, account)
-  if (saved) await engine.discardReviewedSequence(saved).catch(() => {})
+  if (saved && (!matches || matches(saved.calls))) await engine.discardReviewedSequence(saved).catch(() => {})
 }
 
 /** The review's line for a saved action continued as it was reviewed. */
@@ -53,11 +54,13 @@ export async function sequenceCalls<Call>(
   scope: string,
   account: `0x${string}`,
   calls: Call[],
+  matches?: (saved: readonly ReviewedCall[]) => boolean,
 ): Promise<{ calls: Call[]; saved: boolean; scope?: string; held?: number }> {
   const engine = await loadReviewEngine()
   const unfinished = engine.findReviewedSequence(scope, account)
   const fresh = { calls, saved: false, ...(calls.length > 1 ? { scope } : {}) }
-  if (!unfinished) return fresh
+  // A legacy scope may be shared across chains: match this snapshot before adopting or discarding it.
+  if (!unfinished || (matches && !matches(unfinished.calls))) return fresh
   if (!unfinished.sending && !unfinished.proposed) {
     try {
       await engine.discardReviewedSequence(unfinished)

@@ -40,6 +40,7 @@ import { wallet, sentHash } from '../support/fake-wallet'
 import { DefifaCheckout } from '@/components/project/DefifaCheckout'
 import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
 import { buildErc20ApproveRequest } from '@/lib/transaction-builders'
+import { saveReviewedSequence, type ReviewedSequenceRecord } from '../../node_modules/@bananapus/nana-sdk-core/dist/esm/review/sequence.js'
 
 const shop = {
   protocol: 'defifa', hook: HOOK, phase: 1,
@@ -96,6 +97,27 @@ beforeEach(async () => {
 })
 afterEach(async () => { await act(async () => renderer.unmount()); localStorage.clear(); vi.unstubAllGlobals() })
 describe('native Defifa checkout through the reviewed engine', () => {
+  it('opens its own approval review while another chain has a legacy run for the same project and account', async () => {
+    const { createBrowserWriteRecovery, createHeldWriteStorage, findReviewedSequence } = await import('@bananapus/nana-sdk-core/review')
+    const { reviewedCall } = await import('@/lib/reviewed-call')
+    const { defifaSequenceScope } = await import('@/lib/defifa-write-recovery')
+    const approval = reviewedCall(buildErc20ApproveRequest({ chainId: 10, token: TOKEN, spender: TERMINAL, amount: 100n }))
+    const calls = [approval, reviewedCall({ ...prepared(TOKEN).transaction, chainId: 10 }, { dependsOnPrior: true })]
+    const journal = createBrowserWriteRecovery({ chainId: 10, account: ALICE, safe: false, call: approval }, { storage: createHeldWriteStorage() })
+    const legacy: ReviewedSequenceRecord = { version: 1, id: crypto.randomUUID(), account: ALICE, scope: 'defifa:pay:42', modelId: sentHash(99), calls, completed: [] }
+    await journal.withLock(async () => {
+      const held = journal.reserve()
+      journal.submitted(sentHash(99), held)
+      legacy.sending = { step: 0, reservation: held.id }
+    })
+    await saveReviewedSequence(legacy, createHeldWriteStorage(), null)
+    controls.prepare.mockResolvedValue(prepared(TOKEN))
+    wallet.client.readContract.mockResolvedValue(0n)
+    await openReview(); await answer()
+    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(findReviewedSequence(legacy.scope, ALICE)).toEqual(legacy)
+    expect(findReviewedSequence(defifaSequenceScope({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' }), ALICE)?.calls.every(call => call.chainId === 1)).toBe(true)
+  })
   it('wallet-action:mint-defifa-nfts sends the exact prepared call and verifies its receipt before claiming success', async () => {
     await openReview()
     expect(text(renderer.root)).toContain('including NFTs you already hold')
@@ -305,8 +327,8 @@ describe('native Defifa checkout through the reviewed engine', () => {
     wallet.client.readContract.mockImplementation(async ({ functionName, blockNumber }: { functionName: string; blockNumber?: bigint }) => functionName === 'allowance' ? blockNumber === undefined ? 0n : 100n : Promise.reject(new Error('Unexpected read')))
     const { writeHolds } = await import('@/lib/write-holds')
     const { findReviewedSequence } = await import('@bananapus/nana-sdk-core/review')
-    const { defifaWriteNamespace } = await import('@/lib/defifa-write-recovery')
-    const namespace = defifaWriteNamespace({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })
+    const { defifaSequenceScope } = await import('@/lib/defifa-write-recovery')
+    const namespace = defifaSequenceScope({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })
     /** The Safe runs each held proposal: its execution mines, and the hold settles on it. */
     const SAFE_EXEC_ABI = parseAbi(['function execTransaction(address to, uint256 value, bytes data, uint8 operation, uint256 safeTxGas, uint256 baseGas, uint256 gasPrice, address gasToken, address refundReceiver, bytes signatures) payable returns (bool)'])
     const readReceipt = wallet.client.getTransactionReceipt.getMockImplementation()!
