@@ -245,6 +245,10 @@ beforeEach(() => {
     if (functionName === 'allowance') return args?.length === 3 ? [0n, 0, 0] : 0n
     if (functionName === 'balanceOf') return 10n ** 30n
     if (functionName === 'loanOf') return { amount: 5_000_000n, collateral: 10n ** 18n, createdAt: 1, prepaidFeePercent: 25, prepaidDuration: 0, sourceToken: USDC }
+    if (functionName === 'TERMINAL') return TERMINAL
+    if (functionName === 'revnetIdOfLoanWith') return 42n
+    if (functionName === 'accountingContextForTokenOf') return { token: USDC, decimals: 6, currency: 909516616 }
+    if (functionName === 'symbol') return 'USDC'
     if (functionName === 'determineSourceFeeAmount') return 50_000n
     throw new Error(`Unexpected read ${functionName}`)
   })

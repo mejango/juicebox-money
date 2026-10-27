@@ -441,3 +441,27 @@ describe('launch summary creation fees', () => {
     expect(details.findAllByType('dd').map(textOf)).toEqual(['…', '…', '…', '…'])
   })
 })
+
+
+describe('split-sale token credit control', () => {
+  it('hides the ineffective revnet setting and preserves the ordinary project option', async () => {
+    const saved = draft('revnet')
+    saved.ticker = 'REV'
+    saved.storeConfig.issueTokensForSplits = true
+    const root = await mountDraft(saved)
+    const config = root.findAllByType('button').find(node => textOf(node).startsWith('Shop config'))!
+    await act(async () => config.props.onClick())
+    expect(textOf(root)).not.toContain('Full token credit on split sales')
+    await selectFlavor(root, 'project')
+    const option = root.findAllByProps({ role: 'checkbox' }).find(node => textOf(node).startsWith('Full token credit on split sales'))!
+    expect(option).toBeDefined()
+    expect(option.props['aria-checked']).toBe(true)
+    await act(async () => option.props.onClick())
+    expect((await persistedDraft()).storeConfig.issueTokensForSplits).toBe(false)
+    await selectFlavor(root, 'revnet')
+    expect(textOf(root)).not.toContain('Full token credit on split sales')
+    await selectFlavor(root, 'project')
+    const restored = root.findAllByProps({ role: 'checkbox' }).find(node => textOf(node).startsWith('Full token credit on split sales'))!
+    expect(restored.props['aria-checked']).toBe(false)
+  })
+})

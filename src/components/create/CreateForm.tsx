@@ -4062,7 +4062,7 @@ export function CreateForm() {
                       SPLIT_SALES_TOKEN_CREDIT_DESCRIPTION,
                     ],
                   ] as const
-                ).map(([key, title, blurb]) => (
+                ).filter(([key]) => flavor !== "revnet" || key !== "issueTokensForSplits").map(([key, title, blurb]) => (
                   <CheckRow
                     key={key}
                     checked={storeConfig[key]}
