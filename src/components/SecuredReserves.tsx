@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
+import { refreshHomepageReserves } from '@/app/actions/homepage-reserves'
 import { formatAmount } from '@/lib/format'
 import type { HomepageReserves } from '@/lib/homepage-reserves'
 import { chainName } from '@/lib/urn'
@@ -147,7 +148,10 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
       {totalUsd === null || points === null || (metric === 'secured' && data.chains === null) ? (
         <p className="text-center text-xs text-smoke-600 md:text-left">
           {totalUsd === null ? 'This total is unavailable.' : points === null ? 'History is unavailable.' : 'Balance breakdown is unavailable.'}{' '}
-          <button type="button" className="underline disabled:opacity-50" disabled={refreshing} onClick={() => startRefresh(() => router.refresh())}>
+          <button type="button" className="underline disabled:opacity-50" disabled={refreshing} onClick={() => startRefresh(async () => {
+            await refreshHomepageReserves().catch(() => undefined)
+            router.refresh()
+          })}>
             {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         </p>

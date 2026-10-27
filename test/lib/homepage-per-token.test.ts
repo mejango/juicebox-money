@@ -52,7 +52,8 @@ let historyFails = false
 let inflowsFail = false
 let empty = false
 
-vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn }))
+const revalidate = vi.hoisted(() => vi.fn())
+vi.mock('next/cache', () => ({ unstable_cache: (fn: unknown) => fn, revalidatePath: revalidate }))
 vi.mock('@/lib/project-metadata-fill', () => ({ fillIndexedMetadata: async (items: unknown) => items }))
 vi.mock('@/lib/bendystraw', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/bendystraw')>()),
@@ -82,12 +83,13 @@ const refresh = vi.hoisted(() => vi.fn())
 vi.mock('next/navigation', () => ({ useRouter: () => ({ refresh }) }))
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 vi.mock('@/components/SecuredReserveChart', () => ({ SecuredReserveChart: () => null }))
+import * as homepageRefresh from '@/app/actions/homepage-reserves'
 import { SecuredReserves } from '@/components/SecuredReserves'
 const { getTopBalanceProjects, getHomepageBalanceGroups } = await import('@/lib/top-projects')
 const { getHomepageReserves } = await import('@/lib/homepage-reserves')
 
 describe('homepage per-token data', () => {
-  beforeEach(() => { volumeHistoryFails = balancesFail = groupsFail = historyFails = inflowsFail = empty = false })
+  beforeEach(() => { revalidate.mockReset(); refresh.mockReset(); volumeHistoryFails = balancesFail = groupsFail = historyFails = inflowsFail = empty = false })
   it('counts a multi-token project in the Secured total, one line per token', async () => {
     const reserves = await getHomepageReserves()
     expect(reserves.totalUsd).toBeCloseTo(2_005.2)
@@ -198,6 +200,7 @@ describe('homepage per-token data', () => {
       const retry = host.querySelector('button')!
       expect(retry.textContent).toBe('Refresh')
       await act(async () => retry.click())
+      expect(revalidate).toHaveBeenCalledExactlyOnceWith('/')
       expect(refresh).toHaveBeenCalled()
       groupsFail = false
       const recovered = await getHomepageReserves()
@@ -212,6 +215,35 @@ describe('homepage per-token data', () => {
     } finally {
       await act(async () => root.unmount())
       host.remove()
+    }
+  })
+
+  it("shows pending refresh feedback and permits retry after a failed refresh", async () => {
+    groupsFail = true
+    const data = await getHomepageReserves()
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    let finish!: () => void
+    const pending = new Promise<void>(resolve => { finish = resolve })
+    const action = vi.spyOn(homepageRefresh, 'refreshHomepageReserves').mockReturnValueOnce(pending)
+    try {
+      await act(async () => root.render(createElement(SecuredReserves, { data })))
+      const retry = host.querySelector('button')!
+      act(() => retry.click())
+      expect(retry.disabled).toBe(true)
+      expect(retry.textContent).toContain('Refreshing…')
+      await act(async () => { finish(); await pending })
+      expect(retry.disabled).toBe(false)
+      revalidate.mockImplementationOnce(() => { throw new Error('network unavailable') })
+      await act(async () => retry.click())
+      expect(host.textContent).toContain('Unavailable')
+      expect(retry.disabled).toBe(false)
+      await act(async () => retry.click())
+      expect(revalidate).toHaveBeenCalledTimes(2)
+      expect(refresh).toHaveBeenCalledTimes(3)
+    } finally {
+      action.mockRestore()
+      await act(async () => root.unmount())
     }
   })
 
