@@ -96,14 +96,15 @@ export function useReviewedAction(chainId?: number) {
     setSentOn(action.calls[0]?.chainId)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
-      const ended = await runner.run({
+      const ran = await runner.run({
         ...action,
         description: reviewDescription(action.description, viaSafe ? SAFE_NONCE_GUIDANCE : null),
         ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
       })
-      // A failed run shows its line through `error` and its value through `failure`. A sent step whose
-      // receipt is still being verified is pending (`phase`), never failed: the hook ends it done itself.
-      const done = ended?.status === 'failed' || ended?.status === 'receipt' ? null : ended
+      // A sent step whose receipt is still being verified is pending (`phase`), never failed, until
+      // its hold ends the run. A failed run shows its line through `error` and its value through `failure`.
+      const ended = ran?.status === 'receipt' ? await ran.ended() : ran
+      const done = ended?.status === 'failed' ? null : ended
       setResult(done)
       setCancelled(ended === null && !unmounted().aborted)
       return done

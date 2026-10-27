@@ -120,6 +120,7 @@ afterEach(() => {
   currentWallet = walletClient
   activeAccount = ALICE
   acquireWallet = undefined
+  client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
 })
 
 /** The review UI confirms every prompt. */
@@ -206,6 +207,27 @@ describe('useReviewedAction', () => {
     expect(writeHolds.open({ chainId: 10, account: ALICE, safe: false, namespace: intent, call }).peek().status).toBe('clear')
     await act(async () => renderer.unmount())
   })
+
+  it('keeps a send whose receipt is still confirming pending, and returns done once its hold verifies it', async () => {
+    confirmEveryReview()
+    const lagging = vi.fn(async (): Promise<ReturnType<typeof receipt>> => { throw new Error('lagging node') })
+    client.getTransactionReceipt.mockImplementation(lagging)
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const built = REQUESTS.pay as Built
+    const call = { chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n, intent: `lag-${crypto.randomUUID()}` }
+    let ended: unknown = 'pending'
+    await act(async () => { void ref.current!.run({ account: ALICE, calls: [call] }).then(value => { ended = value }) })
+    await vi.waitFor(() => expect(ref.current!.phase).toBe('pending'))
+    expect(ended).toBe('pending')
+    client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
+    // The hold's next look, a few seconds on, verifies it.
+    await act(async () => { await vi.waitFor(() => expect(ended).not.toBe('pending'), { timeout: 15_000, interval: 100 }) })
+    expect(ended).toMatchObject({ status: 'done', hashes: [expect.any(String)] })
+    expect(ref.current!.phase).toBe('success')
+    await act(async () => renderer.unmount())
+  }, 20_000)
 
   it('keeps intent and legacy hold namespaces', async () => {
     confirmEveryReview()
