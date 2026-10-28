@@ -24,8 +24,11 @@ function formatWalletBalance(
   value: bigint | undefined,
   decimals: number,
   symbol: string,
+  status?: { isLoading: boolean; isError: boolean },
 ) {
-  if (value === undefined) return 'Loading…'
+  if (status?.isError) return 'Unavailable'
+  if (status?.isLoading) return 'Loading…'
+  if (value === undefined) return 'Unavailable'
   return `${formatTokenAmount(value, decimals)} ${symbol}`
 }
 
@@ -172,8 +175,8 @@ function SingleChainWalletBalances({
   const chain = JB_CHAINS[chainId]
   const nativeSymbol = chain?.nativeTokenSymbol ?? 'ETH'
   const usdc = USDC_ADDRESSES[chainId]
-  const { data: nativeBalance } = useBalance({ address, chainId })
-  const { data: usdcBalance } = useReadContract({
+  const nativeBalance = useBalance({ address, chainId })
+  const usdcBalance = useReadContract({
     abi: erc20Abi,
     address: usdc,
     chainId,
@@ -187,13 +190,13 @@ function SingleChainWalletBalances({
       <dl className="space-y-1.5">
         <BalanceRow
           label={nativeSymbol}
-          value={formatWalletBalance(nativeBalance?.value, 18, nativeSymbol)}
+          value={formatWalletBalance(nativeBalance.data?.value, 18, nativeSymbol, nativeBalance)}
         />
         <BalanceRow
           label="USDC"
           value={
             usdc
-              ? formatWalletBalance(usdcBalance, 6, 'USDC')
+              ? formatWalletBalance(usdcBalance.data, 6, 'USDC', usdcBalance)
               : 'Unavailable'
           }
         />
