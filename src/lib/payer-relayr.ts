@@ -615,7 +615,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             },
           }, reviewedSendDeps)
         } catch (error) {
-          if (session.outcomes[index].state !== 'submitted' || !(error instanceof engine.ReviewedCallRevertedError || engine.isTransactionReceiptUnavailableError(error))) throw error
+          if (session.outcomes[index].state !== 'submitted' || !(error instanceof engine.ReviewedCallRevertedError || error instanceof engine.ReviewedReceiptUnverifiedError)) throw error
         }
       }
       if (!outcome.hash && outcome.safeProposalHash) {

@@ -2151,7 +2151,8 @@ export function PayPanel({
                 : null
           }
           onClose={() => {
-            if (paymentSequenceLocked(sequenceStarted, sequencePending)) return;
+            // A payment its hold is following closes as held: only the wait ends, and Pay stays locked.
+            if (paymentSequenceLocked(sequenceStarted, sequencePending) && !tx.dismiss()) return;
             // An unproven or lost Safe stage ends with its line: Done dismisses it,
             // so its call is the user's again and the panel is free.
             if (sequenceSafeReleasable) dismissSequenceSafeStage();

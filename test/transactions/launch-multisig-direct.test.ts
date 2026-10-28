@@ -226,7 +226,10 @@ describe('direct launch Safe setup', () => {
   it('holds a wallet reply that is no transaction hash, and reads no receipt for it', async () => {
     const args = options()
     mocks.write.mockResolvedValue('0x1234')
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/transaction identity/)
+    // Held as sent, unverified: the site's refusal of the reply is its cause.
+    const held = await prepareLaunchMultisigs(args).catch((error: Error & { cause?: Error }) => error)
+    expect(held).toMatchObject({ name: 'ReviewedReceiptUnverifiedError' })
+    expect((held as { cause?: Error }).cause?.message).toMatch(/transaction identity/)
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
@@ -274,7 +277,9 @@ describe('direct launch Safe setup', () => {
       storage.setItem.mockImplementation(() => { throw new Error('quota') })
       return HASH
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('recording it failed')
+    const held = await prepareLaunchMultisigs(args).catch((error: Error) => error)
+    expect(held).toMatchObject({ name: 'ReviewedReceiptUnverifiedError' })
+    expect((held as { cause?: Error }).cause?.message).toMatch('recording it failed')
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
   })
