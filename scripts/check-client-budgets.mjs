@@ -51,7 +51,8 @@ const routes = [
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
-  { route: '/[urn]', path: '/eth:1', kib: 521, text: 'Browser Fixture Project' },
+  // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
+  { route: '/[urn]', path: '/eth:1', kib: 523, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   { route: '/account/[address]', path: `/account/${account}`, kib: 418, text: 'Holdings' },
@@ -72,7 +73,8 @@ const budgets = {
   // Explicit stage ordering, bounded signatures and confirmed-result recovery: measured 2671.5 KiB.
   // Acquisition and generic Safe policy guards: measured 2677.6 KiB, rounded up only.
   // Exact loan-source units and frozen repayment metadata: measured 2678.0 KiB, just above2678.
-  allScripts: 2679 * KIB,
+  // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
+  allScripts: 2680 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

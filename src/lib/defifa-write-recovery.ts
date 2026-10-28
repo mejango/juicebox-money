@@ -25,11 +25,11 @@ export const defifaWriteNamespace = (scope: DefifaRecoveryScope) => `defifa:${sc
 export const defifaSequenceScope = (scope: DefifaRecoveryScope) => `${defifaWriteNamespace(scope)}:chain-${scope.chainId}`
 const matchesChain = (scope: DefifaRecoveryScope) => (calls: readonly { chainId: number }[]) => calls.every(call => call.chainId === scope.chainId)
 
-/** Keep exact same-chain legacy runs recoverable, leaving another chain's saved sequence untouched. */
-export async function defifaSequenceCalls<Call>(scope: DefifaRecoveryScope, calls: Call[]) {
+/** Keep exact same-chain legacy runs recoverable, leaving another chain's saved sequence untouched. `approved`: its approval was just verified, so the run continues at the mint. */
+export async function defifaSequenceCalls<Call>(scope: DefifaRecoveryScope, calls: Call[], approved = false) {
   const { sequenceCalls } = await import('@/lib/reviewed-send')
-  const legacy = await sequenceCalls(defifaWriteNamespace(scope), scope.account, calls, matchesChain(scope))
-  return legacy.saved ? legacy : sequenceCalls(defifaSequenceScope(scope), scope.account, calls, matchesChain(scope))
+  const legacy = await sequenceCalls(defifaWriteNamespace(scope), scope.account, calls, matchesChain(scope), approved)
+  return legacy.saved ? legacy : sequenceCalls(defifaSequenceScope(scope), scope.account, calls, matchesChain(scope), approved)
 }
 
 /** A proven mint can finish its own legacy sequence, never another chain's run under that old key. */

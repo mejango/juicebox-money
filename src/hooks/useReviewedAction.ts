@@ -3,7 +3,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Address, TransactionReceipt } from 'viem'
-import { ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import { HELD_CONFIRMING_LINE, ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -86,6 +86,8 @@ export function useReviewedAction(chainId?: number) {
   /** The last run ended with nothing sent because the user closed its review or wallet prompt. */
   const [cancelled, setCancelled] = useState(false)
   const inFlight = useRef(false)
+  /** Ends the wait on a sent step the hold is following, once its confirm closes; core keeps following it. */
+  const stopWaiting = useRef<(() => void) | null>(null)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
     // A flow whose page closed opens no review.
@@ -96,18 +98,27 @@ export function useReviewedAction(chainId?: number) {
     setSentOn(action.calls[0]?.chainId)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
-      const ended = await runner.run({
+      const ran = await runner.run({
         ...action,
         description: reviewDescription(action.description, viaSafe ? SAFE_NONCE_GUIDANCE : null),
         ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
       })
-      // A failed run shows its line through `error` and its value through `failure`.
+      // A sent step whose receipt is still being verified is pending (`phase`), never failed, until
+      // its hold ends the run. A failed run shows its line through `error` and its value through `failure`.
+      // The last step's wait can end when its confirm closes; an earlier step's ending goes on to the next step.
+      const ended = ran?.status === 'receipt'
+        ? await Promise.race([ran.ended(), new Promise<null>(resolve => {
+          if (ran.step === action.calls.length - 1) stopWaiting.current = () => resolve(null)
+        })])
+        : ran
       const done = ended?.status === 'failed' ? null : ended
       setResult(done)
-      setCancelled(ended === null && !unmounted().aborted)
+      // Only a run that sent nothing was closed; a followed send closed early stays held.
+      setCancelled(ran === null && !unmounted().aborted)
       return done
     } finally {
       inFlight.current = false
+      stopWaiting.current = null
     }
   }
 
@@ -116,7 +127,8 @@ export function useReviewedAction(chainId?: number) {
     runner.phase === 'done' ? 'success'
       // A proposal the hold could no longer prove is held with its exit.
       : runner.phase === 'proposed' ? (held?.phase === 'held' ? 'unconfirmed' : 'submitted')
-        : runner.phase === 'receipt' ? 'pending'
+        // A send whose hold shows more than confirming (still in the wallet, say) is held with its line and exit.
+        : runner.phase === 'receipt' ? (held && held.line !== HELD_CONFIRMING_LINE ? 'unconfirmed' : 'pending')
           : runner.phase !== 'idle' ? runner.phase
             : held ? 'unconfirmed'
               : runner.error || cancelled ? 'error'
@@ -137,11 +149,17 @@ export function useReviewedAction(chainId?: number) {
     void invalidateProjectDisplayQueries(queryClient, shownChainId)
   }, [confirmed, queryClient, shownChainId])
 
+  /** Whether it closed: never while a run's review or wallet is open; a followed send stays followed and held. */
   const reset = () => {
-    if (inFlight.current) return
+    if (stopWaiting.current) {
+      stopWaiting.current()
+      return true
+    }
+    if (inFlight.current) return false
     setResult(null)
     setCancelled(false)
     runner.reset()
+    return true
   }
   // A finished run's, a settled proposal's, or a step that mined and reverted.
   const receipt: TransactionReceipt | null = result?.status === 'done'

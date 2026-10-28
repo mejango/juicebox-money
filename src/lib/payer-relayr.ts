@@ -585,6 +585,8 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             account: session.account,
             calls: [{ ...reviewedDeployment(call, session.transport), intent: payerNamespace(session.id, call.chainId) }],
             title: 'Review payer deployment',
+            // Its receipt still confirming is followed; the outcome already reads as submitted.
+            follow: {},
             ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: 'Agree & continue to Safe' } : {}),
             ...(plan ? { plan } : {}),
             guard: assertNoViewAs,
@@ -613,7 +615,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             },
           }, reviewedSendDeps)
         } catch (error) {
-          if (session.outcomes[index].state !== 'submitted' || !(error instanceof engine.ReviewedCallRevertedError || engine.isTransactionReceiptUnavailableError(error))) throw error
+          if (session.outcomes[index].state !== 'submitted' || !(error instanceof engine.ReviewedCallRevertedError || error instanceof engine.ReviewedReceiptUnverifiedError)) throw error
         }
       }
       if (!outcome.hash && outcome.safeProposalHash) {

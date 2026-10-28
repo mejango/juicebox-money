@@ -348,9 +348,8 @@ beforeEach(() => {
 
 describe('Relayr quote and payment boundaries', () => {
   it('restores a quoted fee attempt after a proven acquisition failure, without opening the wallet', async () => {
-    const { WalletNotInvokedError } = await import('@/lib/wallet-refusal')
-    const { ReviewLineError } = await import('@bananapus/nana-sdk-core/review')
-    mocks.acquisitionFailure = new WalletNotInvokedError(new ReviewLineError('Connected account changed. Review again.'), false)
+    const { WalletNotInvokedError } = await import('@bananapus/nana-sdk-core/review')
+    mocks.acquisitionFailure = new WalletNotInvokedError('Connected account changed. Review again.')
     const onSending = vi.fn()
     const error = await pay(payment, [1], { onSending }).catch(error => error)
     expect(onSending).toHaveBeenCalledOnce()

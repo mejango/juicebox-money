@@ -36,7 +36,7 @@ vi.mock('@wagmi/core', async () => {
   return {
     getAccount: mocks.account, waitForTransactionReceipt: mocks.receipt,
     getPublicClient: (_config: unknown, { chainId }: { chainId: number }) => publicClient(chainId as never),
-    getWalletClient: async () => ({ chain: { id: 8453 }, sendTransaction: mocks.write }),
+    getWalletClient: async () => (await import('../support/viem-wallet')).viemWallet(tx => mocks.write(tx), () => mocks.account()?.chainId),
     switchChain: (_config: unknown, { chainId }: { chainId: number }) => mocks.switchChain(chainId),
   }
 })
@@ -226,7 +226,10 @@ describe('direct launch Safe setup', () => {
   it('holds a wallet reply that is no transaction hash, and reads no receipt for it', async () => {
     const args = options()
     mocks.write.mockResolvedValue('0x1234')
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow(/transaction identity/)
+    // Held as sent, unverified: the site's refusal of the reply is its cause.
+    const held = await prepareLaunchMultisigs(args).catch((error: Error & { cause?: Error }) => error)
+    expect(held).toMatchObject({ name: 'ReviewedReceiptUnverifiedError' })
+    expect((held as { cause?: Error }).cause?.message).toMatch(/transaction identity/)
     expect(setup()).toEqual({ phase: 'signing' })
     expect(mocks.receipt).not.toHaveBeenCalled()
     await expect(prepareLaunchMultisigs(args)).rejects.toMatchObject({ name: 'SavedAttemptShownError' })
@@ -274,9 +277,11 @@ describe('direct launch Safe setup', () => {
       storage.setItem.mockImplementation(() => { throw new Error('quota') })
       return HASH
     })
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('recording it failed')
+    // The site's failed record never changes what was sent: the SDK settles it, and the
+    // flow stops at its own next record, the setup still marked signing for recovery.
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('could not be saved')
     expect(setup()).toEqual({ phase: 'signing' })
-    expect(mocks.receipt).not.toHaveBeenCalled()
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('blocks account drift during simulation before signing', async () => {
@@ -375,11 +380,37 @@ describe('direct launch Safe setup', () => {
   })
 
   it('keeps the submitted hash when receipt tracking is temporarily unavailable', async () => {
-    // Core's own wait sees the receipt; the setup's domain read then can't.
+    // Core's own wait sees the receipt; the hold's own read then can't, so the setup is still confirming.
     mocks.receipt.mockResolvedValueOnce({ status: 'success', blockNumber: 123n }).mockRejectedValue(new Error('RPC unavailable'))
-    await expect(prepareLaunchMultisigs(options())).rejects.toThrow('RPC unavailable')
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const args = options()
+      // The run follows it for two minutes, showing it as confirming, before it hands it back.
+      const refused = expect(prepareLaunchMultisigs(args)).rejects.toThrow('Confirming your transaction.')
+      await vi.advanceTimersByTimeAsync(121_000)
+      await refused
+      expect(args.onProgress).toHaveBeenCalledWith('Confirming Safe creation')
+    } finally {
+      vi.useRealTimers()
+    }
     expect(setup()).toEqual({ phase: 'confirming', txHash: HASH })
     expect(mocks.verifyCreated).not.toHaveBeenCalled()
+  })
+
+  it('follows a setup still confirming until its receipt reads, then completes it', async () => {
+    mocks.receipt.mockResolvedValueOnce({ status: 'success', blockNumber: 123n })
+      .mockRejectedValueOnce(new Error('RPC unavailable'))
+      .mockResolvedValue({ status: 'success', blockNumber: 123n })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    try {
+      const run = prepareLaunchMultisigs(options())
+      await vi.advanceTimersByTimeAsync(30_000)
+      await run
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(setup()).toEqual({ phase: 'done', txHash: HASH })
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('records a reverted setup separately and permits a new setup attempt', async () => {

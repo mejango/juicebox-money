@@ -606,7 +606,7 @@ async function sendContractAndConfirm({
   const before = safeContext
     ? await verifySafeWriteContext(chainId, address, expectedAccount, safeContext)
     : null
-  const { sendReviewed, isTransactionReceiptUnavailableError } = await loadReviewEngine()
+  const { sendReviewed, ReviewedReceiptUnverifiedError } = await loadReviewEngine()
   const reviewedSendDeps = await loadReviewedSendDeps()
   let sent: Hex | undefined
   let result
@@ -647,10 +647,12 @@ async function sendContractAndConfirm({
         }
       },
       onSubmitted: (_call, _step, hash) => { sent = hash },
+      // A receipt still confirming is followed before this resolves.
+      follow: { signal },
     }, reviewedSendDeps)
   } catch (error) {
-    // A submitted transaction is not reported as rejected because its receipt could not be read.
-    if (sent && isTransactionReceiptUnavailableError(error)) return { hash: sent, status: 'submitted' }
+    // A sent transaction whose receipt its hold has not verified is submitted, never rejected.
+    if (sent && error instanceof ReviewedReceiptUnverifiedError) return { hash: sent, status: 'submitted' }
     throw error
   }
   let hash: Hex

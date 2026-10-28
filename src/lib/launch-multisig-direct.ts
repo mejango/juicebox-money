@@ -218,6 +218,7 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
           intent: setupNamespace(chainId, account, salt),
         }],
         title: 'Review Safe creation',
+        follow: { onConfirming: () => onProgress('Confirming Safe creation') },
         description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
         ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
         reverify: async () => { read(); await checkLaunchMultisigs(client, plan); await simulateSetup() },

@@ -155,7 +155,8 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
       try {
         mined = hold ? await core.waitForTrackedReceipt(hold.client(call.chainId) as never, hash, { attempts: 1, intervalMs: 0 }) : await receipt!(hash, call.chainId)
       } catch (cause) {
-        throw new core.TransactionReceiptUnavailableError(hash, call.chainId, { cause })
+        // As core: a sent step whose receipt can't be read ends unverified, with what resumes it.
+        throw new core.ReviewedReceiptUnverifiedError(step, hash, undefined, { call, reservation: undefined }, { cause })
       }
       if (mined.status !== 'success') throw new core.ReviewedCallRevertedError(step, hash, mined)
       hashes.push(hash)

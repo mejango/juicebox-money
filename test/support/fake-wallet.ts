@@ -247,7 +247,11 @@ registerReviewHandler(async prompt => (await wallet.requestReview(prompt.model))
 /** The `@wagmi/core` actions core's reviewed run calls, answered by the fake wallet. */
 export const walletActions = {
   getAccount: () => ({ address: wallet.account, chainId: 1 }),
-  getWalletClient: async () => wallet.walletClient,
+  getWalletClient: async () => {
+    // The wallet's chain is the connected account's, as the test's own `getAccount` reports it.
+    const { getAccount } = await import('@wagmi/core')
+    return (await import('./viem-wallet')).viemWallet(tx => wallet.walletClient.sendTransaction(tx), () => getAccount({} as never).chainId)
+  },
   getPublicClient: () => wallet.client,
   switchChain: (_config: unknown, args: { chainId: number }) => wallet.switchChain(args),
 }

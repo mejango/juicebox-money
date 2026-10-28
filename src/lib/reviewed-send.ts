@@ -26,7 +26,8 @@ export const reviewedSendDeps: ReviewedSendDeps = {
 export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
   // The send engine loads with the write, not with the page.
   const { sendReviewed } = await loadReviewEngine()
-  return sendReviewed({ ...action, guard: assertNoViewAs }, reviewedSendDeps)
+  // A step still confirming is followed in the run unless the caller set its own `follow`.
+  return sendReviewed({ follow: {}, ...action, guard: assertNoViewAs }, reviewedSendDeps)
 }
 
 /** Drop the run saved under `scope` once its last step is proven: nothing of it is left to continue. A step still held keeps it. */
@@ -49,19 +50,21 @@ export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as 
  * never under the fresh plan's summary or checks. `scope` is the run's: none
  * for a lone call, which its write hold and the hold's exit decide alone.
  * `held` is the saved step in flight, which the resumed run settles first.
+ * `keepCompleted` continues a run whose completed steps this page just verified.
  */
 export async function sequenceCalls<Call>(
   scope: string,
   account: `0x${string}`,
   calls: Call[],
   matches?: (saved: readonly ReviewedCall[]) => boolean,
+  keepCompleted = false,
 ): Promise<{ calls: Call[]; saved: boolean; scope?: string; held?: number }> {
   const engine = await loadReviewEngine()
   const unfinished = engine.findReviewedSequence(scope, account)
   const fresh = { calls, saved: false, ...(calls.length > 1 ? { scope } : {}) }
   // A legacy scope may be shared across chains: match this snapshot before adopting or discarding it.
   if (!unfinished || (matches && !matches(unfinished.calls))) return fresh
-  if (!unfinished.sending && !unfinished.proposed) {
+  if (!unfinished.sending && !unfinished.proposed && !keepCompleted) {
     try {
       await engine.discardReviewedSequence(unfinished)
       return fresh
