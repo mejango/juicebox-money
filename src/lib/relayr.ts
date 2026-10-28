@@ -1112,6 +1112,7 @@ export async function relayrPay({
   reverifyBeforeSendOnly = false,
   onSending,
   onSent,
+  onConfirming,
   planned,
 }: {
   /** One of the quote's payment options, as Relayr returned it. */
@@ -1132,6 +1133,8 @@ export async function relayrPay({
   onSending?: (details: RelayrPaymentDetails) => void | Promise<void>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void | Promise<void>
+  /** The sent payment's receipt is still confirming, with the line to show: it is followed before this resolves. */
+  onConfirming?: (line: string) => void
   /**
    * The plan whose review showed this quote's Relayr round and its fee bound:
    * a first payment within it is sent with no prompt of its own.
@@ -1166,7 +1169,7 @@ export async function relayrPay({
   if (!reverifyBeforeSendOnly) await reverify?.()
   await requireRelayrPaymentRuntime(client)
 
-  const { sendReviewed, payRelayrReviewed, ReviewedCallRevertedError } = await loadReviewEngine()
+  const { sendReviewed, payRelayrReviewed, ReviewedCallRevertedError, HELD_CONFIRMING_LINE } = await loadReviewEngine()
   const reviewedSendDeps = await loadReviewedSendDeps()
   if (planned && !sent.length) {
     // The plan's review showed this round's fee bound: core spends it, pays
@@ -1236,6 +1239,7 @@ export async function relayrPay({
         ...relayrPaymentReview(reviewed.calldata),
       }],
       title: 'Review execution payment',
+      follow: { onConfirming: () => onConfirming?.(HELD_CONFIRMING_LINE) },
       description: [note,
         'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
       ].filter(Boolean).join(' '),

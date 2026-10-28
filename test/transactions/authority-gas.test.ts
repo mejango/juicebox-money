@@ -1349,6 +1349,32 @@ describe('One safety-check review per project batch', () => {
 
 
 describe('authority final wallet context', () => {
+  it('shows a direct step still confirming as pending and goes on to the next group', async () => {
+    mocks.client.estimateGas.mockResolvedValue(21_000n)
+    mocks.readAuthorityIdentity.mockImplementation(async (_client, authority) => authority === SAFE
+      ? { kind: 'safe', threshold: 2, owners: [ALICE] }
+      : { kind: 'eoa' })
+    mocks.runSafeCalls.mockResolvedValueOnce([{ chainId: 8453, mode: 'service', status: 'queued', nonce: 0, safeTxHash: HASH }])
+    const engine = await loadReviewEngine()
+    const send = engine.sendReviewed
+    const spy = vi.spyOn(engine, 'sendReviewed').mockImplementation(async (action, deps) => {
+      action.follow?.onConfirming?.(0)
+      return send(action, deps)
+    })
+    const onProgress = vi.fn()
+    try {
+      await runAuthorityCalls({ signal: flow, onProgress, calls: [
+        { chainId: 11155111, authority: ALICE, target: TARGET, data: '0x1234' },
+        { chainId: 8453, authority: SAFE, target: TARGET, data: '0x5678' },
+      ] })
+    } finally {
+      spy.mockRestore()
+    }
+    expect(onProgress).toHaveBeenCalledWith({ kind: 'direct', message: engine.HELD_CONFIRMING_LINE })
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234'])
+    expect(mocks.runSafeCalls).toHaveBeenCalledOnce()
+  })
+
   it('passes the selected chain explicitly and preserves ambiguous wallet failures', async () => {
     const onBeforeSubmissionAborted = vi.fn()
     mocks.wallet.sendTransaction.mockRejectedValueOnce(new Error('Wallet response lost'))

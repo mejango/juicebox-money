@@ -647,6 +647,8 @@ async function sendContractAndConfirm({
         }
       },
       onSubmitted: (_call, _step, hash) => { sent = hash },
+      // A receipt still confirming is followed before this resolves.
+      follow: { signal },
     }, reviewedSendDeps)
   } catch (error) {
     // A submitted transaction is not reported as rejected because its receipt could not be read.

@@ -793,6 +793,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           journal!.phase = 'submitted'
           persist()
         },
+        onConfirming: onProgress,
       }))
     } catch (error) {
       const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!journal.payments?.length })

@@ -804,7 +804,7 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'direct') {
       // Core reviews the group once (or spends the parent plan), then sends,
       // simulates, holds and waits on each call in order.
-      const { sendReviewed } = await loadReviewEngine()
+      const { sendReviewed, HELD_CONFIRMING_LINE } = await loadReviewEngine()
       const exactOf = (call: AuthorityCall) => ({ to: call.target, data: call.data, value: call.value ?? 0n })
       /** The call core is sending now, for the final gate. */
       let current = group[0]
@@ -840,6 +840,8 @@ export async function runAuthorityCalls({
         beforeWallet: (_sent, step) => group[step].onSending?.('direct'),
         onUnsent: (_sent, step) => group[step].onBeforeSubmissionAborted?.(),
         onSubmitted: (_sent, step, hash) => group[step].onSubmitted?.(hash, 'direct'),
+        // A step still confirming is followed in the run, which then goes on to the next call.
+        follow: { onConfirming: () => onProgress?.({ kind: 'direct', message: HELD_CONFIRMING_LINE }) },
       }, reviewedSendDeps)
       if (result.status !== 'done') throw new Error('Connected wallet changed. Review this project action again.')
       directResults.push(...result.hashes)

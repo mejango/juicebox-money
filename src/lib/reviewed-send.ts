@@ -26,7 +26,8 @@ export const reviewedSendDeps: ReviewedSendDeps = {
 export async function sendReviewedWrite(action: Omit<ReviewedAction, 'guard'>) {
   // The send engine loads with the write, not with the page.
   const { sendReviewed } = await loadReviewEngine()
-  return sendReviewed({ ...action, guard: assertNoViewAs }, reviewedSendDeps)
+  // A step still confirming is followed in the run unless the caller set its own `follow`.
+  return sendReviewed({ follow: {}, ...action, guard: assertNoViewAs }, reviewedSendDeps)
 }
 
 /** Drop the run saved under `scope` once its last step is proven: nothing of it is left to continue. A step still held keeps it. */
