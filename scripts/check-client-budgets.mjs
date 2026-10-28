@@ -72,7 +72,8 @@ const budgets = {
   // Explicit stage ordering, bounded signatures and confirmed-result recovery: measured 2671.5 KiB.
   // Acquisition and generic Safe policy guards: measured 2677.6 KiB, rounded up only.
   // Exact loan-source units and frozen repayment metadata: measured 2678.0 KiB, just above2678.
-  allScripts: 2679 * KIB,
+  // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
+  allScripts: 2680 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
