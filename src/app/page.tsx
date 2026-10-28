@@ -22,6 +22,7 @@ import splitsIllustration from '@/assets/illustrations/splits.png'
 import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
 import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
+import { readIndexedMetadataJson } from '@/lib/metadata-json.server'
 import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
 import { ChainIcon } from '@/components/ChainIcon'
 import { HomeAuditPromptLink as AuditPromptLink } from './page-client'
@@ -265,7 +266,7 @@ async function ReservesPanel() {
 }
 
 async function ActivityPanel() {
-  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(9), [])
+  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(9, 0, readIndexedMetadataJson), [])
   return (
     <FreshActivity
       initialEvents={activity.slice(0, 8)}

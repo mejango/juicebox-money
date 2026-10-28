@@ -80,7 +80,7 @@ describe('native market inventory', () => {
     const image = `data:image/svg+xml;base64,${Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64')}`
     const uri = `data:application/json;base64,${Buffer.from(JSON.stringify({ name: 'Untrusted name', image, price: '0' })).toString('base64')}`
     const readContract = vi.fn().mockResolvedValue([{ id: 1, resolvedUri: uri }])
-    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toMatchObject({ 1: { name: 'Range 1', image } })
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toMatchObject({ media: { 1: { name: 'Range 1', image } }, failedTierIds: [] })
     expect(readContract).toHaveBeenCalledOnce()
     expect(readContract).toHaveBeenCalledWith(expect.objectContaining({ address: hook, functionName: 'tiersOf', args: [hook, [], true, 1n, 1n], blockNumber: 99n }))
     expect(shop!.tiers[0].price).toBe(1250000n)
@@ -89,8 +89,8 @@ describe('native market inventory', () => {
     mocks.inventory.mockResolvedValue(page(1, null))
     const shop = await readShop({} as PublicClient, 8453, 27, false, 'ETH')
     const readContract = vi.fn().mockRejectedValueOnce(new Error('Large URI RPC unavailable')).mockResolvedValueOnce([{ id: 2, resolvedUri: 'data:application/json;base64,e30=' }])
-    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ 1: { name: 'Range 1' } })
-    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ 1: { name: 'Range 1' } })
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ media: {}, failedTierIds: [1] })
+    expect(await resolveNativeShopMedia({ readContract } as unknown as PublicClient, shop!, [shop!.tiers[0]])).toEqual({ media: {}, failedTierIds: [1] })
     expect(shop!.tiers).toHaveLength(1)
   })
 

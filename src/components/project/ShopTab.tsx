@@ -64,6 +64,7 @@ import {
   timeAgo,
 } from '@/lib/format'
 import { TIER_UNLIMITED_SUPPLY } from '@/lib/tier-metadata'
+import { ShopMediaStatus } from '@/components/project/ShopMediaStatus'
 import { chainName } from '@/lib/urn'
 import { useLinkedDeployments } from '@/lib/sucker-group'
 import { wagmiConfig } from '@/providers/Providers'
@@ -209,7 +210,8 @@ export function ShopTab({
     query: { enabled: !!shop && shop.protocol !== 'defifa' && !!address, staleTime: 30_000 },
   })
 
-  const { data: mediaById } = useShop721Media(chainId, shop)
+  const media = useShop721Media(chainId, shop)
+  const mediaById = media.data
 
   const categories = useMemo(() => {
     if (!shop) return []
@@ -360,6 +362,7 @@ export function ShopTab({
 
   const inventory = (
     <div className="space-y-5">
+      <ShopMediaStatus failed={media.hasFailures} fetching={media.isFetching} retry={media.refetch} />
       <div className="flex flex-wrap justify-end gap-x-5 gap-y-2">
         {shop.tiers.length > 0 ? addItemsButton : null}
         {addManagerLink}

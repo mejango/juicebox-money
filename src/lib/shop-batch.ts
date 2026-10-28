@@ -4,6 +4,7 @@ import { decodeFunctionData, encodeFunctionData, zeroAddress, type Address, type
 import { clientFor } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { ipfsUrl } from '@/lib/format'
+import { fetchMetadataJson } from '@/lib/metadata-json'
 import { build721TierConfigs } from '@/lib/launch'
 import { loadProjectBatch, projectBatchScope, type ProjectBatchCall } from '@/lib/project-batch'
 import { storeItemsForChain, type PinnedStoreItemDraft } from '@/lib/store-items'
@@ -163,9 +164,12 @@ export async function readOriginalShopMetadata(encodedIpfsUri: Hex): Promise<Rec
   const cid = bytes32ToCidV0(encodedIpfsUri)
   const url = cid && ipfsUrl(`ipfs://${cid}`)
   if (!url) throw new Error('The original item metadata is not readable.')
-  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-  if (!response.ok) throw new Error('Could not load the original item metadata. Try again before replacing media.')
-  const metadata: unknown = await response.json()
+  let metadata: unknown
+  try {
+    metadata = await fetchMetadataJson(url, { signal: AbortSignal.timeout(15_000) })
+  } catch (error) {
+    throw new Error('Could not load the original item metadata. Try again before replacing media.', { cause: error })
+  }
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) throw new Error('The original item metadata is not a JSON object.')
   return metadata as Record<string, unknown>
 }

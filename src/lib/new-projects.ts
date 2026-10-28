@@ -1,5 +1,6 @@
 import { unstable_cache } from 'next/cache'
 import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
+import { readIndexedMetadataJson } from '@/lib/metadata-json.server'
 import { bendystraw, type BsProject } from './bendystraw'
 import { toUrn } from './urn'
 
@@ -33,7 +34,7 @@ const cachedNewProjects = unstable_cache(
       { policy: 'stable' },
     )
     const seen = new Set<string>()
-    const projects = await fillIndexedMetadata(data.projects.items)
+    const projects = await fillIndexedMetadata(data.projects.items, readIndexedMetadataJson)
     return projects.flatMap<NewProject>(project => {
       const group = project.suckerGroupId ?? `${project.chainId}-${project.projectId}`
       if (seen.has(group)) return []

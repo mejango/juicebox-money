@@ -7,6 +7,7 @@ import {
   getParticipantsForRefs,
   getRevnetOperatorCandidates,
   getRevnetPriceHistory,
+  getRecentActivity,
   getShopPurchases,
   normalizeBendystrawUrl,
   searchProjects,
@@ -31,6 +32,35 @@ function bodyOf(init?: RequestInit): {
 }
 
 describe('minimal Bendystraw client', () => {
+  it('passes the server metadata cache loader through fresh activity without importing it into shared readers', async () => {
+    const uri = 'ipfs://QmbWqxBEKC3P8tqsKc98xmWNzrzDtRLMiMPL8wBuTGsMnR'
+    const event = {
+      id: 'event', chainId: 1, projectId: 7, timestamp: 1,
+      from: '0x1111111111111111111111111111111111111111', txHash: `0x${'a'.repeat(64)}`,
+      ...Object.fromEntries([
+        'payEvent', 'cashOutTokensEvent', 'projectCreateEvent', 'addToBalanceEvent',
+        'mintTokensEvent', 'sendPayoutsEvent', 'sendReservedTokensToSplitsEvent',
+        'sendPayoutToSplitEvent', 'sendReservedTokensToSplitEvent', 'autoIssueEvent',
+        'borrowLoanEvent', 'repayLoanEvent', 'liquidateLoanEvent', 'mintNftEvent',
+        'deployErc20Event', 'setUriEvent', 'projectTransferEvent', 'operatorPermissionsSetEvent',
+        'rulesetQueuedEvent', 'addNftTierEvent', 'removeNftTierEvent', 'swapEvent',
+        'buybackPoolEvent', 'bridgeClaimEvent',
+      ].map(key => [key, null])),
+      project: { name: null, logoUri: null, metadataUri: uri, tokenSymbol: null, decimals: 18 },
+    }
+    const fetchMock = vi.fn().mockResolvedValueOnce(graphqlResponse({ data: {
+      activityEvents: { items: [event] },
+    } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const load = vi.fn<(url: string) => Promise<{ name: string }>>(async () => ({ name: 'Recovered project' }))
+    await expect(getRecentActivity(9, 0, load)).resolves.toMatchObject([
+      { id: 'event', project: { name: 'Recovered project' } },
+    ])
+    expect(load).toHaveBeenCalledOnce()
+    expect(load.mock.calls[0][0]).toContain('/ipfs/')
+    expect(fetchMock).toHaveBeenCalledOnce()
+  })
+
   it('can request fresh project data without Next revalidation caching', async () => {
     const fetchMock = vi.fn().mockResolvedValue(graphqlResponse({ data: { project: null } }))
     vi.stubGlobal('fetch', fetchMock)

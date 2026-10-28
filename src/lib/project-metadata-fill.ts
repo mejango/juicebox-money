@@ -1,4 +1,9 @@
 import { ipfsUrl } from '@/lib/format'
+import { fetchMetadataJson } from '@/lib/metadata-json'
+
+export type MetadataLoader = (url: string) => Promise<unknown>
+
+const loadMetadata: MetadataLoader = url => fetchMetadataJson(url, { signal: AbortSignal.timeout(8_000) })
 
 type IndexedNameRow = {
   name?: string | null
@@ -9,17 +14,12 @@ type IndexedNameRow = {
 
 async function fetchIndexedMetadata(
   metadataUri: string,
+  load: MetadataLoader,
 ): Promise<{ name?: unknown; logoUri?: unknown; projectTagline?: unknown } | null> {
   const url = ipfsUrl(metadataUri)
   if (!url) return null
   try {
-    // The uri is content-addressed, so the cache window only bounds a miss.
-    const response = await fetch(url, {
-      next: { revalidate: 600 },
-      signal: AbortSignal.timeout(8_000),
-    })
-    if (!response.ok) return null
-    const json = (await response.json()) as unknown
+    const json = await load(url)
     return typeof json === 'object' && json !== null && !Array.isArray(json)
       ? (json as { name?: unknown; logoUri?: unknown; projectTagline?: unknown })
       : null
@@ -36,11 +36,12 @@ async function fetchIndexedMetadata(
  */
 export async function fillIndexedMetadata<T extends IndexedNameRow>(
   rows: readonly T[],
+  load: MetadataLoader = loadMetadata,
 ): Promise<T[]> {
   return Promise.all(
     rows.map(async row => {
       if (row.name || row.logoUri || !row.metadataUri) return row
-      const metadata = await fetchIndexedMetadata(row.metadataUri)
+      const metadata = await fetchIndexedMetadata(row.metadataUri, load)
       if (!metadata) return row
       return {
         ...row,

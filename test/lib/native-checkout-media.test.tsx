@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
-import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721Media, type Shop } from '@/hooks/useShop721'
+import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721Media, type Shop, type ShopMediaResult } from '@/hooks/useShop721'
 
 const mocks = vi.hoisted(() => ({ read: vi.fn(), kept: vi.fn() }))
 vi.mock('wagmi', () => ({ usePublicClient: () => ({ readContract: mocks.read }) }))
@@ -34,7 +34,9 @@ function MediaProbe({ shop, ids, chainId }: { shop: Shop; ids: readonly number[]
 }
 function query(shop: Shop, ids: readonly number[], chainId: 1 | 8453 = 8453): MediaQuery {
   renderToStaticMarkup(createElement(MediaProbe, { shop, ids, chainId }))
-  return mocks.kept.mock.calls.at(-1)![0] as MediaQuery
+  const captured = mocks.kept.mock.calls.at(-1)![0] as { queryKey: readonly unknown[]; queryFn: (context: { client: QueryClient; queryKey: readonly unknown[] }) => Promise<ShopMediaResult> }
+  const client = new QueryClient()
+  return { queryKey: captured.queryKey, queryFn: async () => (await captured.queryFn({ client, queryKey: captured.queryKey })).media }
 }
 const allIds = Array.from({ length: 20 }, (_, index) => index + 1)
 let fetch: ReturnType<typeof vi.fn>
@@ -111,7 +113,7 @@ describe('native checkout cosmetic media admission', () => {
     mocks.read.mockRejectedValue(new Error('Cosmetic resolver unavailable'))
     const media = await query(shop, allIds).queryFn()
     expect(mocks.read).toHaveBeenCalledTimes(NFT_CHECKOUT_PREVIEW_PAGE_SIZE)
-    expect(media).toEqual(Object.fromEntries(shop.tiers.slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE).map(tier => [tier.id, { name: tier.name }])))
+    expect(media).toEqual({})
     expect(shop).toEqual(original)
     expect(fetch).not.toHaveBeenCalled()
   })

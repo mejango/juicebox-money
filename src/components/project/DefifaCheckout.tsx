@@ -13,6 +13,7 @@ import { SAVED_SEQUENCE_LINE } from '@/lib/reviewed-send'
 import { hashOf, liveStep, reviewedCall, useReviewedAction, type ReviewedRun, type TxRequest } from '@/hooks/useReviewedAction'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, NFT_CHECKOUT_PREVIEW_PAGE_SIZE, SHOP_721_QUERY_PREFIX, useShop721Media, type Shop } from '@/hooks/useShop721'
 import { NftCheckoutCard } from '@/components/project/NftCheckoutCard'
+import { ShopMediaStatus } from '@/components/project/ShopMediaStatus'
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from '@/components/project/CheckoutAmountRow'
 import { NftCartLine } from '@/components/project/NftCartLine'
 import { shopCartTotal } from '@/lib/shop-cart-total'
@@ -60,7 +61,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const pageCount = Math.max(1, Math.ceil(shop.tiers.length / NFT_CHECKOUT_PREVIEW_PAGE_SIZE))
   const visiblePage = Math.min(page, pageCount - 1)
   const visibleTiers = shop.tiers.slice(visiblePage * NFT_CHECKOUT_PREVIEW_PAGE_SIZE, (visiblePage + 1) * NFT_CHECKOUT_PREVIEW_PAGE_SIZE)
-  const { data: mediaById } = useShop721Media(chainId, shop, visibleTiers.map(tier => tier.id))
+  const media = useShop721Media(chainId, shop, visibleTiers.map(tier => tier.id))
+  const mediaById = media.data
   const [delegate, setDelegate] = useState('')
   const [review, setReview] = useState<Review | null>(null)
   const [preparing, setPreparing] = useState(false)
@@ -271,6 +273,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const frozenAmount = review ? `${formatUnits(review.prepared.amount, review.prepared.inventory.pricing.decimals)} ${review.symbol}` : ''
   const busy = tx.busy || checking
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['pay']} active={!!review}><div className="space-y-4">
+    <ShopMediaStatus failed={media.hasFailures} fetching={media.isFetching} retry={media.refetch} />
     <p className="text-sm text-smoke-600">Protocol phase: {defifaPhaseLabel(shop.phase)}</p>
       <div className="mt-4">
         <span className="field-label">Shop</span>

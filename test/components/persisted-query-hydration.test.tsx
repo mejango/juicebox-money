@@ -14,8 +14,8 @@ const shop = {
   hook: `0x${'1'.repeat(40)}`,
   tiers: [{ id: 1, encodedIpfsUri: '0x01', resolvedUri: 'ipfs://item' }],
 } as unknown as Shop
-const key = ['shop721Media', 1, shop.hook, '1:0x01:ipfs://item']
-const metadata = { 1: { name: 'Saved shop item' } }
+const key = ['shop721Media', 2, 1, shop.hook, '1:0x01:ipfs://item']
+const metadata = { media: { 1: { name: 'Saved shop item' } }, failedTierIds: [] }
 const withClient = (client: QueryClient, view: ReactNode) => <QueryClientProvider client={client}>{view}</QueryClientProvider>
 
 function ShopItem({ seen }: { seen?: string[] }) {
@@ -84,7 +84,7 @@ describe('persisted shop data and component hydration', () => {
     })
     expect(seen[0]).toBe('Saved shop item')
     await act(async () => {
-      browser.setQueryData(key, { 1: { name: 'Updated shop item' } })
+      browser.setQueryData(key, { media: { 1: { name: 'Updated shop item' } }, failedTierIds: [] })
       await new Promise(resolve => setTimeout(resolve, 0))
     })
     expect(host.textContent).toBe('Updated shop item')

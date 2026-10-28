@@ -15,6 +15,7 @@ import { projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
 import { useProjectHandleFromRoute } from '@/hooks/useProjectHandleFromRoute'
 import { useViewAs } from '@/lib/viewAs'
 import { useResolvedProjectRoute } from '@/providers/ProjectRouteContext'
+import { ParaLocalDisconnectError, ParaSessionLogoutError } from '@/providers/para-logout'
 
 // The menu's contents load with the menu: balances (bendystraw and token
 // reads), View as (ENS lookups) and Get funds. Pointing at the button
@@ -41,6 +42,8 @@ export function WalletButton() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [viewAsOpen, setViewAsOpen] = useState(false)
   const [mounted, setMounted] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
+  const [signOutError, setSignOutError] = useState<string>()
   const menuRef = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
   const { chainId: connectedChainId } = useAccount()
@@ -201,14 +204,23 @@ export function WalletButton() {
               ) : null}
               <div className="mx-4 my-1 border-t border-smoke-200" />
               <button
+                disabled={signingOut}
                 onClick={() => {
-                  closeMenu()
-                  disconnect()
+                  setSignOutError(undefined)
+                  setSigningOut(true)
+                  void disconnect()
+                    .then(closeMenu)
+                    .catch((error: unknown) => setSignOutError(
+                      error instanceof ParaSessionLogoutError || error instanceof ParaLocalDisconnectError
+                        ? error.message : 'The wallet could not sign out. Try again.',
+                    ))
+                    .finally(() => setSigningOut(false))
                 }}
-                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25"
+                className="block w-full px-4 py-3 text-left text-sm font-medium text-ink hover:bg-smoke-25 disabled:opacity-50"
               >
-                Sign out
+                {signingOut ? 'Signing out…' : 'Sign out'}
               </button>
+              {signOutError ? <p role="alert" className="px-4 py-2 text-xs text-red-700">{signOutError}</p> : null}
               <div className="mx-4 my-1 border-t border-smoke-200" />
               {viewAsItem}
             </>
