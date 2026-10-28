@@ -51,7 +51,8 @@ const routes = [
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
-  { route: '/[urn]', path: '/eth:1', kib: 521, text: 'Browser Fixture Project' },
+  // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
+  { route: '/[urn]', path: '/eth:1', kib: 523, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   { route: '/account/[address]', path: `/account/${account}`, kib: 418, text: 'Holdings' },
