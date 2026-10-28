@@ -229,6 +229,31 @@ describe('useReviewedAction', () => {
     await act(async () => renderer.unmount())
   }, 20_000)
 
+  // jbm's reset is refused while a run is in flight, so its page closing is the one way a run ends early.
+  it('an unmount while the payment loads its wallet sends nothing more: one write', async () => {
+    confirmEveryReview()
+    let entered!: () => void, release!: () => void
+    const waiting = new Promise<void>(resolve => { entered = resolve })
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    // The approval is sent; the payment's wallet is still loading when the flow closes.
+    acquireWallet = async () => { if (walletSends.length) { entered(); await blocked } return currentWallet }
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const scope = `close-${crypto.randomUUID()}`
+    const calls = [
+      { chainId: 10, to: TOKEN, data: '0x095ea7b3' as Hex, value: 0n, intent: `${scope}-approve` },
+      { chainId: 10, to: TERMINAL, data: baseline.pay.data as Hex, value: 10n ** 16n, intent: `${scope}-pay` },
+    ]
+    let pending!: ReturnType<Action['run']>
+    await act(async () => { pending = ref.current!.run({ account: ALICE, calls, scope }); await waiting })
+    await act(async () => renderer.unmount())
+    let result: unknown = 'pending'
+    await act(async () => { release(); result = await pending })
+    expect(result).toBeNull()
+    expect(walletSends).toHaveLength(1)
+  }, 20_000)
+
   it('keeps intent and legacy hold namespaces', async () => {
     confirmEveryReview()
     const built = REQUESTS.pay as Built
