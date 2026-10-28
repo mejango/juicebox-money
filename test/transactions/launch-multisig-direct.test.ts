@@ -277,11 +277,11 @@ describe('direct launch Safe setup', () => {
       storage.setItem.mockImplementation(() => { throw new Error('quota') })
       return HASH
     })
-    const held = await prepareLaunchMultisigs(args).catch((error: Error) => error)
-    expect(held).toMatchObject({ name: 'ReviewedReceiptUnverifiedError' })
-    expect((held as { cause?: Error }).cause?.message).toMatch('recording it failed')
+    // The site's failed record never changes what was sent: the SDK settles it, and the
+    // flow stops at its own next record, the setup still marked signing for recovery.
+    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('could not be saved')
     expect(setup()).toEqual({ phase: 'signing' })
-    expect(mocks.receipt).not.toHaveBeenCalled()
+    expect(mocks.write).toHaveBeenCalledOnce()
   })
 
   it('blocks account drift during simulation before signing', async () => {
