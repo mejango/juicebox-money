@@ -24,7 +24,7 @@ import {
   compileBendystrawOperation,
   requestPersistedBendystraw,
 } from '@bananapus/nana-sdk-core/bendystraw-operations'
-import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
+import { fillIndexedMetadata, type MetadataLoader } from '@/lib/project-metadata-fill'
 
 type VersionedProjectRef = Required<BendystrawProjectRef>
 
@@ -659,6 +659,7 @@ export type BsFreshActivityEvent = BsActivityEvent & {
 export async function getRecentActivity(
   limit = 12,
   offset = 0,
+  loadMetadata?: MetadataLoader,
 ): Promise<BsFreshActivityEvent[]> {
   const data = await bendystraw<{
     activityEvents: { items: BsFreshActivityEvent[] }
@@ -693,6 +694,7 @@ export async function getRecentActivity(
   )
   const projects = await fillIndexedMetadata(
     data.activityEvents.items.flatMap(event => (event.project ? [event.project] : [])),
+    loadMetadata,
   )
   return data.activityEvents.items.map(event => ({
     ...event,

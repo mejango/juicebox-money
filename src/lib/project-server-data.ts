@@ -1,6 +1,7 @@
 import { QueryClient, type QueryKey } from '@tanstack/query-core'
 import { cache } from 'react'
 import { ipfsUrl } from '@/lib/format'
+import { readProjectMetadataJson } from '@/lib/metadata-json.server'
 import {
   getProject,
   getProjectActivity,
@@ -143,15 +144,7 @@ export const getProjectMetadata = cache(async function fetchProjectMetadata(
   const url = ipfsUrl(metadataUri);
   if (!url) return null;
   try {
-    const res = await fetch(url, {
-      next: { revalidate: 300 },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as unknown;
-    return typeof json === "object" && json !== null && !Array.isArray(json)
-      ? (json as ProjectMetadata)
-      : null;
+    return await readProjectMetadataJson(url) as ProjectMetadata;
   } catch {
     return null;
   }

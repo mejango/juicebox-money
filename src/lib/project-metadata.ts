@@ -1,4 +1,5 @@
 import { ipfsUrl } from '@/lib/format'
+import { fetchMetadataJson } from '@/lib/metadata-json'
 
 /**
  * ProjectUri JSON round-tripping for the metadata editor. A projectUri can
@@ -165,9 +166,7 @@ export async function fetchProjectMetadataJson(
   }
   let json: unknown
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(15_000) })
-    if (!response.ok) throw new Error(`status ${response.status}`)
-    json = await response.json()
+    json = await fetchMetadataJson(url, { signal: AbortSignal.timeout(15_000) })
   } catch {
     throw new Error(
       'Could not load the current project metadata, so saving would drop its existing fields. Try again.',

@@ -1,6 +1,7 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
+import { fetchMetadataJson } from '@/lib/metadata-json'
 
 import {
   accountingContextsQuery,
@@ -192,13 +193,9 @@ async function resolvePayTierMetadata(tier: {
   const cid = bytes32ToCidV0(tier.encodedIpfsUri);
   if (!cid) return null;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
-    const response = await fetch(appIpfsUrl(`ipfs://${cid}`)!, {
-      signal: controller.signal,
-    }).finally(() => clearTimeout(timer));
-    if (!response.ok) return null;
-    const json = (await response.json()) as unknown;
+    const json = await fetchMetadataJson(appIpfsUrl(`ipfs://${cid}`)!, {
+      signal: AbortSignal.timeout(8_000),
+    });
     return json && typeof json === "object"
       ? pickTierMetadata(json as Record<string, unknown>)
       : null;

@@ -6,6 +6,7 @@ import { useAccount, useConnect, useDisconnect } from 'wagmi'
 import { IS_DETERMINISTIC_BROWSER } from '@/providers/Providers'
 import { offerableWallets } from '@/lib/wallet-list'
 import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
+import { logoutParaSession } from '@/providers/para-logout'
 
 /**
  * Wallet state with wagmi as the single source of truth.
@@ -19,9 +20,10 @@ import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
 export function useWallet() {
   const { address, isConnected } = useAccount()
   const { connectAsync, connectors } = useConnect()
-  const { disconnect: wagmiDisconnect } = useDisconnect()
+  const { disconnectAsync: wagmiDisconnect } = useDisconnect()
   const { modalOpen, requestSignIn, sessionVersion } = useParaAuth()
   const bridging = useRef(false)
+  const disconnecting = useRef<Promise<void> | null>(null)
 
   // Bridge a newly settled Para modal into wagmi. The dynamic import is
   // deliberately gated by sessionVersion so anonymous visits never initialize
@@ -29,14 +31,14 @@ export function useWallet() {
   useEffect(() => {
     if (IS_DETERMINISTIC_BROWSER) return
     if (sessionVersion === 0) return
-    if (modalOpen || isConnected || bridging.current) return
+    if (modalOpen || isConnected || bridging.current || disconnecting.current) return
     bridging.current = true
     ;(async () => {
       try {
         const { getParaClient } = await import('@/providers/para-config')
         const paraClient = getParaClient()
         const loggedIn = await paraClient.isFullyLoggedIn()
-        if (!loggedIn) return
+        if (!loggedIn || disconnecting.current) return
         const para = connectors.find(c => c.id === 'para')
         if (para) {
           await connectAsync({ connector: para })
@@ -73,19 +75,13 @@ export function useWallet() {
       if (!IS_DETERMINISTIC_BROWSER) requestSignIn()
     },
     disconnect: () => {
-      wagmiDisconnect()
-      if (IS_DETERMINISTIC_BROWSER) return
-      // Whether a Para session EXISTS, not whether the active connector is named "para". An
-      // email sign-in whose connector reads as anything else left that session alive — and the
-      // bridge effect above, which exists to pick a live session up, then signed the visitor
-      // straight back in.
-      void import('@/providers/para-config').then(async ({ getParaClient }) => {
-        const client = getParaClient()
-        const live = await client.isFullyLoggedIn().catch(() => false)
-        if (!live) return
-        markParaSession(false)
-        await client.logout().catch(() => {})
-      })
+      if (disconnecting.current) return disconnecting.current
+      const pending = (IS_DETERMINISTIC_BROWSER
+        ? wagmiDisconnect()
+        : logoutParaSession(wagmiDisconnect)
+      ).then(() => undefined)
+      disconnecting.current = pending.finally(() => { disconnecting.current = null })
+      return disconnecting.current
     },
   }
 }

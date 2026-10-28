@@ -1,5 +1,6 @@
 import { unstable_cache } from 'next/cache'
 import { fillIndexedMetadata } from '@/lib/project-metadata-fill'
+import { readIndexedMetadataJson } from '@/lib/metadata-json.server'
 import { formatUnits } from 'viem'
 import { bendystraw, type BsProject } from './bendystraw'
 import { displayChainSlug } from './chainDisplay'
@@ -69,7 +70,7 @@ const cachedBalanceGroups = unstable_cache(
     return Promise.all(
       items.map(async group => ({
         ...group,
-        projects: { items: await fillIndexedMetadata(group.projects.items) },
+        projects: { items: await fillIndexedMetadata(group.projects.items, readIndexedMetadataJson) },
       })),
     )
   },

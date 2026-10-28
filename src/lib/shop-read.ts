@@ -16,7 +16,7 @@ import {
   getProjectNftInventory,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
-import type { Shop, ShopTier, TierMedia } from '@/hooks/useShop721'
+import type { Shop, ShopTier, TierMedia, ShopMediaResult } from '@/hooks/useShop721'
 import { appIpfsUrl } from '@/lib/format'
 import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
@@ -26,6 +26,7 @@ import {
   tierMediaImageUrl,
 } from '@/lib/tier-metadata'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { fetchMetadataJson } from '@/lib/metadata-json'
 
 /** The project's 721 shop reads, loaded on demand by the useShop721 hooks and the Shop tab. */
 
@@ -271,8 +272,7 @@ export async function readShop(
   }
 }
 
-/** Resolve a tier's display metadata: the resolver's data URI first, then
- *  the tier's IPFS JSON. Best-effort — {} on any failure. */
+/** Valid absent/empty metadata is {}, while transport and parse failures remain retryable. */
 export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   const pick = (json: Record<string, unknown>): TierMedia => {
     const meta = pickTierMetadata(json)
@@ -290,47 +290,54 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
   const resolved = tier.resolvedUri
     ? parseTierMetadataJson(tier.resolvedUri)
     : null
-  if (resolved && Object.keys(resolved).length > 0) return pick(resolved)
+  if (resolved) return pick(resolved)
 
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
   const url = cid ? appIpfsUrl(`ipfs://${cid}`) : null
   if (!url) return {}
-  try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 8_000)
-    const res = await fetch(url, { signal: controller.signal }).finally(() =>
-      clearTimeout(timer),
-    )
-    if (!res.ok) return {}
-    const json = (await res.json()) as unknown
-    return json && typeof json === 'object'
-      ? pick(json as Record<string, unknown>)
-      : {}
-  } catch {
-    return {}
+  const json = await fetchMetadataJson(url, { signal: AbortSignal.timeout(8_000) })
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    throw new Error('The item metadata is not a JSON object.')
   }
+  return pick(json as Record<string, unknown>)
 }
 
 /** Cosmetic native resolver read: one exact tier, independent of action preparation. */
 async function resolveNativeTierMedia(client: PublicClient, shop: Shop, tier: ShopTier): Promise<TierMedia> {
   if (shop.protocol !== 'defifa' || !shop.store) return { name: tier.name }
-  try {
-    const rows = await readTierPage(client, shop.store, shop.hook, BigInt(tier.id), true, { size: 1n, blockNumber: shop.inventoryBlockNumber })
-    const row = rows[0]
-    if (rows.length !== 1 || Number(row.id) !== tier.id) return { name: tier.name }
-    return await resolveTierMedia({ ...tier, resolvedUri: row.resolvedUri })
-  } catch {
-    return { name: tier.name }
+  const rows = await readTierPage(client, shop.store, shop.hook, BigInt(tier.id), true, { size: 1n, blockNumber: shop.inventoryBlockNumber })
+  const row = rows[0]
+  if (rows.length !== 1 || Number(row.id) !== tier.id) throw new Error('Item artwork could not be verified. Try again.')
+  return resolveTierMedia({ ...tier, resolvedUri: row.resolvedUri })
+}
+
+async function loadShopMedia(
+  tiers: ShopTier[],
+  resolve: (tier: ShopTier) => Promise<TierMedia>,
+  previous: Record<number, TierMedia> = {},
+  concurrency = tiers.length || 1,
+): Promise<ShopMediaResult> {
+  const media: Record<number, TierMedia> = {}
+  const failedTierIds: number[] = []
+  for (let offset = 0; offset < tiers.length; offset += concurrency) {
+    await Promise.all(tiers.slice(offset, offset + concurrency).map(async tier => {
+      if (Object.hasOwn(previous, tier.id)) { media[tier.id] = previous[tier.id]; return }
+      try { media[tier.id] = await resolve(tier) }
+      catch { failedTierIds.push(tier.id) }
+    }))
   }
+  return { media, failedTierIds: failedTierIds.sort((a, b) => a - b) }
+}
+
+export function resolveShopMedia(tiers: ShopTier[], previous?: Record<number, TierMedia>) {
+  return loadShopMedia(tiers, resolveTierMedia, previous)
 }
 
 /** The query owner admits a small preview page; at most two URI reads run together. */
-export async function resolveNativeShopMedia(client: PublicClient | undefined, shop: Shop, tiers: ShopTier[]): Promise<Record<number, TierMedia>> {
-  const entries: [number, TierMedia][] = []
-  for (let offset = 0; offset < tiers.length; offset += 2) {
-    entries.push(...await Promise.all(tiers.slice(offset, offset + 2).map(async tier => [tier.id,
-      tier.resolvedUri ? await resolveTierMedia(tier) : client && shop.store ? await resolveNativeTierMedia(client, shop, tier) : { name: tier.name },
-    ] as [number, TierMedia])))
-  }
-  return Object.fromEntries(entries)
+export function resolveNativeShopMedia(client: PublicClient | undefined, shop: Shop, tiers: ShopTier[], previous?: Record<number, TierMedia>) {
+  return loadShopMedia(tiers, tier => {
+    if (tier.resolvedUri) return resolveTierMedia(tier)
+    if (!client || !shop.store) throw new Error('Item artwork could not be loaded. Try again.')
+    return resolveNativeTierMedia(client, shop, tier)
+  }, previous, 2)
 }

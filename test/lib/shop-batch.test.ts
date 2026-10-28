@@ -178,9 +178,9 @@ describe('original item metadata', () => {
   it('fails closed on an unavailable or invalid original JSON', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false } as Response)
     await expect(readOriginalShopMetadata(URI)).rejects.toThrow('Could not load')
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => [] } as unknown as Response)
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json([]))
     await expect(readOriginalShopMetadata(URI)).rejects.toThrow('not a JSON object')
-    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ unknown: [123] }) } as unknown as Response)
+    vi.mocked(fetch).mockResolvedValueOnce(Response.json({ unknown: [123] }))
     await expect(readOriginalShopMetadata(URI)).resolves.toEqual({ unknown: [123] })
   })
 })

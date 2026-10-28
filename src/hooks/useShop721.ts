@@ -89,6 +89,11 @@ export type TierMedia = {
   categoryName?: string
 }
 
+export type ShopMediaResult = {
+  media: Record<number, TierMedia>
+  failedTierIds: number[]
+}
+
 
 export const SHOP_721_QUERY_PREFIX = ['shop721-v2'] as const
 export const DEFIFA_HOLDINGS_QUERY_PREFIX = ['defifa-owned-nfts'] as const
@@ -128,23 +133,25 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
   const mediaTierKey = tiers
     .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}${tier.name === undefined ? '' : `:${tier.name}`}`)
     .join(',')
-  return useKeptQuery({
-    queryKey: ['shop721Media', chainId, shop?.hook, nativeTierIds === undefined
+  const query = useKeptQuery<ShopMediaResult>({
+    // Old persisted maps could contain a failed fetch cached as a valid {}.
+    queryKey: ['shop721Media', 2, chainId, shop?.hook, nativeTierIds === undefined
       ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
     meta: PERSIST,
     enabled: !!shop && tiers.length > 0 && (!nativeTierIds || !shop.store || !!publicClient || tiers.every(tier => !!tier.resolvedUri)),
-    staleTime: Infinity,
-    queryFn: async () => {
-      const { resolveTierMedia, resolveNativeShopMedia } = await import('@/lib/shop-read')
+    staleTime: query => query.state.data?.failedTierIds.length ? 0 : Infinity,
+    queryFn: async ({ client, queryKey }): Promise<ShopMediaResult> => {
+      const previous = client.getQueryData<ShopMediaResult>(queryKey)?.media
+      const { resolveShopMedia, resolveNativeShopMedia } = await import('@/lib/shop-read')
       if (nativeTierIds && shop?.protocol === 'defifa') {
-        return resolveNativeShopMedia(publicClient, shop, tiers)
+        return resolveNativeShopMedia(publicClient, shop, tiers, previous)
       }
-      const entries = await Promise.all(
-        tiers.map(
-          async tier => [tier.id, await resolveTierMedia(tier)] as const,
-        ),
-      )
-      return Object.fromEntries(entries) as Record<number, TierMedia>
+      return resolveShopMedia(tiers, previous)
     },
   })
+  return {
+    ...query,
+    data: query.data?.media,
+    hasFailures: query.isError || !!query.data?.failedTierIds.length,
+  }
 }

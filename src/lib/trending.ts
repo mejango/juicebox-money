@@ -1,5 +1,6 @@
 import { bendystraw, BsProject } from './bendystraw'
 import { fillIndexedMetadata } from './project-metadata-fill'
+import { readIndexedMetadataJson } from './metadata-json.server'
 import { legacyProjectHref, toUrn } from './urn'
 
 /**
@@ -61,7 +62,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
   const groups = await Promise.all(
     data.suckerGroups.items.map(async group => ({
       ...group,
-      projects: { items: await fillIndexedMetadata(group.projects.items) },
+      projects: { items: await fillIndexedMetadata(group.projects.items, readIndexedMetadataJson) },
     })),
   )
   return groups.flatMap(group => {
