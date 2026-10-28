@@ -154,7 +154,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
     try {
       assertCurrent(review)
       // A saved run whose step was sent continues as reviewed; one whose approval only went through is dropped, so a new cart reviews afresh.
-      const { calls, saved, scope: runScope } = planned.length > 1 ? await defifaSequenceCalls(scope, planned) : { calls: planned, saved: false, scope: undefined }
+      const { calls, saved, scope: runScope } = planned.length > 1 ? await defifaSequenceCalls(scope, planned, approvalBlock !== undefined) : { calls: planned, saved: false, scope: undefined }
       last = calls.length - 1
       const reverify: ReviewedRun['reverify'] = async (_call, at) => {
         await prepareFresh(review)

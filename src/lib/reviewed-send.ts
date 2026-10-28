@@ -50,19 +50,21 @@ export const SAVED_SEQUENCE_LINE = 'This continues your saved action exactly as 
  * never under the fresh plan's summary or checks. `scope` is the run's: none
  * for a lone call, which its write hold and the hold's exit decide alone.
  * `held` is the saved step in flight, which the resumed run settles first.
+ * `keepCompleted` continues a run whose completed steps this page just verified.
  */
 export async function sequenceCalls<Call>(
   scope: string,
   account: `0x${string}`,
   calls: Call[],
   matches?: (saved: readonly ReviewedCall[]) => boolean,
+  keepCompleted = false,
 ): Promise<{ calls: Call[]; saved: boolean; scope?: string; held?: number }> {
   const engine = await loadReviewEngine()
   const unfinished = engine.findReviewedSequence(scope, account)
   const fresh = { calls, saved: false, ...(calls.length > 1 ? { scope } : {}) }
   // A legacy scope may be shared across chains: match this snapshot before adopting or discarding it.
   if (!unfinished || (matches && !matches(unfinished.calls))) return fresh
-  if (!unfinished.sending && !unfinished.proposed) {
+  if (!unfinished.sending && !unfinished.proposed && !keepCompleted) {
     try {
       await engine.discardReviewedSequence(unfinished)
       return fresh
