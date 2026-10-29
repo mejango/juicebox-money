@@ -2,12 +2,16 @@
 
 import { createElement } from 'react'
 import TestRenderer, { act, type ReactTestInstance } from 'react-test-renderer'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   account: '0x1111111111111111111111111111111111111111',
   balance: undefined as { value: bigint } | undefined,
   usdc: undefined as bigint | undefined,
+  nativeError: false,
+  usdcError: false,
+  nativeLoading: false,
+  usdcLoading: false,
 }))
 
 vi.mock('@/hooks/useWallet', () => ({
@@ -33,8 +37,8 @@ vi.mock('next/link', () => ({
 // The connected wallet's chain, with no project in view, gives the one-chain balances.
 vi.mock('wagmi', () => ({
   useAccount: () => ({ chainId: 1 }),
-  useBalance: () => ({ data: mocks.balance }),
-  useReadContract: () => ({ data: mocks.usdc }),
+  useBalance: () => ({ data: mocks.balance, isError: mocks.nativeError, isLoading: mocks.nativeLoading }),
+  useReadContract: () => ({ data: mocks.usdc, isError: mocks.usdcError, isLoading: mocks.usdcLoading }),
 }))
 vi.mock('@/hooks/useEnsName', () => ({ useEnsName: () => ({ data: null }) }))
 vi.mock('@/components/GetFunds', () => ({ GetFunds: () => null }))
@@ -44,7 +48,14 @@ import { WalletButton } from '@/components/WalletButton'
 beforeEach(() => {
   mocks.balance = undefined
   mocks.usdc = undefined
+  mocks.nativeError = false
+  mocks.usdcError = false
+  mocks.nativeLoading = false
+  mocks.usdcLoading = false
 })
+
+const roots: TestRenderer.ReactTestRenderer[] = []
+afterEach(async () => { await act(async () => { roots.splice(0).forEach(root => root.unmount()) }) })
 
 const rowValues = (renderer: TestRenderer.ReactTestRenderer) =>
   renderer.root
@@ -55,6 +66,7 @@ async function menuRows() {
   let renderer!: TestRenderer.ReactTestRenderer
   await act(async () => {
     renderer = TestRenderer.create(createElement(WalletButton))
+    roots.push(renderer)
   })
   const trigger = renderer.root.find(
     (node: ReactTestInstance) =>
@@ -67,6 +79,34 @@ async function menuRows() {
 }
 
 describe('the wallet balances in the account menu', () => {
+  it('shows terminal read failures as unavailable instead of loading', async () => {
+    mocks.nativeError = true
+    mocks.usdcError = true
+    expect(await menuRows()).toEqual(['Unavailable', 'Unavailable'])
+  })
+
+  it('retains independent asset states and valid zero balances', async () => {
+    mocks.balance = { value: 0n }
+    mocks.usdcError = true
+    expect(await menuRows()).toEqual(['0 ETH', 'Unavailable'])
+    mocks.nativeError = true
+    mocks.usdcError = false
+    mocks.usdc = 0n
+    expect(await menuRows()).toEqual(['Unavailable', '0 USDC'])
+  })
+
+  it('does not label missing idle data as an active load', async () => {
+    expect(await menuRows()).toEqual(['Unavailable', 'Unavailable'])
+  })
+
+  it('does not present cached balances as current after a failed refetch', async () => {
+    mocks.balance = { value: 1_000_000_000_000_000_000n }
+    mocks.usdc = 1_000_000n
+    mocks.nativeError = true
+    mocks.usdcError = true
+    expect(await menuRows()).toEqual(['Unavailable', 'Unavailable'])
+  })
+
   it.each([
     ['nothing', '0', 0n],
     ['dust, to its first significant figure', '0.00003', 30_000_000_000_000n],
@@ -109,6 +149,8 @@ describe('the wallet balances in the account menu', () => {
   })
 
   it('shows a balance that is still loading as loading', async () => {
+    mocks.nativeLoading = true
+    mocks.usdcLoading = true
     expect(await menuRows()).toEqual(['Loading…', 'Loading…'])
   })
 })
