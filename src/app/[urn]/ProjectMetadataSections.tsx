@@ -191,6 +191,9 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
               raisedByChain={chains.map((row) => ({
                 chainId: row.chainId,
                 usd: row.volumeUsd || "0",
+                volume: row.volume || "0",
+                symbol: row.tokenSymbol,
+                decimals: row.decimals,
               }))}
               paymentsCount={paymentsCount}
               suckerGroupId={project.suckerGroupId}

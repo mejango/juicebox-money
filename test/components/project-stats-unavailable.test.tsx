@@ -27,3 +27,24 @@ describe('holder availability', () => {
     expect(render()).toMatch(/>0<\/span>[\s\S]*owners/)
   })
 })
+
+describe('raised by chain', () => {
+  it('shows the accounting-token amount above the USD when the indexer knows the token', () => {
+    const html = renderToStaticMarkup(
+      <ProjectStats
+        totalRaisedUsd="1200000000000000000000"
+        raisedByChain={[
+          { chainId: 8453, usd: '1188740000000000000000', volume: '460670000000000000', symbol: 'ETH', decimals: 18 },
+          { chainId: 1, usd: '12180000000000000000' },
+        ]}
+        paymentsCount={0}
+        suckerGroupId={null}
+        chains={[]}
+        isRevnet
+      />,
+    )
+    expect(html).toContain('0.4607 ETH')
+    expect(html).toContain('$1,188.74')
+    expect(html).toContain('$12.18')
+  })
+})

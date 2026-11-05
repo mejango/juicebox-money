@@ -282,8 +282,17 @@ export function ProjectStats({
 }: {
   /** Bendystraw's indexed, 18-decimal fixed-point USD volume. */
   totalRaisedUsd: string
-  /** Bendystraw's indexed USD volume for each deployment. */
-  raisedByChain: { chainId: number; usd: string }[]
+  /**
+   * Bendystraw's indexed volume for each deployment: USD, plus the raw amount
+   * in the deployment's accounting token when the indexer knows that token.
+   */
+  raisedByChain: {
+    chainId: number
+    usd: string
+    volume?: string
+    symbol?: string | null
+    decimals?: number | null
+  }[]
   paymentsCount: number
   suckerGroupId: string | null
   /** [chainId, projectId] pairs across the sucker group. */
@@ -410,15 +419,26 @@ export function ProjectStats({
             {raisedByChain.map(row => (
               <div
                 key={row.chainId}
-                className="flex items-center justify-between gap-4 text-xs"
+                className="flex items-start justify-between gap-4 text-xs"
               >
                 <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
                   <ChainIcon chainId={row.chainId} size={17} />
                   <span className="truncate">{chainName(row.chainId)}</span>
                 </span>
-                <span className="shrink-0 tabular-nums text-ink">
-                  {formatUsd18(row.usd)}
-                </span>
+                {row.volume != null && row.symbol && row.decimals != null ? (
+                  <span className="shrink-0 text-right tabular-nums text-ink">
+                    <span className="block">
+                      {formatTokenAmount(row.volume, row.decimals)} {row.symbol}
+                    </span>
+                    <span className="block text-[11px] text-smoke-500">
+                      {formatUsd18(row.usd)}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="shrink-0 tabular-nums text-ink">
+                    {formatUsd18(row.usd)}
+                  </span>
+                )}
               </div>
             ))}
           </div>
