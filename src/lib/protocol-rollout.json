@@ -1,7 +1,7 @@
 {
   "source": {
     "repository": "deploy-all-v6",
-    "commit": "b827a8b6c72869997207cd9246413ec99e7baceb"
+    "commit": "8ff50c28f7f4e4a8f98fdd8f680a6e2ddd2323d1"
   },
   "chains": {
     "1": {
