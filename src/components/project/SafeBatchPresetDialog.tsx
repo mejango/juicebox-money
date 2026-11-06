@@ -8,7 +8,7 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { ErrorNote } from '@/components/ui/TxError'
 import { clientFor } from '@/lib/authority'
-import { buildStep, type BatchStep } from '@/lib/safe-batch'
+import { buildStep, type BatchStep, type BatchStepRef } from '@/lib/safe-batch'
 import {
   MAX_TWAP_WINDOW,
   MIN_TWAP_WINDOW,
@@ -57,8 +57,8 @@ export function SafeBatchPresetDialog({ onClose }: { onClose: () => void }) {
         key={preset.id}
         preset={preset}
         deployments={batch.deployments}
-        onAdd={steps => {
-          batch.queue(steps)
+        onAdd={(steps, dropped) => {
+          batch.queue(steps, dropped)
           onClose()
         }}
       />
@@ -73,7 +73,7 @@ function PresetPlan({
 }: {
   preset: SafeBatchPreset
   deployments: { chainId: JBChainId; projectId: number }[]
-  onAdd: (steps: BatchStep[]) => void
+  onAdd: (steps: BatchStep[], dropped: BatchStepRef[]) => void
 }) {
   const query = useQuery({
     queryKey: [
@@ -158,7 +158,7 @@ function PresetPlan({
         setError('Select at least one chain with steps to add.')
         return
       }
-      onAdd(steps)
+      onAdd(steps, selectedPlans.flatMap(plan => plan.dropped ?? []))
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : 'Could not add the preset.')
     }

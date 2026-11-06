@@ -14,9 +14,10 @@ import type { Address } from 'viem'
 import {
   readSafeBatch,
   subscribeSafeBatch,
-  upsertStep,
+  queueSteps,
   writeSafeBatch,
   type BatchStep,
+  type BatchStepRef,
 } from '@/lib/safe-batch'
 import { useLinkedDeployments, type ProjectPair } from '@/lib/sucker-group'
 import { chainName } from '@/lib/urn'
@@ -34,7 +35,7 @@ type SafeBatchContextValue = {
   batches: Record<number, BatchStep[]>
   stepsOn: (chainId: number) => BatchStep[]
   /** Upsert each step into its own chain's tray and announce it. */
-  queue: (steps: readonly BatchStep[]) => void
+  queue: (steps: readonly BatchStep[], dropped?: readonly BatchStepRef[]) => void
   replace: (chainId: JBChainId, steps: readonly BatchStep[]) => void
   clear: (chainId?: JBChainId) => void
   notice: string | null
@@ -107,13 +108,17 @@ export function SafeBatchProvider({
   )
 
   const queue = useCallback(
-    (steps: readonly BatchStep[]) => {
+    (steps: readonly BatchStep[], dropped: readonly BatchStepRef[] = []) => {
       const next = { ...batches }
       const touched: JBChainId[] = []
-      for (const step of steps) {
-        if (projectOn(step.chainId) !== step.projectId) continue
-        next[step.chainId] = upsertStep(next[step.chainId] ?? [], step)
-        if (!touched.includes(step.chainId)) touched.push(step.chainId)
+      for (const { chainId, projectId } of [...steps, ...dropped]) {
+        if (projectOn(chainId) !== projectId || touched.includes(chainId)) continue
+        next[chainId] = queueSteps(
+          next[chainId] ?? [],
+          steps.filter(step => step.chainId === chainId),
+          dropped.filter(ref => ref.chainId === chainId),
+        )
+        touched.push(chainId)
       }
       if (!touched.length) return
       setBatches(next)

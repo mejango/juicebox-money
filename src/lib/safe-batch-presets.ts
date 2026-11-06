@@ -18,8 +18,10 @@ import {
 } from 'viem'
 import {
   buildStep,
+  stepKey,
   type BatchStep,
   type BatchStepKind,
+  type BatchStepRef,
   type BatchStepValues,
   type MirrorResolution,
 } from '@/lib/safe-batch'
@@ -94,6 +96,8 @@ export type PresetChainResolution = {
   status: 'unavailable' | 'nothing' | 'ready'
   message: string | null
   steps: BatchStep[]
+  /** Queued pool registrations this resolution refuses, removed when it is added. */
+  dropped?: BatchStepRef[]
 }
 
 function registryAddress(
@@ -333,6 +337,7 @@ export async function resolvePreset(
   }
 
   const poolNotes: string[] = []
+  const dropped: BatchStepRef[] = []
   if (preset.steps.includes('setPoolFor') && !isAddressEqual(currentHook, zeroAddress)) {
     const poolHook = rolloutAddress('JBUniswapV4Hook', chainId)
     for (const probe of poolProbes(chainId)) {
@@ -344,6 +349,8 @@ export async function resolvePreset(
       if (!pool) continue
       if (pool.kind === 'skip') {
         if (pool.note) poolNotes.push(pool.note)
+        const key = { kind: 'setPoolFor' as const, to: buybackRegistry, functionName: 'setPoolFor', values: { terminalToken: probe.write } }
+        dropped.push({ chainId, projectId, id: `${chainId}:${stepKey(key)}` })
         continue
       }
       steps.push(buildStep({ kind: pool.kind, chainId, projectId, values: pool.values, note: pool.note }))
@@ -371,7 +378,7 @@ export async function resolvePreset(
       steps: [],
     }
   }
-  return { status: 'ready', message: poolNotes.join(' ') || null, steps }
+  return { status: 'ready', message: poolNotes.join(' ') || null, steps, dropped }
 }
 
 /** The target chain's spelling of a step's terminal token: native stays native, USDC maps to that chain's USDC. */

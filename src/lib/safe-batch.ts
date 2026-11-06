@@ -572,6 +572,19 @@ export function composeBatch(steps: readonly BatchStep[]): {
   }
 }
 
+/** A queued step's identity in one chain's batch. */
+export type BatchStepRef = Pick<BatchStep, 'chainId' | 'projectId' | 'id'>
+
+/** Upserts `steps` into one chain's queue after removing `dropped`, which a fresh resolution no longer allows. */
+export function queueSteps(
+  queued: readonly BatchStep[],
+  steps: readonly BatchStep[],
+  dropped: readonly BatchStepRef[] = [],
+): BatchStep[] {
+  const gone = new Set(dropped.map(ref => ref.id))
+  return steps.reduce(upsertStep, queued.filter(step => !gone.has(step.id)))
+}
+
 export function upsertStep(
   steps: readonly BatchStep[],
   step: BatchStep,

@@ -14,7 +14,7 @@ import {
   resolvePreset,
   SAFE_BATCH_PRESETS,
 } from '@/lib/safe-batch-presets'
-import { buildStep, mirrorBatch, upsertStep } from '@/lib/safe-batch'
+import { buildStep, mirrorBatch, queueSteps, upsertStep } from '@/lib/safe-batch'
 import { rolloutAddress, rolloutTargets } from '@/lib/protocol-rollout'
 import * as rollout from '@/lib/protocol-rollout'
 
@@ -433,5 +433,22 @@ describe('queued pool registrations', () => {
       ['setPoolFor', NATIVE],
       ['setPoolFor', USDC_BASE],
     ])
+  })
+
+  it('removes a queued registration that a fresh resolution refuses', async () => {
+    const resolveAt = (newPrice: bigint) =>
+      resolvePreset(PRESET, {
+        chainId: 84532,
+        projectId: 2,
+        client: chain({
+          pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 1800n } },
+          prices: { [newPoolSlot(84532, 10_000, 200)]: newPrice, [oldPoolSlot(10_000, 200)]: OLD_PRICE },
+        }),
+      })
+    const first = await resolveAt(OLD_PRICE)
+    const queued = queueSteps([], first.steps, first.dropped)
+    expect(queued.map(step => step.kind)).toContain('setPoolFor')
+    const fresh = await resolveAt(2n * OLD_PRICE)
+    expect(queueSteps(queued, fresh.steps, fresh.dropped).map(step => step.kind)).toEqual(['setHookFor', 'setTerminalFor'])
   })
 })

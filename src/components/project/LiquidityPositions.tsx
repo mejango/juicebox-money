@@ -289,7 +289,17 @@ function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projec
     staleTime: 30_000,
     queryFn: ({ signal }) => readMovableLpPositions(client!, chainId, pool!, address!, signal),
   })
-  if (!client || !pool || !positionManager || !movable.data?.length) return null
+  if (!client || !pool || !positionManager) return null
+  // A failed scan is not "nothing to move".
+  if (movable.isError) {
+    return (
+      <p role="status" className="mb-3 text-xs text-red-700">
+        Could not check for liquidity left in the old pool.{' '}
+        <button type="button" className="underline" onClick={() => void movable.refetch()}>Retry</button>
+      </p>
+    )
+  }
+  if (!movable.data?.length) return null
 
   const review = async ({ from, position }: MovableLpPosition) => {
     if (!connectedAddress) return
