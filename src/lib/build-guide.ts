@@ -263,7 +263,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Issuance', 'New tokens per ETH or USD paid, before reserved tokens. Default 10,000. Leave blank on a later ruleset to continue the previous rate after any scheduled cuts'],
           ['Issuance cut', 'How much the new-token rate falls each cycle. Revnets express this as “cut X% every N days”'],
           ['Reserved split', 'The share of new tokens set aside for other recipients. Add recipients to set the total'],
-          ['Cash outs', 'Let holders exchange tokens for available project funds. The cash out tax controls how much stays for remaining holders: 0% gives a proportional share; 100% turns cash outs off. Revnets may also delay when cash outs begin'],
+          ['Cash outs', 'Let holders exchange tokens for available project funds. The cash out tax controls how much stays for remaining holders: 0 gives a proportional share; 1 turns cash outs off. Revnets may also delay when cash outs begin'],
           ['Payouts', 'None, payments to the owner within a limit, or payments to named recipients. Set amounts or percentage shares for each accepted asset. Limits apply per cycle and per chain'],
           ['Surplus allowance', 'How much the owner can withdraw beyond the regular spending limit'],
           ['Accept payments', 'Off pauses paying'],
@@ -531,7 +531,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Cash out',
     paragraphs: [
-      'Holders exchange tokens for part of the surplus: the balance not scheduled for payouts. The cash out tax sets how much stays for remaining holders; 0% returns a proportional share, 100% turns cash outs off. The tokens are burned.',
+      'Holders exchange tokens for part of the surplus: the balance not scheduled for payouts. The cash out tax sets how much stays for remaining holders; 0 returns a proportional share, 1 turns cash outs off. The tokens are burned.',
       'Quote with previewCashOutFrom, which runs the project’s data hook and any buyback decision; a surplus-only calculation can disagree with the real transaction. The route decides where the minimum goes: minTokensReclaimed on the terminal path, buyback metadata on the pool path. Re-quote after any change to rules, supply, balance, pool, or fees.',
     ],
     blocks: [
@@ -863,7 +863,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['contracts'],
     title: 'Fees, in detail',
     paragraphs: [
-      'The 2.5% fee applies to payouts, surplus allowance withdrawals, and cash outs with a tax above 0%. It is paid into the fee revnet, which returns its tokens to the fee recipient.',
+      'The 2.5% fee applies to payouts, surplus allowance withdrawals, and cash outs with a tax above 0. It is paid into the fee revnet, which returns its tokens to the fee recipient.',
     ],
     blocks: [
       {

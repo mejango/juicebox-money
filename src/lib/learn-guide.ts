@@ -301,7 +301,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "title": "Cash outs",
     "paragraphs": [
       "When you cash out, you return tokens to the project and receive a share of its balance sheet, minus anything already scheduled for payouts. The returned tokens are burned.",
-      "The cash out tax leaves part of your share behind for remaining holders. At 0% you get your proportional share; at 100% cash outs are off. In between, bigger cash outs lose less of their share, because the formula also weighs how much of the supply you return."
+      "The cash out tax leaves part of your share behind for remaining holders. At 0 you get your proportional share; at 1 cash outs are off. In between, bigger cash outs lose less of their share, because the formula also weighs how much of the supply you return."
     ],
     "blocks": [
       {
@@ -310,14 +310,14 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "lines": [
           "  balance 100 ETH, you hold 10% of the supply",
           "",
-          "  tax  0%  → cash out returns 10.0 ETH",
-          "  tax 20%  → cash out returns  8.2 ETH   (1.8 ETH stays)",
-          "  tax 50%  → cash out returns  5.5 ETH   (4.5 ETH stays)",
-          "  tax 80%  → cash out returns  2.8 ETH   (7.2 ETH stays)",
+          "  tax 0    → cash out returns 10.0 ETH",
+          "  tax 0.2  → cash out returns  8.2 ETH   (1.8 ETH stays)",
+          "  tax 0.5  → cash out returns  5.5 ETH   (4.5 ETH stays)",
+          "  tax 0.8  → cash out returns  2.8 ETH   (7.2 ETH stays)",
           "",
           "  returned = balance × share × ((1 − tax) + tax × share)"
         ],
-        "description": "With a balance of 100 ETH and a cash out of 10% of total supply, a 0% tax returns 10 ETH, 20% returns 8.2 ETH, 50% returns 5.5 ETH, and 80% returns 2.8 ETH, before fees. Multiply balance by the share, then by one minus the tax plus the tax times the share."
+        "description": "With a balance of 100 ETH and a cash out of 10% of total supply, a tax of 0 returns 10 ETH, 0.2 returns 8.2 ETH, 0.5 returns 5.5 ETH, and 0.8 returns 2.8 ETH, before fees. Multiply balance by the share, then by one minus the tax plus the tax times the share."
       },
       {
         "type": "steps",
@@ -350,7 +350,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-fees",
     "title": "Fees",
     "paragraphs": [
-      "Juicebox charges 2.5% when money leaves a project: payouts, allowance withdrawals, and cash outs with a tax above 0%. The fee is a payment into the Juicebox Protocol’s own project (JBP6), so it comes back as JBP6 tokens: to the owner for payouts, to the chosen recipient for withdrawals, and to you for cash outs.",
+      "Juicebox charges 2.5% when money leaves a project: payouts, allowance withdrawals, and cash outs with a tax above 0. The fee is a payment into the Juicebox Protocol’s own project (JBP6), so it comes back as JBP6 tokens: to the owner for payouts, to the chosen recipient for withdrawals, and to you for cash outs.",
       "Paying a project has no fee. Launching one costs a creation fee of up to 0.001 ETH per chain. A 100 ETH payout sends 2.5 ETH to JBP6 and 97.5 ETH to recipients, and the owner receives JBP6 tokens."
     ],
     "blocks": [

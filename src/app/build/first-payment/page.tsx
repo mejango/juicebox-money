@@ -49,7 +49,7 @@ export default async function FirstPaymentPage() {
           ['Identity', 'protocolVersion is 6, chainId is 84532, and projectId is "1".'],
           ['Evidence', 'blockNumber and blockHash identify when the data was read. controller is the managing contract found through JBDirectory.'],
           ['Terms', 'ruleset.id is nonzero. In metadata, reservedPercent is the share of new tokens set aside for others; cashOutTaxRate shapes how much stays for remaining holders; pausePay stops payments. dataHook names any extension that can change a payment or cash out. Compare these fields with the project’s Terms view.'],
-          ['Units', 'Large whole numbers print as strings. reservedPercent and cashOutTaxRate use a scale of 10,000: 6200 means 62%. weight gives new tokens per unit of the project’s pricing currency, before setting aside the reserved share. Divide it by 10^18 for the displayed rate.'],
+          ['Units', 'Large whole numbers print as strings. reservedPercent and cashOutTaxRate use a scale of 10,000: 6200 means 62% reserved or a cash out tax of 0.62. weight gives new tokens per unit of the project’s pricing currency, before setting aside the reserved share. Divide it by 10^18 for the displayed rate.'],
         ] },
         { type: 'text', text: 'Set JB_PROJECT_ID to read another Base Sepolia project. Set BASE_SEPOLIA_RPC_URL to use another service for reading that network. Always compare both the network and project ID.' },
       ],

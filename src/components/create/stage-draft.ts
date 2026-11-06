@@ -395,8 +395,8 @@ export function stageSummaryParts(
   if (flavor === "revnet") {
     parts.push(
       stage.cashOuts
-        ? `${stageCashOutTax(stage) / 100}% cash out tax`
-        : "99.99% cash out tax",
+        ? `${stageCashOutTax(stage) / 10_000} cash out tax`
+        : "0.9999 cash out tax",
     );
   } else if (stage.cashOuts && !routedAll) {
     parts.push("Cash outs on");

@@ -31,7 +31,7 @@ export const PROTOCOL_CONCEPTS = {
   /** JBCashOuts.cashOutFrom — 0 returns the exact proportional share of surplus; a higher rate
    *  returns less than proportional; MAX returns nothing. */
   cashOutTax:
-    'A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0%, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; 100% returns nothing.',
+    'A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.',
 
   /** JBFundAccessLimitGroup.payoutLimits — "maximum amounts distributable to splits per ruleset
    *  cycle". Resets every cycle. */
