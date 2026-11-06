@@ -200,25 +200,26 @@ export function LiquidityPositions({
   const { address, isViewAs } = useViewedAccount()
   // Per-chain scan outcomes reported up by the row groups, so the aggregate
   // empty state is knowable without lifting each chain's queries out of them.
-  const [scan, setScan] = useState<Record<number, number | 'loading' | 'error'>>({})
+  const [scan, setScan] = useState<Record<string, number | 'loading' | 'error'>>({})
   // The edit panel portals here, BELOW the scroll wrapper — as a table row it
   // would inherit the table's full scrollable width and blow the modal out.
   const [panelHost, setPanelHost] = useState<HTMLDivElement | null>(null)
   const onStatus = useCallback(
-    (chainId: number, status: number | 'loading' | 'error') => {
+    (key: number | string, status: number | 'loading' | 'error') => {
       setScan(current =>
-        current[chainId] === status ? current : { ...current, [chainId]: status },
+        current[key] === status ? current : { ...current, [key]: status },
       )
     },
     [],
   )
   if (!address || !chains.length) return null
-  const allEmpty = chains.every(chain => scan[chain.chainId] === 0)
+  // Empty only when every scan, the retired-pool one included, answered with nothing.
+  const allEmpty = chains.every(chain => scan[chain.chainId] === 0 && scan[`retired:${chain.chainId}`] === 0)
 
   return (
     <div>
       {chains.map(chain => (
-        <MovableLpRows key={chain.chainId} chainId={chain.chainId} projectId={chain.projectId} sym={sym} />
+        <MovableLpRows key={chain.chainId} chainId={chain.chainId} projectId={chain.projectId} sym={sym} onStatus={onStatus} />
       ))}
       {allEmpty ? (
         <p className="text-sm text-smoke-500">
@@ -269,7 +270,17 @@ export function LiquidityPositions({
  * The wallet's positions still in a pool the project's buyback has left, each moved into the
  * current pool by one reviewed `modifyLiquidities`.
  */
-function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projectId: number; sym: string }) {
+function MovableLpRows({
+  chainId,
+  projectId,
+  sym,
+  onStatus,
+}: {
+  chainId: JBChainId
+  projectId: number
+  sym: string
+  onStatus: (key: string, status: number | 'loading' | 'error') => void
+}) {
   const client = usePublicClient({ chainId }) as PublicClient | undefined
   const { address, connectedAddress, isViewAs } = useViewedAccount()
   const tx = useReviewedAction(chainId)
@@ -289,6 +300,10 @@ function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projec
     staleTime: 30_000,
     queryFn: ({ signal }) => readMovableLpPositions(client!, chainId, pool!, address!, signal),
   })
+  const enabled = !!client && !!pool && !!address
+  useEffect(() => {
+    onStatus(`retired:${chainId}`, !enabled ? 0 : movable.isError ? 'error' : (movable.data?.length ?? 'loading'))
+  }, [chainId, onStatus, enabled, movable.isError, movable.data?.length])
   if (!client || !pool || !positionManager) return null
   // A failed scan is not "nothing to move".
   if (movable.isError) {
