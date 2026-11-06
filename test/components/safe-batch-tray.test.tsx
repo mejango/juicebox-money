@@ -363,7 +363,7 @@ describe('Safe batch tray', () => {
     click(button('Start from a preset'))
     await settle()
     const dialog = document.querySelector('dialog')
-    expect(dialog?.textContent).toContain('Move to buyback 1.4.0 + gateway')
+    expect(dialog?.textContent).toContain('Move to buyback 2.0.0 + gateway')
     expect(dialog?.textContent).toContain('Not deployed on Base yet.')
     expect(dialog?.textContent).toContain('30 minutes will be stored')
     const window_ = dialog?.querySelector<HTMLInputElement>('input[aria-label^="TWAP window on Ethereum"]')

@@ -12,11 +12,14 @@ import { buildStep, type BatchStep } from '@/lib/safe-batch'
 import {
   MAX_TWAP_WINDOW,
   MIN_TWAP_WINDOW,
+  NEW_POOL_NOTE,
   resolvePreset,
   SAFE_BATCH_PRESETS,
   type PresetChainResolution,
   type SafeBatchPreset,
 } from '@/lib/safe-batch-presets'
+
+const isPoolStep = (step: BatchStep) => step.kind === 'setPoolFor' || step.kind === 'initializePoolFor'
 import { shortError } from '@/lib/errors'
 import { chainName } from '@/lib/urn'
 
@@ -115,7 +118,7 @@ function PresetPlan({
     for (const plan of selectedPlans) {
       for (const step of plan.steps) {
         const edited = windows[step.id]
-        if (step.kind !== 'setPoolFor' || edited === undefined) {
+        if (!isPoolStep(step) || edited === undefined) {
           steps.push(step)
           continue
         }
@@ -134,7 +137,12 @@ function PresetPlan({
             chainId: step.chainId,
             projectId: step.projectId,
             values: { ...step.values, twapWindow: window },
-            note: window === step.values.twapWindow ? step.note : undefined,
+            note:
+              window === step.values.twapWindow
+                ? step.note
+                : step.kind === 'initializePoolFor'
+                  ? NEW_POOL_NOTE
+                  : undefined,
           }),
         )
       }
@@ -209,7 +217,7 @@ function PresetPlan({
                         {step.note ? (
                           <span className="block text-amber-700">{step.note}</span>
                         ) : null}
-                        {step.kind === 'setPoolFor' ? (
+                        {isPoolStep(step) ? (
                           <label className="mt-1 flex items-center gap-2">
                             <span className="text-smoke-500">TWAP window (seconds)</span>
                             <input

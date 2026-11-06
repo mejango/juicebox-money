@@ -23,7 +23,8 @@ import {
   type MirrorResolution,
 } from '@/lib/safe-batch'
 import { chainName } from '@/lib/urn'
-import { rolloutTargets } from '@/lib/protocol-rollout'
+import { migratedPoolKey, poolMove, poolSqrtPriceX96, type V4PoolKey } from '@/lib/buyback-pool-migration'
+import { rolloutAddress, rolloutTargets } from '@/lib/protocol-rollout'
 
 /**
  * Presets are data: a target hook/terminal pair and the step kinds that move
@@ -39,10 +40,10 @@ export type SafeBatchPreset = {
 
 export const SAFE_BATCH_PRESETS: readonly SafeBatchPreset[] = [
   {
-    id: 'buyback-1-4-0-gateway',
-    title: 'Move to buyback 1.4.0 + gateway',
+    id: 'buyback-2-0-0-gateway',
+    title: 'Move to buyback 2.0.0 + gateway',
     description:
-      'Points the project at the current buyback hook and router gateway, carrying its live pool onto the new hook.',
+      "Points the project at the current buyback hook and router gateway, and opens its pool on the new hook at the old pool's price.",
     steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
   },
 ]
@@ -61,6 +62,8 @@ export const DEPLOYER_DEFAULT_TWAP_NOTE =
 export function replacedTwapNote(window: bigint): string {
   return `The old window was ${window}s; 30 minutes will be stored.`
 }
+export const NEW_POOL_NOTE = 'Starts at the old price with no TWAP history; LPs move their own liquidity.'
+export const NO_POOL_PRICE_NOTE = 'has no price to carry; set it up on the new hook directly.'
 
 export type PresetChainResolution = {
   status: 'unavailable' | 'nothing' | 'ready'
@@ -241,7 +244,9 @@ export async function resolvePreset(
     )
   }
 
+  const poolNotes: string[] = []
   if (preset.steps.includes('setPoolFor') && !isAddressEqual(currentHook, zeroAddress)) {
+    const poolHook = rolloutAddress('JBUniswapV4Hook', chainId)
     for (const probe of poolProbes(chainId)) {
       const pool = await readPool(client, currentHook, pid, probe)
       if (!pool) continue
@@ -253,8 +258,46 @@ export async function resolvePreset(
       })
       // A second registration reverts with PoolAlreadySet.
       if (carried > 0n) continue
-      const { values, note } = carriedPoolValues(pool)
-      steps.push(buildStep({ kind: 'setPoolFor', chainId, projectId, values, note }))
+      if (!poolHook) {
+        return { status: 'unavailable', message: `The current V4 hook is not recorded on ${name}.`, steps: [] }
+      }
+      const oldKey = (await client.readContract({
+        address: currentHook,
+        abi: jbBuybackHookAbi,
+        functionName: 'poolKeyOf',
+        args: [pid, probe.read],
+      })) as V4PoolKey
+      const newKey = migratedPoolKey(oldKey, poolHook)
+      const [oldPrice, newPrice] = await Promise.all([
+        poolSqrtPriceX96(client, chainId, oldKey),
+        poolSqrtPriceX96(client, chainId, newKey),
+      ])
+      const move = poolMove(oldPrice, newPrice)
+      const label = probe.read === zeroAddress ? 'Native' : 'USDC'
+      if (move.kind === 'none') {
+        poolNotes.push(`${label} pool ${NO_POOL_PRICE_NOTE}`)
+        continue
+      }
+      const carriedValues = carriedPoolValues(pool)
+      if (move.kind === 'setPoolFor') {
+        steps.push(buildStep({ kind: 'setPoolFor', chainId, projectId, ...carriedValues }))
+        continue
+      }
+      steps.push(
+        buildStep({
+          kind: 'initializePoolFor',
+          chainId,
+          projectId,
+          values: {
+            fee: carriedValues.values.fee,
+            tickSpacing: carriedValues.values.tickSpacing,
+            twapWindow: carriedValues.values.twapWindow,
+            pairToken: carriedValues.values.terminalToken,
+            sqrtPriceX96: move.sqrtPriceX96,
+          },
+          note: [carriedValues.note, NEW_POOL_NOTE].filter(Boolean).join(' '),
+        }),
+      )
     }
   }
 
@@ -275,11 +318,11 @@ export async function resolvePreset(
   if (!steps.length) {
     return {
       status: 'nothing',
-      message: `Nothing to do on ${name}: already on the current hook and gateway.`,
+      message: poolNotes.join(' ') || `Nothing to do on ${name}: already on the current hook and gateway.`,
       steps: [],
     }
   }
-  return { status: 'ready', message: null, steps }
+  return { status: 'ready', message: poolNotes.join(' ') || null, steps }
 }
 
 /** The target chain's spelling of a step's terminal token: native stays native, USDC maps to that chain's USDC. */

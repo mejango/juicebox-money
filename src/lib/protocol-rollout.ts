@@ -7,7 +7,7 @@ type ContractName = keyof (typeof snapshot.chains)['1']['contracts']
 type ChainRecord = {
   alias: string
   contracts: Record<ContractName, string | null>
-  history: Record<string, { previous: string | null; v1: string | null }>
+  history: Record<string, Record<string, string | null>>
 }
 
 export function rolloutChain(chainId: number): ChainRecord | undefined {
@@ -51,8 +51,8 @@ export async function readRouterPath(client: PublicClient, chainId: number, proj
   if (!attached) return null
   const terminal = await client.readContract({ address: registry, abi: jbRouterTerminalRegistryAbi, functionName: 'terminalOf', args: [projectId] })
   if (isAddressEqual(terminal, zeroAddress)) return null
-  const knownGateway = rolloutAddress('JBRouterTerminalGateway', chainId)
-  const gateway = knownGateway && isAddressEqual(terminal, knownGateway) ? terminal : null
+  // A retired gateway still fronts its own router until the project moves off it.
+  const gateway = rolloutContractName(chainId, terminal)?.startsWith('JBRouterTerminalGateway (') ? terminal : null
   // A failed gateway read is unknown; never show its address as the underlying router.
   const knownRouter = [rolloutAddress('JBRouterTerminal', chainId), ...Object.values(rolloutChain(chainId)?.history.JBRouterTerminal ?? {})]
     .some(address => address && isAddressEqual(address as Address, terminal))

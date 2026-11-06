@@ -1,7 +1,10 @@
 import { zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
+import { uniswapV4PoolId, uniswapV4PoolStateSlot } from '@bananapus/nana-sdk-core/v6'
+import { migratedPoolKey, type V4PoolKey } from '@/lib/buyback-pool-migration'
 import {
   DEPLOYER_DEFAULT_TWAP_NOTE,
+  NEW_POOL_NOTE,
   presetInfraAvailable,
   replacedTwapNote,
   resolveMirrorValues,
@@ -9,12 +12,13 @@ import {
   SAFE_BATCH_PRESETS,
 } from '@/lib/safe-batch-presets'
 import { buildStep, mirrorBatch } from '@/lib/safe-batch'
-import { rolloutTargets } from '@/lib/protocol-rollout'
+import { rolloutAddress, rolloutTargets } from '@/lib/protocol-rollout'
 import * as rollout from '@/lib/protocol-rollout'
 
 const PRESET = SAFE_BATCH_PRESETS[0]
 const MAINNETS = [1, 10, 8453, 42161] as const
-const OLD_HOOK = '0x77bEe1AD2AC0ACe98A9b5b58d75685C8B4d94948' as Address
+const OLD_HOOK = '0xb222dA5A71E8fB89a5A38B7C920eaB5dfbc74b91' as Address
+const OLD_PRICE = 79_228_162_514_264_337_593_543_950_336n
 const NEW_HOOK = rolloutTargets(11155111)!.hook
 const NEW_TERMINAL = rolloutTargets(11155111)!.terminal
 const OLD_TERMINAL = '0x9999999999999999999999999999999999999999' as Address
@@ -28,6 +32,15 @@ function withMissingDeploymentRecords(chainIds: readonly number[]) {
 
 type Pool = { fee: number; tickSpacing: number; twap: bigint }
 
+/** The PoolManager slot0 word of the pool the stub's current hook reports, moved onto a chain's current V4 hook. */
+function newPoolSlot(chainId: number, fee: number, tickSpacing: number): string {
+  const old: V4PoolKey = { currency0: zeroAddress, currency1: zeroAddress, fee, tickSpacing, hooks: zeroAddress }
+  return uniswapV4PoolStateSlot(uniswapV4PoolId(migratedPoolKey(old, rolloutAddress('JBUniswapV4Hook', chainId)!))).toLowerCase()
+}
+function oldPoolSlot(fee: number, tickSpacing: number): string {
+  return uniswapV4PoolStateSlot(uniswapV4PoolId({ currency0: zeroAddress, currency1: zeroAddress, fee, tickSpacing, hooks: zeroAddress })).toLowerCase()
+}
+
 /** A stubbed chain: code presence, registry pointers, and pools per (hook, token). */
 function chain({
   code = [NEW_HOOK, NEW_TERMINAL],
@@ -36,6 +49,7 @@ function chain({
   pools = {},
   hookAllowed = true,
   terminalAllowed = true,
+  prices = {},
 }: {
   code?: Address[]
   hook?: Address
@@ -43,6 +57,8 @@ function chain({
   pools?: Record<string, Pool>
   hookAllowed?: boolean
   terminalAllowed?: boolean
+  /** sqrtPriceX96 per PoolManager slot; any pool not listed is live at OLD_PRICE. */
+  prices?: Record<string, bigint>
 }) {
   const poolOf = (hookAddress: Address, token: Address) =>
     pools[`${hookAddress.toLowerCase()}:${token.toLowerCase()}`]
@@ -79,6 +95,10 @@ function chain({
             hooks: zeroAddress,
           }
         }
+        if (functionName === 'extsload') {
+          const price = prices[String(args?.[0]).toLowerCase()] ?? OLD_PRICE
+          return `0x${price.toString(16).padStart(64, '0')}`
+        }
         throw new Error(`Unexpected read ${functionName}`)
       },
     ),
@@ -86,7 +106,7 @@ function chain({
   return client as unknown as PublicClient & typeof client
 }
 
-describe('buyback 1.4.0 + gateway preset', () => {
+describe('buyback 2.0.0 + gateway preset', () => {
   it('refuses deployed but disallowed selections and propagates unknown allowances', async () => {
     for (const client of [chain({ hookAllowed: false }), chain({ terminalAllowed: false })]) {
       expect(await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })).toMatchObject({ status: 'unavailable', steps: [] })
@@ -100,8 +120,8 @@ describe('buyback 1.4.0 + gateway preset', () => {
 
   it('uses canonical per-chain targets only after deployment', () => {
     expect(PRESET).toMatchObject({
-      id: 'buyback-1-4-0-gateway',
-      title: 'Move to buyback 1.4.0 + gateway',
+      id: 'buyback-2-0-0-gateway',
+      title: 'Move to buyback 2.0.0 + gateway',
       steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
     })
     expect(presetInfraAvailable(1)).toBe(true)
@@ -208,6 +228,37 @@ describe('buyback 1.4.0 + gateway preset', () => {
     const pools = resolved.steps.filter(step => step.kind === 'setPoolFor')
     expect(pools).toHaveLength(1)
     expect(pools[0].args).toEqual([6n, 10_000, 200, 1800n, USDC_BASE])
+  })
+
+  it('opens the native pool on the new V4 hook at the old pool price', async () => {
+    const client = chain({
+      pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 172_800n } },
+      prices: { [newPoolSlot(84532, 10_000, 200)]: 0n },
+    })
+    const resolved = await resolvePreset(PRESET, { chainId: 84532, projectId: 2, client })
+    expect(resolved.steps.map(step => step.kind)).toEqual(['setHookFor', 'initializePoolFor', 'setTerminalFor'])
+    expect(resolved.steps[1].args).toEqual([2n, 10_000, 200, 1800n, NATIVE, OLD_PRICE])
+    expect(resolved.steps[1].note).toBe(`${DEPLOYER_DEFAULT_TWAP_NOTE} ${NEW_POOL_NOTE}`)
+    // Pinned in revnet-money's preset test too: co-signers on either client must sign identical calldata.
+    expect(resolved.steps.map(step => step.data)).toEqual([
+      '0x779b0290000000000000000000000000000000000000000000000000000000000000000200000000000000000000000080717f09461a3fb08364fe8c5259220f7d06e0af',
+      '0x49e303830000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000271000000000000000000000000000000000000000000000000000000000000000c80000000000000000000000000000000000000000000000000000000000000708000000000000000000000000000000000000000000000000000000000000eeee0000000000000000000000000000000000000001000000000000000000000000',
+      '0xf3e37d010000000000000000000000000000000000000000000000000000000000000002000000000000000000000000e2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977',
+    ])
+  })
+
+  it('registers a new pool that already exists, and carries nothing from an old pool with no price', async () => {
+    const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 1800n } }
+    const existing = await resolvePreset(PRESET, { chainId: 84532, projectId: 2, client: chain({ pools }) })
+    expect(existing.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
+    expect(existing.message).toBeNull()
+    const unpriced = await resolvePreset(PRESET, {
+      chainId: 84532,
+      projectId: 2,
+      client: chain({ pools, prices: { [newPoolSlot(84532, 10_000, 200)]: 0n, [oldPoolSlot(10_000, 200)]: 0n } }),
+    })
+    expect(unpriced.steps.map(step => step.kind)).toEqual(['setHookFor', 'setTerminalFor'])
+    expect(unpriced.message).toBe('Native pool has no price to carry; set it up on the new hook directly.')
   })
 
   it('adds no pool step when the project has no pool, and skips applied steps', async () => {
