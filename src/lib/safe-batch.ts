@@ -436,11 +436,8 @@ export function powerStepValues(
  * A step's identity inside one chain's tray: adding a step whose key already
  * exists replaces it in place. The key is `${kind}:${to}`, extended by the
  * pool token (a registry hosts one pool step per token) or, for the generic
- * owner-power kind, the function name.
- */
-/**
- * A step's identity in its chain's batch. A pool registration is one per terminal token whatever
- * its operation, so a re-mirrored `setPoolFor` replaces a queued `initializePoolFor` and back.
+ * owner-power kind, the function name. `setPoolFor` and `initializePoolFor` share
+ * one identity, so a later registration of a token replaces a queued one.
  */
 export function stepKey(
   step: Pick<BatchStep, 'kind' | 'to' | 'functionName' | 'values'>,

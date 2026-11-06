@@ -4,7 +4,7 @@ import { uniswapV4PoolId, uniswapV4PoolStateSlot, uniswapV4SqrtPriceX96AtTick } 
 import { migratedPoolKey, type V4PoolKey } from '@/lib/buyback-pool-migration'
 import {
   DEPLOYER_DEFAULT_TWAP_NOTE,
-  mirrorPresetBatch,
+  MIGRATION_MIRROR_LINE,
   NEW_POOL_PRICE_OFF_NOTE,
   NO_POOL_HISTORY_NOTE,
   newPoolNote,
@@ -14,7 +14,7 @@ import {
   resolvePreset,
   SAFE_BATCH_PRESETS,
 } from '@/lib/safe-batch-presets'
-import { buildStep, mirrorBatch, upsertStep, type BatchStep } from '@/lib/safe-batch'
+import { buildStep, mirrorBatch, upsertStep } from '@/lib/safe-batch'
 import { rolloutAddress, rolloutTargets } from '@/lib/protocol-rollout'
 import * as rollout from '@/lib/protocol-rollout'
 
@@ -129,7 +129,7 @@ describe('buyback 2.0.0 + gateway preset', () => {
     client.readContract.mockRejectedValueOnce(new Error('RPC unavailable'))
     await expect(resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })).rejects.toThrow('RPC unavailable')
     const step = buildStep({ kind: 'setHookFor', chainId: 11155111, projectId: 2, values: { hook: NEW_HOOK } })
-    expect(await resolveMirrorValues(step, { chainId: 84532, projectId: 2, client: chain({ hookAllowed: false }) })).toEqual({ skip: 'The selected hook is not allowed by the registry on Base Sepolia.' })
+    expect(await resolveMirrorValues(step, { chainId: 84532, projectId: 2, client: chain({ hookAllowed: false }) })).toEqual({ skip: MIGRATION_MIRROR_LINE })
   })
 
   it('uses canonical per-chain targets only after deployment', () => {
@@ -337,20 +337,21 @@ describe('buyback 2.0.0 + gateway preset', () => {
 })
 
 describe('mirroring per-chain steps', () => {
-  it.each(MAINNETS)('mirrors the full migration to executed mainnet chain %i using its recorded targets', async chainId => {
-    const targets = rolloutTargets(chainId)!
-    expect(targets).not.toBeNull()
+  it.each(MAINNETS)('refuses to mirror the migration onto mainnet chain %i and points at the preset', async chainId => {
     const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } }
     const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client: chain({ pools }) })
+    const operator = buildStep({ kind: 'setOperatorOf', chainId: 11155111, projectId: 2, values: { operator: OLD_TERMINAL } })
+    const targets = rolloutTargets(chainId)!
     const targetClient = chain({ code: [targets.hook, targets.terminal], pools })
-    const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 6 }, (step, to) => resolveMirrorValues(step, { ...to, client: targetClient }))
-    expect(mirrored.skipped).toEqual([])
-    expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
-    expect(mirrored.steps.map(step => step.args)).toEqual([
-      [6n, targets.hook],
-      [6n, 3000, 60, 1800n, NATIVE],
-      [6n, targets.terminal],
+    const mirrored = await mirrorBatch([...source.steps, operator], { chainId, projectId: 6 }, (step, to) => resolveMirrorValues(step, { ...to, client: targetClient }))
+    expect(mirrored.skipped.map(item => item.reason)).toEqual([
+      MIGRATION_MIRROR_LINE,
+      'The preceding buyback hook selection could not be mirrored.',
+      MIGRATION_MIRROR_LINE,
     ])
+    expect(MIGRATION_MIRROR_LINE).toBe('Use the "Move to buyback 2.0.0 + gateway" preset; it resolves every chain at once.')
+    // A step that is not part of the move still mirrors as before.
+    expect(mirrored.steps.map(step => step.args)).toEqual([[6n, OLD_TERMINAL]])
   })
 
   it('skips the migration batch and its dependent pool when destination execution records are missing', async () => {
@@ -364,9 +365,6 @@ describe('mirroring per-chain steps', () => {
       expect(mirrored.skipped).toHaveLength(3)
       expect(mirrored.skipped[1].reason).toContain('preceding buyback hook selection')
     }
-    const available = await mirrorBatch(source.steps, { chainId: 84532, projectId: 2 }, (step, to) => resolveMirrorValues(step, { ...to, client }))
-    expect(available.skipped).toEqual([])
-    expect(available.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
     const reordered = await mirrorBatch([source.steps[1], source.steps[0], source.steps[2]], { chainId: 1, projectId: 2 }, (step, to) => resolveMirrorValues(step, { ...to, client }))
     expect(reordered.steps).toEqual([])
     expect(reordered.skipped).toHaveLength(3)
@@ -414,57 +412,26 @@ describe('mirroring per-chain steps', () => {
     const hook = buildStep({ kind: 'setHookFor', chainId: 11155111, projectId: 2, values: { hook: NEW_HOOK } })
     expect(
       await resolveMirrorValues(hook, { chainId: 10, projectId: 2, client: chain({}) }),
-    ).toEqual({ skip: 'The buyback and gateway rollout is not deployed on Optimism yet.' })
+    ).toEqual({ skip: MIGRATION_MIRROR_LINE })
   })
 })
 
-describe('mirroring the migration preset', () => {
-  const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } }
-  const sourceBatch = async (sourcePools: Record<string, Pool> = pools) =>
-    (await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client: chain({ pools: sourcePools }) })).steps
-  const mirror = (steps: BatchStep[], client: PublicClient) => mirrorPresetBatch(steps, { chainId: 84532, projectId: 2, client })
-  const unopened = { [newPoolSlot(84532, 3000, 60)]: 0n }
-
-  it("opens the destination's uninitialized pool at its own TWAP", async () => {
-    const steps = await sourceBatch()
-    expect(steps[1].kind).toBe('setPoolFor')
-    const mirrored = await mirror(steps, chain({ pools, prices: unopened, meanTick: 200 }))
-    expect(mirrored.skipped).toEqual([])
-    expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'initializePoolFor', 'setTerminalFor'])
-    expect(mirrored.steps[1].values.sqrtPriceX96).toBe(uniswapV4SqrtPriceX96AtTick(200))
-  })
-
-  it('skips a destination that is already migrated', async () => {
-    const steps = await sourceBatch()
-    const mirrored = await mirror(steps, chain({ hook: NEW_HOOK, terminal: NEW_TERMINAL }))
-    expect(mirrored.steps).toEqual([])
-    expect(mirrored.skipped).toEqual([
-      { step: steps[0], reason: 'Nothing to do on Base Sepolia: already on the current hook and gateway.' },
+describe('queued pool registrations', () => {
+  it('keeps one registration per terminal token, whatever its operation', () => {
+    const pool = (kind: 'setPoolFor' | 'initializePoolFor', token: Address) =>
+      buildStep({
+        kind,
+        chainId: 84532,
+        projectId: 2,
+        values:
+          kind === 'setPoolFor'
+            ? { fee: 10_000, tickSpacing: 200, twapWindow: 1800n, terminalToken: token }
+            : { fee: 10_000, tickSpacing: 200, twapWindow: 1800n, pairToken: token, sqrtPriceX96: OLD_PRICE },
+      })
+    const queued = [pool('setPoolFor', USDC_BASE), pool('setPoolFor', NATIVE)].reduce(upsertStep, [pool('initializePoolFor', NATIVE)])
+    expect(queued.map(step => [step.kind, step.values.terminalToken])).toEqual([
+      ['setPoolFor', NATIVE],
+      ['setPoolFor', USDC_BASE],
     ])
-  })
-
-  it('includes pools only the destination has', async () => {
-    const steps = await sourceBatch({})
-    expect(steps.map(step => step.kind)).toEqual(['setHookFor', 'setTerminalFor'])
-    const mirrored = await mirror(steps, chain({ pools, prices: unopened }))
-    expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'initializePoolFor', 'setTerminalFor'])
-  })
-
-  it('keeps a window the operator edited on the source', async () => {
-    const steps = await sourceBatch()
-    const edited = buildStep({ kind: 'setPoolFor', chainId: 11155111, projectId: 2, values: { ...steps[1].values, twapWindow: 3600n } })
-    const mirrored = await mirror([steps[0], edited, steps[2]], chain({ pools }))
-    expect(mirrored.steps[1].kind).toBe('setPoolFor')
-    expect(mirrored.steps[1].values.twapWindow).toBe(3600n)
-  })
-
-  it('re-mirroring after the pool opened elsewhere leaves one registration', async () => {
-    const steps = await sourceBatch()
-    const first = await mirror(steps, chain({ pools, prices: unopened }))
-    const again = await mirror(steps, chain({ pools }))
-    expect(first.steps[1].kind).toBe('initializePoolFor')
-    expect(again.steps[1].kind).toBe('setPoolFor')
-    const queued = again.steps.reduce(upsertStep, first.steps)
-    expect(queued.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
   })
 })

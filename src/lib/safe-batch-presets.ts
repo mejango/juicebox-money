@@ -18,7 +18,6 @@ import {
 } from 'viem'
 import {
   buildStep,
-  mirrorBatch,
   type BatchStep,
   type BatchStepKind,
   type BatchStepValues,
@@ -177,7 +176,8 @@ async function readPool(
 }
 
 /** The pool-registration values carried from an old hook, with the window reset to 30 minutes. */
-function carriedPoolValues(pool: PoolRead, twapWindow = PRESET_TWAP_WINDOW) {
+function carriedPoolValues(pool: PoolRead) {
+  const twapWindow = PRESET_TWAP_WINDOW
   return {
     values: {
       fee: pool.fee,
@@ -212,7 +212,6 @@ async function poolStepOn(
   targetHook: Address,
   poolHook: Address,
   probe: { read: Address; write: Address },
-  twapWindow: bigint,
 ): Promise<PoolStep | null> {
   const pool = await readPool(client, currentHook, pid, probe)
   if (!pool) return null
@@ -242,7 +241,7 @@ async function poolStepOn(
   if (move.kind === 'setPoolFor' && !pricesAgree(newPrice, reference.sqrtPriceX96)) {
     return { kind: 'skip', note: `${label} ${NEW_POOL_PRICE_OFF_NOTE}` }
   }
-  const carriedValues = carriedPoolValues(pool, twapWindow)
+  const carriedValues = carriedPoolValues(pool)
   if (move.kind === 'setPoolFor') return { kind: 'setPoolFor', ...carriedValues }
   return {
     kind: 'initializePoolFor',
@@ -263,14 +262,7 @@ export async function resolvePreset(
     chainId,
     projectId,
     client,
-    windows = {},
-  }: {
-    chainId: JBChainId
-    projectId: number
-    client: PublicClient
-    /** Registration windows per token label carried from an edited source batch. */
-    windows?: Partial<Record<string, bigint>>
-  },
+  }: { chainId: JBChainId; projectId: number; client: PublicClient },
 ): Promise<PresetChainResolution> {
   const name = chainName(chainId)
   const targets = rolloutTargets(chainId)
@@ -348,8 +340,7 @@ export async function resolvePreset(
         if (!(await readPool(client, currentHook, pid, probe))) continue
         return { status: 'unavailable', message: `The current V4 hook is not recorded on ${name}.`, steps: [] }
       }
-      const label = probe.read === zeroAddress ? 'Native' : 'USDC'
-      const pool = await poolStepOn(client, chainId, pid, currentHook, targets.hook, poolHook, probe, windows[label] ?? PRESET_TWAP_WINDOW)
+      const pool = await poolStepOn(client, chainId, pid, currentHook, targets.hook, poolHook, probe)
       if (!pool) continue
       if (pool.kind === 'skip') {
         if (pool.note) poolNotes.push(pool.note)
@@ -398,6 +389,9 @@ function mirroredToken(
   return null
 }
 
+/** Shared with revnet-money: a migration step is never mirrored. */
+export const MIGRATION_MIRROR_LINE = `Use the "${SAFE_BATCH_PRESETS[0].title}" preset; it resolves every chain at once.`
+
 /**
  * Chain-specific values for mirroring one step onto another chain, re-read
  * there through the same preset reads. Steps whose inputs cannot be derived
@@ -410,14 +404,12 @@ export async function resolveMirrorValues(
   const name = chainName(to.chainId)
   const pid = BigInt(to.projectId)
   const sourceTargets = rolloutTargets(step.chainId)
-  const targetTargets = rolloutTargets(to.chainId)
   if (step.kind === 'setHookFor' || step.kind === 'setTerminalFor') {
     const key = step.kind === 'setHookFor' ? 'hook' : 'terminal'
+    // The move to the rollout targets is resolved per chain by its preset, never copied; the pool
+    // registrations after this selection are dropped with it.
     if (sourceTargets && String(step.values[key]).toLowerCase() === sourceTargets[key].toLowerCase()) {
-      if (!targetTargets) return { skip: `The buyback and gateway rollout is not deployed on ${name} yet.` }
-      if (!await hasCode(to.client, targetTargets[key])) return { skip: `The selected ${key} is not deployed on ${name} yet.` }
-      if (!await selectionAllowed(to.client, to.chainId, key, targetTargets[key])) return { skip: `The selected ${key} is not allowed by the registry on ${name}.` }
-      return { values: { ...step.values, [key]: targetTargets[key] } }
+      return { skip: MIGRATION_MIRROR_LINE }
     }
     return { skip: `Choose the ${key} on ${name} directly; this selection has no verified counterpart.` }
   }
@@ -455,52 +447,4 @@ export async function resolveMirrorValues(
     return { skip: `Owner powers take per-chain values. Add them on ${name} directly.` }
   }
   return { values: step.values }
-}
-
-const POOL_KINDS: readonly string[] = ['setPoolFor', 'initializePoolFor']
-
-/**
- * "Same on every chain" for a batch: its move to the current hook (that selection, the pool
- * registrations after it and the gateway selection) is resolved as the whole preset from the
- * destination's own state and token probes, carrying each pool's chosen window; every other step
- * mirrors through `mirrorBatch`. Mirrored in revnet-money's `mirrorPresetBatch`.
- */
-export async function mirrorPresetBatch(
-  steps: readonly BatchStep[],
-  to: { chainId: JBChainId; projectId: number; client: PublicClient },
-): Promise<Awaited<ReturnType<typeof mirrorBatch>>> {
-  const fromChainId = steps[0]?.chainId
-  const from = fromChainId ? rolloutTargets(fromChainId) : null
-  const resolve = (step: BatchStep, target: { chainId: JBChainId; projectId: number }) =>
-    resolveMirrorValues(step, { ...target, client: to.client })
-  const target = { chainId: to.chainId, projectId: to.projectId }
-  const hookAt = from
-    ? steps.findIndex(step => step.kind === 'setHookFor' && String(step.values.hook).toLowerCase() === from.hook.toLowerCase())
-    : -1
-  if (hookAt < 0) return mirrorBatch(steps, target, resolve)
-  const usdc = USDC_ADDRESSES[fromChainId!]?.toLowerCase()
-  const windows: Partial<Record<string, bigint>> = {}
-  const migration = steps.map((step, index) => {
-    if (index === hookAt) return true
-    if (step.kind === 'setTerminalFor') return String(step.values.terminal).toLowerCase() === from!.terminal.toLowerCase()
-    if (index < hookAt || !POOL_KINDS.includes(step.kind)) return false
-    const token = String(step.values.terminalToken ?? step.values.pairToken).toLowerCase()
-    const label = token === NATIVE_TOKEN.toLowerCase() ? 'Native' : token === usdc ? 'USDC' : null
-    if (label) windows[label] = step.values.twapWindow as bigint
-    return true
-  })
-  // ponytail: other steps keep their side of the migration; reorder by hand in the tray if needed.
-  const [before, after, preset] = await Promise.all([
-    mirrorBatch(steps.filter((_, index) => index < hookAt && !migration[index]), target, resolve),
-    mirrorBatch(steps.filter((_, index) => index > hookAt && !migration[index]), target, resolve),
-    resolvePreset(SAFE_BATCH_PRESETS[0], { ...to, windows }),
-  ])
-  return {
-    steps: [...before.steps, ...preset.steps, ...after.steps],
-    skipped: [
-      ...before.skipped,
-      ...(preset.status === 'ready' || !preset.message ? [] : [{ step: steps[hookAt], reason: preset.message }]),
-      ...after.skipped,
-    ],
-  }
 }
