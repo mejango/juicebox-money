@@ -42,6 +42,8 @@ import { cachedQuery, PERSIST } from '@/lib/query-persist'
 import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
+import { migratedPoolKey, poolSqrtPriceX96, retiredPoolHooks } from '@/lib/buyback-pool-migration'
+import { rolloutAddress, rolloutChain } from '@/lib/protocol-rollout'
 import { formatTokenAmount, truncateAddress } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import {
@@ -905,6 +907,47 @@ export async function readUserLpPositions(
     })
   }
   return mine
+}
+
+export interface MovableLpPosition {
+  /** The retired pool the position sits in. */
+  from: Extract<MarketResult, { status: 'pool' }>
+  position: UserLpPosition
+}
+
+/**
+ * The wallet's positions in the pools the project's buyback used before its current V4 hook.
+ * Mirrored in revnet-money's market reads.
+ */
+export async function readMovableLpPositions(
+  client: PublicClient,
+  chainId: JBChainId,
+  pool: Extract<MarketResult, { status: 'pool' }>,
+  owner: Address,
+  signal?: AbortSignal,
+): Promise<MovableLpPosition[]> {
+  const retired = retiredPoolHooks(
+    pool.key.hooks,
+    rolloutAddress('JBUniswapV4Hook', chainId),
+    rolloutChain(chainId)?.history.JBUniswapV4Hook,
+  )
+  const found = await Promise.all(
+    retired.map(async hooks => {
+      const key = migratedPoolKey(pool.key, hooks)
+      const sqrtP = await poolSqrtPriceX96(client, chainId, key)
+      if (sqrtP === 0n) return []
+      const from = {
+        ...pool,
+        key,
+        poolId: computePoolId(key),
+        sqrtP,
+        price: poolPriceFromSqrt(sqrtP, pool.pairIsC0, pool.pair.decimals) ?? pool.price,
+      }
+      const positions = await readUserLpPositions(client, chainId, from, owner, signal)
+      return positions.map(position => ({ from, position }))
+    }),
+  )
+  return found.flat()
 }
 
 // ------------------------------------------------------------- component --

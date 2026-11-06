@@ -30,11 +30,14 @@ import {
   retainedFloor,
 } from '@/lib/transaction-builders'
 import {
+  readMovableLpPositions,
   readUserLpPositions,
   resolveMarket,
   type MarketResult,
+  type MovableLpPosition,
   type UserLpPosition,
 } from './MarketSection'
+import { liquidityMovePlan, poolSqrtPriceX96 } from '@/lib/buyback-pool-migration'
 import { EditPositionPanel } from './EditPositionPanel'
 import { MarketEditPanel } from './MarketEditPanel'
 import {
@@ -214,6 +217,9 @@ export function LiquidityPositions({
 
   return (
     <div>
+      {chains.map(chain => (
+        <MovableLpRows key={chain.chainId} chainId={chain.chainId} projectId={chain.projectId} sym={sym} />
+      ))}
       {allEmpty ? (
         <p className="text-sm text-smoke-500">
           You have no LP positions on any chain.
@@ -254,6 +260,181 @@ export function LiquidityPositions({
           You&apos;re viewing another account — connect as its owner to claim,
           edit, or remove.
         </p>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The wallet's positions still in a pool the project's buyback has left, each moved into the
+ * current pool by one reviewed `modifyLiquidities`.
+ */
+function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projectId: number; sym: string }) {
+  const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const { address, connectedAddress, isViewAs } = useViewedAccount()
+  const tx = useReviewedAction(chainId)
+  const { pool, positionManager } = useUserLpSummary(chainId, projectId, address)
+  const [reading, setReading] = useState<bigint | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [started, setStarted] = useState(false)
+  const [pending, setPending] = useState<{
+    account: Address
+    movable: MovableLpPosition
+    plan: ReturnType<typeof liquidityMovePlan>
+  } | null>(null)
+  const movable = useQuery({
+    queryKey: ['movableLpPositions', chainId, pool?.poolId, address?.toLowerCase()],
+    enabled: !!client && !!pool && !!address,
+    retry: 0,
+    staleTime: 30_000,
+    queryFn: ({ signal }) => readMovableLpPositions(client!, chainId, pool!, address!, signal),
+  })
+  if (!client || !pool || !positionManager || !movable.data?.length) return null
+
+  const review = async ({ from, position }: MovableLpPosition) => {
+    if (!connectedAddress) return
+    setError(null)
+    setReading(position.tokenId)
+    try {
+      // Re-read both prices: the burn floors and the new liquidity come from them.
+      const [fresh, toSqrtPriceX96] = await Promise.all([
+        readMovableLpPositions(client, chainId, pool, connectedAddress),
+        poolSqrtPriceX96(client, chainId, pool.key),
+      ])
+      const current = fresh.find(item => item.position.tokenId === position.tokenId)
+      if (!current || current.from.poolId !== from.poolId) {
+        throw new Error('This position is no longer owned by your wallet.')
+      }
+      setStarted(false)
+      tx.reset()
+      setPending({
+        account: connectedAddress,
+        movable: current,
+        plan: liquidityMovePlan({
+          tokenId: current.position.tokenId,
+          liquidity: current.position.liquidity,
+          tickLower: current.position.tickLower,
+          tickUpper: current.position.tickUpper,
+          to: pool.key,
+          fromSqrtPriceX96: current.from.sqrtP,
+          toSqrtPriceX96,
+          owner: connectedAddress,
+        }),
+      })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not read this position.')
+    } finally {
+      setReading(null)
+    }
+  }
+
+  const run = (frozen: NonNullable<typeof pending>) => {
+    setStarted(true)
+    void tx.run({
+      account: frozen.account,
+      calls: [reviewedCall(
+        buildModifyLiquiditiesRequest({
+          chainId,
+          positionManager,
+          unlockData: frozen.plan.unlockData,
+          deadline: swapDeadline(tx.isSafe),
+          value: 0n,
+        }),
+        { intent: liquidityIntent({ chainId, pool: frozen.movable.from.poolId, positions: [frozen.movable.position.tokenId] }) },
+      )],
+    }).then(done => { if (done) void movable.refetch() })
+  }
+
+  const close = () => {
+    if (tx.busy) return
+    setPending(null)
+    setStarted(false)
+    tx.dismiss()
+  }
+
+  const pairMin = (plan: ReturnType<typeof liquidityMovePlan>) => pool.pairIsC0 ? plan.amount0Minimum : plan.amount1Minimum
+  const tokenMin = (plan: ReturnType<typeof liquidityMovePlan>) => pool.pairIsC0 ? plan.amount1Minimum : plan.amount0Minimum
+  const complete = started && tx.settled
+
+  return (
+    <div className="mb-3 space-y-2">
+      {movable.data.map(({ from, position }) => (
+        <div
+          key={position.tokenId.toString()}
+          className="flex flex-wrap items-center justify-between gap-2 border border-smoke-100 px-3 py-2 text-xs text-smoke-700"
+        >
+          <span className="inline-flex items-center gap-2">
+            <ChainIcon chainId={chainId} size={16} />
+            Position #{position.tokenId.toString()} is still in the old pool.
+          </span>
+          <button
+            type="button"
+            className="btn-secondary min-h-[32px] px-3 text-xs"
+            disabled={tx.busy || reading !== null || isViewAs}
+            onClick={() => void review({ from, position })}
+          >
+            {reading === position.tokenId ? 'Reading…' : 'Move to new pool'}
+          </button>
+        </div>
+      ))}
+      {error && !pending ? <ErrorNote message={error} /> : null}
+      {pending ? (
+        <TxProgress
+          open
+          title={complete ? 'Liquidity moved' : 'Move liquidity'}
+          rows={[
+            { label: 'Position', value: `#${pending.movable.position.tokenId.toString()}`, mono: true },
+            {
+              label: 'Moves',
+              value: (
+                <>
+                  {formatTokenAmount(pending.movable.position.tokenAmount, 18)} {sym}
+                  <span className="block text-xs text-smoke-500">
+                    {formatTokenAmount(pending.movable.position.pairAmount, pool.pair.decimals)} {pool.pair.symbol}
+                  </span>
+                </>
+              ),
+              strong: true,
+            },
+            {
+              label: 'At least',
+              value: (
+                <>
+                  {formatTokenAmount(tokenMin(pending.plan), 18)} {sym}
+                  <span className="block text-xs text-smoke-500">
+                    {formatTokenAmount(pairMin(pending.plan), pool.pair.decimals)} {pool.pair.symbol}
+                  </span>
+                  <span className="block text-xs text-smoke-500">
+                    out of the old pool, enforced onchain; leftovers and fees come back to you
+                  </span>
+                </>
+              ),
+            },
+            { label: 'To', value: pending.account, mono: true },
+            { label: 'On', value: chainName(chainId) },
+          ]}
+          steps={[
+            {
+              title: 'Move liquidity',
+              detail:
+                tx.phase === 'simulating'
+                  ? 'Checking…'
+                  : tx.phase === 'signing'
+                    ? 'Confirm in your wallet…'
+                    : tx.phase === 'pending'
+                      ? 'Sending…'
+                      : undefined,
+            },
+          ]}
+          activeIndex={started ? 0 : -1}
+          busy={tx.busy}
+          complete={complete}
+          status={tx.notice ?? tx.safeNonceGuidance}
+          error={tx.error}
+          onClose={close}
+          start={() => run(pending)}
+          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); void review(pending.movable) } } : null}
+        />
       ) : null}
     </div>
   )
