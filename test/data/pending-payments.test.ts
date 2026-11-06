@@ -13,10 +13,12 @@ vi.mock('@/lib/project-batch', () => ({ loadProjectBatches: mocks.batches }))
 
 import { fetchPendingPayments, loadPendingPaymentBatch, paymentCommitment, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPayment } from '@/lib/pending-payments'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
+import * as rollout from '@/lib/protocol-rollout'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const OTHER = '0x2222222222222222222222222222222222222222' as Address
-const GATEWAY = '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901' as Address
+const GATEWAY = '0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977' as Address
+const PREVIOUS_GATEWAY = '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901' as Address
 const ERROR = `0x${'ab'.repeat(32)}` as Hex
 const tuple = (payment: PendingPayment) => ({ amount: BigInt(payment.amount), preferAddToBalance: payment.preferAddToBalance,
   shouldReturnHeldFees: payment.shouldReturnHeldFees, beneficiary: payment.beneficiary, projectId: BigInt(payment.projectId),
@@ -45,8 +47,12 @@ function eventLog(name: string, row: PendingPayment, overrides: Record<string, u
     data: encodeAbiParameters(inputs, inputs.map(input => args[input.name as keyof typeof args])) } as TransactionReceipt['logs'][number]
 }
 
+const recordedChain = rollout.rolloutChain(1)!
 beforeEach(() => {
   vi.resetAllMocks()
+  vi.restoreAllMocks()
+  // Pagination is per gateway; most cases page one generation.
+  vi.spyOn(rollout, 'rolloutChain').mockReturnValue({ ...recordedChain, history: { ...recordedChain.history, JBRouterTerminalGateway: {} } })
   live = { commitment: payment().callCommitment, failure: { errorHash: zeroHash, count: 0, lastFailureAt: 0, highestGasLimit: 0n }, timestamp: 100_000n, gasLimit: 30_000_000n }
   mocks.clientFor.mockReturnValue(mocks.client)
   mocks.symbol.mockResolvedValue('ETH')
@@ -74,6 +80,14 @@ describe('complete authenticated pending payment inventory', () => {
     ])
     expect(mocks.bendystraw.mock.calls[0][0]).toContain('{ version: 6 }')
     expect(mocks.client.readContract).not.toHaveBeenCalled()
+  })
+
+  it('keeps pending payments on the previous gateway generation listed', async () => {
+    vi.mocked(rollout.rolloutChain).mockReturnValue(recordedChain)
+    mocks.bendystraw.mockImplementation(async (_query: string, variables: { gateway: string }) =>
+      page(variables.gateway === PREVIOUS_GATEWAY ? [payment(1, { gateway: PREVIOUS_GATEWAY })] : []))
+    expect((await fetchPendingPayments(1, 1)).map(row => row.gateway)).toEqual([PREVIOUS_GATEWAY])
+    expect(mocks.bendystraw.mock.calls.map(([, variables]) => variables.gateway).sort()).toEqual([GATEWAY, PREVIOUS_GATEWAY].sort())
   })
 
   it('shows a payment from project 6 on destination 1 only, including other valid origins', async () => {

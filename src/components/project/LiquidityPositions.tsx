@@ -1,7 +1,7 @@
 'use client'
 
 import { legacyClaimFeesKey, legacyRemoveLpKey } from '@/lib/legacy-intents'
-import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { liquidityIntent, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
@@ -30,11 +30,14 @@ import {
   retainedFloor,
 } from '@/lib/transaction-builders'
 import {
+  readMovableLpPositions,
   readUserLpPositions,
   resolveMarket,
   type MarketResult,
+  type MovableLpPosition,
   type UserLpPosition,
 } from './MarketSection'
+import { liquidityMovePlan, poolSqrtPriceX96, readMovablePosition } from '@/lib/buyback-pool-migration'
 import { EditPositionPanel } from './EditPositionPanel'
 import { MarketEditPanel } from './MarketEditPanel'
 import {
@@ -197,23 +200,27 @@ export function LiquidityPositions({
   const { address, isViewAs } = useViewedAccount()
   // Per-chain scan outcomes reported up by the row groups, so the aggregate
   // empty state is knowable without lifting each chain's queries out of them.
-  const [scan, setScan] = useState<Record<number, number | 'loading' | 'error'>>({})
+  const [scan, setScan] = useState<Record<string, number | 'loading' | 'error'>>({})
   // The edit panel portals here, BELOW the scroll wrapper — as a table row it
   // would inherit the table's full scrollable width and blow the modal out.
   const [panelHost, setPanelHost] = useState<HTMLDivElement | null>(null)
   const onStatus = useCallback(
-    (chainId: number, status: number | 'loading' | 'error') => {
+    (key: number | string, status: number | 'loading' | 'error') => {
       setScan(current =>
-        current[chainId] === status ? current : { ...current, [chainId]: status },
+        current[key] === status ? current : { ...current, [key]: status },
       )
     },
     [],
   )
   if (!address || !chains.length) return null
-  const allEmpty = chains.every(chain => scan[chain.chainId] === 0)
+  // Empty only when every scan, the retired-pool one included, answered with nothing.
+  const allEmpty = chains.every(chain => scan[chain.chainId] === 0 && scan[`retired:${chain.chainId}`] === 0)
 
   return (
     <div>
+      {chains.map(chain => (
+        <MovableLpRows key={chain.chainId} chainId={chain.chainId} projectId={chain.projectId} sym={sym} onStatus={onStatus} />
+      ))}
       {allEmpty ? (
         <p className="text-sm text-smoke-500">
           You have no LP positions on any chain.
@@ -254,6 +261,211 @@ export function LiquidityPositions({
           You&apos;re viewing another account — connect as its owner to claim,
           edit, or remove.
         </p>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * The wallet's positions still in a pool the project's buyback has left, each moved into the
+ * current pool by one reviewed `modifyLiquidities`.
+ */
+function MovableLpRows({
+  chainId,
+  projectId,
+  sym,
+  onStatus,
+}: {
+  chainId: JBChainId
+  projectId: number
+  sym: string
+  onStatus: (key: string, status: number | 'loading' | 'error') => void
+}) {
+  const client = usePublicClient({ chainId }) as PublicClient | undefined
+  const { address, connectedAddress, isViewAs } = useViewedAccount()
+  const tx = useReviewedAction(chainId)
+  const { pool, positionManager } = useUserLpSummary(chainId, projectId, address)
+  const [reading, setReading] = useState<bigint | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [started, setStarted] = useState(false)
+  const [pending, setPending] = useState<{
+    account: Address
+    movable: MovableLpPosition
+    plan: ReturnType<typeof liquidityMovePlan>
+  } | null>(null)
+  const movable = useQuery({
+    queryKey: ['movableLpPositions', chainId, pool?.poolId, address?.toLowerCase()],
+    enabled: !!client && !!pool && !!address,
+    retry: 0,
+    staleTime: 30_000,
+    queryFn: ({ signal }) => readMovableLpPositions(client!, chainId, pool!, address!, signal),
+  })
+  const enabled = !!client && !!pool && !!address
+  useEffect(() => {
+    onStatus(`retired:${chainId}`, !enabled ? 0 : movable.isError ? 'error' : (movable.data?.length ?? 'loading'))
+  }, [chainId, onStatus, enabled, movable.isError, movable.data?.length])
+  if (!client || !pool || !positionManager) return null
+  // A failed scan is not "nothing to move".
+  if (movable.isError) {
+    return (
+      <p role="status" className="mb-3 text-xs text-red-700">
+        Could not check for liquidity left in the old pool.{' '}
+        <button type="button" className="underline" onClick={() => void movable.refetch()}>Retry</button>
+      </p>
+    )
+  }
+  if (!movable.data?.length) return null
+
+  const review = async ({ from, position }: MovableLpPosition) => {
+    if (!connectedAddress) return
+    setError(null)
+    setReading(position.tokenId)
+    try {
+      // Re-read both prices: the burn floors and the new liquidity come from them. The position
+      // itself comes from the PositionManager, never the index.
+      const [fresh, onchain, toSqrtPriceX96] = await Promise.all([
+        readMovableLpPositions(client, chainId, pool, connectedAddress),
+        readMovablePosition(client, positionManager, position.tokenId, from.key, connectedAddress),
+        poolSqrtPriceX96(client, chainId, pool.key),
+      ])
+      const current = fresh.find(item => item.position.tokenId === position.tokenId)
+      if (!current || current.from.poolId !== from.poolId) {
+        throw new Error('This position is no longer owned by your wallet.')
+      }
+      setStarted(false)
+      tx.reset()
+      setPending({
+        account: connectedAddress,
+        movable: { from: current.from, position: { ...current.position, ...onchain } },
+        plan: liquidityMovePlan({
+          ...onchain,
+          to: pool.key,
+          fromSqrtPriceX96: current.from.sqrtP,
+          toSqrtPriceX96,
+          owner: connectedAddress,
+        }),
+      })
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not read this position.')
+    } finally {
+      setReading(null)
+    }
+  }
+
+  const run = (frozen: NonNullable<typeof pending>) => {
+    setStarted(true)
+    void tx.run({
+      account: frozen.account,
+      calls: [reviewedCall(
+        buildModifyLiquiditiesRequest({
+          chainId,
+          positionManager,
+          unlockData: frozen.plan.unlockData,
+          deadline: swapDeadline(tx.isSafe),
+          value: 0n,
+        }),
+        { intent: liquidityIntent({ chainId, pool: frozen.movable.from.poolId, positions: [frozen.movable.position.tokenId] }) },
+      )],
+      // The PositionManager's state again right before sending, as revnet-money does.
+      reverify: async () => {
+        const fresh = await readMovablePosition(client, positionManager, frozen.movable.position.tokenId, frozen.movable.from.key, frozen.account)
+        if (fresh.liquidity !== frozen.movable.position.liquidity) {
+          throw new ReviewLineError('This position changed. Review it again before moving it.')
+        }
+      },
+    }).then(done => { if (done) void movable.refetch() })
+  }
+
+  const close = () => {
+    if (tx.busy) return
+    setPending(null)
+    setStarted(false)
+    tx.dismiss()
+  }
+
+  const pairMin = (plan: ReturnType<typeof liquidityMovePlan>) => pool.pairIsC0 ? plan.amount0Minimum : plan.amount1Minimum
+  const tokenMin = (plan: ReturnType<typeof liquidityMovePlan>) => pool.pairIsC0 ? plan.amount1Minimum : plan.amount0Minimum
+  const complete = started && tx.settled
+
+  return (
+    <div className="mb-3 space-y-2">
+      {movable.data.map(({ from, position }) => (
+        <div
+          key={position.tokenId.toString()}
+          className="flex flex-wrap items-center justify-between gap-2 border border-smoke-100 px-3 py-2 text-xs text-smoke-700"
+        >
+          <span className="inline-flex items-center gap-2">
+            <ChainIcon chainId={chainId} size={16} />
+            Position #{position.tokenId.toString()} is still in the old pool.
+          </span>
+          <button
+            type="button"
+            className="btn-secondary min-h-[32px] px-3 text-xs"
+            disabled={tx.busy || reading !== null || isViewAs}
+            onClick={() => void review({ from, position })}
+          >
+            {reading === position.tokenId ? 'Reading…' : 'Move to new pool'}
+          </button>
+        </div>
+      ))}
+      {error && !pending ? <ErrorNote message={error} /> : null}
+      {pending ? (
+        <TxProgress
+          open
+          title={complete ? 'Liquidity moved' : 'Move liquidity'}
+          rows={[
+            { label: 'Position', value: `#${pending.movable.position.tokenId.toString()}`, mono: true },
+            {
+              label: 'Moves',
+              value: (
+                <>
+                  {formatTokenAmount(pending.movable.position.tokenAmount, 18)} {sym}
+                  <span className="block text-xs text-smoke-500">
+                    {formatTokenAmount(pending.movable.position.pairAmount, pool.pair.decimals)} {pool.pair.symbol}
+                  </span>
+                </>
+              ),
+              strong: true,
+            },
+            {
+              label: 'At least',
+              value: (
+                <>
+                  {formatTokenAmount(tokenMin(pending.plan), 18)} {sym}
+                  <span className="block text-xs text-smoke-500">
+                    {formatTokenAmount(pairMin(pending.plan), pool.pair.decimals)} {pool.pair.symbol}
+                  </span>
+                  <span className="block text-xs text-smoke-500">
+                    out of the old pool, enforced onchain; leftovers and fees come back to you
+                  </span>
+                </>
+              ),
+            },
+            { label: 'To', value: pending.account, mono: true },
+            { label: 'On', value: chainName(chainId) },
+          ]}
+          steps={[
+            {
+              title: 'Move liquidity',
+              detail:
+                tx.phase === 'simulating'
+                  ? 'Checking…'
+                  : tx.phase === 'signing'
+                    ? 'Confirm in your wallet…'
+                    : tx.phase === 'pending'
+                      ? 'Sending…'
+                      : undefined,
+            },
+          ]}
+          activeIndex={started ? 0 : -1}
+          busy={tx.busy}
+          complete={complete}
+          status={tx.notice ?? tx.safeNonceGuidance}
+          error={tx.error}
+          onClose={close}
+          start={() => run(pending)}
+          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); void review(pending.movable) } } : null}
+        />
       ) : null}
     </div>
   )

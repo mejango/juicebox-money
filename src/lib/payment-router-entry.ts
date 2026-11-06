@@ -9,6 +9,7 @@ export function knownPaymentRouterEntries(chainId: number): Address[] {
   const addresses = [
     rolloutAddress('JBRouterTerminalRegistry', chainId),
     rolloutAddress('JBRouterTerminalGateway', chainId),
+    ...Object.values(record?.history.JBRouterTerminalGateway ?? {}),
     rolloutAddress('JBRouterTerminal', chainId),
     ...Object.values(record?.history.JBRouterTerminal ?? {}),
   ].filter((address): address is string => !!address)

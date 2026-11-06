@@ -98,9 +98,15 @@
       ]
     },
     "src/components/project/LiquidityPositions.tsx": {
-      "hooks": 1,
-      "sends": 2,
+      "hooks": 2,
+      "sends": 3,
       "sendSites": [
+        {
+          "id": "move-liquidity-to-new-pool",
+          "actions": [
+            "Move Uniswap V4 liquidity to the new pool"
+          ]
+        },
         {
           "id": "claim-liquidity-fees",
           "actions": [

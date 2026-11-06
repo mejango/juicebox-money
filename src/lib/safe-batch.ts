@@ -436,14 +436,16 @@ export function powerStepValues(
  * A step's identity inside one chain's tray: adding a step whose key already
  * exists replaces it in place. The key is `${kind}:${to}`, extended by the
  * pool token (a registry hosts one pool step per token) or, for the generic
- * owner-power kind, the function name.
+ * owner-power kind, the function name. `setPoolFor` and `initializePoolFor` share
+ * one identity, so a later registration of a token replaces a queued one.
  */
 export function stepKey(
   step: Pick<BatchStep, 'kind' | 'to' | 'functionName' | 'values'>,
 ): string {
   const spec = STEP_KINDS[step.kind]
   const extra = spec.discriminator?.(step.values, step.functionName)
-  return `${step.kind}:${step.to.toLowerCase()}${extra ? `:${extra}` : ''}`
+  const kind = step.kind === 'initializePoolFor' ? 'setPoolFor' : step.kind
+  return `${kind}:${step.to.toLowerCase()}${extra ? `:${extra}` : ''}`
 }
 
 export function buildStep({
@@ -516,6 +518,12 @@ const DEPENDENCIES: readonly {
     message:
       "Set the buyback hook before registering its pool. setPoolFor registers on the project's current hook.",
   },
+  {
+    kind: 'initializePoolFor',
+    after: 'setHookFor',
+    message:
+      "Set the buyback hook before opening its pool. initializePoolFor registers on the project's current hook.",
+  },
 ]
 
 /**
@@ -562,6 +570,19 @@ export function composeBatch(steps: readonly BatchStep[]): {
     calls: steps.map(step => ({ to: step.to, data: step.data, value: step.value })),
     problems: checkBatchOrder(steps).problems,
   }
+}
+
+/** A queued step's identity in one chain's batch. */
+export type BatchStepRef = Pick<BatchStep, 'chainId' | 'projectId' | 'id'>
+
+/** Upserts `steps` into one chain's queue after removing `dropped`, which a fresh resolution no longer allows. */
+export function queueSteps(
+  queued: readonly BatchStep[],
+  steps: readonly BatchStep[],
+  dropped: readonly BatchStepRef[] = [],
+): BatchStep[] {
+  const gone = new Set(dropped.map(ref => ref.id))
+  return steps.reduce(upsertStep, queued.filter(step => !gone.has(step.id)))
 }
 
 export function upsertStep(

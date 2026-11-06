@@ -1,28 +1,38 @@
 {
   "source": {
     "repository": "deploy-all-v6",
-    "commit": "a6ab40c5806b52ff4cb21f9eaefe275e621796f9"
+    "commit": "8ff50c28f7f4e4a8f98fdd8f680a6e2ddd2323d1"
   },
   "chains": {
     "1": {
       "alias": "ethereum",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0x3fa39399bbc752418ee7e16addeb0b95d6386943"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0x3fa39399bbc752418ee7e16addeb0b95d6386943",
+        "JBUniswapV4Hook": "0x41a50be8b4b63e968ab83227bc73330c5d1215c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x2fa194dc476d2b3c091dd13f76908f7294aa95c8",
+          "previous": "0xd81ece6cf73b18a1b109e48c86ffdbd284f6d5c8"
         }
       }
     },
@@ -30,21 +40,31 @@
       "alias": "optimism",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0xedb20e9963b22bcd3b0652b246aac2c222510d36"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0xedb20e9963b22bcd3b0652b246aac2c222510d36",
+        "JBUniswapV4Hook": "0x850ec1a2adcb2126d823632e60441de2926fd5c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0xfb8fdd258d6175a12a02805863662139db2415c8",
+          "previous": "0xae18f78eadfa5addda9026e1ab835381cfdf55c8"
         }
       }
     },
@@ -52,21 +72,31 @@
       "alias": "base",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0x3c2f3742785b0dec9bbb401de6615b70f740e4ca"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0x3c2f3742785b0dec9bbb401de6615b70f740e4ca",
+        "JBUniswapV4Hook": "0xb436cedbee8f191a3860719b4b0f474434f315c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x5c989a282a05e967f2d291467cc6d6c4500cd5c8",
+          "previous": "0xf70b71605f1c0a8ff7580557645bb7e29fe495c8"
         }
       }
     },
@@ -74,21 +104,31 @@
       "alias": "arbitrum",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0xa588449291852a49962276d75a25d51d8e285469"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0xa588449291852a49962276d75a25d51d8e285469",
+        "JBUniswapV4Hook": "0xa7477af9d209daf3e34d376d500ec82539b755c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x24b199b37f6195194313502f06dab4b5218495c8",
+          "previous": "0xd21ba44c9c833ccaf70795af7bf00719aa7455c8"
         }
       }
     },
@@ -96,21 +136,31 @@
       "alias": "base_sepolia",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0x552da193c58a71d8ad9f354f7d09b29f79c12422"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0x552da193c58a71d8ad9f354f7d09b29f79c12422",
+        "JBUniswapV4Hook": "0x2ca71b1ce365b571ce24cb57577a4a645dcc15c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x2192d032ef8edc19f6e59d875288890872c555c8",
+          "previous": "0xf7ce556c8c10cff2c8da6ea521c6232598f7d5c8"
         }
       }
     },
@@ -118,21 +168,31 @@
       "alias": "arbitrum_sepolia",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0xda4bbf677ba6f1f70054bd2bd6240d839141027d"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0xda4bbf677ba6f1f70054bd2bd6240d839141027d",
+        "JBUniswapV4Hook": "0x23d9ab653d95aa60e660015d80c9a112374ed5c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x6e1109602c8654b00b2f9477f2693b4cd2d055c8",
+          "previous": "0xd27bd395dfb5741a7cc66df836e3039c563955c8"
         }
       }
     },
@@ -140,21 +200,31 @@
       "alias": "sepolia",
       "contracts": {
         "JBDirectory": "0x5aff29060e023e6fb87be5596652b33c65af535b",
-        "JBBuybackHook": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91",
+        "JBBuybackHook": "0x80717f09461a3fb08364fe8c5259220f7d06e0af",
         "JBBuybackHookRegistry": "0x72f55a54cd53410a5ff175508a5a384227081788",
-        "JBRouterTerminal": "0x62e2fe718ca3008a6a322deec9903286463f1add",
+        "JBRouterTerminal": "0xa0b7b55e87c781f47bda8d40f8381cb746eb0e37",
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
-        "JBRouterTerminalGateway": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901",
-        "JBRatioPriceFeed": "0xbfcd029ee4e8a550409e65b5e2eca4f21de30c94"
+        "JBRouterTerminalGateway": "0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977",
+        "JBRatioPriceFeed": "0xbfcd029ee4e8a550409e65b5e2eca4f21de30c94",
+        "JBUniswapV4Hook": "0x3f365e7c021c957747b870d8800547140d04d5c8"
       },
       "history": {
         "JBBuybackHook": {
-          "previous": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
-          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566"
+          "v1": "0xc7c8334b09e43a38c20b43cf0f824e074280b566",
+          "v2": "0x77bee1ad2ac0ace98a9b5b58d75685c8b4d94948",
+          "previous": "0xb222da5a71e8fb89a5a38b7c920eab5dfbc74b91"
         },
         "JBRouterTerminal": {
-          "previous": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
-          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61"
+          "v1": "0x90689f415c80d2bc0f690a08e9e2b8c9dbfbdf61",
+          "v2": "0x0fbcbb3d10c8f524840d74ef81c1a9f161c418d7",
+          "previous": "0x62e2fe718ca3008a6a322deec9903286463f1add"
+        },
+        "JBRouterTerminalGateway": {
+          "previous": "0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901"
+        },
+        "JBUniswapV4Hook": {
+          "v1": "0x733ed06a75a8535af1c33ec6fa79371f42b0d5c8",
+          "previous": "0x7494930fbfa2fdd06549526c805d48b4f22a15c8"
         }
       }
     },
@@ -167,17 +237,14 @@
         "JBRouterTerminal": null,
         "JBRouterTerminalRegistry": "0xe0427f250fdb0379c8e98e884ee4570521208cbc",
         "JBRouterTerminalGateway": null,
-        "JBRatioPriceFeed": "0x866aea0a4dba3d191790b68d564e96f1dd4d1f49"
+        "JBRatioPriceFeed": "0x866aea0a4dba3d191790b68d564e96f1dd4d1f49",
+        "JBUniswapV4Hook": null
       },
       "history": {
-        "JBBuybackHook": {
-          "previous": null,
-          "v1": null
-        },
-        "JBRouterTerminal": {
-          "previous": null,
-          "v1": null
-        }
+        "JBBuybackHook": {},
+        "JBRouterTerminal": {},
+        "JBRouterTerminalGateway": {},
+        "JBUniswapV4Hook": {}
       }
     }
   }

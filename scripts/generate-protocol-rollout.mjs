@@ -7,7 +7,7 @@ import { executedDeploymentAddress } from './lib/protocol-rollout-artifacts.mjs'
 // deliberately not an input: after execution the same command updates the app.
 const root = resolve(process.env.PROTOCOL_DEPLOYMENTS_DIR ?? '../../deploy-all-v6')
 const chainNames = { 1: 'ethereum', 10: 'optimism', 8453: 'base', 42161: 'arbitrum', 11155111: 'sepolia', 11155420: 'optimism_sepolia', 84532: 'base_sepolia', 421614: 'arbitrum_sepolia' }
-const names = ['JBDirectory', 'JBBuybackHook', 'JBBuybackHookRegistry', 'JBRouterTerminal', 'JBRouterTerminalRegistry', 'JBRouterTerminalGateway', 'JBRatioPriceFeed']
+const names = ['JBDirectory', 'JBBuybackHook', 'JBBuybackHookRegistry', 'JBRouterTerminal', 'JBRouterTerminalRegistry', 'JBRouterTerminalGateway', 'JBRatioPriceFeed', 'JBUniswapV4Hook']
 const read = (chain, name) => {
   const path = join(root, 'deployments', chain, `${name}.json`)
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : null
@@ -17,12 +17,13 @@ let gatewayAbi
 for (const [id, alias] of Object.entries(chainNames)) {
   const contracts = {}
   for (const name of names) contracts[name] = executedDeploymentAddress(read(alias, name), id, name)
+  // Every retired generation stays recognizable: `_deprecated` is v1, `_deprecatedN` is v(N+1),
+  // and the newest retired one is "previous".
   const history = {}
-  for (const name of ['JBBuybackHook', 'JBRouterTerminal']) {
-    history[name] = {
-      previous: executedDeploymentAddress(read(alias, `${name}_deprecated1`), id, name) ?? (!contracts.JBRouterTerminalGateway ? contracts[name] : null),
-      v1: executedDeploymentAddress(read(alias, `${name}_deprecated`), id, name),
-    }
+  for (const name of ['JBBuybackHook', 'JBRouterTerminal', 'JBRouterTerminalGateway', 'JBUniswapV4Hook']) {
+    const retired = []
+    for (let artifact; (artifact = read(alias, `${name}_deprecated${retired.length || ''}`));) retired.push(executedDeploymentAddress(artifact, id, name))
+    history[name] = Object.fromEntries(retired.map((address, i) => [i === retired.length - 1 ? 'previous' : `v${i + 1}`, address]))
   }
   chains[id] = { alias, contracts, history }
   gatewayAbi ??= read(alias, 'JBRouterTerminalGateway')?.abi

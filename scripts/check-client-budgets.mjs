@@ -52,10 +52,12 @@ const routes = [
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 523, text: 'Browser Fixture Project' },
+  // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
+  { route: '/[urn]', path: '/eth:1', kib: 526, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 418, text: 'Holdings' },
+  // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
+  { route: '/account/[address]', path: `/account/${account}`, kib: 419, text: 'Holdings' },
   // Every unmatched path lands in a page that calls notFound(); pages stream, so
   // it answers 200 with the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -75,7 +77,8 @@ const budgets = {
   // Exact loan-source units and frozen repayment metadata: measured 2678.0 KiB, just above2678.
   // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
   // node-forge 1.4.3 (Para SDK security patch, lazy wallet chunk): measured 2682.8 KiB, rounded up only.
-  allScripts: 2683 * KIB,
+  // Buyback 2.0.0 rollout presets and LP move: measured 2686.6 KiB, rounded up only.
+  allScripts: 2687 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

@@ -335,7 +335,8 @@ describe('an LP fee claim reviewed for one account', () => {
   it('wallet-action:claim-uniswap-v4-lp-fees never claims from an account switched to before confirming', async () => {
     wallet.holdReviews()
     await render(<LiquidityPositions chains={[{ chainId: 1, projectId: 7 }]} sym="TKN" />)
-    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Claim fees'))
+    // Fees load after the row; the button is enabled once they do.
+    await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Claim fees' && !item.disabled))
     await click('Claim fees')
     expect(host.querySelector('[data-tx-confirm]')).not.toBeNull()
     await waitUntil(() => wallet.openReviews > 0)

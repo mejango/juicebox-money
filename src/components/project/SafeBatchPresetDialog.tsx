@@ -8,15 +8,18 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { ErrorNote } from '@/components/ui/TxError'
 import { clientFor } from '@/lib/authority'
-import { buildStep, type BatchStep } from '@/lib/safe-batch'
+import { buildStep, type BatchStep, type BatchStepRef } from '@/lib/safe-batch'
 import {
   MAX_TWAP_WINDOW,
   MIN_TWAP_WINDOW,
+  newPoolNoteOf,
   resolvePreset,
   SAFE_BATCH_PRESETS,
   type PresetChainResolution,
   type SafeBatchPreset,
 } from '@/lib/safe-batch-presets'
+
+const isPoolStep = (step: BatchStep) => step.kind === 'setPoolFor' || step.kind === 'initializePoolFor'
 import { shortError } from '@/lib/errors'
 import { chainName } from '@/lib/urn'
 
@@ -54,8 +57,8 @@ export function SafeBatchPresetDialog({ onClose }: { onClose: () => void }) {
         key={preset.id}
         preset={preset}
         deployments={batch.deployments}
-        onAdd={steps => {
-          batch.queue(steps)
+        onAdd={(steps, dropped) => {
+          batch.queue(steps, dropped)
           onClose()
         }}
       />
@@ -70,7 +73,7 @@ function PresetPlan({
 }: {
   preset: SafeBatchPreset
   deployments: { chainId: JBChainId; projectId: number }[]
-  onAdd: (steps: BatchStep[]) => void
+  onAdd: (steps: BatchStep[], dropped: BatchStepRef[]) => void
 }) {
   const query = useQuery({
     queryKey: [
@@ -115,7 +118,7 @@ function PresetPlan({
     for (const plan of selectedPlans) {
       for (const step of plan.steps) {
         const edited = windows[step.id]
-        if (step.kind !== 'setPoolFor' || edited === undefined) {
+        if (!isPoolStep(step) || edited === undefined) {
           steps.push(step)
           continue
         }
@@ -134,7 +137,12 @@ function PresetPlan({
             chainId: step.chainId,
             projectId: step.projectId,
             values: { ...step.values, twapWindow: window },
-            note: window === step.values.twapWindow ? step.note : undefined,
+            note:
+              window === step.values.twapWindow
+                ? step.note
+                : step.kind === 'initializePoolFor'
+                  ? newPoolNoteOf(step.note)
+                  : undefined,
           }),
         )
       }
@@ -150,7 +158,7 @@ function PresetPlan({
         setError('Select at least one chain with steps to add.')
         return
       }
-      onAdd(steps)
+      onAdd(steps, selectedPlans.flatMap(plan => plan.dropped ?? []))
     } catch (addError) {
       setError(addError instanceof Error ? addError.message : 'Could not add the preset.')
     }
@@ -209,7 +217,7 @@ function PresetPlan({
                         {step.note ? (
                           <span className="block text-amber-700">{step.note}</span>
                         ) : null}
-                        {step.kind === 'setPoolFor' ? (
+                        {isPoolStep(step) ? (
                           <label className="mt-1 flex items-center gap-2">
                             <span className="text-smoke-500">TWAP window (seconds)</span>
                             <input
