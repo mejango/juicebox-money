@@ -414,6 +414,24 @@ describe('reserved distributions', () => {
     expect(bullets.join()).not.toContain('distributed reserved')
   })
 
+  it.each([0, 4052])('labels custom reserved hooks before interpreting reward group %s as a project', splitProjectId => {
+    const hook = '0x1111111111111111111111111111111111111111'
+    const receipt = event({
+      ...toAddress,
+      sendReservedTokensToSplitEvent: {
+        ...toAddress.sendReservedTokensToSplitEvent!,
+        hook,
+        splitProjectId,
+      },
+    })
+    const parts = combinedActivityParts([distribution, receipt], 'ART')
+    const markup = renderToStaticMarkup(<>{parts.actions}</>)
+    expect(markup).toContain(`https://basescan.org/address/${hook}`)
+    expect(markup).toContain('hook')
+    expect(markup).not.toContain(`project #${splitProjectId}`)
+    expect(markup).not.toContain('title="0xsmall"')
+  })
+
   it('admits receipts to the project feed only alongside their distribution', () => {
     expect(projectFeedEvents([toAddress, toProject])).toEqual([])
     expect(projectFeedEvents([toAddress, distribution])).toHaveLength(2)

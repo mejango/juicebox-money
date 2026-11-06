@@ -10,7 +10,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { formatUnits, type Address } from 'viem'
+import { formatUnits, zeroAddress, type Address } from 'viem'
 import { mergeCrossChainActivityGroups, SPLITS_TOTAL_PERCENT } from '@bananapus/nana-sdk-core'
 import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
@@ -586,6 +586,11 @@ export function combinedActivityParts(
                 }}
                 chainId={entry.chainId as JBChainId}
               />
+            ) : receipt.hook && receipt.hook.toLowerCase() !== zeroAddress ? (
+              // A custom hook owns the split; its projectId is the hook's own data, not a project.
+              <>
+                <ActorLink href={addressUrl(entry.chainId, receipt.hook)} actor={receipt.hook} /> hook
+              </>
             ) : receipt.splitProjectId > 0 ? (
               <>project #{receipt.splitProjectId}</>
             ) : (
