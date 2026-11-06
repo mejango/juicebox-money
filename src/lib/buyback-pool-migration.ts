@@ -222,7 +222,7 @@ export async function readMovablePosition(
 }
 
 /** The most the new pool's price may differ from the old pool's before a move is refused, in bps. */
-export const MOVE_PRICE_TOLERANCE_BPS = 100n
+const MOVE_PRICE_TOLERANCE_BPS = 100n
 
 /** Whether two sqrtPriceX96 values are prices within `bps` of each other. */
 export function pricesAgree(a: bigint, b: bigint, bps = MOVE_PRICE_TOLERANCE_BPS): boolean {

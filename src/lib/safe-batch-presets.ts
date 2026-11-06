@@ -72,7 +72,7 @@ function windowLabel(seconds: bigint | number): string {
   const value = BigInt(seconds)
   return value % 60n === 0n ? `${value / 60n} minute${value === 60n ? '' : 's'}` : `${value}s`
 }
-export function deployerDefaultTwapNote(stored = PRESET_TWAP_WINDOW): string {
+function deployerDefaultTwapNote(stored = PRESET_TWAP_WINDOW): string {
   return `The old window was the deployer default (48h); ${windowLabel(stored)} will be stored.`
 }
 export const DEPLOYER_DEFAULT_TWAP_NOTE = deployerDefaultTwapNote()
@@ -88,7 +88,7 @@ export function newPoolNoteOf(note: string | undefined): string | undefined {
   const start = note?.indexOf(NEW_POOL_NOTE_START) ?? -1
   return start < 0 ? undefined : note!.slice(start)
 }
-export const NO_POOL_PRICE_NOTE = 'has no price to carry; set it up on the new hook directly.'
+const NO_POOL_PRICE_NOTE = 'has no price to carry; set it up on the new hook directly.'
 export const NO_POOL_HISTORY_NOTE = "pool: the old pool's price history can't be read; not carried."
 export const NEW_POOL_PRICE_OFF_NOTE = 'pool: the new pool is priced more than 1% off the old one; not registered.'
 
