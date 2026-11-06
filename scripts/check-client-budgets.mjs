@@ -74,7 +74,8 @@ const budgets = {
   // Acquisition and generic Safe policy guards: measured 2677.6 KiB, rounded up only.
   // Exact loan-source units and frozen repayment metadata: measured 2678.0 KiB, just above2678.
   // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
-  allScripts: 2680 * KIB,
+  // node-forge 1.4.3 (Para SDK security patch, lazy wallet chunk): measured 2682.8 KiB, rounded up only.
+  allScripts: 2683 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
