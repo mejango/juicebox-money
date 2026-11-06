@@ -47,8 +47,10 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
         await route.fallback()
         return
       }
-      expect(request.variables).toEqual({ chainId: 1, projectId: 1, gateway: GATEWAY, limit: 100, offset: 0 })
-      await route.fulfill({ json: { data: { routerPendingCalls: { items: payments, totalCount: payments.length } } } })
+      expect(request.variables).toEqual({ chainId: 1, projectId: 1, gateway: request.variables.gateway, limit: 100, offset: 0 })
+      // Every gateway generation is read; the retired one still holds these payments.
+      const items = request.variables.gateway === GATEWAY ? payments : []
+      await route.fulfill({ json: { data: { routerPendingCalls: { items, totalCount: items.length } } } })
     })
 
     function gatewayRead(target: string, data: Hex): Hex | undefined {
