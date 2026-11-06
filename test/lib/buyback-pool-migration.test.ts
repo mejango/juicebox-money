@@ -50,7 +50,7 @@ describe('retiredPoolHooks', () => {
 })
 
 describe('liquidityMovePlan', () => {
-  it('burns, mints the same band on the new key and takes the pair to the owner', () => {
+  it('wallet-action:move-uniswap-v4-liquidity-to-the-new-pool burns, mints the same band on the new key and takes the pair to the owner', () => {
     const plan = liquidityMovePlan(MOVE)
     const [actions, params] = decodeAbiParameters(
       [{ type: 'bytes' }, { type: 'bytes[]' }],

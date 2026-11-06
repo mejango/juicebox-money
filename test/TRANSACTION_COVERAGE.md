@@ -69,6 +69,7 @@ and the check fails on a missing marker.
 | Authorize the Uniswap position manager | Permit2 `approve` | **E** | `contracts/transaction-backlog.test.ts` |
 | Claim Uniswap V4 LP fees | zero-liquidity `modifyLiquidities` decrease + take: one position, or both sides of a market with one take | **E** | `contracts/transaction-backlog.test.ts`, `contracts/market-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Remove Uniswap V4 liquidity | `modifyLiquidities` burn + take with 95% floors | **E** | `contracts/transaction-backlog.test.ts` |
+| Move Uniswap V4 liquidity to the new pool | one `modifyLiquidities`: burn the retired-hook position, mint on the new hook within 1% of the reviewed price, take the pair | **E** | `lib/buyback-pool-migration.test.ts` |
 | Edit Uniswap V4 liquidity | `modifyLiquidities` increase + close, decrease + take, or burn + mint + close, sized from live holdings | **E** | `contracts/edit-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Make or edit a Uniswap V4 market | two single-sided `modifyLiquidities` mints spanning floor→ceiling; per-side increase / decrease / burn / re-mint under one settlement | **E** | `contracts/market-liquidity.test.ts`, `components/reviewed-account-liquidity.test.tsx` |
 | Review a direct transaction | exact review payload | **P/E** | `transactions/review.test.ts` |
