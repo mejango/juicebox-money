@@ -608,7 +608,8 @@ export function removeStep(
 }
 
 export type MirrorResolution =
-  | { values: BatchStepValues }
+  /** `kind` and `note` replace the source step's when the target chain needs another operation. */
+  | { values: BatchStepValues; kind?: BatchStepKind; note?: string }
   | { skip: string }
 
 /**
@@ -623,6 +624,8 @@ export async function mirrorBatch(
   resolve: (
     step: BatchStep,
     to: { chainId: JBChainId; projectId: number },
+    /** The steps already mirrored onto the target chain. */
+    prior: readonly BatchStep[],
   ) => Promise<MirrorResolution>,
 ): Promise<{
   steps: BatchStep[]
@@ -645,24 +648,26 @@ export async function mirrorBatch(
     }
     const spec = STEP_KINDS[step.kind]
     let values = step.values
+    let rebuilt: { kind: BatchStepKind; note?: string; label?: string } = step
     if (spec.perChain) {
-      const resolution = await resolve(step, to)
+      const resolution = await resolve(step, to, mirrored)
       if ('skip' in resolution) {
         if (step.kind === 'setHookFor') hookSelectionSkipped = true
         skipped.push({ step, reason: resolution.skip })
         continue
       }
       values = resolution.values
+      if (resolution.kind) rebuilt = { kind: resolution.kind, note: resolution.note }
     }
     try {
       mirrored.push(
         buildStep({
-          kind: step.kind,
+          kind: rebuilt.kind,
           chainId: to.chainId,
           projectId: to.projectId,
           values,
-          note: step.note,
-          label: step.label,
+          note: rebuilt.note,
+          label: rebuilt.label,
         }),
       )
       if (step.kind === 'setHookFor') hookSelectionSkipped = false

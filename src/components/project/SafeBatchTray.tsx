@@ -181,8 +181,8 @@ export function SafeBatchTray({ chainId }: { chainId: JBChainId }) {
         if (deployment.chainId === source.chainId) continue
         const name = chainName(deployment.chainId)
         try {
-          const result = await mirrorBatch(steps, deployment, (step, to) =>
-            resolveMirrorValues(step, { ...to, client: clientFor(to.chainId) }),
+          const result = await mirrorBatch(steps, deployment, (step, to, prior) =>
+            resolveMirrorValues(step, { ...to, client: clientFor(to.chainId) }, prior),
           )
           if (result.steps.length) {
             let next = batch.stepsOn(deployment.chainId)

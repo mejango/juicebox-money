@@ -1,5 +1,11 @@
-import { liquidityMovePlan, retiredPoolHooks, type V4PoolKey } from '@/lib/buyback-pool-migration'
-import { decodeAbiParameters, keccak256, zeroAddress, type Address } from 'viem'
+import {
+  liquidityMovePlan,
+  pricesAgree,
+  readMovablePosition,
+  retiredPoolHooks,
+  type V4PoolKey,
+} from '@/lib/buyback-pool-migration'
+import { decodeAbiParameters, getAddress, keccak256, zeroAddress, type Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
 // Same vectors in revnet-money's test/buyback-pool-migration.test.ts: both clients must
@@ -44,27 +50,57 @@ describe('retiredPoolHooks', () => {
 })
 
 describe('liquidityMovePlan', () => {
-  it('burns, mints the same band on the new key and closes both currencies', () => {
+  it('burns, mints the same band on the new key and takes the pair to the owner', () => {
     const plan = liquidityMovePlan(MOVE)
     const [actions, params] = decodeAbiParameters(
       [{ type: 'bytes' }, { type: 'bytes[]' }],
       plan.unlockData,
     )
-    expect(actions).toBe('0x03021212')
-    expect(params).toHaveLength(4)
-    expect(plan.amount0Minimum).toBe(plan.amount1Minimum)
+    // v4-periphery Actions: BURN_POSITION 0x03, MINT_POSITION 0x02, TAKE_PAIR 0x11.
+    expect(actions).toBe('0x030211')
+    expect(params).toHaveLength(3)
+    expect(
+      decodeAbiParameters(
+        [{ type: 'address' }, { type: 'address' }, { type: 'address' }],
+        params[2]!,
+      ),
+    ).toEqual([TO.currency0, TO.currency1, MOVE.owner])
     expect(plan.liquidity).toBeLessThan(MOVE.liquidity)
     expect(plan.liquidity).toBeGreaterThan((MOVE.liquidity * 97n) / 100n)
   })
 
+  it('caps the mint at what its liquidity needs at the reviewed price plus 1%, within the burn', () => {
+    const plan = liquidityMovePlan(MOVE)
+    expect(plan.amount0Maximum).toBeLessThanOrEqual(plan.amount0Minimum)
+    expect(plan.amount1Maximum).toBeLessThanOrEqual(plan.amount1Minimum)
+    // 98% of the burn at the same price needs ~98%; 1% headroom keeps it under the 99% floor.
+    expect(plan.amount0Maximum).toBeGreaterThan((plan.amount0Minimum * 98n) / 100n)
+  })
+
   it('pins the unlock data both clients produce', () => {
     const plan = liquidityMovePlan(MOVE)
-    expect([plan.amount0Minimum, plan.amount1Minimum, plan.liquidity]).toEqual([
+    expect([
+      plan.amount0Minimum,
+      plan.amount1Minimum,
+      plan.liquidity,
+      plan.amount0Maximum,
+      plan.amount1Maximum,
+    ]).toEqual([
       PINNED.amount0Minimum,
       PINNED.amount1Minimum,
       PINNED.liquidity,
+      PINNED.amount0Maximum,
+      PINNED.amount1Maximum,
     ])
     expect(keccak256(plan.unlockData)).toBe(PINNED.hash)
+  })
+
+  it('refuses a new pool priced more than 1% from the old one', () => {
+    const off = (2n ** 96n * 1006n) / 1000n; // price +1.2%
+    expect(() => liquidityMovePlan({ ...MOVE, toSqrtPriceX96: off })).toThrow(
+      "The new pool's price is off; move later.",
+    )
+    expect(pricesAgree((2n ** 96n * 1004n) / 1000n, 2n ** 96n)).toBe(true); // +0.8%
   })
 
   it('refuses a pool that is not open, an empty position and a band off the spacing', () => {
@@ -76,9 +112,51 @@ describe('liquidityMovePlan', () => {
   })
 })
 
+describe('readMovablePosition', () => {
+  const FROM: V4PoolKey = { ...TO, hooks: getAddress(PREVIOUS) }
+  // info packs tickUpper at bits 32..55 and tickLower at bits 8..31.
+  const info = (lower: number, upper: number) =>
+    (BigInt.asUintN(24, BigInt(upper)) << 32n) | (BigInt.asUintN(24, BigInt(lower)) << 8n)
+  const chain = ({
+    owner = MOVE.owner,
+    key = FROM,
+    liquidity = MOVE.liquidity,
+  }: {
+    owner?: Address
+    key?: V4PoolKey
+    liquidity?: bigint
+  }) => ({
+    readContract: async ({ functionName }: { functionName: string }) =>
+      functionName === 'ownerOf'
+        ? owner
+        : functionName === 'getPoolAndPositionInfo'
+          ? [key, info(-600, 600)]
+          : liquidity,
+  })
+  const read = (state: Parameters<typeof chain>[0]) =>
+    readMovablePosition(chain(state) as never, zeroAddress, 7n, FROM, MOVE.owner)
+
+  it('returns the live position', async () => {
+    await expect(read({})).resolves.toEqual({
+      tokenId: 7n,
+      liquidity: MOVE.liquidity,
+      tickLower: -600,
+      tickUpper: 600,
+    })
+  })
+
+  it('refuses another owner, another pool and an emptied position', async () => {
+    await expect(read({ owner: CURRENT })).rejects.toThrow('no longer owned')
+    await expect(read({ key: TO })).rejects.toThrow('not in the old pool')
+    await expect(read({ liquidity: 0n })).rejects.toThrow('no liquidity')
+  })
+})
+
 const PINNED = {
   amount0Minimum: 29257480770345798n,
   amount1Minimum: 29257480770345798n,
   liquidity: 979999999999999990n,
-  hash: '0xb10d1143fa036df336c3bc611cb3ed121cc929202ef1488c65dd95fa9cbd435e',
+  amount0Maximum: 29251570168169970n,
+  amount1Maximum: 29251570168169970n,
+  hash: '0xb91d1a74ddbbfcaf059e0d8fc79b01a1126ae0d79b39d78e3991df587edf8dad',
 }

@@ -37,7 +37,7 @@ import {
   type MovableLpPosition,
   type UserLpPosition,
 } from './MarketSection'
-import { liquidityMovePlan, poolSqrtPriceX96 } from '@/lib/buyback-pool-migration'
+import { liquidityMovePlan, poolSqrtPriceX96, readMovablePosition } from '@/lib/buyback-pool-migration'
 import { EditPositionPanel } from './EditPositionPanel'
 import { MarketEditPanel } from './MarketEditPanel'
 import {
@@ -296,9 +296,11 @@ function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projec
     setError(null)
     setReading(position.tokenId)
     try {
-      // Re-read both prices: the burn floors and the new liquidity come from them.
-      const [fresh, toSqrtPriceX96] = await Promise.all([
+      // Re-read both prices: the burn floors and the new liquidity come from them. The position
+      // itself comes from the PositionManager, never the index.
+      const [fresh, onchain, toSqrtPriceX96] = await Promise.all([
         readMovableLpPositions(client, chainId, pool, connectedAddress),
+        readMovablePosition(client, positionManager, position.tokenId, from.key, connectedAddress),
         poolSqrtPriceX96(client, chainId, pool.key),
       ])
       const current = fresh.find(item => item.position.tokenId === position.tokenId)
@@ -309,12 +311,9 @@ function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projec
       tx.reset()
       setPending({
         account: connectedAddress,
-        movable: current,
+        movable: { from: current.from, position: { ...current.position, ...onchain } },
         plan: liquidityMovePlan({
-          tokenId: current.position.tokenId,
-          liquidity: current.position.liquidity,
-          tickLower: current.position.tickLower,
-          tickUpper: current.position.tickUpper,
+          ...onchain,
           to: pool.key,
           fromSqrtPriceX96: current.from.sqrtP,
           toSqrtPriceX96,

@@ -1,10 +1,11 @@
 import { zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
-import { uniswapV4PoolId, uniswapV4PoolStateSlot } from '@bananapus/nana-sdk-core/v6'
+import { uniswapV4PoolId, uniswapV4PoolStateSlot, uniswapV4SqrtPriceX96AtTick } from '@bananapus/nana-sdk-core/v6'
 import { migratedPoolKey, type V4PoolKey } from '@/lib/buyback-pool-migration'
 import {
   DEPLOYER_DEFAULT_TWAP_NOTE,
   NEW_POOL_NOTE,
+  SPOT_POOL_NOTE,
   presetInfraAvailable,
   replacedTwapNote,
   resolveMirrorValues,
@@ -50,6 +51,8 @@ function chain({
   hookAllowed = true,
   terminalAllowed = true,
   prices = {},
+  coverage = 1_800,
+  meanTick = 0,
 }: {
   code?: Address[]
   hook?: Address
@@ -59,6 +62,10 @@ function chain({
   terminalAllowed?: boolean
   /** sqrtPriceX96 per PoolManager slot; any pool not listed is live at OLD_PRICE. */
   prices?: Record<string, bigint>
+  /** The old V4 hook's oldest retained observation, in seconds; 0 when it holds none. */
+  coverage?: number
+  /** The old pool's mean tick over the observed window. */
+  meanTick?: number
 }) {
   const poolOf = (hookAddress: Address, token: Address) =>
     pools[`${hookAddress.toLowerCase()}:${token.toLowerCase()}`]
@@ -98,6 +105,11 @@ function chain({
         if (functionName === 'extsload') {
           const price = prices[String(args?.[0]).toLowerCase()] ?? OLD_PRICE
           return `0x${price.toString(16).padStart(64, '0')}`
+        }
+        if (functionName === 'observationCoverageOf') return coverage
+        if (functionName === 'observe') {
+          const [period] = args?.[1] as number[]
+          return [[0n, BigInt(meanTick * period!)], [0n, 0n]]
         }
         throw new Error(`Unexpected read ${functionName}`)
       },
@@ -261,6 +273,28 @@ describe('buyback 2.0.0 + gateway preset', () => {
     expect(unpriced.message).toBe('Native pool has no price to carry; set it up on the new hook directly.')
   })
 
+  it('opens at spot, and says so, only when the old pool holds no observations', async () => {
+    const client = chain({
+      pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 1800n } },
+      prices: { [newPoolSlot(84532, 10_000, 200)]: 0n, [oldPoolSlot(10_000, 200)]: 2n * OLD_PRICE },
+      coverage: 0,
+    })
+    const resolved = await resolvePreset(PRESET, { chainId: 84532, projectId: 2, client })
+    expect(resolved.steps[1].values.sqrtPriceX96).toBe(2n * OLD_PRICE)
+    expect(resolved.steps[1].note).toBe(SPOT_POOL_NOTE)
+  })
+
+  it('initializes at the TWAP over the covered window, not the spot price', async () => {
+    const client = chain({
+      pools: { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 10_000, tickSpacing: 200, twap: 1800n } },
+      prices: { [newPoolSlot(84532, 10_000, 200)]: 0n, [oldPoolSlot(10_000, 200)]: 2n * OLD_PRICE },
+      coverage: 600,
+      meanTick: -7,
+    })
+    const resolved = await resolvePreset(PRESET, { chainId: 84532, projectId: 2, client })
+    expect(resolved.steps[1].values.sqrtPriceX96).toBe(uniswapV4SqrtPriceX96AtTick(-7))
+  })
+
   it('adds no pool step when the project has no pool, and skips applied steps', async () => {
     const noPool = await resolvePreset(PRESET, {
       chainId: 84532,
@@ -296,7 +330,7 @@ describe('mirroring per-chain steps', () => {
     const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } }
     const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client: chain({ pools }) })
     const targetClient = chain({ code: [targets.hook, targets.terminal], pools })
-    const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 6 }, (step, to) => resolveMirrorValues(step, { ...to, client: targetClient }))
+    const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 6 }, (step, to, prior) => resolveMirrorValues(step, { ...to, client: targetClient }, prior))
     expect(mirrored.skipped).toEqual([])
     expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
     expect(mirrored.steps.map(step => step.args)).toEqual([
@@ -312,18 +346,32 @@ describe('mirroring per-chain steps', () => {
     const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client })
     expect(source.steps).toHaveLength(3)
     for (const chainId of [1, 10, 8453, 42161, 11155420] as const) {
-      const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 2 }, (step, to) => resolveMirrorValues(step, { ...to, client }))
+      const mirrored = await mirrorBatch(source.steps, { chainId, projectId: 2 }, (step, to, prior) => resolveMirrorValues(step, { ...to, client }, prior))
       expect(mirrored.steps).toEqual([])
       expect(mirrored.skipped).toHaveLength(3)
       expect(mirrored.skipped[1].reason).toContain('preceding buyback hook selection')
     }
-    const available = await mirrorBatch(source.steps, { chainId: 84532, projectId: 2 }, (step, to) => resolveMirrorValues(step, { ...to, client }))
+    const available = await mirrorBatch(source.steps, { chainId: 84532, projectId: 2 }, (step, to, prior) => resolveMirrorValues(step, { ...to, client }, prior))
     expect(available.skipped).toEqual([])
     expect(available.steps.map(step => step.kind)).toEqual(['setHookFor', 'setPoolFor', 'setTerminalFor'])
-    const reordered = await mirrorBatch([source.steps[1], source.steps[0], source.steps[2]], { chainId: 1, projectId: 2 }, (step, to) => resolveMirrorValues(step, { ...to, client }))
+    const reordered = await mirrorBatch([source.steps[1], source.steps[0], source.steps[2]], { chainId: 1, projectId: 2 }, (step, to, prior) => resolveMirrorValues(step, { ...to, client }, prior))
     expect(reordered.steps).toEqual([])
     expect(reordered.skipped).toHaveLength(3)
     expect(reordered.skipped[0].reason).toContain('before registering its pool')
+  })
+
+  it("resolves a mirrored pool step from the destination's own pools", async () => {
+    const pools = { [`${OLD_HOOK.toLowerCase()}:${zeroAddress}`]: { fee: 3000, tickSpacing: 60, twap: 1800n } }
+    const source = await resolvePreset(PRESET, { chainId: 11155111, projectId: 2, client: chain({ pools }) })
+    expect(source.steps[1].kind).toBe('setPoolFor')
+    // The destination's new pool is not open: it opens there at that chain's own old-pool TWAP.
+    const destination = chain({ pools, prices: { [newPoolSlot(84532, 3000, 60)]: 0n }, meanTick: 200 })
+    const mirrored = await mirrorBatch(source.steps, { chainId: 84532, projectId: 2 }, (step, to, prior) =>
+      resolveMirrorValues(step, { ...to, client: destination }, prior),
+    )
+    expect(mirrored.skipped).toEqual([])
+    expect(mirrored.steps.map(step => step.kind)).toEqual(['setHookFor', 'initializePoolFor', 'setTerminalFor'])
+    expect(mirrored.steps[1].values.sqrtPriceX96).toBe(uniswapV4SqrtPriceX96AtTick(200))
   })
 
   it('re-reads a pool on the target chain and maps USDC to that chain', async () => {
