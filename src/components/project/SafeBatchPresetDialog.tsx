@@ -12,7 +12,7 @@ import { buildStep, type BatchStep } from '@/lib/safe-batch'
 import {
   MAX_TWAP_WINDOW,
   MIN_TWAP_WINDOW,
-  NEW_POOL_NOTE,
+  newPoolNoteOf,
   resolvePreset,
   SAFE_BATCH_PRESETS,
   type PresetChainResolution,
@@ -141,7 +141,7 @@ function PresetPlan({
               window === step.values.twapWindow
                 ? step.note
                 : step.kind === 'initializePoolFor'
-                  ? NEW_POOL_NOTE
+                  ? newPoolNoteOf(step.note)
                   : undefined,
           }),
         )

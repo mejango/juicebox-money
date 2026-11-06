@@ -1,7 +1,7 @@
 'use client'
 
 import { legacyClaimFeesKey, legacyRemoveLpKey } from '@/lib/legacy-intents'
-import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
+import { liquidityIntent, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { projectDisplayQuery } from '@/lib/project-display-queries'
@@ -341,6 +341,13 @@ function MovableLpRows({ chainId, projectId, sym }: { chainId: JBChainId; projec
         }),
         { intent: liquidityIntent({ chainId, pool: frozen.movable.from.poolId, positions: [frozen.movable.position.tokenId] }) },
       )],
+      // The PositionManager's state again right before sending, as revnet-money does.
+      reverify: async () => {
+        const fresh = await readMovablePosition(client, positionManager, frozen.movable.position.tokenId, frozen.movable.from.key, frozen.account)
+        if (fresh.liquidity !== frozen.movable.position.liquidity) {
+          throw new ReviewLineError('This position changed. Review it again before moving it.')
+        }
+      },
     }).then(done => { if (done) void movable.refetch() })
   }
 

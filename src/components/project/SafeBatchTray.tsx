@@ -19,8 +19,8 @@ import {
   usableSafeConfirmations,
   type SafeQueuedTransaction,
 } from '@bananapus/nana-sdk-core/safe-service'
-import { composeBatch, mirrorBatch, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
-import { presetInfraAvailable, resolveMirrorValues } from '@/lib/safe-batch-presets'
+import { composeBatch, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
+import { mirrorPresetBatch, presetInfraAvailable } from '@/lib/safe-batch-presets'
 import { chainName } from '@/lib/urn'
 
 /** The calls as an order-free key, so a reordered tray still matches its proposal. */
@@ -181,9 +181,7 @@ export function SafeBatchTray({ chainId }: { chainId: JBChainId }) {
         if (deployment.chainId === source.chainId) continue
         const name = chainName(deployment.chainId)
         try {
-          const result = await mirrorBatch(steps, deployment, (step, to, prior) =>
-            resolveMirrorValues(step, { ...to, client: clientFor(to.chainId) }, prior),
-          )
+          const result = await mirrorPresetBatch(steps, { ...deployment, client: clientFor(deployment.chainId) })
           if (result.steps.length) {
             let next = batch.stepsOn(deployment.chainId)
             for (const step of result.steps) next = upsertStep(next, step)

@@ -83,13 +83,6 @@ const KEY_COMPONENTS = [
 const ORACLE_ABI = [
   {
     type: 'function',
-    name: 'observationCoverageOf',
-    stateMutability: 'view',
-    inputs: [{ name: 'key', type: 'tuple', components: KEY_COMPONENTS }],
-    outputs: [{ type: 'uint32' }],
-  },
-  {
-    type: 'function',
     name: 'observe',
     stateMutability: 'view',
     inputs: [
@@ -108,53 +101,41 @@ function reverted(cause: unknown): boolean {
   return false
 }
 
+/** Shorter windows tried, longest first, when the old hook's history cannot answer the full one. */
+const SHORTER_WINDOWS = [900, 300, 60]
+
 /**
- * The pool's price over `window` seconds, read from its V4 oracle hook the way the buyback hook
- * quotes: the longest retained window when coverage is partial, the arithmetic mean tick rounded
- * down. Spot only when the hook holds no observations; 0 for an uninitialized pool; any other
- * failure throws.
+ * The pool's average price over the longest window its V4 oracle hook can answer, starting at
+ * `window`: the arithmetic mean tick rounded down, as the buyback hook quotes. A 0 price for an
+ * uninitialized pool; null when no window can be observed. Never spot.
  */
 export async function poolTwapSqrtPriceX96(
   client: Pick<PublicClient, 'readContract'>,
   chainId: number,
   key: V4PoolKey,
   window: number,
-): Promise<{ sqrtPriceX96: bigint; twap: boolean }> {
-  const spot = await poolSqrtPriceX96(client, chainId, key)
-  // An uninitialized pool has no history either.
-  if (spot === 0n) return { sqrtPriceX96: 0n, twap: false }
-  const fallback = { sqrtPriceX96: spot, twap: false }
-  let period = window
-  try {
-    const oldest = await client.readContract({
-      address: key.hooks,
-      abi: ORACLE_ABI,
-      functionName: 'observationCoverageOf',
-      args: [key],
-    })
-    if (oldest === 0) return fallback
-    if (oldest < period) period = oldest
-  } catch (cause) {
-    // Hooks without coverage reporting are observed directly, as the buyback hook does.
-    if (!reverted(cause)) throw cause
+): Promise<{ sqrtPriceX96: bigint; window: number } | null> {
+  if ((await poolSqrtPriceX96(client, chainId, key)) === 0n) return { sqrtPriceX96: 0n, window: 0 }
+  for (const period of [window, ...SHORTER_WINDOWS.filter((shorter) => shorter < window)]) {
+    let tickCumulatives: readonly bigint[]
+    try {
+      [tickCumulatives] = await client.readContract({
+        address: key.hooks,
+        abi: ORACLE_ABI,
+        functionName: 'observe',
+        args: [key, [period, 0]],
+      })
+    } catch (cause) {
+      // Retired hooks cannot report their coverage; a revert means too little history.
+      if (!reverted(cause)) throw cause
+      continue
+    }
+    const delta = tickCumulatives[1]! - tickCumulatives[0]!
+    let tick = delta / BigInt(period)
+    if (delta < 0n && delta % BigInt(period) !== 0n) tick -= 1n
+    return { sqrtPriceX96: uniswapV4SqrtPriceX96AtTick(Number(tick)), window: period }
   }
-  if (period <= 0) return fallback
-  let tickCumulatives: readonly bigint[]
-  try {
-    [tickCumulatives] = await client.readContract({
-      address: key.hooks,
-      abi: ORACLE_ABI,
-      functionName: 'observe',
-      args: [key, [period, 0]],
-    })
-  } catch (cause) {
-    if (!reverted(cause)) throw cause
-    return fallback
-  }
-  const delta = tickCumulatives[1]! - tickCumulatives[0]!
-  let tick = delta / BigInt(period)
-  if (delta < 0n && delta % BigInt(period) !== 0n) tick -= 1n
-  return { sqrtPriceX96: uniswapV4SqrtPriceX96AtTick(Number(tick)), twap: true }
+  return null
 }
 
 export type PoolMove =

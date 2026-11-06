@@ -438,12 +438,17 @@ export function powerStepValues(
  * pool token (a registry hosts one pool step per token) or, for the generic
  * owner-power kind, the function name.
  */
+/**
+ * A step's identity in its chain's batch. A pool registration is one per terminal token whatever
+ * its operation, so a re-mirrored `setPoolFor` replaces a queued `initializePoolFor` and back.
+ */
 export function stepKey(
   step: Pick<BatchStep, 'kind' | 'to' | 'functionName' | 'values'>,
 ): string {
   const spec = STEP_KINDS[step.kind]
   const extra = spec.discriminator?.(step.values, step.functionName)
-  return `${step.kind}:${step.to.toLowerCase()}${extra ? `:${extra}` : ''}`
+  const kind = step.kind === 'initializePoolFor' ? 'setPoolFor' : step.kind
+  return `${kind}:${step.to.toLowerCase()}${extra ? `:${extra}` : ''}`
 }
 
 export function buildStep({
@@ -608,8 +613,7 @@ export function removeStep(
 }
 
 export type MirrorResolution =
-  /** `kind` and `note` replace the source step's when the target chain needs another operation. */
-  | { values: BatchStepValues; kind?: BatchStepKind; note?: string }
+  | { values: BatchStepValues }
   | { skip: string }
 
 /**
@@ -624,8 +628,6 @@ export async function mirrorBatch(
   resolve: (
     step: BatchStep,
     to: { chainId: JBChainId; projectId: number },
-    /** The steps already mirrored onto the target chain. */
-    prior: readonly BatchStep[],
   ) => Promise<MirrorResolution>,
 ): Promise<{
   steps: BatchStep[]
@@ -648,26 +650,24 @@ export async function mirrorBatch(
     }
     const spec = STEP_KINDS[step.kind]
     let values = step.values
-    let rebuilt: { kind: BatchStepKind; note?: string; label?: string } = step
     if (spec.perChain) {
-      const resolution = await resolve(step, to, mirrored)
+      const resolution = await resolve(step, to)
       if ('skip' in resolution) {
         if (step.kind === 'setHookFor') hookSelectionSkipped = true
         skipped.push({ step, reason: resolution.skip })
         continue
       }
       values = resolution.values
-      if (resolution.kind) rebuilt = { kind: resolution.kind, note: resolution.note }
     }
     try {
       mirrored.push(
         buildStep({
-          kind: rebuilt.kind,
+          kind: step.kind,
           chainId: to.chainId,
           projectId: to.projectId,
           values,
-          note: rebuilt.note,
-          label: rebuilt.label,
+          note: step.note,
+          label: step.label,
         }),
       )
       if (step.kind === 'setHookFor') hookSelectionSkipped = false
