@@ -94,7 +94,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
 
   const requireAccount = (): Address => {
     if (!address) throw new Error('Sign in first.')
-    if (holder && !isAddressEqual(holder, address)) throw new Error('Sign in as the token owner to claim these credits.')
+    if (holder && !isAddressEqual(holder, address)) throw new Error('Sign in as the token holder to claim these credits.')
     const saved = loadProjectBatch(scope)
     if (saved && !isAddressEqual(saved.account, address)) throw new Error('Connect the wallet that started this saved batch.')
     return address
@@ -153,7 +153,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
       setReviewBatchId(result.id)
       if (result.status === 'complete') {
         setComplete(true)
-        setStatus(isClaim ? 'All selected credits are now ERC-20 tokens in the token owner’s wallet.' : 'Every reviewed allocation has been distributed.')
+        setStatus(isClaim ? 'All selected credits are now ERC-20 tokens in the token holder’s wallet.' : 'Every reviewed allocation has been distributed.')
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['yourPosition'] }),
           queryClient.invalidateQueries({ queryKey: ['autoIssueAmount'] }),

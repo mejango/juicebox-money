@@ -12,7 +12,7 @@ import {
   type SetStateAction,
 } from 'react'
 
-export type ShopCartItem = {
+type ShopCartItem = {
   tierId: number
   name?: string
   image?: string

@@ -419,7 +419,7 @@ export function StoreEditor({
                       isRevnet ? "Non-transferable" : "Allow rulesets to pause transfers",
                       isRevnet
                         ? "This item can be created or destroyed, but cannot move between wallets."
-                        : "The current rules can stop item owners from sending this item to another wallet. Creating and destroying it stay allowed.",
+                        : "The current rules can stop holders from sending this item to another wallet. Creating and destroying it stay allowed.",
                     ],
                     [
                       "cantBeRemoved",

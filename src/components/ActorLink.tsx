@@ -1,6 +1,13 @@
-import { AddressLink } from '@/components/ui/AddressLink'
+import Link from 'next/link'
+import { AddressLabel } from '@/components/ui/AddressLabel'
+import { explorerAddressUrl } from '@/lib/chainDisplay'
 
-/** An activity row's actor: opens the account page, or the explorer for a contract. */
+const LINK_CLASS = 'text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink'
+
+/**
+ * An activity row's actor: opens the account page, or the explorer for a contract.
+ * Not built on AddressLink, whose Safe badge would load on every page with a feed.
+ */
 export function ActorLink({
   actor,
   chainId,
@@ -11,12 +18,19 @@ export function ActorLink({
   contract?: boolean
 }) {
   if (!actor) return null
-  return (
-    <AddressLink
-      address={actor}
-      chainId={chainId}
-      explorer={contract}
-      className="text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
-    />
+  if (!contract) {
+    return (
+      <Link href={`/account/${actor}`} prefetch={false} className={LINK_CLASS}>
+        <AddressLabel address={actor} />
+      </Link>
+    )
+  }
+  const url = chainId !== undefined ? explorerAddressUrl(chainId, actor) : null
+  return url ? (
+    <a href={url} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+      <AddressLabel address={actor} />
+    </a>
+  ) : (
+    <AddressLabel address={actor} className="text-smoke-700" />
   )
 }

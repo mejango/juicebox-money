@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { AddressLink } from '@/components/ui/AddressLink'
+
+vi.mock('@/hooks/useEnsName', () => ({ useEnsName: () => ({ data: null }) }))
+vi.mock('@/components/SafeBadge', () => ({ SafeBadge: () => null }))
 
 const ADDRESS = '0x1111111111111111111111111111111111111111'
 async function hrefOf(element: React.ReactElement) {

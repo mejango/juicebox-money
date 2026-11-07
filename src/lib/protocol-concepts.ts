@@ -31,7 +31,7 @@ export const PROTOCOL_CONCEPTS = {
   /** JBCashOuts.cashOutFrom — 0 returns the exact proportional share of surplus; a higher rate
    *  returns less than proportional; MAX returns nothing. */
   cashOutTax:
-    'A setting that leaves more money for remaining token owners when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.',
+    'A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.',
 
   /** JBFundAccessLimitGroup.payoutLimits — "maximum amounts distributable to splits per ruleset
    *  cycle". Resets every cycle. */
@@ -56,7 +56,7 @@ export const PROTOCOL_CONCEPTS = {
 
   /** JB721 tier flag `transfersPausable` — only tiers that opted in are affected. */
   itemTransfers:
-    'Whether item owners can send shop items to someone else during this stage. A pause affects only items created with this control enabled.',
+    'Whether holders can send shop items to someone else during this stage. A pause affects only items created with this control enabled.',
 } as const
 
 /**

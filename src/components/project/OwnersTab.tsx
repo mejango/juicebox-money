@@ -136,6 +136,7 @@ export function OwnersTab({
                   suckerGroupId={suckerGroupId}
                   chains={chains}
                   groupPending={pending}
+                  isRevnet={isRevnet}
                 />
               </div>
             ),
@@ -893,10 +894,12 @@ function AllHoldersCard({
   suckerGroupId,
   chains,
   groupPending,
+  isRevnet,
 }: {
   chainId: JBChainId
   projectId: number
   suckerGroupId: string | null
+  isRevnet: boolean
   chains: [number, number][]
   /** The group check is still out, so `chains` may be only the home deployment. */
   groupPending: boolean
@@ -977,16 +980,15 @@ function AllHoldersCard({
   // truncated = we only know it's at least that many.
   const exact = !!data && data.totalCount <= data.items.length
   const holderCount = exact ? String(holders.length) : `${holders.length}+`
-  const holderCountLine = `${holderCount} ${
-    holders.length === 1 && exact ? 'owner' : 'owners'
-  }`
+  const holderNoun = isRevnet ? 'owner' : 'holder'
+  const holderCountLine = `${holderCount} ${holderNoun}${holders.length === 1 && exact ? '' : 's'}`
 
   return (
     <div className="card overflow-hidden p-5">
       <div>
         <span className="field-label">All</span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Token owners paid in, received splits, received auto-issuance, or got
+          {isRevnet ? 'Token owners' : 'Holders'} paid in, received splits, received auto-issuance, or got
           them second-hand.
         </p>
         {data?.groupExtended ? (

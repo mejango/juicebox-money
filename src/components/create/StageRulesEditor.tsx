@@ -201,6 +201,7 @@ export function StageRulesEditor({
   multiToken: boolean;
 }) {
   const isRevnet = flavor === "revnet";
+  const holders = isRevnet ? "Owners" : "Holders";
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch });
   const toggleOpen = (key: string) =>
     set({ open: { ...stage.open, [key]: !stage.open[key] } });
@@ -812,7 +813,7 @@ export function StageRulesEditor({
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {stage.routedMode === "all"
-                  ? `All funds can be paid out by these percentages.${routedAll ? " Token owners can't cash out." : ""}`
+                  ? `All funds can be paid out by these percentages.${routedAll ? ` ${holders} can't cash out.` : ""}`
                   : `Each recipient gets up to their ${fundsUnit} amount. The rest can back cash outs.`}
               </p>
               <SplitsEditor
@@ -988,7 +989,7 @@ export function StageRulesEditor({
               disabled={disabled}
               required
               offBlurb="Tokens are for support and standing — cashing out returns almost nothing."
-              onBlurb={`Token owners can exchange ${tokenLabel} for available project funds under the rules below, after any cash out delay.`}
+              onBlurb={`${holders} can exchange ${tokenLabel} for available project funds under the rules below, after any cash out delay.`}
             />
             {!stage.cashOuts ? (
               <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
@@ -1000,16 +1001,16 @@ export function StageRulesEditor({
         ) : routedAll ? (
           <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
             {multiToken
-              ? "Every accepted token routes all of its funds by percentage, leaving no surplus for token owners to cash out. Switch either token's payouts to fixed amounts to leave a surplus."
-              : "Routing all funds by percentage leaves no surplus for token owners to cash out. Switch payouts to fixed amounts to leave a surplus."}
+              ? "Every accepted token routes all of its funds by percentage, leaving no surplus for token holders to cash out. Switch either token's payouts to fixed amounts to leave a surplus."
+              : "Routing all funds by percentage leaves no surplus for token holders to cash out. Switch payouts to fixed amounts to leave a surplus."}
           </p>
         ) : (
           <TaxPicker
             stage={stage}
             set={set}
             disabled={disabled}
-            offBlurb="Tokens are for support and standing. Token owners can't pull funds out."
-            onBlurb={`Token owners can exchange ${tokenLabel} for funds not set aside for payouts.`}
+            offBlurb={`Tokens are for support and standing. ${holders} can't pull funds out.`}
+            onBlurb={`${holders} can exchange ${tokenLabel} for funds not set aside for payouts.`}
           />
         )}
       </SubSection>

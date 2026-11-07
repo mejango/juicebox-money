@@ -4097,8 +4097,8 @@ export function CreateForm() {
                       }))
                     }
                     disabled={busy}
-                    title="Let item owners cash out their items"
-                    blurb="Item owners can give up their items for a share of funds not set aside for payouts, under the cash out rules."
+                    title="Let holders cash out their items"
+                    blurb="Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules."
                   />
                 )}
               </div>

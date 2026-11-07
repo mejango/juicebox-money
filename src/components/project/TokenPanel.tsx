@@ -81,7 +81,7 @@ export function TokenPanel({
       ? totalSupply === 0n
         ? `This project does not currently offer tokens or credits for payments on ${chainName(chainId)}. No tokens or credits are in circulation on this chain.`
         : `Payments on ${chainName(chainId)} do not currently issue new credits. Existing credit balances are still recorded within Juicebox.`
-      : 'Payments can issue credits recorded within Juicebox. If the project creates a wallet token (ERC-20), token owners can claim it in exchange for those credits.'
+      : 'Payments can issue credits recorded within Juicebox. If the project creates a wallet token (ERC-20), holders can claim it in exchange for those credits.'
 
   // One row list for both variants; a row can align items-center instead of
   // items-baseline per variant (the full Address row centers, compact's
