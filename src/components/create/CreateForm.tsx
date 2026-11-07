@@ -127,6 +127,8 @@ import {
   stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
+  scheduledStart,
+  scheduledStartOk,
   type DraftStage,
 } from "./stage-draft";
 import type { ChartStage } from "@/components/project/chartUtils";
@@ -826,11 +828,10 @@ export function CreateForm() {
     const closes = afterApplies && afterMode !== "cycle";
     const count = stages.length + Number(closes);
     const firstMust =
-      first.scheduleOn && first.schedule
-        ? Math.floor(new Date(first.schedule).getTime() / 1000)
-        : selected.length > 1 || count > 1
-          ? now + (count > 1 && notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS)
-          : 0;
+      scheduledStart(first) ??
+      (selected.length > 1 || count > 1
+        ? now + (count > 1 && notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS)
+        : 0);
     if (count < 2) return { musts: [firstMust], starts: [firstMust || now] };
     return orderedRulesetSchedule({
       firstStart: firstMust,
@@ -990,6 +991,7 @@ export function CreateForm() {
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
     [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
+    [isSimpleProject || scheduledStartOk(stages[0], Math.floor(Date.now() / 1000)), `${flavor === "revnet" ? "Stage" : "Ruleset"} #1 needs a start at least an hour from now.`, 2],
     [stagedApprovalOk, "Custom approval contracts need rulesets queued one at a time. Use a standard notice to launch several together.", 2],
     [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
@@ -1299,9 +1301,7 @@ export function CreateForm() {
     if (flavor === "revnet") {
       starts = [];
       let start =
-        stages[0].scheduleOn && stages[0].schedule
-          ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
-          : now;
+        scheduledStart(stages[0]) ?? now;
       stages.forEach((stage, i) => {
         if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
         starts.push(start);
@@ -1365,9 +1365,7 @@ export function CreateForm() {
         if (flavor === "revnet") {
           planStages = [];
           let start =
-            stages[0].scheduleOn && stages[0].schedule
-              ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
-              : deployStart;
+            scheduledStart(stages[0]) ?? deployStart;
           stages.forEach((stage, i) => {
             if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
             planStages.push(toRevnetStageRules(stage, i, start, chainId));

@@ -237,6 +237,22 @@ export function stageCashOutTax(stage: DraftStage): number {
   return stage.cashOutTax;
 }
 
+/** The first stage's chosen start in unix seconds, or null for the default start. */
+export function scheduledStart(stage: DraftStage): number | null {
+  return stage.scheduleOn && stage.schedule
+    ? Math.floor(new Date(stage.schedule).getTime() / 1000)
+    : null;
+}
+
+/** Revnet's own minimum for a chosen start. A start that has passed by the time a
+ *  revnet deploys locks cash outs and loans for the delay (REVDeployer CASH_OUT_DELAY). */
+export const MIN_START_LEAD_SECONDS = 3_600;
+
+export function scheduledStartOk(stage: DraftStage, nowSeconds: number): boolean {
+  const start = scheduledStart(stage);
+  return start === null || start >= nowSeconds + MIN_START_LEAD_SECONDS;
+}
+
 export function stageTaxOk(stage: DraftStage): boolean {
   if (!stage.taxCustomOn) return true;
   const n = Number(stage.taxCustomPct);
@@ -364,8 +380,8 @@ export function stageSummaryParts(
   const parts: string[] = [];
   if (index === 0) {
     parts.push(
-      stage.scheduleOn && stage.schedule
-        ? "Starts at a set time"
+      scheduledStart(stage) !== null
+        ? `Starts ${formatDateTime(scheduledStart(stage)!)}`
         : "Starts at launch",
     );
   } else if (flavor === "revnet") {

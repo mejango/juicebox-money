@@ -220,6 +220,20 @@ describe('multichain launch validation', () => {
     expect(launchButton(root).props.disabled).toBe(false)
   })
 
+  it('refuses a chosen start under an hour away and names it, with the default start untouched', async () => {
+    const past = draft('revnet')
+    past.stages[0] = { ...past.stages[0], scheduleOn: true, schedule: '2020-01-01T00:00' }
+    let root = await mountDraft(past)
+    expect(textOf(launchSection(root))).toContain('Stage #1 needs a start at least an hour from now.')
+    await act(async () => renderer!.unmount())
+    renderer = undefined
+
+    const future = draft('revnet')
+    future.stages[0] = { ...future.stages[0], scheduleOn: true, schedule: new Date(Date.now() + 2 * 3_600_000).toISOString() }
+    root = await mountDraft(future)
+    expect(textOf(launchSection(root))).not.toContain('needs a start')
+  })
+
   it('explains an active invalid custom ruleset on the Launch step', async () => {
     const root = await mountDraft(draft('project', true))
     expect(launchButton(root).props.disabled).toBe(true)

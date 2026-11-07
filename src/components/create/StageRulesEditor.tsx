@@ -15,14 +15,17 @@ import {
 } from "./SplitsEditor";
 import { AddButton, CheckRow, ChipButton, OptionRow, SubSection, TaxValueInput } from "./ui";
 import { cashOutTaxValue } from "@/lib/format";
+import { timestampToLocalDateTimeInput } from "@/lib/time-zone";
 import { AddressField } from "./AddressField";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
 import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 
 import {
+  MIN_START_LEAD_SECONDS,
   numOk,
   routedModePatch,
+  scheduledStartOk,
   secondsLabel,
   stageCashOutTax,
   stageDurationSeconds,
@@ -291,10 +294,16 @@ export function StageRulesEditor({
                 onChange={(schedule) => set({ schedule })}
                 disabled={disabled}
                 ariaLabel="Project launch date and time"
+                min={timestampToLocalDateTimeInput(Date.now() + MIN_START_LEAD_SECONDS * 1000)}
                 wrapperClassName="mt-2"
                 inputClassName="input-well min-h-[44px] w-full px-3.5 text-sm disabled:opacity-60"
               />
             ) : null}
+            {scheduledStartOk(stage, Math.floor(Date.now() / 1000)) ? null : (
+              <p className="mt-2 text-xs text-red-600">
+                Choose a start at least an hour from now.
+              </p>
+            )}
           </div>
         ) : null}
 
