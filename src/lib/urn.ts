@@ -37,6 +37,7 @@ export function chainName(chainId: number): string {
 }
 
 const LEGACY_SITE = 'https://old.juicebox.money'
+const LEGACY_CHECK_TIMEOUT_MS = 3_000
 
 /**
  * Rebuild a request path on the legacy site with each segment decoded once and
@@ -56,6 +57,24 @@ export function legacyHref(pathname: string, search = ''): string {
     })
     .join('/')
   return `${LEGACY_SITE}${encodeURI(path)}${search}`
+}
+
+/**
+ * Whether the legacy site really serves this page. Only a confirmed page is
+ * worth leaving for: its 404 is bare and has no way back, and an outage there
+ * has nothing to offer either. The check reads the matched route as well as the
+ * status because a miss under `/@` answers 200 from its 404 page.
+ */
+export async function legacyPageExists(href: string): Promise<boolean> {
+  try {
+    const response = await fetch(href, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(LEGACY_CHECK_TIMEOUT_MS),
+    })
+    return response.ok && !response.headers.get('x-matched-path')?.endsWith('/404')
+  } catch {
+    return false
+  }
 }
 
 /**

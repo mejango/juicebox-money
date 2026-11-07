@@ -68,6 +68,10 @@ export function SearchBox({
   const [ensPending, setEnsPending] = useState(false)
   // Search backend unreachable — say so rather than letting it read as "no matches".
   const [searchUnavailable, setSearchUnavailable] = useState(false)
+  // The text the last completed search answered, so "no matches" never shows for
+  // a query still on its way.
+  const [searchedText, setSearchedText] = useState<string | null>(null)
+  const [handleAnswer, setHandleAnswer] = useState<{ handle: string; exists: boolean } | null>(null)
   const [open, setOpen] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [placeholderFits, setPlaceholderFits] = useState(true)
@@ -88,6 +92,11 @@ export function SearchBox({
   const handlePath = projectHandle
     ? `/@${encodeURIComponent(projectHandle.handle)}`
     : null
+  const requestedHandle = projectHandle?.handle
+  const handleExists =
+    requestedHandle && handleAnswer?.handle === requestedHandle
+      ? handleAnswer.exists
+      : undefined
 
   // The navigation lets this field absorb the available space between the
   // logo and wallet control. Keep the descriptive placeholder while it fits,
@@ -154,6 +163,7 @@ export function SearchBox({
         const json = (await res.json()) as { projects: Result[] }
         if (generation !== searchGenerationRef.current) return
         setSearchUnavailable(false)
+        setSearchedText(text)
         setResults(json.projects)
         setOpen(true)
       } catch (reason) {
@@ -172,6 +182,31 @@ export function SearchBox({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handlePath, handlePending, query])
+
+  // Offer a handle only once it has somewhere to go. A check that can't finish
+  // keeps the row: the route itself answers, on this site.
+  useEffect(() => {
+    if (!requestedHandle) return
+    const handle = requestedHandle
+    const controller = new AbortController()
+    const t = setTimeout(async () => {
+      let exists = true
+      try {
+        const res = await fetch(
+          `/api/project-route?segment=${encodeURIComponent(`@${handle}`)}`,
+          { signal: controller.signal },
+        )
+        if (res.status === 404) exists = ((await res.json()) as { legacy?: boolean }).legacy === true
+      } catch (reason) {
+        if ((reason as Error)?.name === 'AbortError') return
+      }
+      if (!controller.signal.aborted) setHandleAnswer({ handle, exists })
+    }, 300)
+    return () => {
+      clearTimeout(t)
+      controller.abort()
+    }
+  }, [requestedHandle])
 
   // Account queries: a literal address matches immediately; a plausible ENS
   // name debounce-resolves, showing a pending row while it's in flight.
@@ -256,9 +291,19 @@ export function SearchBox({
     ? `/account/${account.ensName ?? account.address}`
     : null
 
+  const noMatches =
+    handleExists === false ||
+    (searchedText === query.trim() &&
+      results.length === 0 &&
+      !searchUnavailable &&
+      !account &&
+      !ensPending)
+
   const submit = () => {
     if (urn) go(`/${toUrn(urn.chainId, urn.projectId)}`)
-    else if (handlePath) goHandle(handlePath)
+    else if (handlePath) {
+      if (handleExists !== false) goHandle(handlePath)
+    }
     else if (handlePending) {
       pendingSubmitRef.current = query
       // After a failed download this asks for the chunk again.
@@ -285,13 +330,16 @@ export function SearchBox({
     if (pending === query && handlePath && focused) goHandle(handlePath)
   }, [handlePath, handlePending, query])
 
+  useEffect(() => {
+    if (autoFocus) inputRef.current?.focus()
+  }, [autoFocus])
+
   const input = (
     <div className="relative w-full">
       <MagnifierIcon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-smoke-500" />
       <input
         ref={inputRef}
         type="text"
-        autoFocus={autoFocus}
         value={query}
         onChange={e => {
           pendingSubmitRef.current = null
@@ -299,7 +347,7 @@ export function SearchBox({
         }}
         onBlur={() => { pendingSubmitRef.current = null }}
         onFocus={() =>
-          (results.length > 0 || account || ensPending || searchUnavailable) &&
+          (results.length > 0 || account || ensPending || searchUnavailable || noMatches) &&
           setOpen(true)
         }
         onKeyDown={e => {
@@ -321,11 +369,22 @@ export function SearchBox({
         handlePath ||
         account ||
         ensPending ||
-        searchUnavailable) ? (
+        searchUnavailable ||
+        noMatches) ? (
         <ul className="card absolute left-0 right-0 top-full z-50 mt-2 max-h-96 overflow-auto py-1.5 shadow-[0_12px_32px_rgba(32,30,26,0.12)]">
           {ensPending && !account ? (
             <li className="px-4 py-2.5 text-xs text-smoke-500">
               Resolving {query.trim()}…
+            </li>
+          ) : null}
+          {projectHandle && handleExists === undefined ? (
+            <li className="px-4 py-2.5 text-xs text-smoke-500">
+              Resolving @{projectHandle.handle}…
+            </li>
+          ) : null}
+          {noMatches ? (
+            <li role="status" className="px-4 py-2.5 text-xs text-smoke-500">
+              No matching projects.
             </li>
           ) : null}
           {searchUnavailable && results.length === 0 ? (
@@ -366,13 +425,13 @@ export function SearchBox({
               </button>
             </li>
           ) : null}
-          {projectHandle && handlePath ? (
+          {handleExists && handlePath ? (
             <li>
               <button
                 onClick={() => goHandle(handlePath)}
                 className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm text-ink hover:bg-smoke-25"
               >
-                Go to project @{projectHandle.handle}
+                Go to project @{projectHandle?.handle}
               </button>
             </li>
           ) : null}

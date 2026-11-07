@@ -62,7 +62,7 @@ Read-only, no key required, cached at the edge.
 - \`GET /api/project-name?chainId=<id>&projectId=<id>\`: project name and the group linking its chains (sucker group).
 - \`GET /api/project-ready?chainId=<id>&projectId=<id>\`: whether a launched project is indexed yet.
 - \`GET /api/participants?suckerGroupId=<id>\`: token holders across chains.
-- \`GET /api/movements?suckerGroupId=<id>\`: payments and cash outs.
+- \`GET /api/movements?suckerGroupId=<id>\`: token moves queued between chains. Empty when none are queued, which says nothing about payments.
 - \`GET /api/price-history?suckerGroupId=<id>&chainId=<id>\`: price of newly created tokens over time.
 - \`GET /api/loans?...\`: loans taken against project tokens.
 - \`GET /api/project-og/<chainId>/<projectId>\`: 1200x630 PNG link-preview card.
@@ -72,7 +72,7 @@ Read-only, no key required, cached at the edge.
 - Protocol contracts: https://github.com/Bananapus/version-6
 - This client: https://github.com/mejango/juicebox-money
 - Contract explorer: https://juicebox.center/#apps/juicescan
-- Inspect the example: https://juicebox.center/inspect/basesep/1
+- Inspect the example: https://juicebox.money/basesep:1
 `
 
 export const revalidate = 3600

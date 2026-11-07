@@ -15,6 +15,7 @@ export type TrendingCard = {
   external: boolean
   version: number
   name: string
+  projectId: number
   tagline: string | null
   logoUri: string | null
   /** The group's payment volume, each payment valued in USD at its own time. 18-dec. */
@@ -91,6 +92,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         external: group.version !== 6,
         version: group.version,
         name: representative.name ?? `Project ${representative.projectId}`,
+        projectId: representative.projectId,
         tagline: representative.projectTagline,
         logoUri: representative.logoUri,
         volumeUsd: group.volumeUsd,

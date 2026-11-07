@@ -50,11 +50,23 @@ import {
 import {
   canonicalHandleOf,
 } from "@/lib/project-handles";
-import { chainName, legacyHref, toUrn } from "@/lib/urn";
+import { chainName, legacyHref, legacyPageExists, toUrn } from "@/lib/urn";
 import { resolveProjectRouteCached, projectRouteSnapshot, type ResolvedProjectRoute } from "@/lib/project-route.server";
 
 const IS_DETERMINISTIC_BROWSER =
   process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === "true";
+
+const legacyPageExistsCached = cache(legacyPageExists);
+
+/**
+ * Anything that isn't a V6 project route may be a page on the V1–V5 app now
+ * serving from old.juicebox.money. Hand it the same path only if it is one.
+ */
+async function leaveUnresolvedRoute(segment: string): Promise<never> {
+  const legacy = legacyHref(`/${segment}`);
+  if (await legacyPageExistsCached(legacy)) redirect(legacy);
+  notFound();
+}
 
 const getRevnetOperatorCandidatesCached = cache(getRevnetOperatorCandidates);
 const getRevnetOperatorCached = cache(async (chainId: number, projectId: number) =>
@@ -125,9 +137,7 @@ export async function generateMetadata({
   // redirect/404 identity decisions when Next streams metadata separately.
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
-  // Anything that isn't a V6 project route belongs to the V1–V5 app now
-  // serving from old.juicebox.money — hand it the same path.
-  if (!urn) redirect(legacyHref(`/${segment}`));
+  if (!urn) return leaveUnresolvedRoute(segment);
   const result = await getPageDataCached(urn.chainId, urn.projectId);
   if (!result) notFound();
   const project = result.project;
@@ -318,7 +328,7 @@ export default async function ProjectPage({
   await connection();
   const segment = (await params).urn;
   const urn = await resolveProjectRouteCached(segment);
-  if (!urn) redirect(legacyHref(`/${segment}`));
+  if (!urn) return leaveUnresolvedRoute(segment);
 
   const pending = getPageDataCached(urn.chainId, urn.projectId);
   // An indexed identity can paint while the current onchain metadata pointer

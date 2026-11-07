@@ -132,7 +132,9 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
             : 'col-start-2 max-w-[280px] justify-self-end'
         }`}
       >
-        {expanded ? (
+        {/* One mounted field across both states: focusing it expands the row,
+            and a remount here would drop that focus and the first keystrokes. */}
+        <div className={expanded ? undefined : '@max-[7.5rem]:hidden'}>
           <SearchBox
             expanded
             placeholder="Search"
@@ -142,23 +144,19 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
               if (!focused) setSearchOpen(false)
             }}
           />
-        ) : (
-          <>
-            <div className="@max-[7.5rem]:hidden">
-              <SearchBox expanded placeholder="Search" onFocusChange={setSearchFocused} />
-            </div>
-            <div className="hidden justify-end @max-[7.5rem]:flex">
-              <button
-                type="button"
-                aria-label="Search"
-                onClick={() => setSearchOpen(true)}
-                className="input-well flex h-11 w-11 shrink-0 items-center justify-center text-smoke-600 hover:text-ink"
-              >
-                <MagnifierIcon className="h-4 w-4" />
-              </button>
-            </div>
-          </>
-        )}
+        </div>
+        {!expanded ? (
+          <div className="hidden justify-end @max-[7.5rem]:flex">
+            <button
+              type="button"
+              aria-label="Search"
+              onClick={() => setSearchOpen(true)}
+              className="input-well flex h-11 w-11 shrink-0 items-center justify-center text-smoke-600 hover:text-ink"
+            >
+              <MagnifierIcon className="h-4 w-4" />
+            </button>
+          </div>
+        ) : null}
       </div>
       <div className="col-start-3 row-start-1 justify-self-end">
         {expanded ? (

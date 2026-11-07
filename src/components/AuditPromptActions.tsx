@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { AUDIT_PROMPT } from '@/lib/audit-prompt'
+import { COPY_BLOCKED_MESSAGE, ManualCopyField } from './ManualCopyField'
 
 const TRANSACTION_AUDIT_PROMPT = `Audit this exact transaction built by Juicebox Money against the current Juicebox V6 contracts.
 
@@ -25,6 +26,7 @@ const PROMPTS = [
 
 export function AuditPromptActions() {
   const [copied, setCopied] = useState<string | null>(null)
+  const [blocked, setBlocked] = useState<string | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(
@@ -37,26 +39,35 @@ export function AuditPromptActions() {
   return (
     <div className="divide-y divide-smoke-200 border-y border-smoke-200">
       {PROMPTS.map(item => (
-        <button
-          key={item.id}
-          type="button"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(item.prompt)
-              setCopied(item.id)
-              if (timer.current) clearTimeout(timer.current)
-              timer.current = setTimeout(() => setCopied(null), 2000)
-            } catch {
-              setCopied(null)
-            }
-          }}
-          className="flex min-h-14 w-full items-center justify-between gap-5 py-3 text-left font-agrandir text-sm font-medium hover:text-bluebs-600"
-        >
-          <span>{item.label}</span>
-          <span className="shrink-0 text-xs text-smoke-600">
-            {copied === item.id ? 'Copied' : 'Copy'}
-          </span>
-        </button>
+        <div key={item.id}>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(item.prompt)
+                setBlocked(null)
+                setCopied(item.id)
+                if (timer.current) clearTimeout(timer.current)
+                timer.current = setTimeout(() => setCopied(null), 2000)
+              } catch {
+                setCopied(null)
+                setBlocked(item.id)
+              }
+            }}
+            className="flex min-h-14 w-full items-center justify-between gap-5 py-3 text-left font-agrandir text-sm font-medium hover:text-bluebs-600"
+          >
+            <span>{item.label}</span>
+            <span className="shrink-0 text-xs text-smoke-600">
+              {copied === item.id ? 'Copied' : 'Copy'}
+            </span>
+          </button>
+          {blocked === item.id ? (
+            <div className="pb-4 text-sm leading-relaxed">
+              <p role="status" className="mb-2">{COPY_BLOCKED_MESSAGE}</p>
+              <ManualCopyField id={`audit-prompt-${item.id}`} label={item.label} value={item.prompt} />
+            </div>
+          ) : null}
+        </div>
       ))}
     </div>
   )

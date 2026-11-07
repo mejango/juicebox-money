@@ -58,11 +58,9 @@ const routes = [
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
   { route: '/account/[address]', path: `/account/${account}`, kib: 419, text: 'Holdings' },
-  // Every unmatched path lands in a page that calls notFound(); pages stream, so
-  // it answers 200 with the 404 page inside and loads that page's chunks too.
+  // A path a page rejects calls notFound(); pages stream, so it answers 200 with
+  // the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
-  // Hands deeper legacy paths to old.juicebox.money; there is no page to load.
-  { route: '/[urn]/[...rest]', path: '/v3/45', status: 307 },
 ]
 
 const budgets = {

@@ -23,6 +23,21 @@ describe('public alias verification endpoint', () => {
     expect(response.status).toBe(503)
     expect(JSON.stringify(await response.json())).not.toContain('private RPC URL')
   })
+  it('separates a handle nobody holds from one the legacy site serves', async () => {
+    mocks.resolve.mockResolvedValue(null)
+    const lookup = (status: number) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })))
+      return GET(new Request('https://juicebox.test/api/project-route?segment=%40juicebox'))
+    }
+    const missing = await lookup(404)
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toMatchObject({ legacy: false })
+    const legacy = await lookup(200)
+    expect(legacy.status).toBe(404)
+    expect(await legacy.json()).toMatchObject({ legacy: true })
+    expect(fetch).toHaveBeenCalledWith('https://old.juicebox.money/@juicebox', expect.anything())
+    vi.unstubAllGlobals()
+  })
   it('accounts for server age and request transit without requiring synchronized clocks', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(50_000)
