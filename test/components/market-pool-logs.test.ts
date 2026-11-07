@@ -10,11 +10,9 @@ describe("the market's pool log scan", () => {
   it("reads the pool manager's Initialize and ModifyLiquidity logs for one pool over one block range, through the public client", async () => {
     const request = vi.fn(async () => [])
     const client = { request } as unknown as PublicClient
-    await getPoolLogs(client, PM, POOL, 16n, 255n, false)
-    await getPoolLogs(client, PM, POOL, 16n, 255n, true)
+    await getPoolLogs(client, PM, POOL, 16n, 255n)
     expect(request.mock.calls).toEqual([
       [{ method: 'eth_getLogs', params: [{ address: PM, topics: [[INITIALIZE_TOPIC, MODIFY_LIQUIDITY_TOPIC], POOL], fromBlock: '0x10', toBlock: '0xff' }] }],
-      [{ method: 'eth_getLogs', params: [{ address: PM, topics: [INITIALIZE_TOPIC, POOL], fromBlock: '0x10', toBlock: '0xff' }] }],
     ])
   })
 })
