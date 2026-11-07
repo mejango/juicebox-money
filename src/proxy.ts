@@ -24,6 +24,11 @@ const APP_ROUTES = new Set([
     : []),
 ])
 
+/** Project tabs a slash path can name, the form revnet.money links use. */
+const PROJECT_TABS = new Set([
+  'activity', 'extras', 'funds', 'operator', 'overview', 'owner', 'owners', 'rulesets', 'shop', 'terms', 'tokens',
+])
+
 export function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl
   const [first, ...rest] = pathname.split('/').filter(Boolean)
@@ -33,6 +38,11 @@ export function proxy(request: NextRequest) {
     decoded = decodeURIComponent(first)
   } catch {
     // Malformed encoding: leave as-is; it won't parse as a urn or handle.
+  }
+  // /eth:3/owners/market is the project's #owners/market tab.
+  if (rest.length <= 2 && PROJECT_TABS.has(rest[0]?.toLowerCase()) && (decoded.startsWith('@') || parseUrn(decoded))) {
+    const target = new URL(`/${first}${search}#${rest.join('/').toLowerCase()}`, request.url)
+    return NextResponse.redirect(target, 307)
   }
   // Single-segment urn (/eth:1) and @handle routes are this app's. Handles
   // that fail live verification still redirect, from the route itself.

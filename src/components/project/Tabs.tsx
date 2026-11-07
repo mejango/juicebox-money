@@ -45,10 +45,19 @@ export function replaceTabHash(hash: string): void {
   history.replaceState(history.state, '', hash)
 }
 
+/** A tab the visitor chose gets its own history entry, for the same native-method reason. */
+function pushTabHash(hash: string): void {
+  if (window.location.hash === hash) return
+  const history = window.history
+  const nativePushState = Object.getPrototypeOf(history)?.pushState as History['pushState'] | undefined
+  if (nativePushState) nativePushState.call(history, history.state, '', hash)
+  else history.pushState(history.state, '', hash)
+}
+
 /** Keep local tab state and shareable hashes under the verified alias lease. */
-export function replaceProjectTabHash(hash: string): void {
+function commitProjectTabHash(write: () => void): void {
   const commit = () => {
-    replaceTabHash(hash)
+    write()
     window.dispatchEvent(new Event('hashchange'))
   }
   const segment = projectRouteSegmentFromPathname(window.location.pathname)
@@ -56,6 +65,14 @@ export function replaceProjectTabHash(hash: string): void {
   // verification too; the provider waits for it.
   if (segment && peekProjectHandleFromRoute(segment) !== null) requestProjectTabNavigation(commit)
   else commit()
+}
+
+export function replaceProjectTabHash(hash: string): void {
+  commitProjectTabHash(() => replaceTabHash(hash))
+}
+
+export function pushProjectTabHash(hash: string): void {
+  commitProjectTabHash(() => pushTabHash(hash))
 }
 
 /**
@@ -147,6 +164,8 @@ export function ProjectTabs({
   const [overflowExpanded, setOverflowExpanded] = useState(false)
   const subtabByParent = useRef<Record<string, string>>({})
   const mounted = useRef(new Set<string>())
+  const tabRow = useRef<HTMLDivElement>(null)
+  const tapped = useRef(false)
 
   const normalActiveSlug = tabs.some(
     tab => tabSlug(tab.label) === activeSlug,
@@ -200,7 +219,23 @@ export function ProjectTabs({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Keep the active tab in view: a linked tab can sit past the row's edge on a phone.
+  useEffect(() => {
+    const row = tabRow.current
+    if (!row) return
+    const box = row.querySelector('[aria-selected="true"]')?.getBoundingClientRect()
+    const rowBox = row.getBoundingClientRect()
+    if (box && (box.left < rowBox.left || box.right > rowBox.right)) {
+      // Only the row moves: scrollIntoView would also scroll the page to the tabs.
+      row.scrollLeft += box.left + box.width / 2 - (rowBox.left + rowBox.width / 2)
+    }
+    // On a phone the row can sit at the fold, with the tapped tab's content below it.
+    if (tapped.current && isSingleColumn) row.scrollIntoView({ block: 'start', behavior: 'instant' })
+    tapped.current = false
+  }, [activeSlug, isSingleColumn])
+
   const activate = (nextSlug: string) => {
+    tapped.current = true
     const [currentParent, currentChild] = window.location.hash
       .replace('#', '')
       .split('/')
@@ -208,9 +243,8 @@ export function ProjectTabs({
       subtabByParent.current[tabSlug(currentParent)] = tabSlug(currentChild)
     }
 
-    // Keep the hash shareable without adding history entries per click.
     const child = subtabByParent.current[nextSlug]
-    replaceProjectTabHash(`#${nextSlug}${child ? `/${child}` : ''}`)
+    pushProjectTabHash(`#${nextSlug}${child ? `/${child}` : ''}`)
   }
 
   const buttonClasses = (selected: boolean) =>
@@ -236,6 +270,7 @@ export function ProjectTabs({
       <div className="contents min-[801px]:order-2 min-[801px]:block min-[801px]:min-w-0 min-[801px]:flex-1">
         <div className="order-2 -mx-1 mt-8 flex border-b border-smoke-200 px-1 min-[801px]:order-none min-[801px]:mt-0">
           <div
+            ref={tabRow}
             data-project-tab-scroll
             className="scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
           >
@@ -371,7 +406,7 @@ export function SubTabs({
 
   const activate = (i: number) => {
     if (hashParent) {
-      replaceProjectTabHash(
+      pushProjectTabHash(
         `#${tabSlug(hashParent)}/${tabSlug(tabs[i].label)}`,
       )
     } else setActive(i)

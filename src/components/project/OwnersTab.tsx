@@ -117,7 +117,7 @@ export function OwnersTab({
         compact
       />
       <SubTabs
-        hashParent="tokens"
+        hashParent={isRevnet ? 'owners' : 'tokens'}
         tabs={[
           {
             label: 'Accounts',
