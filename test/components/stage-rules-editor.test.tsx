@@ -3,7 +3,7 @@ import { act } from 'react'
 import TestRenderer, { type ReactTestInstance } from 'react-test-renderer'
 import { describe, expect, it, vi } from 'vitest'
 import { StageRulesEditor } from '@/components/create/StageRulesEditor'
-import { newDraftStage, type DraftStage } from '@/components/create/stage-draft'
+import { newDraftStage, stageCashOutTax, type DraftStage } from '@/components/create/stage-draft'
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 
 vi.mock('@/components/create/AddressField', () => ({ AddressField: () => null }))
@@ -69,5 +69,24 @@ describe('payout unit switch', () => {
     const editor = await mount(routed('20'))
     await editor.click('Split all funds by %')
     expect(editor.stage().payoutSplits[0].value).toBe('20')
+  })
+})
+
+describe('rules sections', () => {
+  it('keeps one section open, and the payout choice says what it costs', async () => {
+    const editor = await mount({ ...newDraftStage(true), payouts: 'routed', open: { fees: true } })
+    await editor.click('Timing')
+    expect(editor.stage().open).toMatchObject({ timing: true, fees: true })
+    await editor.click('Payouts')
+    expect(editor.stage().open).toEqual({ payouts: true, fees: true })
+    expect(textOf(editor.root())).toContain("Holders can't cash out.")
+    await editor.click('Fixed ETH amounts')
+    expect(textOf(editor.root())).not.toContain("Holders can't cash out.")
+  })
+
+  it('offers tax chips as values from 0 to 1 without changing their rates', async () => {
+    const editor = await mount({ ...newDraftStage(true), cashOuts: true, open: { cashouts: true } })
+    await editor.click('0.3')
+    expect(stageCashOutTax(editor.stage())).toBe(3000)
   })
 })

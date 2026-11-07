@@ -437,7 +437,7 @@ export function CreateForm() {
   /** Project owner (or revnet operator). The dead address permanently disables
    *  retained authority; an empty enabled field uses the connected wallet. */
   const [owner, setOwner] = useState(PERMANENTLY_DISABLED_AUTHORITY);
-  const [authorityMode, setAuthorityMode] = useState<"create" | "existing">("create");
+  const [authorityMode, setAuthorityMode] = useState<"create" | "existing">("existing");
   const [authoritySigners, setAuthoritySigners] = useState<string[]>(["", "", ""]);
   const [authorityThreshold, setAuthorityThreshold] = useState(2);
   const [ticker, setTicker] = useState("");
@@ -772,9 +772,6 @@ export function CreateForm() {
     setOwnerPerChainOpen(false);
   };
   const createsAuthoritySafe = authorityEnabled && authorityMode === "create";
-  const authorityDescription = flavor === "revnet"
-    ? "The operator handles the revnet's day-to-day operations with the limited controls listed above."
-    : "The owner holds the project and manages its rules and funds.";
   const ownerOk = !authorityEnabled || (createsAuthoritySafe
     ? validateAuthorityPolicy(authoritySigners, authorityThreshold)
     : (owner.trim() === "" || resolvedAddress(owner) !== null) &&
@@ -3204,7 +3201,7 @@ export function CreateForm() {
                   <span className="mt-2 block">{OPERATOR_LIMITS}</span>
                 </>
               ) : (
-                "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
+                "One address owns the project, and can change its rules and withdraw funds. Off means nobody can, ever."
               )
             }
           />
@@ -3213,7 +3210,6 @@ export function CreateForm() {
               <span className="field-label">
                 {flavor === "revnet" ? "Revnet operator" : "Project owner"}
               </span>
-              <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
               <p className="mb-3 mt-2 text-xs leading-relaxed text-smoke-700">
                 {authorityMode === "create"
                   ? "Create a multisig so its signers approve decisions together. "
@@ -3226,7 +3222,7 @@ export function CreateForm() {
                 >
                   {authorityMode === "create"
                     ? flavor === "revnet" ? "Already have an operator in mind?" : "Already have an owner in mind?"
-                    : "Create a new multisig?"}
+                    : "Create a multisig"}
                 </button>
               </p>
               {authorityMode === "create" ? (
@@ -3721,16 +3717,14 @@ export function CreateForm() {
             </p>
           ) : null}
 
-          {flavor === "revnet" ? (
-            <div className="mt-4">
-              <AddButton
-                onClick={() => addStage("revnet")}
-                disabled={busy}
-              >
-                Add a stage
-              </AddButton>
-            </div>
-          ) : null}
+          <div className="mt-4">
+            <AddButton
+              onClick={() => (flavor === "revnet" ? addStage("revnet") : addStage())}
+              disabled={busy}
+            >
+              {flavor === "revnet" ? "Add a stage" : "Add a ruleset"}
+            </AddButton>
+          </div>
 
           {flavor !== "revnet" && afterApplies ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
@@ -3740,29 +3734,23 @@ export function CreateForm() {
               <div className="mt-2 flex flex-wrap items-center gap-2.5">
                 <select
                   value={afterMode}
-                  onChange={(e) => {
-                    if (e.target.value === "custom") {
-                      addStage();
-                      setAfterMode("wait");
-                    } else {
-                      setAfterMode(e.target.value as typeof afterMode);
-                    }
-                  }}
+                  onChange={(e) => setAfterMode(e.target.value as typeof afterMode)}
                   disabled={busy}
                   className="input-well select-caret min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
                 >
                   <option value="wait">Wait</option>
                   <option value="terminal">Terminate</option>
                   <option value="cycle">Cycle</option>
-                  <option value="custom">Custom…</option>
                 </select>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {afterMode === "wait"
-                  ? "The project idles — payments and issuance pause until the project owner queues more rules."
+                  ? authorityEnabled
+                    ? "Payments and issuance pause until the owner queues more rules."
+                    : "Payments and issuance stop for good."
                   : afterMode === "terminal"
-                    ? "These terms are locked in forever — they can never be changed again."
-                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes. To hand off to new rules after a set number of cycles or on a date, pick Custom… and set when it starts."}
+                    ? "These terms are locked in forever."
+                    : "The ruleset repeats each time it ends."}
               </p>
             </div>
           ) : null}

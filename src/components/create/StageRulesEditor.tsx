@@ -200,6 +200,9 @@ export function StageRulesEditor({
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch });
   const toggleOpen = (key: string) =>
     set({ open: { ...stage.open, [key]: !stage.open[key] } });
+  // One section open at a time; the fee disclosure inside Payouts keeps its own state.
+  const toggleSection = (key: string) =>
+    set({ open: { fees: !!stage.open.fees, [key]: !stage.open[key] } });
 
   const duration = stageDurationSeconds(stage);
   const reservedPercent = splitsTotal(stage.reservedSplits, "percent");
@@ -277,7 +280,7 @@ export function StageRulesEditor({
         label="Timing"
         summary={timingSummary}
         open={!!stage.open.timing}
-        onToggle={() => toggleOpen("timing")}
+        onToggle={() => toggleSection("timing")}
       >
         {isFirst ? (
           <div className="mb-3">
@@ -404,9 +407,8 @@ export function StageRulesEditor({
             </div>
             <span className="field-label">Duration</span>
             <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              How long these rules run. Flexible rules last until the project
-              owner changes them; a fixed duration locks them in, and the next
-              ruleset starts when it ends.
+              Flexible lasts until the owner changes it. A fixed duration locks
+              the rules until it ends.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
               <select
@@ -475,16 +477,11 @@ export function StageRulesEditor({
         label="New tokens"
         summary={tokensSummary}
         open={!!stage.open.tokens}
-        onToggle={() => toggleOpen("tokens")}
+        onToggle={() => toggleSection("tokens")}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Set how many new {tokenLabel} each payment creates. This is the
-          issuance rate. You can set aside a share for chosen recipients;
-          payers receive the rest. The cash out rules below decide whether
-          holders can exchange {tokenLabel} for project funds.
-          {!isFirst
-            ? " Leave the rate empty to keep the previous ruleset’s rate."
-            : ""}
+          New {tokenLabel} each payment creates.
+          {!isFirst ? " Leave empty to keep the previous rate." : ""}
         </p>
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
           <input
@@ -606,11 +603,9 @@ export function StageRulesEditor({
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <span className="field-label">Tokens without payment</span>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Set aside {tokenLabel} for named wallets, without a payment.
-                Anyone can create these tokens for the recipients once the stage
-                starts. This is called auto-issuance.
+                {tokenLabel} for named wallets, created once the stage starts.
                 {chainIds.length > 1
-                  ? " Each mint happens once for the whole launch, on the chain you pick per row."
+                  ? " Each row mints once, on the chain you pick."
                   : ""}
               </p>
               {stage.autoIssuances.map((row) => (
@@ -730,7 +725,6 @@ export function StageRulesEditor({
             {reservedOn ? (
               <p className="text-xs leading-relaxed text-smoke-700">
                 Each recipient gets a percentage of new {tokenLabel}.
-                These percentages add up to the total set aside.
               </p>
             ) : null}
             <SplitsEditor
@@ -763,11 +757,9 @@ export function StageRulesEditor({
           label="Payouts"
           summary={payoutsSummary}
           open={!!stage.open.payouts}
-          onToggle={() => toggleOpen("payouts")}
+          onToggle={() => toggleSection("payouts")}
         >
           <p className="text-xs leading-relaxed text-smoke-700">
-            Set who can receive project funds. These transfers are payouts.
-            Funds beyond the unused payout budget can back cash outs.
             The payout budget resets each time the rules repeat.
           </p>
           <div className="mt-3 space-y-2">
@@ -816,8 +808,8 @@ export function StageRulesEditor({
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {stage.routedMode === "all"
-                  ? "All funds are available for payouts, divided by these percentages."
-                  : `Each recipient gets up to their ${unitLabel} amount. Funds beyond the unused budget stay available for cash outs.`}
+                  ? `All funds can be paid out by these percentages.${routedAll ? " Holders can't cash out." : ""}`
+                  : `Each recipient gets up to their ${unitLabel} amount. The rest can back cash outs.`}
               </p>
               <SplitsEditor
                 splits={stage.payoutSplits}
@@ -982,7 +974,7 @@ export function StageRulesEditor({
         label="Cash outs"
         summary={cashOutsSummary}
         open={!!stage.open.cashouts}
-        onToggle={() => toggleOpen("cashouts")}
+        onToggle={() => toggleSection("cashouts")}
       >
         {isRevnet ? (
           <>
@@ -1013,7 +1005,7 @@ export function StageRulesEditor({
             set={set}
             disabled={disabled}
             offBlurb="Tokens are for support and standing — holders can't pull funds out."
-            onBlurb={`Holders can exchange ${tokenLabel} for funds not set aside for payouts. This remaining balance is called surplus.`}
+            onBlurb={`Holders can exchange ${tokenLabel} for funds not set aside for payouts.`}
           />
         )}
       </SubSection>
@@ -1031,7 +1023,7 @@ export function StageRulesEditor({
               .join(" | ") || "Standard"
           }
           open={!!stage.open.owner}
-          onToggle={() => toggleOpen("owner")}
+          onToggle={() => toggleSection("owner")}
         >
           <CheckRow
             checked={stage.ownerMinting}
@@ -1112,7 +1104,7 @@ export function StageRulesEditor({
               .join(", ") || "None"
           }
           open={!!stage.open.extras}
-          onToggle={() => toggleOpen("extras")}
+          onToggle={() => toggleSection("extras")}
         >
           <div className="space-y-2">
             <CheckRow

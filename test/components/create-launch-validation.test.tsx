@@ -234,6 +234,14 @@ describe('multichain launch validation', () => {
     expect(textOf(launchSection(root))).not.toContain('needs a start')
   })
 
+  it('offers a visible way to add a ruleset', async () => {
+    const root = await mountDraft(draft('project'))
+    await act(async () => root.findByProps({ 'aria-label': 'Rules' }).props.onClick())
+    const add = root.findAllByType('button').find(node => textOf(node).includes('Add a ruleset'))!
+    await act(async () => add.props.onClick())
+    expect(root.findAll(node => node.props['aria-expanded'] !== undefined && textOf(node).startsWith('Ruleset #2')).length).toBeGreaterThan(0)
+  })
+
   it('explains an active invalid custom ruleset on the Launch step', async () => {
     const root = await mountDraft(draft('project', true))
     expect(launchButton(root).props.disabled).toBe(true)

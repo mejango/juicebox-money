@@ -16,6 +16,8 @@ test('creates owner and operator policies without enabling authority by default'
   await expect(allowChanges).not.toBeChecked()
   await expect(page.getByLabel('Owner signer 1', { exact: true })).toHaveCount(0)
   await allowChanges.click()
+  await expect(page.getByLabel('Project owner', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Create a multisig' }).click()
   await expect(page.getByLabel('Owner approval policy')).toHaveValue('2')
   for (const [index, signer] of signers.entries()) {
     await page.getByLabel(`Owner signer ${index + 1}`, { exact: true }).fill(signer)
@@ -29,7 +31,7 @@ test('creates owner and operator policies without enabling authority by default'
   await expect(page.getByText('Use your wallet or an existing multisig.')).toBeVisible()
   await expect(page.getByText('Leave empty to use your connected wallet.')).toBeVisible()
   await page.getByLabel('Project owner', { exact: true }).fill(signers[0])
-  await page.getByRole('button', { name: 'Create a new multisig?' }).click()
+  await page.getByRole('button', { name: 'Create a multisig' }).click()
   await expect(page.getByLabel('Owner signer 1', { exact: true })).toHaveValue(signers[0])
   await page.getByLabel('Project flavor').selectOption('revnet')
   await expect(page.getByLabel('Operator signer 1', { exact: true })).toHaveValue(signers[0])
@@ -37,7 +39,7 @@ test('creates owner and operator policies without enabling authority by default'
   await page.getByRole('button', { name: 'Already have an operator in mind?' }).click()
   await expect(page.getByLabel('Revnet operator', { exact: true })).toHaveValue(signers[0])
   await expect(page.getByLabel('Operator signer 1', { exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Create a new multisig?' }).click()
+  await page.getByRole('button', { name: 'Create a multisig' }).click()
   await expect(page.getByLabel('Operator signer 1', { exact: true })).toHaveValue(signers[0])
   await page.getByRole('button', { name: 'Remove operator signer 3' }).click()
   await expect(page.getByLabel('Operator approval policy')).toContainText('2 of 2')
@@ -60,7 +62,7 @@ test('restores legacy authority addresses and per-chain overrides in existing mo
   await expect(page.getByLabel('Owner signer 1', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: /Set per chain — if the project owner/ }).click()
   await expect(page.getByLabel('Project owner on Optimism', { exact: true })).toHaveValue(signers[1])
-  await page.getByRole('button', { name: 'Create a new multisig?' }).click()
+  await page.getByRole('button', { name: 'Create a multisig' }).click()
   await page.getByRole('button', { name: 'Already have an owner in mind?' }).click()
   await expect(page.getByLabel('Project owner on Optimism', { exact: true })).toHaveValue(signers[1])
 })
@@ -69,6 +71,7 @@ test('persists a new approval policy across a reload', async ({ page }) => {
   await page.goto('/create')
   await expect(page.locator('[data-create-ready="true"]')).toBeVisible()
   await page.getByRole('checkbox', { name: /Allow changes/ }).click()
+  await page.getByRole('button', { name: 'Create a multisig' }).click()
   for (const [index, signer] of signers.entries()) {
     await page.getByLabel(`Owner signer ${index + 1}`, { exact: true }).fill(signer)
   }
@@ -87,6 +90,7 @@ for (const role of ['owner', 'operator'] as const) {
     await expect(page.locator('[data-create-ready="true"]')).toBeVisible()
     if (role === 'operator') await page.getByLabel('Project flavor').selectOption('revnet')
     await page.getByRole('checkbox', { name: role === 'owner' ? /Allow changes/ : /Enable limited operator controls/ }).click()
+    await page.getByRole('button', { name: 'Create a multisig' }).click()
     const roleLabel = role === 'owner' ? 'Owner' : 'Operator'
     for (const index of [0, 1]) {
       await page.getByLabel(`${roleLabel} signer ${index + 1}`, { exact: true }).fill(signers[index])
