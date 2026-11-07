@@ -22,6 +22,6 @@ function payClient(chain: Chain): PublicClient {
 
 /** The client for the reads a payer waits on: the same RPC, ahead of the page's other reads. */
 export function usePayPublicClient(chainId: JBChainId): PublicClient | undefined {
-  const client = usePublicClient({ chainId })
-  return client ? payClient(client.chain) : undefined
+  const client = usePublicClient({ chainId }) as PublicClient | undefined
+  return client?.chain ? payClient(client.chain) : client
 }
