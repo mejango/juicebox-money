@@ -88,8 +88,9 @@ export function useShopCart(chainId?: number): ShopCartContextValue {
     update(cart => {
       const previous = cart.items[item.tierId]
       if (
-        previous?.name === item.name &&
-        previous?.image === item.image
+        previous &&
+        (item.name ?? previous.name) === previous.name &&
+        (item.image ?? previous.image) === previous.image
       ) {
         return cart
       }

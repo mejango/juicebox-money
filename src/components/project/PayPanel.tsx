@@ -623,7 +623,8 @@ export function PayPanel({
     for (const tier of shop.tiers) {
       registerItem({
         tierId: tier.id,
-        name: tier.name ?? `Item #${tier.id}`,
+        // A tier whose media hasn't resolved says nothing: a name already registered stands.
+        name: tier.name ?? undefined,
         image: tier.image ?? undefined,
       });
       const quantity = cart[tier.id] ?? 0;
@@ -1707,11 +1708,11 @@ export function PayPanel({
               );
               const item = {
                 tierId: tier.id,
-                name: tier.name ?? `Item #${tier.id}`,
+                name: tier.name ?? undefined,
                 image: tier.image ?? undefined,
               };
               return (
-                <NftCheckoutCard key={tier.id} tierId={tier.id} name={item.name} image={tier.image} qty={qty}
+                <NftCheckoutCard key={tier.id} tierId={tier.id} name={tier.name ?? `Item #${tier.id}`} image={tier.image} qty={qty}
                   priceLabel={`${formatTokenAmount(price, shop.pricingDecimals)} ${shopPricingSymbol}`}
                   soldOut={soldOut} busy={busy} canAdd={qty < cap}
                   onSelect={() => setQuantity(tier.id, 1, item)}

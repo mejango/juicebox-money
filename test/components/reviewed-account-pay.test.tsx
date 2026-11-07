@@ -854,6 +854,27 @@ describe('a checkout whose shop read fails', () => {
     expect(refetch).toHaveBeenCalled()
   })
 
+  it('never overwrites a name the Shop tab gave an item with its placeholder', async () => {
+    m.queries.nativeInventory = inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] })
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    m.realCart = true
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    let items!: ReturnType<typeof useShopCart>['items']
+    function AddNamed() {
+      const cart = useShopCart()
+      items = cart.items
+      return <button type="button" onClick={() => cart.setQuantity(1, 1, { tierId: 1, name: 'Hat' })}>Add named</button>
+    }
+    await act(async () => root.render(
+      <ShopCartProvider chainId={1}>
+        <AddNamed />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+      </ShopCartProvider>,
+    ))
+    await act(async () => button('Add named').click())
+    expect(items[1].name).toBe('Hat')
+  })
+
   it('prices the cart from the one read the Shop tab shares', async () => {
     m.queries.nativeInventory = inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] })
     m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
