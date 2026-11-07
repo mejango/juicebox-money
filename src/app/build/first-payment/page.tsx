@@ -136,7 +136,7 @@ export default async function FirstPaymentPage() {
         <nav aria-label="First payment resources" className="mt-6 flex flex-wrap gap-4 underline underline-offset-4">
           <Link href="/learn">Learn Juicebox</Link>
           <Link href="/build">Build reference</Link>
-          <Link href="/basesep:1">Inspect the example</Link>
+          <Link href="/basesep:1" prefetch={false}>Inspect the example</Link>
         </nav>
       </header>
       <GuideSections sections={sections} ariaLabel="First payment" />

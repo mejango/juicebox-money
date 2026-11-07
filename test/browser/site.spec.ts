@@ -252,7 +252,7 @@ async function exerciseCreateWizard(page: Page, viewport: string) {
   }
 
   await expect(
-    page.getByText('No owner', { exact: true }),
+    page.getByText('No operator', { exact: true }),
   ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Sign in to launch' })).toBeVisible()
 }
