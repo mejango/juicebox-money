@@ -7,3 +7,8 @@ export function defifaPhaseLabel(phase: number | undefined): string {
     ? phaseLabels[phase as keyof typeof phaseLabels]
     : 'Unavailable'
 }
+
+/** DefifaGamePhase.NO_CONTEST: the game is voided with full refunds available. */
+export function defifaPhaseNote(phase: number | undefined): string | null {
+  return phase === 5 ? 'This game was voided. Full refunds are available.' : null
+}

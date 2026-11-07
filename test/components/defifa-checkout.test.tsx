@@ -380,6 +380,11 @@ describe('native Defifa checkout through the reviewed engine', () => {
     expect(readDefifaWriteRecovery({ chainId: 1, projectId: 42, account: ALICE, action: 'pay' })).toBeNull()
     expect(renderer.root.findAllByType('button').some(node => text(node) === 'Try again')).toBe(true)
   })
+  it('says refunds are open on a voided game', async () => {
+    await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, phase: 5 } })))
+    expect(text(renderer.root)).toContain('This game was voided. Full refunds are available.')
+  })
+
   it('shows inactive phase honestly without a disabled mint placeholder', async () => {
     await act(async () => renderer.update(createElement(DefifaCheckout, { chainId: 1, projectId: 42, shop: { ...shop, phase: 3 } })))
     expect(text(renderer.root)).toContain('NFT minting is not open in this phase.')
