@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { cashOutTaxValue } from '@/lib/format'
 
 /**
  * The cash-out bonding curve: cashing out fraction x of the token supply
@@ -48,7 +49,7 @@ export function CashOutCurve({ rate }: { rate: number }) {
         viewBox="0 0 220 150"
         className="h-auto w-full max-w-[300px] cursor-crosshair touch-none"
         role="img"
-        aria-label={`Cash-out curve at ${rate / 100}% tax`}
+        aria-label={`Cash-out curve at ${cashOutTaxValue(rate)} tax`}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHoverX(null)}
       >

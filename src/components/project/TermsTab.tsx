@@ -19,6 +19,7 @@ import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { TermsTabSkeleton } from '@/components/LoadingSkeletons'
 import {
   billionthsToPct,
+  cashOutTaxValue,
   fmtPct,
   formatCountdown,
   formatDate,
@@ -263,7 +264,7 @@ export function TermsTab({
                       {basisPoints(m.reservedPercent)}
                     </td>
                     <td className="py-2.5 text-ink">
-                      {basisPoints(m.cashOutTaxRate)}
+                      {cashOutTaxValue(m.cashOutTaxRate)}
                     </td>
                   </tr>
                 )

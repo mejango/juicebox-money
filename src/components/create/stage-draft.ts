@@ -1,9 +1,9 @@
 import { formatUnits } from "viem";
 import { decimalOk as numOk } from "@/lib/decimal";
 export { decimalOk as numOk } from "@/lib/decimal";
-import { createSimpleProjectStage, FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
+import { CASH_OUTS_OFF_REVNET, createSimpleProjectStage, FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
 import { resolvedAddress } from "@/lib/ens";
-import { formatDateTime } from "@/lib/format";
+import { cashOutTaxValue, formatDateTime } from "@/lib/format";
 import { splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
 
 /**
@@ -395,11 +395,11 @@ export function stageSummaryParts(
   if (flavor === "revnet") {
     parts.push(
       stage.cashOuts
-        ? `${stageCashOutTax(stage) / 10_000} cash out tax`
-        : "0.9999 cash out tax",
+        ? `${cashOutTaxValue(stageCashOutTax(stage))} cash out tax`
+        : `${cashOutTaxValue(CASH_OUTS_OFF_REVNET)} cash out tax`,
     );
   } else if (stage.cashOuts && !routedAll) {
-    parts.push("Cash outs on");
+    parts.push(`${cashOutTaxValue(stageCashOutTax(stage))} cash out tax`);
   }
   return parts;
 }

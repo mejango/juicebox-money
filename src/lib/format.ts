@@ -191,6 +191,33 @@ export function fmtPct(pct: number): string {
 }
 
 /**
+ * A cash out tax rate out of JBConstants.MAX_CASH_OUT_TAX_RATE (10,000) as the
+ * 0 to 1 value people read: 1000 becomes "0.1", 9999 becomes "0.9999".
+ */
+export function cashOutTaxValue(rate: number | bigint): string {
+  return String(Number((Number(rate) / 10_000).toFixed(4)))
+}
+
+/**
+ * A typed 0 to 1 tax value as the 0-100 percent string drafts and the encoders
+ * keep: "0.15" becomes "15". Saved drafts hold that same string, so they encode
+ * the same rate. Anything else reads as "NaN", which validation refuses, so a
+ * percent habit can't turn into a different rate.
+ */
+export function taxPctFromValue(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed === '') return ''
+  if (!/^\d*\.?\d{0,4}$/.test(trimmed) || trimmed === '.') return 'NaN'
+  return String(Math.round(Number(trimmed) * 10_000) / 100)
+}
+
+/** The 0 to 1 value for a saved 0-100 percent string. */
+export function taxValueFromPct(pct: string): string {
+  const n = Number(pct)
+  return pct.trim() === '' || !Number.isFinite(n) ? '' : cashOutTaxValue(Math.round(n * 100))
+}
+
+/**
  * 1e9-scaled fraction (split/weight-cut percents) → a percent string.
  * Without `decimals`: display form, "%" included: 5e8 → "50%".
  * With `decimals`: a bare trimmed 0-100 number string for input prefills:

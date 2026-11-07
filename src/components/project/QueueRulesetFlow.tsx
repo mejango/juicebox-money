@@ -52,10 +52,12 @@ import { loadRelayrPendingSession, relayrCallsScope, RELAYR_REQUEST_REFRESH_SECO
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
+  cashOutTaxValue,
   etherscanTxUrl,
   formatDuration,
   toLocalDateTimeInput,
 } from "@/lib/format";
+import { TaxValueInput } from "@/components/create/ui";
 import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
@@ -295,6 +297,12 @@ export function pctToBp(pct: string): number {
   const n = Number(pct);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.min(PERCENT_OUT_OF_10000_MAX, Math.round(n * 100));
+}
+
+/** A cash out tax the field can queue: 100 is cash outs off (JBConstants.MAX_CASH_OUT_TAX_RATE). */
+function taxPctOk(pct: string): boolean {
+  const n = Number(pct);
+  return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
 /**
@@ -1241,7 +1249,8 @@ function RulesetEditorForm({
   // different — and immutable — encoding from the one shown.
   const weightValid = isWeightValid(state.weight);
   const limitsOk = (rules: EditorState) =>
-    rules.limits.every((l) => l.mode !== "limited" || Number(l.amount) > 0);
+    rules.limits.every((l) => l.mode !== "limited" || Number(l.amount) > 0) &&
+    taxPctOk(rules.cashOutTaxPct);
   const limitsValid = limitsOk(state);
   const stagesRules = [state, ...followers.map((f) => f.rules)];
   const followersValid = followers.every(
@@ -1810,13 +1819,19 @@ function RulesFields({
           onChange={(v) => set("reservedPct", v)}
           disabled={disabled}
         />
-        <PctField
-          label="Cash-out tax"
-          note={PROTOCOL_CONCEPTS.cashOutTax}
-          value={rules.cashOutTaxPct}
-          onChange={(v) => set("cashOutTaxPct", v)}
-          disabled={disabled}
-        />
+        <label className="block">
+          <span className="field-label">
+            <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash-out tax</ConceptTerm>
+          </span>
+          <TaxValueInput
+            pct={rules.cashOutTaxPct}
+            onPct={(v) => set("cashOutTaxPct", v)}
+            disabled={disabled}
+            className={`input-well mt-1.5 min-h-[40px] w-full px-3 text-sm tabular-nums outline-none disabled:opacity-60 ${
+              taxPctOk(rules.cashOutTaxPct) ? "" : "!border-red-400"
+            }`}
+          />
+        </label>
       </div>
 
       <section>
@@ -2098,7 +2113,7 @@ function describe(s: EditorState): { label: string; value: string }[] {
     },
     { label: "Issuance cut", value: `${Number(s.weightCutPct)}%` },
     { label: "Reserved", value: `${Number(s.reservedPct)}%` },
-    { label: "Cash-out tax", value: `${Number(s.cashOutTaxPct)}%` },
+    { label: "Cash-out tax", value: cashOutTaxValue(pctToBp(s.cashOutTaxPct)) },
     { label: "Payments", value: s.pausePay ? "Paused" : "Open" },
     {
       label: "Payouts",

@@ -13,7 +13,8 @@ import {
   splitOk,
   splitsTotal,
 } from "./SplitsEditor";
-import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from "./ui";
+import { AddButton, CheckRow, ChipButton, OptionRow, SubSection, TaxValueInput } from "./ui";
+import { cashOutTaxValue } from "@/lib/format";
 import { AddressField } from "./AddressField";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
@@ -50,9 +51,9 @@ const DURATION_PRESETS: [number, string][] = [
 
 const CASH_OUT_TAXES = [
   { rate: 0, label: "No tax" },
-  { rate: 1000, label: "10% tax" },
-  { rate: 3000, label: "30% tax" },
-  { rate: 5000, label: "50% tax" },
+  { rate: 1000, label: "0.1" },
+  { rate: 3000, label: "0.3" },
+  { rate: 5000, label: "0.5" },
 ] as const;
 
 /** Off/On cash-out choice plus the tax picker shown while cash outs are on. */
@@ -97,8 +98,7 @@ function TaxPicker({
       {cashOutsOn ? (
         <>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            A cash out tax leaves part of a partial cash out for holders who stay.
-            It sets a curve, so a 10% setting does not simply subtract 10%.
+            A higher tax leaves more for the holders who stay.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {CASH_OUT_TAXES.map((tax) => (
@@ -131,24 +131,18 @@ function TaxPicker({
           </div>
           {stage.taxCustomOn ? (
             <div className="mt-2 flex items-center gap-2.5">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={stage.taxCustomPct}
-                onChange={(e) =>
-                  set({
-                    cashOuts: true,
-                    taxCustomPct: e.target.value.slice(0, 5),
-                  })
-                }
+              <TaxValueInput
+                pct={stage.taxCustomPct}
+                onPct={(taxCustomPct) => set({ cashOuts: true, taxCustomPct })}
                 disabled={disabled}
-                placeholder="15"
+                placeholder="0.15"
+                ariaLabel="Cash out tax"
                 className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
                   stageTaxOk(stage) ? "" : "!border-red-400"
                 }`}
               />
               <span className="text-sm text-smoke-700">
-                % tax (up to 99.99)
+                tax, from 0 to 0.9999
               </span>
             </div>
           ) : null}
@@ -267,9 +261,9 @@ export function StageRulesEditor({
   const cashOutsSummary = routedAll
     ? "Off — all funds committed to payouts"
     : isRevnet && !stage.cashOuts
-      ? "On | 99.99% tax"
+      ? `On | ${cashOutTaxValue(CASH_OUTS_OFF_REVNET)} tax`
       : stage.cashOuts
-      ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${stageCashOutTax(stage) / 100}% tax`}`
+      ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${cashOutTaxValue(stageCashOutTax(stage))} tax`}`
       : "Off";
 
   return (
@@ -992,9 +986,8 @@ export function StageRulesEditor({
             />
             {!stage.cashOuts ? (
               <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                Revnets can&apos;t fully disable cash outs — Off applies the
-                maximum 99.99% tax, so partial cash outs return next to nothing
-                while cashing out every token still claims the full treasury.
+                Off applies the maximum tax of {cashOutTaxValue(CASH_OUTS_OFF_REVNET)},
+                so partial cash outs return next to nothing.
               </p>
             ) : null}
           </>

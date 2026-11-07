@@ -35,6 +35,7 @@ import { EditSplitsFlow } from "@/components/project/EditSplitsFlow";
 import { QueueRulesetFlow } from "@/components/project/QueueRulesetFlow";
 import {
   billionthsToPct,
+  cashOutTaxValue,
   fmtPct,
   formatCountdown,
   formatDate,
@@ -173,7 +174,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
         m.cashOutTaxRate >= 10_000
           ? "Disabled"
           : m.cashOutTaxRate > 0
-            ? basisPoints(m.cashOutTaxRate)
+            ? cashOutTaxValue(m.cashOutTaxRate)
             : "None",
     },
     {
@@ -435,7 +436,7 @@ function ruleRows(
         m.cashOutTaxRate >= 10_000
           ? "Disabled"
           : m.cashOutTaxRate > 0
-            ? `Taxed ${basisPoints(m.cashOutTaxRate)}`
+            ? `Taxed ${cashOutTaxValue(m.cashOutTaxRate)}`
             : "No tax",
     },
     {
