@@ -1070,19 +1070,18 @@ describe('a payment from a Safe', () => {
 
 
 describe('native market payment guard', () => {
-  it('shows the payment-form shimmer while protocol identity loads and uses cached success during refresh', async () => {
+  it('keeps the form with its action off while protocol identity loads, and uses cached success during refresh', async () => {
     m.queries.payNftProtocol = { data: undefined, isSuccess: false, isError: false }
     const panel = <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
     await act(async () => root.render(panel))
-    expect(host.querySelector('[role="status"]')?.getAttribute('aria-label')).toBe('Loading payment details')
-    expect(host.querySelectorAll('.skeleton-shimmer').length).toBeGreaterThan(0)
+    expect(host.querySelector('[aria-label="Amount"]')).not.toBeNull()
     expect(host.textContent).not.toContain('NFT protocol')
-    expect(host.querySelector('button')).toBeNull()
+    expect(host.textContent).not.toContain('payment details')
+    expect(button('Pay').disabled).toBe(true)
     expect(wallet.writeContract).not.toHaveBeenCalled()
     m.queries.payNftProtocol = { data: null, isSuccess: true, isError: false, isFetching: true }
     await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
     expect(host.querySelector('[aria-label="Amount"]')).not.toBeNull()
-    expect(host.querySelector('[aria-label="Loading payment details"]')).toBeNull()
     expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
@@ -1093,11 +1092,33 @@ describe('native market payment guard', () => {
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
   })
 
-  it('blocks payment when protocol identity cannot be verified', async () => {
-    m.queries.payNftProtocol = { data: null, isSuccess: false, isError: true, refetch: vi.fn() }
+  it('keeps refusing payment when protocol identity cannot be verified, with one line and one Retry on the form', async () => {
+    const refetch = vi.fn()
+    m.queries.payNftProtocol = { data: null, isSuccess: false, isError: true, refetch }
     await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
-    expect(host.textContent).toContain('Could not verify')
-    expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+    expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
+    expect(host.querySelector('select[aria-label="Chain"], [aria-label="Payment mode"]')).not.toBeNull()
+    expect(host.textContent).toContain("Couldn't load this project's payment details.")
+    expect(host.textContent).not.toContain('NFT protocol')
+    expect(button('Pay').disabled).toBe(true)
+    await act(async () => button('Retry').click())
+    expect(refetch).toHaveBeenCalled()
+    expect(wallet.writeContract).not.toHaveBeenCalled()
+  })
+
+  it('offers the same line for unreadable tokens, and hides the verdict while it reads again', async () => {
+    const refetch = vi.fn()
+    m.queries.paySurface = { data: undefined, isError: true, isFetching: false, refetch }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.textContent).toContain("Couldn't load this project's payment details.")
+    expect(host.textContent).not.toContain('accepted tokens')
+    expect(button('Pay').disabled).toBe(true)
+    await act(async () => button('Retry').click())
+    expect(refetch).toHaveBeenCalled()
+    m.queries.paySurface = { data: undefined, isError: true, isFetching: true, refetch }
+    await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
+    expect(host.textContent).not.toContain('payment details')
+    expect(button('Pay').disabled).toBe(true)
   })
 
   it('uses the same shimmer while a verified native market loads its inventory', async () => {
@@ -1266,8 +1287,17 @@ describe('compatible basic funding', () => {
       m.prepareUserPay = vi.fn(async () => { throw new Error('unreadable') })
       m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: Math.floor(Date.now() / 1000) + 3600, pausePay: true, terminals: [TERMINAL], unknown: [] }, isError: false }
       await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
-      expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
-      await click('Add to balance')
+      if (identity === 'defifa') {
+        expect(host.querySelector('input[aria-label="Amount"]')).toBeNull()
+        await click('Add to balance')
+      } else {
+        const modeSelect = host.querySelector<HTMLSelectElement>('select[aria-label="Payment mode"]')!
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(modeSelect, 'addbalance')
+          modeSelect.dispatchEvent(new Event('change', { bubbles: true }))
+        })
+        expect(host.textContent).not.toContain('payment details')
+      }
       const input = host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '1')

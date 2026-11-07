@@ -35,6 +35,7 @@ import {
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
+import { recoveringRead } from "@/lib/read-recovery";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
@@ -351,11 +352,10 @@ export function PayPanel({
   // ONLY when a preview through the attached entry confirms it can route them (else a
   // dead route reverts at pay time). Built atomically so the token list is
   // never a partial/desynced snapshot.
-  const { data: surface, isError: surfaceError } = useQuery(projectDisplayQuery(queryClient, {
+  const { data: surface, isError: surfaceError, isFetching: surfaceFetching, refetch: refetchSurface } = useQuery(projectDisplayQuery(queryClient, {
     queryKey: projectDisplayKey({ chainId, projectId: BigInt(projectId) }, "paySurface"),
     enabled: !!publicClient,
-
-    retry: 1,
+    ...recoveringRead,
     queryFn: async (reader): Promise<PaySurface> => {
       const client = publicClient!;
       const pid = BigInt(projectId);
@@ -1160,6 +1160,8 @@ export function PayPanel({
     !pairCheck.linked ||
     notStarted ||
     surfaceError ||
+    // An unverified project is never paid: its protocol decides what a payment must carry.
+    (mode === "pay" && !identity.isSuccess) ||
     terminalBlocked ||
     addBalanceViaRouter ||
     (surface?.pausePay && mode === "pay");
@@ -1533,16 +1535,25 @@ export function PayPanel({
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
     return <div className="space-y-4"><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
-  if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
-    const pending = nativeMarket ? inventory : identity;
-    const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
+  if (mode === 'pay' && nativeMarket) {
+    const failed = inventory.isError || (inventory.isSuccess && inventory.data?.protocol !== 'defifa');
     if (!failed) return <ProjectPayPanelSkeleton embedded />;
     return <div className="space-y-2 text-sm text-smoke-600">
-      <p>{nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.'}</p>
-      <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button>
-      {addBalanceAction}
+      <p>Could not read Defifa NFT tiers.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn-secondary px-4 py-2" onClick={() => void inventory.refetch()}>Retry</button>
+        {addBalanceAction}
+      </div>
     </div>;
   }
+
+  // One line for every read Pay refuses without. The verdict waits while a read is being tried again.
+  const payDetailsFailed = surfaceError || (mode === "pay" && identity.isError);
+  const payDetailsRetrying = surfaceFetching || identity.isFetching;
+  const retryPayDetails = () => {
+    if (surfaceError) void refetchSurface();
+    if (identity.isError) void identity.refetch();
+  };
 
   const hasShopPreview = !!shop && shop.tiers.length > 0 && mode === "pay";
 
@@ -1664,7 +1675,10 @@ export function PayPanel({
             className={CHECKOUT_AMOUNT_INPUT_CLASS}
           />
         } currency={<>
-{contexts.length > 1 || onRamp.supported ? (
+{!surface ? (
+            // The unit is unknown until the project's tokens are read: no token is implied meanwhile.
+            surfaceError ? null : <Skeleton className="h-4 w-10 rounded" role="status" aria-label="Loading payment tokens" />
+          ) : contexts.length > 1 || onRamp.supported ? (
             // Valued by INDEX, not address — a token can appear direct and
             // via-router, so the option must stay in lock-step with the
             // selected context (website/ fund-loss fix).
@@ -2033,10 +2047,16 @@ export function PayPanel({
           </button>
         </p>
       ) : null}
-      {surfaceError ? (
-        <p className="mt-3 text-sm text-red-600">
-          Couldn&apos;t verify this project&apos;s accepted tokens — payments
-          are disabled.
+      {payDetailsFailed && !payDetailsRetrying ? (
+        <p role="alert" className="mt-3 text-sm text-red-600">
+          Couldn&apos;t load this project&apos;s payment details.{" "}
+          <button
+            type="button"
+            onClick={retryPayDetails}
+            className="font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
         </p>
       ) : null}
       {surface?.pausePay && mode === "pay" ? (
