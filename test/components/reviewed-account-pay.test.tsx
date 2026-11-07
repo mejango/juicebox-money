@@ -1054,6 +1054,20 @@ describe('the pay receipt', () => {
     expect(amountInput().value).toBe('')
     expect(host.textContent).toContain("USDC isn't accepted on Base.")
   })
+
+  it('keeps typed dollars when the new chain drops the token the menu had', async () => {
+    m.onRamp = true
+    m.queries.payTokensPerDollar = { data: WEI_PER_DOLLAR, isLoading: false }
+    m.resolveSuckers = async () => [{ peerChainId: 8453, projectId: 42n }]
+    m.queries.paySurface = { data: { contexts: [contextFor('erc20'), contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false, isSuccess: true }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42], [8453, 42]]} />))
+    await setSelect('Payment token', 'buy')
+    await typeAmount('25')
+    m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false, isSuccess: true }
+    await setSelect('Chain', '8453')
+    await settle()
+    expect(amountInput().value).toBe('$25')
+  })
 })
 
 describe('a checkout whose items are all gone', () => {

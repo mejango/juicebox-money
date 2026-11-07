@@ -490,7 +490,7 @@ function ruleRows(
     },
     {
       section: "Other rules",
-      label: "Accept more treasury tokens",
+      label: "Accept more tokens",
       value: m.allowAddAccountingContext ? "Allowed" : "Not allowed",
     },
     {

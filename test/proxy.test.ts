@@ -39,6 +39,8 @@ describe('proxy', () => {
     expect(rendersNotFound(await proxy(request('/v3/terms')))).toBe(true)
     expect(rendersNotFound(await proxy(request('/eth:3/nope')))).toBe(true)
     expect(rendersNotFound(await proxy(request('/eth:3/owners/market/extra')))).toBe(true)
+    expect(rendersNotFound(await proxy(request('/eth:3/owners/not-a-tab')))).toBe(true)
+    expect(rendersNotFound(await proxy(request('/eth:3/overview/not-a-tab')))).toBe(true)
   })
 
   it('leaves app routes, and paths under them, to the app', async () => {

@@ -502,7 +502,7 @@ export function PayPanel({
         setDebouncedAmount("");
       }
       selectedKeyRef.current = null;
-      setTokenTouched(false);
+      if (!payWithDollars) setTokenTouched(false);
       setTokenIndex(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

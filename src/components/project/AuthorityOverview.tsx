@@ -944,6 +944,7 @@ function PermissionsAcrossChains({
             <div key={owner.address} className="flex flex-wrap items-center gap-2">
               <AddressLink
                 showSafe
+                explorer={isRevnet}
                 address={owner.address}
                 chainId={owner.chains[0]}
                 className="font-mono text-sm text-ink"

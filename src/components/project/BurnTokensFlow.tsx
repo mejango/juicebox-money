@@ -163,7 +163,7 @@ export function BurnTokensFlow({
         <h3 className="font-agrandir text-lg font-medium">Burn tokens</h3>
       ) : null}
       <p className="mt-1 text-sm text-smoke-700">
-        Permanently remove tokens from supply without receiving treasury funds.
+        Permanently remove tokens from supply without receiving funds.
         Internal credits are burned before claimed ERC-20 tokens.
       </p>
       <label className="mt-3 block">

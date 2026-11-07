@@ -1068,8 +1068,8 @@ export function StageRulesEditor({
                   ],
                   [
                     "addAccountingContext",
-                    "Accept more treasury tokens",
-                    "Accept and account for new tokens in the treasury.",
+                    "Accept more tokens",
+                    "Accept and account for new tokens in the balance.",
                   ],
                   [
                     "addPriceFeed",

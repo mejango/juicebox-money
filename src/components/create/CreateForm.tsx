@@ -405,7 +405,7 @@ export function CreateForm() {
   const [issuanceBase, setIssuanceBase] = useState<"eth" | "usd" | null>(null);
   const [bridge, setBridge] = useState<LaunchPlan["bridge"]>("ccip");
   const [bridgeOpen, setBridgeOpen] = useState(false);
-  /** Link the selected chains with suckers so the token and treasury bridge
+  /** Link the selected chains with suckers so the token and balance bridge
    *  between them. Unlinked, each chain gets an independent project that
    *  shares only the configuration. Only meaningful above one chain. */
   const [linkChains, setLinkChains] = useState(true);
@@ -3016,7 +3016,7 @@ export function CreateForm() {
                 </button>{" "}
                 {linkChains
                   ? `so your token${
-                      customOn ? "" : " and treasury"
+                      customOn ? "" : " and balance"
                     } can move between them.`
                   : "— each chain launches its own project and nothing moves between them."}
               </p>
@@ -3027,7 +3027,7 @@ export function CreateForm() {
                     onToggle={() => !busy && setLinkChains((on) => !on)}
                     disabled={busy}
                     title="Link these chains"
-                    blurb="Deploys suckers so the token and treasury bridge between every selected chain. Unlinked, each chain gets a separate project that only shares this configuration."
+                    blurb="Deploys suckers so the token and balance bridge between every selected chain. Unlinked, each chain gets a separate project that only shares this configuration."
                   />
                   {linkChains ? (
                     <div className="mt-3">

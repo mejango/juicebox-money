@@ -540,7 +540,7 @@ export function CashOutPanel({
           ? 'Sell on the market'
           : plan.venue === 'amm'
             ? 'Market trade through the payment contract'
-            : 'Project treasury',
+            : 'Project balance',
     })
     return rows
   }

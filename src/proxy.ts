@@ -29,6 +29,17 @@ const PROJECT_TABS = new Set([
   'activity', 'extras', 'funds', 'operator', 'overview', 'owner', 'owners', 'rulesets', 'shop', 'terms', 'tokens',
 ])
 
+/** A tab's subtabs, as tabSlug writes their labels into the hash. */
+const OWNERS_SUBTABS = new Set(['accounts', 'market', 'settlement', 'splits', 'reserved', 'autoissuance', 'loans'])
+const PROJECT_SUBTABS: Record<string, Set<string>> = {
+  owners: OWNERS_SUBTABS,
+  tokens: OWNERS_SUBTABS,
+  shop: new Set(['inventory', 'customers']),
+}
+const isProjectTabPath = ([tab, subtab, ...more]: string[]) =>
+  !more.length && PROJECT_TABS.has(tab?.toLowerCase()) &&
+  (!subtab || !!PROJECT_SUBTABS[tab.toLowerCase()]?.has(subtab.toLowerCase()))
+
 // Two segments under no app route, so Next renders app/not-found.tsx with a 404.
 const NO_ROUTE_PATH = '/_/not-found'
 
@@ -43,7 +54,7 @@ export async function proxy(request: NextRequest) {
     // Malformed encoding: leave as-is; it won't parse as a urn or handle.
   }
   // /eth:3/owners/market is the project's #owners/market tab.
-  if (rest.length <= 2 && PROJECT_TABS.has(rest[0]?.toLowerCase()) && (decoded.startsWith('@') || parseUrn(decoded))) {
+  if (isProjectTabPath(rest) && (decoded.startsWith('@') || parseUrn(decoded))) {
     const target = new URL(`/${first}${search}#${rest.join('/').toLowerCase()}`, request.url)
     return NextResponse.redirect(target, 307)
   }

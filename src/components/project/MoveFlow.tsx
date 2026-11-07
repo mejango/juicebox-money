@@ -16,6 +16,7 @@ import {
   getV6SuckerPairs,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { recoveringRead } from '@/lib/read-recovery'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
@@ -112,11 +113,11 @@ export function MoveCard({
   // Source-chain sucker pairs (linked destinations) + the caller's ERC-20
   // position on the source chain (only the deployed ERC-20 can bridge —
   // credits can't).
-  const { data: src } = useQuery({
+  const { data: src, isError: srcFailed, refetch: retrySrc } = useQuery({
     queryKey: ['settlement-move-src', from, fromPid, viewed],
     enabled: connected && fromPid !== null,
     staleTime: 20_000,
-    retry: 1,
+    ...recoveringRead,
     queryFn: async () => {
       if (fromPid === null) {
         throw new Error('The source project ID could not be verified.')
@@ -215,6 +216,12 @@ export function MoveCard({
               stays unavailable until the linked projects can be resolved.
             </p>
           ) : null}
+          {srcFailed && !src ? (
+            <p role="alert" className="text-xs text-smoke-700">
+              Couldn&apos;t read this project&apos;s linked chains.{' '}
+              <button type="button" className="underline" onClick={() => void retrySrc()}>Retry</button>
+            </p>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-end">
             <label className="block min-w-0">
               <span className="field-label">From</span>
@@ -237,7 +244,7 @@ export function MoveCard({
                 value={to}
                 onChange={setTo}
                 disabled={dests.length === 0}
-                placeholder="No linked chains"
+                placeholder={src ? 'No linked chains' : srcFailed ? 'Unavailable' : 'Checking…'}
                 className="mt-1.5"
               />
             </label>
