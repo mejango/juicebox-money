@@ -91,6 +91,10 @@ vi.mock('@/hooks/useTokenBalances', () => ({
   useTokenBalances: () => ({ balances: new Map([['0x7777777777777777777777777777777777777777', 10n ** 24n]]) }),
 }))
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
+vi.mock('@/hooks/usePayPublicClient', async () => {
+  const { usePublicClient } = await import('wagmi')
+  return { usePayPublicClient: (chainId: number) => usePublicClient({ chainId } as never) }
+})
 vi.mock('@/components/project/ShopCartProvider', async original => ({
   ...(await original<typeof import('@/components/project/ShopCartProvider')>()),
   useShopCart: () => ({ quantities: {}, items: {}, count: 0, countsByChain: {}, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),

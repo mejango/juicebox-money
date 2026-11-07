@@ -88,6 +88,10 @@ vi.mock('wagmi', async () => {
     useSignTypedData: () => ({ signTypedDataAsync: vi.fn() }),
   }
 })
+vi.mock('@/hooks/usePayPublicClient', async () => {
+  const { usePublicClient } = await import('wagmi')
+  return { usePayPublicClient: (chainId: number) => usePublicClient({ chainId } as never) }
+})
 vi.mock('@/hooks/useWallet', async () => {
   const { useFakeWallet } = await import('../support/fake-wallet')
   return { useWallet: useFakeWallet }
@@ -968,7 +972,7 @@ describe('the pay receipt', () => {
     expect(text).toContain('Other recipients get 500 TKN')
     expect(text).toMatch(/About \$2,230\.33/)
     const note = host.querySelector<HTMLInputElement>('input[aria-label="Note"]')!
-    expect(note.placeholder).toBe('Add a public note (optional)')
+    expect(note.placeholder).toBe('Add a public note')
     const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
     const receipt = [...host.querySelectorAll('p')].find(p => p.textContent === 'You get about')!
     expect(follows(amountInput(), receipt)).toBe(true)

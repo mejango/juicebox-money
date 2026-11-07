@@ -48,9 +48,8 @@ import {
   zeroAddress,
   type Address,
   type Hex,
-  type PublicClient,
 } from "viem";
-import { usePublicClient } from "wagmi";
+import { usePayPublicClient } from "@/hooks/usePayPublicClient";
 import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { liveStep, revertedReceipt, reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
@@ -280,7 +279,7 @@ export function PayPanel({
 
   // Another chain's deployment comes from the indexer: it is paid only once the onchain registry links it.
   const pairCheck = useLinkedPair([initialChainId, initialProjectId], [chainId, projectId], chains.length > 1);
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
+  const publicClient = usePayPublicClient(chainId);
   const inventory = useShop721(chainId, projectId, isRevnet);
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
@@ -2107,7 +2106,7 @@ export function PayPanel({
           value={memo}
           onChange={(e) => setMemo(e.target.value.slice(0, 256))}
           disabled={busy}
-          placeholder="Add a public note (optional)"
+          placeholder="Add a public note"
           aria-label="Note"
           className="input-well min-h-[44px] min-w-0 flex-1 px-3.5 text-sm disabled:opacity-60"
         />

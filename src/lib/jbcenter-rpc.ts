@@ -1,6 +1,7 @@
 import { createJBCenterRpcProvider, createPacedJBCenterLimiter } from '@bananapus/nana-sdk-core/jbcenter'
 import { custom, http, type Transport } from 'viem'
 import { jbCenterAppOrigin, jbCenterBaseUrl } from '@/lib/jbcenter-config'
+import { createRpcLanes } from '@/lib/rpc-lanes'
 
 const FIXTURE_NETWORKS: Record<number, string> = {
   1: 'mainnet',
@@ -20,7 +21,7 @@ const serverFetch: typeof fetch = (input, init) => {
 }
 
 // One queue per browser module, shared by every chain and provider retry.
-const browserLimiter = createPacedJBCenterLimiter()
+const browserLanes = createRpcLanes(createPacedJBCenterLimiter())
 const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
 
 /** Center's RPC for `chainId`. Center load balances reads across nodes that
@@ -29,10 +30,12 @@ const browserFetch: typeof fetch = (input, init) => window.fetch(input, init)
  * -32001 ("Requested resource not found." in viem). The SDK's provider asks
  * again after 250, 500, 1,000, 2,000 and 2,000 ms: reading `latest` instead
  * would read state older than the block the read pins. The read's signal goes
- * with every try, and a wait between tries ends the moment it aborts. */
+ * with every try, and a wait between tries ends the moment it aborts. `lane`
+ * is 'first' only for the reads a payer waits on. */
 export function jbCenterRpcTransport(
   chainId: number,
   timeoutMs = 15_000,
+  lane: keyof typeof browserLanes = 'rest',
 ): Transport {
   if (process.env.NEXT_PUBLIC_DETERMINISTIC_BROWSER === 'true') {
     const network = FIXTURE_NETWORKS[chainId]
@@ -41,6 +44,7 @@ export function jbCenterRpcTransport(
       'http://127.0.0.1:4399'
     return network ? http(`${origin}/rpc/${network}`) : http()
   }
+  const browserLimiter = browserLanes[lane]
   return custom(
     createJBCenterRpcProvider(chainId, {
       baseUrl: jbCenterBaseUrl(),
