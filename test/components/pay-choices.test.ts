@@ -2,6 +2,8 @@ import {
   buyableAsset,
   defaultsToDollars,
   payButtonAction,
+  pickedTokenIndex,
+  tokensForDollars,
 } from '@/lib/pay-choices'
 import { describe, expect, it } from 'vitest'
 
@@ -72,4 +74,23 @@ describe('what a payer should buy to pay this project', () => {
 
 it.each([[undefined], [0n, undefined], [undefined, 0n]])('keeps pending or failed balances unknown (case %#)', (...balances) => {
   expect(defaultsToDollars({ isConnected: true, balances })).toBe(false)
+})
+
+describe('dollars and tokens', () => {
+  it('converts typed dollars at the token price per dollar', () => {
+    expect(tokensForDollars('25', 448363759259978n)).toBe(11209093981499450n)
+    expect(tokensForDollars('0.5', 1_000_000n)).toBe(500_000n)
+  })
+
+  it('treats anything but a positive number as zero', () => {
+    for (const typed of ['', ' ', '0', '-1', 'abc']) expect(tokensForDollars(typed, 5n)).toBe(0n)
+  })
+
+  it('finds a picked token by symbol when the chain changes its address', () => {
+    const tokens = [{ key: 'a', symbol: 'ETH' }, { key: 'b', symbol: 'USDC' }]
+    const keyOf = (token: { key: string }) => token.key
+    expect(pickedTokenIndex(tokens, 'b', 'ETH', keyOf)).toBe(1)
+    expect(pickedTokenIndex(tokens, 'old', 'USDC', keyOf)).toBe(1)
+    expect(pickedTokenIndex(tokens, 'old', 'DAI', keyOf)).toBe(-1)
+  })
 })

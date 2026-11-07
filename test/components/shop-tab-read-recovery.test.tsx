@@ -39,7 +39,7 @@ async function mount() {
     root = createRoot(host)
     root.render(
       <QueryClientProvider client={queries}>
-        <ShopCartProvider><ShopTab chainId={1} projectId={4} isRevnet={false} chains={[[1, 4]]} /></ShopCartProvider>
+        <ShopCartProvider chainId={1}><ShopTab chainId={1} projectId={4} isRevnet={false} chains={[[1, 4]]} /></ShopCartProvider>
       </QueryClientProvider>,
     )
   })
@@ -64,7 +64,7 @@ describe('a failed shop read', () => {
   it('offers Retry, and Retry reads again and shows the inventory', async () => {
     mocks.readShop.mockRejectedValue(new Error('fetch failed'))
     await mount()
-    await vi.waitFor(() => expect(retry()).toBeTruthy())
+    await vi.waitFor(() => expect(retry()).toBeTruthy(), { timeout: 8_000 })
     expect(host.textContent).toContain("Couldn't load the shop.")
 
     mocks.readShop.mockResolvedValue(shop)
@@ -78,7 +78,7 @@ describe('a failed shop read', () => {
     queries.setQueryData(shop721QueryKey(1, 4, false), shop, { updatedAt: 1 })
     mocks.readShop.mockRejectedValue(new Error('fetch failed'))
     await mount()
-    await vi.waitFor(() => expect(retry()).toBeTruthy())
+    await vi.waitFor(() => expect(retry()).toBeTruthy(), { timeout: 8_000 })
     expect(host.textContent).toContain("Couldn't refresh the shop.")
     expect(host.textContent).toContain('0.01 ETH')
     expect(host.textContent).toContain('50 left')

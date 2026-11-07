@@ -32,6 +32,7 @@ import { usePublicClient, useReadContract } from 'wagmi'
 import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
+import { recoveringRead } from '@/lib/read-recovery'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
@@ -96,11 +97,11 @@ export function GetLoanFlow({
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const { data: contexts, isLoading: contextsLoading } = useQuery({
+  const { data: contexts, isLoading: contextsLoading, isError: contextsError, isFetching: contextsFetching, refetch: refetchContexts } = useQuery({
     queryKey: ['accountingContexts', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 60_000,
-    retry: 1,
+    ...recoveringRead,
     queryFn: () =>
       getAccountingContexts(publicClient!, {
         chainId,
@@ -450,8 +451,19 @@ export function GetLoanFlow({
         After 10 years, any tokens backing an unpaid loan are lost.
       </p>
 
-      {contextsLoading ? (
+      {contextsLoading || (contextsFetching && !contexts) ? (
         <FormFieldsSkeleton rows={3} label="Loading loan terms" />
+      ) : contextsError && !contexts ? (
+        <p role="alert" className="mt-3 text-sm leading-relaxed text-red-600">
+          Couldn&apos;t read this revnet&apos;s loan token.{' '}
+          <button
+            type="button"
+            onClick={() => void refetchContexts()}
+            className="font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </p>
       ) : ctxs.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           This revnet doesn’t accept a token to borrow on this chain.

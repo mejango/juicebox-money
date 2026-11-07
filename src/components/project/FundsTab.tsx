@@ -16,10 +16,8 @@ import {
   JBCoreContracts,
   NATIVE_TOKEN,
   SPLITS_TOTAL_PERCENT,
-  USD_CURRENCY_ID,
   jbV6ContractAddress,
   jbFundAccessLimitsAbi,
-  jbPricesAbi,
   jbProjectsAbi,
   jbSplitsAbi,
   jbTerminalStoreAbi,
@@ -43,7 +41,7 @@ import {
 } from 'viem'
 import { useConfig, usePublicClient, useReadContract } from 'wagmi'
 import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
-import { treasuryTotal } from '@/components/project/ProjectStats'
+import { readTreasuryUsdPrice, treasuryTotal } from '@/components/project/ProjectStats'
 import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -301,19 +299,7 @@ async function readChainFunds(
     }
   })
   const usdPrice = pricesAddress
-    ? await client
-        .readContract({
-          address: pricesAddress,
-          abi: jbPricesAbi,
-          functionName: 'pricePerUnitOf',
-          args: [
-            pid,
-            BigInt(USD_CURRENCY_ID(6)),
-            BigInt(ctx.currency),
-            18n,
-          ],
-        })
-        .catch(() => null)
+    ? await readTreasuryUsdPrice(client, pricesAddress, pid, ctx.currency)
     : null
   const usd = treasuryUsdValue({
     balance,

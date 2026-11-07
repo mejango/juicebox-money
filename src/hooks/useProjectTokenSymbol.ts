@@ -3,8 +3,7 @@
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import type { PublicClient } from 'viem'
-import { usePublicClient } from 'wagmi'
+import { usePayPublicClient } from '@/hooks/usePayPublicClient'
 import { projectTokenQuery } from '@/lib/project-token-query'
 
 /**
@@ -13,7 +12,8 @@ import { projectTokenQuery } from '@/lib/project-token-query'
  * the Market card's cache key so every panel on a project page reads it once.
  */
 export function useProjectTokenSymbol(chainId: JBChainId, projectId: number) {
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
+  // The Pay receipt names the token, so this read goes with the reads a payer waits on.
+  const publicClient = usePayPublicClient(chainId)
   return useKeptQuery({
     ...projectTokenQuery(publicClient!, chainId, projectId),
     enabled: !!publicClient,

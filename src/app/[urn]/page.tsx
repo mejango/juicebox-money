@@ -468,7 +468,7 @@ async function ProjectPageContents({ urn, result: pending }: {
   const paymentsCount = projectGroupPaymentsCount(chains);
 
   return (
-    <ShopCartProvider>
+    <ShopCartProvider chainId={urn.chainId}>
     <SafeBatchProvider home={[urn.chainId, project.projectId]} deployments={authorityDeployments} isRevnet={isRevnet}>
       <div className="mx-auto max-w-6xl px-4 pb-8 pt-6 sm:px-6 sm:pb-12">
         <Suspense fallback={<ProjectHeaderSkeleton hint={{ name: project.name?.trim() || `Project ${project.projectId}`, logoUri: project.logoUri, tagline: project.projectTagline }} />}>

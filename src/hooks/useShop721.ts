@@ -6,6 +6,7 @@ import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { Address, PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { PERSIST } from '@/lib/query-persist'
+import { recoveringRead } from '@/lib/read-recovery'
 
 /*
  * The project's 721 shop reads, shared by the Shop tab, the pay box and activity rows. Kept out
@@ -114,7 +115,7 @@ export function useShop721(chainId: JBChainId, projectId: number, isRevnet: bool
     meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
-    retry: 1,
+    ...recoveringRead,
     // The reads load on demand, so the home activity rail stays light.
     queryFn: async () =>
       (await import('@/lib/shop-read')).readShop(publicClient!, chainId, projectId, isRevnet, nativeSymbol),

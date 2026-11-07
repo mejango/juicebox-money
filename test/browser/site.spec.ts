@@ -306,7 +306,7 @@ async function exerciseProjectSurfaces(
   await expect(payCard.getByLabel('Payment token')).toHaveValue('0')
   await expect(payCard.getByLabel('Payment token')).toContainText('USDC')
   await expect(
-    payCard.getByText("Couldn't verify this project's accepted tokens"),
+    payCard.getByText("Couldn't load this project's payment details."),
   ).toHaveCount(0)
   await expect(
     payCard.getByText("This project doesn't list the direct payment terminal"),

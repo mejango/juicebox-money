@@ -1,3 +1,5 @@
+import { parseUnits } from 'viem'
+
 /**
  * Which currency the pay panel opens on, and what its button does.
  *
@@ -26,6 +28,34 @@ export function defaultsToDollars({
 }): boolean {
   if (!isConnected || balances.length === 0) return false
   return balances.every(balance => balance === 0n)
+}
+
+/**
+ * A typed dollar amount in token units, given JBPrices' price of one dollar in that token at the
+ * token's decimals. Zero for anything that is not a positive number.
+ */
+export function tokensForDollars(dollars: string, tokensPerDollar: bigint): bigint {
+  try {
+    const trimmed = dollars.trim()
+    if (!trimmed || Number(trimmed) <= 0) return 0n
+    return (parseUnits(trimmed, 18) * tokensPerDollar) / 10n ** 18n
+  } catch {
+    return 0n
+  }
+}
+
+/**
+ * Where a picked token sits in a re-resolved list. Addresses differ across chains, so a token
+ * absent by key is looked for by symbol. -1 when this list does not have it.
+ */
+export function pickedTokenIndex<T extends { symbol: string }>(
+  tokens: readonly T[],
+  key: string,
+  symbol: string,
+  keyOf: (token: T) => string,
+): number {
+  const byKey = tokens.findIndex(token => keyOf(token) === key)
+  return byKey >= 0 ? byKey : tokens.findIndex(token => token.symbol === symbol)
 }
 
 /** What pressing the pay button does, given who is here and what they picked. */
