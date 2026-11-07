@@ -13,7 +13,7 @@ import { getProjectsOwnedBy, type BsProject } from '@/lib/bendystraw'
 import { fetchSafesOwnedBy } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_SERVICE } from '@/lib/safe'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
-import { SUPPORTED_CHAINS } from '@/providers/Providers'
+import { PRODUCTION_CHAINS } from '@/lib/chains'
 
 export type SafeOwnedProject = { project: BsProject; viaSafe: SafeOwnership }
 
@@ -38,6 +38,36 @@ export function dedupeSafeProjects(
 }
 
 /**
+ * The account's Safes, and whether every chain answered. The SDK reads a failed
+ * request as no Safes, so the answers are watched here. A 429 it retries counts
+ * only if the last try failed; a 404 is an account the service doesn't know.
+ * Testnets are left out: the indexer read that follows covers mainnets only.
+ */
+export async function lookUpOwnedSafes(address: string) {
+  const failed = new Set<string>()
+  const owned = await fetchSafesOwnedBy(
+    address,
+    PRODUCTION_CHAINS.map(chain => chain.id),
+    {
+      ...SAFE_SERVICE,
+      fetch: async (input, init) => {
+        const url = String(input)
+        try {
+          const response = await (SAFE_SERVICE.fetch ?? fetch)(input, init)
+          if (response.ok || response.status === 404) failed.delete(url)
+          else failed.add(url)
+          return response
+        } catch (error) {
+          failed.add(url)
+          throw error
+        }
+      },
+    },
+  )
+  return { owned, complete: failed.size === 0 }
+}
+
+/**
  * The Safe-owned layer of the owned-projects grid. This runs client-side:
  * the Safe Transaction Service helpers (and their localStorage overrides)
  * live in the client-only safe module.
@@ -52,6 +82,8 @@ export function AccountSafeProjects({
   ownedCount: number
 }) {
   const [rows, setRows] = useState<SafeOwnedProject[] | null>(null)
+  const [incomplete, setIncomplete] = useState(false)
+  const [attempt, setAttempt] = useState(0)
   const queryClient = useQueryClient()
 
   useEffect(() => {
@@ -61,11 +93,8 @@ export function AccountSafeProjects({
     ;(async () => {
       try {
         // Chains without Safe's transaction service contribute nothing.
-        const owned = await fetchSafesOwnedBy(
-          address,
-          SUPPORTED_CHAINS.map(chain => chain.id),
-          SAFE_SERVICE,
-        )
+        const { owned, complete } = await lookUpOwnedSafes(address)
+        if (!stopped) setIncomplete(!complete)
         const safes = [...new Set(owned.map(entry => entry.safe))]
         if (!safes.length) {
           if (!stopped) setRows([])
@@ -90,7 +119,10 @@ export function AccountSafeProjects({
         )
         if (!stopped) setRows(withThresholds)
       } catch {
-        if (!stopped) setRows([])
+        if (!stopped) {
+          setIncomplete(true)
+          setRows([])
+        }
       }
     })()
     return () => {
@@ -99,7 +131,7 @@ export function AccountSafeProjects({
     }
     // ownedKeys is derived server-side per address; address identifies it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address])
+  }, [address, attempt])
 
   if (rows === null) {
     return ownedCount === 0 ? (
@@ -108,7 +140,24 @@ export function AccountSafeProjects({
       </p>
     ) : null
   }
+  const unfinished = incomplete ? (
+    <p className="col-span-full text-sm text-smoke-600">
+      Couldn&apos;t finish checking this account&apos;s Safes.{' '}
+      <button
+        type="button"
+        className="font-medium text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
+        onClick={() => {
+          setRows(null)
+          setIncomplete(false)
+          setAttempt(current => current + 1)
+        }}
+      >
+        Try again
+      </button>
+    </p>
+  ) : null
   if (rows.length === 0) {
+    if (unfinished) return unfinished
     return ownedCount === 0 ? (
       <p className="col-span-full text-sm text-smoke-600">
         This account does not own any projects yet.
@@ -124,6 +173,7 @@ export function AccountSafeProjects({
           viaSafe={viaSafe}
         />
       ))}
+      {unfinished}
     </>
   )
 }

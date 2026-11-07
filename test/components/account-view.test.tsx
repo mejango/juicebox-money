@@ -98,6 +98,7 @@ import {
 import {
   AccountSafeProjects,
   dedupeSafeProjects,
+  lookUpOwnedSafes,
 } from '@/components/account/AccountSafeProjects'
 import { RelayrDiscardError } from '@/lib/relayr'
 import type {
@@ -740,11 +741,11 @@ describe('AccountSafeProjects', () => {
     expect(text).not.toContain('Duplicate Safe project')
     // Distinct projects with the same chain/account share one identity request.
     expect(mocks.readAuthorityIdentity).toHaveBeenCalledExactlyOnceWith({ chain: { id: 1 } }, SAFE)
-    // Only the chain with a hosted Safe service is queried.
-    expect(mocks.safeService).toHaveBeenCalledExactlyOnceWith(
-      `https://api.safe.global/tx-service/eth/api/v1/owners/${ALICE}/safes/`,
-      expect.anything(),
-    )
+    // Mainnets only: the indexer read that follows covers nothing else.
+    const asked = mocks.safeService.mock.calls.map(call => String(call[0]))
+    expect(asked).toContain(`https://api.safe.global/tx-service/eth/api/v1/owners/${ALICE}/safes/`)
+    expect(asked).toHaveLength(4)
+    expect(asked.join()).not.toMatch(/sep/)
     await act(async () => renderer.unmount())
     client.clear()
   })
@@ -766,6 +767,42 @@ describe('AccountSafeProjects', () => {
     )
     await act(async () => renderer.unmount())
     client.clear()
+  })
+
+  it('says the check could not finish instead of reporting no projects, and retries', async () => {
+    mocks.safeService.mockImplementation(async () => new Response('', { status: 500 }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(
+        createElement(QueryClientProvider, { client }, createElement(AccountSafeProjects, {
+          address: ALICE,
+          ownedKeys: [],
+          ownedCount: 0,
+        })),
+      )
+    })
+    expect(renderedText(renderer.root)).toContain('finish checking')
+    expect(renderedText(renderer.root)).not.toContain('does not own any projects')
+
+    mocks.safeService.mockImplementation(async () => new Response(JSON.stringify({ safes: [] })))
+    const retry = renderer.root.findAllByType('button').find(button => button.children.join('') === 'Try again')!
+    await act(async () => retry.props.onClick())
+    expect(renderedText(renderer.root)).toContain('does not own any projects')
+    await act(async () => renderer.unmount())
+    client.clear()
+  })
+
+  it('counts a rate limit the SDK retried through as answered, and a lasting one as failed', async () => {
+    mocks.safeService.mockImplementation(async () => new Response(JSON.stringify({ safes: [] })))
+    mocks.safeService.mockImplementationOnce(async () => new Response('', { status: 429, headers: { 'retry-after': '0' } }))
+    expect((await lookUpOwnedSafes(ALICE)).complete).toBe(true)
+
+    mocks.safeService.mockImplementation(async () => new Response('', { status: 404 }))
+    expect((await lookUpOwnedSafes(ALICE)).complete).toBe(true)
+
+    mocks.safeService.mockImplementation(async () => { throw new Error('aborted') })
+    expect((await lookUpOwnedSafes(ALICE)).complete).toBe(false)
   })
 
   it('drops projects whose owner is not one of the Safes', () => {
