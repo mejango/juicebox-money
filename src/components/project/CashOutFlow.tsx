@@ -33,6 +33,7 @@ import {
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
 import { liveStep, reachedLastStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
@@ -41,18 +42,17 @@ import {
   cashOutExecutionErrorMessage,
   cashOutPoolBufferBps,
   getCashOutContext,
-  isNativeToken,
   minimumDropNotice,
 } from '@/lib/cashOut'
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
-import { etherscanTxUrl, formatTokenAmount, truncateAddress } from '@/lib/format'
+import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
+import { tokenSymbol } from '@/lib/token-symbol'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { AllowedDecreaseField } from '@/components/project/AllowedDecreaseField'
 import { swapDeadline } from '@/lib/safe-connector'
 import { chainName } from '@/lib/urn'
-import Link from 'next/link'
 
 const DEFAULT_SLIPPAGE_BPS = 100
 
@@ -87,24 +87,20 @@ export function CashOutPanel({
   chainId,
   projectId,
   projectName,
-  accountingToken,
-  accountingTokenSymbol,
   onGoToPay,
   showHeading = true,
 }: {
   chainId: JBChainId
   projectId: number
   projectName?: string
-  /** The accounting token's address per bendystraw. */
-  accountingToken?: string | null
-  /** The accounting token's symbol per bendystraw (e.g. "ETH", "USDC"). */
-  accountingTokenSymbol?: string | null
   /** Switch to the Pay tab, when the host has one. */
   onGoToPay?: () => void
   /** The modal host supplies the dialog title. */
   showHeading?: boolean
 }) {
   const { isConnected, address, openSignIn } = useWallet()
+  // Balance and quote read for the account on screen; every send stays with the connected wallet.
+  const { address: viewed, isViewAs } = useViewedAccount()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
   const tx = useReviewedAction(chainId)
@@ -147,9 +143,9 @@ export function CashOutPanel({
     abi: jbTokensAbi,
     address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'totalBalanceOf',
-    args: [address ?? zeroAddress, BigInt(projectId)],
+    args: [viewed ?? zeroAddress, BigInt(projectId)],
     chainId,
-    query: { enabled: !!address },
+    query: { enabled: !!viewed },
   })
 
   // The symbol of the token being cashed out (the project's ERC-20, if any).
@@ -214,7 +210,7 @@ export function CashOutPanel({
       chainId,
       projectId,
       cashOutCount.toString(),
-      address ?? zeroAddress,
+      viewed ?? zeroAddress,
       slippageBps,
     ],
     enabled: !!publicClient && !!context && !!terminal && cashOutCount > 0n,
@@ -223,7 +219,7 @@ export function CashOutPanel({
       getHookAwareCashOutQuote(publicClient!, {
         chainId,
         projectId: BigInt(projectId),
-        holder: address ?? zeroAddress,
+        holder: viewed ?? zeroAddress,
         cashOutCount,
         tokenToReclaim: context!.token,
         terminal: terminal!.address,
@@ -253,15 +249,15 @@ export function CashOutPanel({
       : null
   const directSellAvailable = directSellDirection !== null
   const { data: claimedBalance } = useQuery({
-    queryKey: ['claimedCashOutBalance', chainId, projectToken?.address, address],
-    enabled: !!publicClient && !!projectToken && !!address,
+    queryKey: ['claimedCashOutBalance', chainId, projectToken?.address, viewed],
+    enabled: !!publicClient && !!projectToken && !!viewed,
     staleTime: 15_000,
     queryFn: () =>
       publicClient!.readContract({
         address: projectToken!.address,
         abi: erc20Abi,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [viewed!],
       }),
   })
   const { data: directSellQuote, isFetching: directSellLoading } = useQuery({
@@ -381,19 +377,19 @@ export function CashOutPanel({
     })
   }, [directSellWins, needsTokenApproval, needsRouterApproval])
 
-  // Only trust bendystraw's symbol when it describes the same token as the
-  // on-chain accounting context (projects can register several contexts).
-  const receiveSymbol = context
-    ? isNativeToken(context.token)
-      ? nativeSymbol
-      : accountingTokenSymbol &&
-          accountingToken?.toLowerCase() === context.token.toLowerCase()
-        ? accountingTokenSymbol
-        : truncateAddress(context.token)
-    : ''
+  const { data: receiveSymbolRead } = useQuery({
+    queryKey: ['cashOutReceiveSymbol', chainId, context?.token],
+    enabled: !!publicClient && !!context,
+    staleTime: 5 * 60_000,
+    queryFn: () => tokenSymbol(publicClient!, context!.token as Address, { chainId, nativeSymbol }),
+  })
+  const receiveSymbol = receiveSymbolRead ?? ''
   const receiveDecimals = context?.decimals ?? 18
+  const minimumLine = route
+    ? `${formatTokenAmount(bestRoute?.minimumReturn ?? route.minimumReturn, receiveDecimals)} ${receiveSymbol}`
+    : ''
 
-  const zeroBalance = isConnected && balance === 0n
+  const zeroBalance = !!viewed && balance === 0n
   const exceedsBalance =
     balance !== undefined && cashOutCount > 0n && cashOutCount > balance
   const nothingToReclaim =
@@ -454,6 +450,7 @@ export function CashOutPanel({
   }
 
   const review = async () => {
+    if (isViewAs) return
     if (!isConnected || !address) {
       openSignIn()
       return
@@ -807,39 +804,6 @@ export function CashOutPanel({
         </h3>
       ) : null}
 
-      <div className="mt-2 min-h-[20px] text-sm text-smoke-700" aria-live="polite">
-        {!isConnected ? (
-          'Sign in to see your balance.'
-        ) : zeroBalance ? (
-          onGoToPay ? (
-            <>
-              You don&apos;t hold this project&apos;s tokens yet —{' '}
-              <button
-                onClick={onGoToPay}
-                className="font-medium text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
-              >
-                pay to get some
-              </button>
-              .
-            </>
-          ) : (
-            "You don't hold this project's tokens yet."
-          )
-        ) : balance !== undefined ? (
-          <span className="flex items-center gap-2">
-            You hold {formatTokenAmount(balance, 18)} {holdingsSymbol}
-            <button
-              onClick={setMax}
-              className="btn-secondary px-2.5 py-0.5 text-[11px]"
-            >
-              MAX
-            </button>
-          </span>
-        ) : (
-          'Checking your balance…'
-        )}
-      </div>
-
       <label className="mt-3 block">
         <span className="field-label">Amount to cash out</span>
         <div
@@ -861,50 +825,77 @@ export function CashOutPanel({
           <span className="ml-2 shrink-0 font-medium text-smoke-700">
             {holdingsSymbol}
           </span>
+          {balance !== undefined && balance > 0n ? (
+            <button
+              type="button"
+              onClick={setMax}
+              className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
+            >
+              Max
+            </button>
+          ) : null}
         </div>
       </label>
 
-      <div className="mt-2 min-h-[20px] text-sm text-smoke-700" aria-live="polite">
+      <div className="mt-2 min-h-[20px] text-xs text-smoke-700" aria-live="polite">
+        {!viewed ? (
+          'Sign in to see your balance.'
+        ) : zeroBalance ? (
+          onGoToPay ? (
+            <>
+              You don&apos;t hold this project&apos;s tokens yet.{' '}
+              <button
+                onClick={onGoToPay}
+                className="font-medium text-bluebs-600 underline underline-offset-2 hover:text-bluebs-700"
+              >
+                Pay to get some
+              </button>
+            </>
+          ) : (
+            "You don't hold this project's tokens yet."
+          )
+        ) : balance !== undefined ? (
+          `You hold ${formatTokenAmount(balance, 18)} ${holdingsSymbol}.`
+        ) : (
+          'Checking your balance…'
+        )}
+      </div>
+
+      <details className="mt-3 text-xs text-smoke-700">
+        <summary className="cursor-pointer font-medium">Allowed decrease {slippageBps / 100}%</summary>
+        <AllowedDecreaseField bps={slippageBps} onChange={setSlippageBps} hideLabel />
+        {!directSellWins && poolBufferBps !== null ? (
+          <p className="mt-2">
+            This pool&apos;s preview already allows about{' '}
+            {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for its fee
+            and the price change caused by the trade.
+          </p>
+        ) : null}
+      </details>
+
+      <div className="mt-4 min-h-[20px] text-sm text-smoke-700" aria-live="polite">
         {exceedsBalance ? (
           <span className="text-red-600">That&apos;s more than you hold.</span>
         ) : nothingToReclaim ? (
           'The current cash-out quote returns no funds.'
         ) : cashOutCount > 0n && quoteFailed ? (
-          'Couldn’t get a quote right now — try again shortly.'
+          'Couldn’t get a quote right now. Try again shortly.'
         ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (
           directSellWins
-            ? `Selling on the market estimates ~${formatTokenAmount(directSellQuote!, receiveDecimals)} ${receiveSymbol}, compared with ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol} from cashing out`
-            : `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}`
+            ? `Selling on the market: ~${formatTokenAmount(directSellQuote!, receiveDecimals)} ${receiveSymbol}, at least ${minimumLine}. Cashing out: ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}.`
+            : `You'll receive ~${formatTokenAmount(route.expectedReturn, receiveDecimals)} ${receiveSymbol}${route.route === 'treasury' ? ' after fees' : ''}, at least ${minimumLine}.`
         ) : cashOutCount > 0n && quoteLoading ? (
           'Getting your quote…'
         ) : null}
       </div>
 
-      <AllowedDecreaseField bps={slippageBps} onChange={setSlippageBps} />
-
-      <p className="mt-2 text-xs text-smoke-700">
-        How far the return can fall from the quote before this transaction fails.
-        This is called slippage.{' '}
-        <Link href="/learn#learn-glossary" className="underline underline-offset-2">
-          Glossary
-        </Link>
-      </p>
-
-      {!directSellWins && poolBufferBps !== null ? (
-        <p className="mt-2 text-xs text-smoke-700">
-          This pool&apos;s preview already allows about{' '}
-          {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for its fee
-          and the price change caused by the trade. Your {slippageBps / 100}% setting
-          allows for further changes before confirmation.
-        </p>
-      ) : null}
-
-      <div className="mt-5 flex justify-end">
+      <div className="mt-3 flex justify-end">
         <button
           onClick={() => void review()}
           disabled={
             busy ||
             preparing ||
+            isViewAs ||
             (isConnected &&
               (cashOutCount <= 0n ||
                 exceedsBalance ||
@@ -914,7 +905,9 @@ export function CashOutPanel({
           }
           className="btn-primary min-h-[44px] px-5 text-sm"
         >
-          {!isConnected
+          {isViewAs
+            ? 'Exit View as to cash out'
+            : !isConnected
             ? 'Sign in to cash out'
             : cashOutCount > 0n
               ? directSellWins
@@ -923,21 +916,6 @@ export function CashOutPanel({
               : 'Cash out'}
         </button>
       </div>
-
-      {!exceedsBalance &&
-      !nothingToReclaim &&
-      cashOutCount > 0n &&
-      route &&
-      route.expectedReturn > 0n ? (
-        <p className="mt-3 text-center text-xs text-smoke-700">
-          You&apos;ll receive at least{' '}
-          {formatTokenAmount(
-            bestRoute?.minimumReturn ?? route.minimumReturn,
-            receiveDecimals,
-          )}{' '}
-          {receiveSymbol}, or the transaction fails without exchanging your tokens.
-        </p>
-      ) : null}
 
       <TxError error={plan ? null : (errorMsg ?? tx.error)} />
       {confirmDialog}

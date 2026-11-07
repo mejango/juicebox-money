@@ -8,15 +8,18 @@ export function AllowedDecreaseField({
   bps,
   onChange,
   maxBps = 9_999,
+  hideLabel = false,
 }: {
   bps: number
   onChange: (bps: number) => void
   /** The most the custom field accepts, in basis points. */
   maxBps?: number
+  /** A collapsible host already names the field. */
+  hideLabel?: boolean
 }) {
   return (
     <div className="mt-3 flex flex-wrap items-center gap-2">
-      <span className="shrink-0 text-xs font-medium text-smoke-700">Allowed decrease</span>
+      <span className={hideLabel ? 'sr-only' : 'shrink-0 text-xs font-medium text-smoke-700'}>Allowed decrease</span>
       {SLIPPAGE_PRESETS_BPS.map(preset => (
         <button
           key={preset}

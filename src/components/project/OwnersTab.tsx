@@ -69,6 +69,7 @@ import { useLinkedDeployments } from '@/lib/sucker-group'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
+import { clientFor } from '@/lib/authority'
 import type { BsParticipant } from '@/lib/bendystraw'
 import { netOfCashOutFee } from '@/lib/cashOut'
 import {
@@ -257,15 +258,33 @@ function YouCard({
 
   const multiChain = chains.length > 1
 
-  // Every holder action is a primary control except Burn: it is the one
-  // destructive option here, so it stays visually quieter (revnet.money
-  // parity).
+  const { data: heldByChain } = useQuery({
+    queryKey: ['youHeldByChain', address, chains],
+    enabled: !!address,
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: () =>
+      Promise.all(
+        chains.map(([cid, pid]) =>
+          clientFor(cid as JBChainId).readContract({
+            abi: jbTokensAbi,
+            address: jbV6ContractAddress[JBCoreContracts.JBTokens][cid as JBChainId] as Address,
+            functionName: 'totalBalanceOf',
+            args: [address!, BigInt(pid)],
+          }),
+        ),
+      ),
+  })
+  // Only a settled zero on every chain hides the actions: a failed read keeps them.
+  const holdsNothing = !!heldByChain?.every(balance => balance === 0n)
+
+  // Cash out is the card's one primary action.
   const actionBtn = (id: YouAction, label: string) => (
     <button
       type="button"
       onClick={() => setAction(id)}
       className={`${
-        id === 'burn' ? 'btn-secondary' : 'btn-primary'
+        id === 'cashOut' ? 'btn-primary' : 'btn-secondary'
       } min-h-[40px] px-4 text-sm`}
       aria-haspopup="dialog"
       aria-expanded={action === id}
@@ -348,11 +367,11 @@ function YouCard({
           {!isRevnet ? <ClaimCreditsAcrossChains home={[chainId, projectId]} chains={listed} holder={address!} /> : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {actionBtn('cashOut', 'Cash out')}
-            {isRevnet ? actionBtn('loan', 'Get a loan') : null}
-            {multiChain ? actionBtn('move', 'Move between chains') : null}
+            {!holdsNothing ? actionBtn('cashOut', 'Cash out') : null}
+            {!holdsNothing && isRevnet ? actionBtn('loan', 'Get a loan') : null}
+            {!holdsNothing && multiChain ? actionBtn('move', 'Move between chains') : null}
             {actionBtn('liquidity', 'Add liquidity')}
-            {actionBtn('burn', 'Burn')}
+            {!holdsNothing ? actionBtn('burn', 'Burn') : null}
           </div>
 
           {action && actionTitle ? (
@@ -385,6 +404,7 @@ function YouCard({
                   chainId={chainId}
                   projectId={projectId}
                   chains={chains}
+                  tokenSymbol={collateralSymbol}
                 />
               ) : (
                 <AddLiquidityFlow

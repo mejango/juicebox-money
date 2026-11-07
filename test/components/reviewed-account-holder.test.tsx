@@ -224,7 +224,7 @@ describe('a cash out reviewed for one account', () => {
   it('wallet-action:cash-out-project-tokens never sends from an account switched to before confirming', async () => {
     vi.useFakeTimers()
     wallet.holdReviews()
-    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(renderer, amountInput, '2')
     await act(async () => {
       vi.advanceTimersByTime(400)
@@ -245,7 +245,7 @@ describe('a cash out reviewed for one account', () => {
     vi.useFakeTimers()
     m.directSell = true
     wallet.holdReviews()
-    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(renderer, amountInput, '2')
     await act(async () => {
       vi.advanceTimersByTime(400)
@@ -264,7 +264,7 @@ describe('a cash out reviewed for one account', () => {
 
   it('cashes out from the account that reviewed it, to that account', async () => {
     vi.useFakeTimers()
-    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+    const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(renderer, amountInput, '2')
     await act(async () => {
       vi.advanceTimersByTime(400)
@@ -361,7 +361,7 @@ describe('the normal path, click for click as main', () => {
     vi.useFakeTimers()
     const HOLD_COPY = [HELD_CONFIRMING_LINE, HELD_AWAY_SUCCESS_LINE, HELD_EXIT_LABEL, HELD_SEND_AGAIN_LABEL, SAVED_ATTEMPT_CHECK_LINE, WRITE_HOLD_PENDING_LINE]
     for (const round of [1, 2]) {
-      const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+      const renderer = await render(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
       await type(renderer, amountInput, '2')
       await act(async () => { vi.advanceTimersByTime(400) })
       await click(renderer, 'Cash out 2 JBT')

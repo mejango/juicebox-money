@@ -92,6 +92,10 @@ vi.mock('@tanstack/react-query', () => ({
         }
         return { data, isFetching: false, isError: false, refetch: vi.fn(async () => ({ data, isError: false })) }
       }
+      case 'cashOutReceiveSymbol':
+        return { data: 'USDC' }
+      case 'accountingContexts':
+        return { data: [{ token: '0x4444444444444444444444444444444444444444', decimals: 6, currency: 1 }] }
       case 'cashOutMarket':
         return {
           data: mocks.directSell
@@ -205,7 +209,10 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => {
 import { jbMultiTerminalAbi } from '@bananapus/nana-sdk-core'
 import { ExtrasTab } from '@/components/project/ExtrasTab'
 import { DistributeFlow } from '@/components/project/AutoIssuanceSection'
+import { BurnTokensFlow } from '@/components/project/BurnTokensFlow'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
+import { GetLoanFlow } from '@/components/project/GetLoanFlow'
+import { clearViewAs, setViewAs } from '@/lib/viewAs'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
 
@@ -580,8 +587,6 @@ describe('cash-out write flow', () => {
           chainId: 1,
           projectId: 42,
           projectName: 'Safe Project',
-          accountingToken: '0x4444444444444444444444444444444444444444',
-          accountingTokenSymbol: 'USDC',
         }),
       )
     })
@@ -623,7 +628,6 @@ describe('cash-out write flow', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(CashOutPanel, {
         chainId: 1, projectId: 42, projectName: 'Safe Project',
-        accountingToken: '0x4444444444444444444444444444444444444444', accountingTokenSymbol: 'USDC',
       }))
     })
     const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
@@ -641,7 +645,6 @@ describe('cash-out write flow', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(CashOutPanel, {
         chainId: 1, projectId: 42, projectName: 'Safe Project',
-        accountingToken: '0x4444444444444444444444444444444444444444', accountingTokenSymbol: 'USDC',
       }))
     })
     const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
@@ -669,10 +672,9 @@ describe('cash-out write flow', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(CashOutPanel, {
         chainId: 1, projectId: 42, projectName: 'Safe Project',
-        accountingToken: '0x4444444444444444444444444444444444444444', accountingTokenSymbol: 'USDC',
       }))
     })
-    await act(async () => buttonWith(renderer, 'MAX').props.onClick())
+    await act(async () => buttonWith(renderer, 'Max').props.onClick())
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Sell 5 JBT on the pool').props.onClick())
     const [request, options] = mocks.send.mock.calls[0] as [{ functionName: string }, { intent?: string }]
@@ -692,8 +694,6 @@ describe('cash-out write flow', () => {
           chainId: 1,
           projectId: 42,
           projectName: 'Safe Project',
-          accountingToken: '0x4444444444444444444444444444444444444444',
-          accountingTokenSymbol: 'USDC',
         }),
       )
     })
@@ -738,13 +738,11 @@ describe('cash-out write flow', () => {
         createElement(CashOutPanel, {
           chainId: 1,
           projectId: 42,
-          accountingToken: '0x4444444444444444444444444444444444444444',
-          accountingTokenSymbol: 'USDC',
         }),
       )
     })
 
-    await act(async () => buttonWith(renderer, 'MAX').props.onClick())
+    await act(async () => buttonWith(renderer, 'Max').props.onClick())
     expect(buttonWith(renderer, 'Cash out 5 JBT')).toBeDefined()
 
     await act(async () => buttonWith(renderer, '3%').props.onClick())
@@ -861,7 +859,7 @@ describe('cash-out write flow', () => {
         }),
       )
     })
-    await act(async () => buttonWith(renderer, 'pay to get some').props.onClick())
+    await act(async () => buttonWith(renderer, 'Pay to get some').props.onClick())
     expect(onGoToPay).toHaveBeenCalledTimes(1)
   })
 
@@ -925,5 +923,44 @@ describe('cash-out write flow', () => {
 
     await act(async () => buttonWith(renderer, 'Cash out again').props.onClick())
     expect(mocks.reset).toHaveBeenCalled()
+  })
+})
+
+describe('holder dialogs', () => {
+  const VIEWED = '0x7777777777777777777777777777777777777777'
+  const flows = [
+    ['Exit View as to cash out', 'You hold 5 JBT', () => createElement(CashOutPanel, { chainId: 1, projectId: 42 })],
+    ['Exit View as to burn', 'You hold 5 JBT', () => createElement(BurnTokensFlow, { chainId: 1, projectId: 42, tokenSymbol: 'JBT' })],
+    ['Exit View as to get a loan', 'You hold 5 JBT', () => createElement(GetLoanFlow, { chainId: 1, projectId: 42, collateralSymbol: 'JBT' })],
+  ] as const
+
+  it.each(flows)('show the viewed balance and %s, with no wallet connected', async (label, balanceLine, flow) => {
+    mocks.connected = false
+    mocks.address = undefined
+    setViewAs(VIEWED)
+    let renderer!: TestRenderer.ReactTestRenderer
+    try {
+      await act(async () => { renderer = TestRenderer.create(flow()) })
+      expect(renderedText(renderer.root)).toContain(balanceLine)
+      expect(renderedText(renderer.root)).not.toContain('Sign in')
+      expect(buttonWith(renderer, label).props.disabled).toBe(true)
+      expect(mocks.send).not.toHaveBeenCalled()
+    } finally {
+      clearViewAs()
+    }
+  })
+
+  it('name the quote line with the token symbol, after fees, with the minimum above the action', async () => {
+    vi.useFakeTimers()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(CashOutPanel, { chainId: 1, projectId: 42 })) })
+    const amount = renderer.root.findAllByType('input').find(input => String(input.props['aria-label']).startsWith('Amount of'))!
+    await act(async () => { amount.props.onChange({ target: { value: '2' } }) })
+    await act(async () => { vi.advanceTimersByTime(400) })
+    const text = renderedText(renderer.root)
+    expect(text).toMatch(/You'll receive ~\S+ USDC after fees, at least \S+ USDC\./)
+    expect(text).not.toContain('0x4444')
+    expect(text).not.toContain('This is called slippage')
+    vi.useRealTimers()
   })
 })
