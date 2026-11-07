@@ -1,7 +1,7 @@
 'use client'
 
 import type { Shop } from '@/hooks/useShop721'
-import { defifaPhaseLabel } from '@/lib/defifa-phase'
+import { defifaPhaseLabel, defifaPhaseNote } from '@/lib/defifa-phase'
 import { formatTokenAmount } from '@/lib/format'
 
 /** SDK protocol identity proves Defifa only, without application or range assumptions. */
@@ -10,6 +10,7 @@ export function DefifaInventory({ shop }: { shop: Shop }) {
     <div className="card space-y-4 p-5">
       <span className="field-label">Defifa NFT tiers</span>
       <p className="text-sm text-smoke-600">Protocol phase: {defifaPhaseLabel(shop.phase)}</p>
+      {defifaPhaseNote(shop.phase) ? <p className="text-sm text-ink">{defifaPhaseNote(shop.phase)}</p> : null}
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-smoke-200 text-smoke-600">

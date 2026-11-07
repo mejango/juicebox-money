@@ -1,11 +1,30 @@
 import type { Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { pctToBp, queueRulesetAuthority } from '@/components/project/QueueRulesetFlow'
+import { JBRouterTerminalContracts, jbV6ContractAddress } from '@bananapus/nana-sdk-core'
+import { v6Address } from '@bananapus/nana-sdk-core/v6'
+
+import { assertQueueableTerminals, pctToBp, queueRulesetAuthority } from '@/components/project/QueueRulesetFlow'
+import { FlowError } from '@/lib/errors'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
 const SAFE = '0x4444444444444444444444444444444444444444' as Address
+
+describe('assertQueueableTerminals', () => {
+  const MULTI = v6Address('JBMultiTerminal', 1)
+  const REGISTRY = jbV6ContractAddress[JBRouterTerminalContracts.JBRouterTerminalRegistry][1] as Address
+
+  // Live /eth:8 holds exactly this pair, and could not open the editor.
+  it('allows the router registry beside the multi terminal', () => {
+    expect(() => assertQueueableTerminals([MULTI, REGISTRY], 1)).not.toThrow()
+  })
+
+  it('still refuses any other terminal, whose limits the editor would drop, with a showable message', () => {
+    expect(() => assertQueueableTerminals([MULTI, ALICE], 1)).toThrow(FlowError)
+    expect(() => assertQueueableTerminals([MULTI, ALICE], 1)).toThrow('uses a custom terminal')
+  })
+})
 
 describe('pctToBp', () => {
   it('encodes a 0% reserved share — turning reserving off is a queueable rule', () => {

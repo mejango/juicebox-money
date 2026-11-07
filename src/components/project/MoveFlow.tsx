@@ -40,6 +40,7 @@ import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxPr
 import { TxError } from '@/components/ui/TxError'
 import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
@@ -81,17 +82,21 @@ export function MoveCard({
   chainId,
   projectId,
   chains,
+  tokenSymbol = 'tokens',
 }: {
   chainId: JBChainId
   projectId: number
   chains: [number, number][]
+  tokenSymbol?: string
 }) {
   const config = useConfig()
-  const { isConnected, address, openSignIn } = useWallet()
+  const { address, openSignIn } = useWallet()
+  // The position reads for the account on screen; the move stays with the connected wallet.
+  const { address: viewed, isViewAs } = useViewedAccount()
 
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
-  const connected = mounted && isConnected && !!address
+  const connected = mounted && !!viewed
 
   const [from, setFrom] = useState<number>(chainId)
   const [to, setTo] = useState<number | null>(null)
@@ -108,7 +113,7 @@ export function MoveCard({
   // position on the source chain (only the deployed ERC-20 can bridge —
   // credits can't).
   const { data: src } = useQuery({
-    queryKey: ['settlement-move-src', from, fromPid, address],
+    queryKey: ['settlement-move-src', from, fromPid, viewed],
     enabled: connected && fromPid !== null,
     staleTime: 20_000,
     retry: 1,
@@ -136,7 +141,7 @@ export function MoveCard({
               abi: erc20Abi,
               address: token,
               functionName: 'balanceOf',
-              args: [address!],
+              args: [viewed!],
             })) as bigint)
           : 0n
       return { pairs, token: token && token !== zeroAddress ? token : null, erc20Balance }
@@ -255,8 +260,10 @@ export function MoveCard({
                     value={amount}
                     onChange={e => setAmount(e.target.value)}
                     placeholder="0"
+                    aria-label={`Amount of ${tokenSymbol} to move`}
                     className="min-h-[44px] w-full bg-transparent text-lg font-medium outline-none placeholder:text-smoke-500"
                   />
+                  <span className="ml-2 shrink-0 text-sm font-medium text-smoke-700">{tokenSymbol}</span>
                   <button
                     onClick={() =>
                       src?.erc20Balance != null &&
@@ -264,7 +271,7 @@ export function MoveCard({
                     }
                     className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
                   >
-                    MAX
+                    Max
                   </button>
                 </div>
               </label>
@@ -277,7 +284,11 @@ export function MoveCard({
             </>
           )}
 
-          {selectedPair &&
+          {isViewAs ? (
+            <div className="flex justify-end">
+              <button disabled className="btn-primary min-h-[44px] px-5 text-sm">Exit View as to move</button>
+            </div>
+          ) : selectedPair &&
           fromPid !== null &&
           src?.token &&
           parsedAmount > 0n &&

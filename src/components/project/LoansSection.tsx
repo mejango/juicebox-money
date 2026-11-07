@@ -364,6 +364,7 @@ function RepayFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { address } = useWallet()
+  const { isViewAs } = useViewedAccount()
   const tx = useReviewedAction(chainId)
   /** The repayment reached the wallet: only then does a settled run mean the loan is repaid, not just approved. */
   const [repaySent, setRepaySent] = useState(false)
@@ -620,10 +621,10 @@ function RepayFlow({
     <>
       <button
         onClick={handleRepay}
-        disabled={checking || busy}
+        disabled={checking || busy || isViewAs}
         className="btn-secondary min-h-[32px] px-3 text-xs"
       >
-        Repay
+        {isViewAs ? 'Exit View as to repay' : 'Repay'}
       </button>
       {!plan ? (
         <TxError

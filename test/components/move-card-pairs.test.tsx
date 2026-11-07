@@ -17,6 +17,7 @@ vi.mock('wagmi/actions', () => ({ getPublicClient: () => ({ readContract: async 
 
 import { MoveCard } from '@/components/project/MoveFlow'
 import { clearSuckerGroups } from '@/lib/sucker-group'
+import { clearViewAs, setViewAs } from '@/lib/viewAs'
 
 const LINE = "The Base project listed here isn't linked onchain."
 let renderer: ReactTestRenderer | undefined
@@ -48,6 +49,16 @@ describe('moving tokens to a deployment the indexer lists', () => {
     expect(page).toContain('Move to Base')
     expect(page).not.toContain(LINE)
     expect(page).not.toContain('Checking…')
+  })
+  it('previews the viewed account and asks to exit View as instead of offering the move', async () => {
+    setViewAs('0x7777777777777777777777777777777777777777')
+    try {
+      const page = await renderWithAmount()
+      expect(page).toContain('Exit View as to move')
+      expect(page).not.toContain('Move to Base')
+    } finally {
+      clearViewAs()
+    }
   })
   it('shows one line and no move when the registry links another Base project', async () => {
     m.resolveSuckers.mockResolvedValue([{ peerChainId: 1, projectId: 17n }, { peerChainId: 8453, projectId: 304n }])

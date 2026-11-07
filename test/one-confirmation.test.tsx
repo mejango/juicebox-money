@@ -305,7 +305,7 @@ describe('one confirmation per action', () => {
   })
 
   it('wallet-action:one-confirmation cash-out: one review for the pool approvals and the sale', async () => {
-    page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+    page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(input => String(input.getAttribute('aria-label')).startsWith('Amount of'), '2')
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     const { dialogs, sent } = await act1('Sell 2 JBT on the pool', 3)

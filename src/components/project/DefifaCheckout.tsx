@@ -24,7 +24,7 @@ import { TxProgress } from '@/components/ui/TxProgress'
 import { WriteRecoveryInTabNote } from '@/components/ui/WriteRecoveryInTabNote'
 import { formatTokenAmount } from '@/lib/format'
 import { explorerTxUrl } from '@/lib/chainDisplay'
-import { defifaPhaseLabel } from '@/lib/defifa-phase'
+import { defifaPhaseLabel, defifaPhaseNote } from '@/lib/defifa-phase'
 import { friendlyError } from '@/lib/errors'
 
 type Review = {
@@ -275,6 +275,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['pay']} active={!!review}><div className="space-y-4">
     <ShopMediaStatus failed={media.hasFailures} fetching={media.isFetching} retry={media.refetch} />
     <p className="text-sm text-smoke-600">Protocol phase: {defifaPhaseLabel(shop.phase)}</p>
+    {defifaPhaseNote(shop.phase) ? <p className="text-sm text-ink">{defifaPhaseNote(shop.phase)}</p> : null}
       <div className="mt-4">
         <span className="field-label">Shop</span>
         <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
