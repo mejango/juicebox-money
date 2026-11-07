@@ -94,3 +94,5 @@ A current-client getter can still resolve a connector captured before an awaited
 A correct shop compiler does not constrain a previously queued Safe transaction. Reuse the decoded shop policy for new generic Safe signatures, execution and funding, including supported wrappers. Keep passive signed/funded status and receipt reconciliation outside that guard. Actual-module queue and recovery regressions enforce the boundary.
 
 - 2026-11-07: "Owners" means token holders only on revnet surfaces. Custom projects and shared copy say "holders". Before applying a review's naming pick across a site with two flavors, ask whether it holds for both.
+
+- 2026-11-07: Local renders with no keys rate-limit and fake failures. Check new code against real data by forwarding `/api` and juicebox.center RPC to live juicebox.money through Playwright routes, and compare with the live page before believing a data symptom.

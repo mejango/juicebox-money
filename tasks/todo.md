@@ -1327,11 +1327,20 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 
 ## Items
 
-- [ ] Stream A, pay: j01, j02, j26, j17, j18, j25, p01, p02
-- [ ] Stream B, shop: j03, j27, p03
-- [ ] Stream C, project page: j04, j06, j07, j14, j15, j24, p04, p08
-- [ ] Stream D, authority and holders: j05, j08, j13, j16, j19, j28, p06
-- [ ] Stream E, create and tax: j09, j10, j11, j12, j23, p05, p09
-- [ ] Stream F, search, 404, home, docs: j20, j21, j22, c01, p07, j29, j30, j31
-- [ ] Sequential, after merge: p10
-- [ ] Integration: full check, renders, two Codex passes, PR
+- [x] Stream A, pay: j01, j02, j26, j17, j18, j25, p01, p02
+- [x] Stream B, shop: j03, j27, p03
+- [x] Stream C, project page: j04, j06, j07, j14, j15, j24, p04, p08
+- [x] Stream D, authority and holders: j05, j08, j13, j16, j19, j28, p06
+- [x] Stream E, create and tax: j09, j10, j11, j12, j23, p05, p09
+- [x] Stream F, search, 404, home, docs: j20, j21, j22, c01, p07, j29, j30, j31
+- [x] Sequential, after merge: p10
+- [x] Integration: full check, renders, two Codex passes, PR
+
+## Review (2026-11-07)
+
+- Every item marked Fix is in the PR. j21 follows the note: a bad path 404s on this site.
+- `npm run check`: 3,520 unit tests and 90 browser tests pass. Budgets bumped 1 to 2 KiB per route, 13 KiB all scripts.
+- Renders: new code against live juicebox.money /api and RPC at true 1280 and 390, View as a real holder. Custom project not rendered: every project tried is a revnet.
+- Codex: two passes, three findings, all fixed with tests.
+- Correction: owners is revnet-only, holders everywhere else.
+

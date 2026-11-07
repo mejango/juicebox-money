@@ -16,6 +16,7 @@ import {
   getV6SuckerPairs,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { recoveringRead } from '@/lib/read-recovery'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
@@ -166,7 +167,7 @@ export function MoveCard({
               projectId: remoteProjectId,
               sucker: p.local,
             }]
-      }),
+      }).sort((a, b) => byChainOrder(a.chainId, b.chainId)),
     [chains, src],
   )
 
