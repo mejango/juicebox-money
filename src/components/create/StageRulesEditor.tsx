@@ -167,6 +167,7 @@ export function StageRulesEditor({
   index,
   prevDuration = 0,
   unitLabel,
+  fundsUnit,
   unitChoice,
   disabled,
   chainIds,
@@ -182,6 +183,9 @@ export function StageRulesEditor({
   /** Previous ruleset's duration in seconds (0 = flexible); reminds the user what a cycle is. */
   prevDuration?: number;
   unitLabel: string;
+  /** The token payout and withdrawal amounts are encoded in. Each limit's currency is its
+   *  accounting token, whatever the issuance is priced in. */
+  fundsUnit: string;
   /** When set, the issuance unit is a choice (ETH/USD) picked inline. */
   unitChoice?: {
     value: "eth" | "usd";
@@ -262,7 +266,7 @@ export function StageRulesEditor({
             : "No payout amounts set"
           : stage.routedMode === "all"
             ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`
-            : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
+            : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${fundsUnit} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
     (stage.payouts !== "none" && stage.holdFees ? " | fees held" : "");
 
   const cashOutsSummary = routedAll
@@ -803,13 +807,13 @@ export function StageRulesEditor({
                   onClick={() => set(routedModePatch(stage, "eth", "amounts"))}
                   disabled={disabled}
                 >
-                  Fixed {unitLabel} amounts
+                  Fixed {fundsUnit} amounts
                 </ChipButton>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {stage.routedMode === "all"
                   ? `All funds can be paid out by these percentages.${routedAll ? " Holders can't cash out." : ""}`
-                  : `Each recipient gets up to their ${unitLabel} amount. The rest can back cash outs.`}
+                  : `Each recipient gets up to their ${fundsUnit} amount. The rest can back cash outs.`}
               </p>
               <SplitsEditor
                 splits={stage.payoutSplits}
@@ -817,7 +821,7 @@ export function StageRulesEditor({
                 disabled={disabled}
                 bucketLabel="payouts"
                 mode={payoutsMode}
-                amountLabel={unitLabel}
+                amountLabel={fundsUnit}
                 chainIds={chainIds}
                 allowHook
                 showRouting
@@ -846,7 +850,7 @@ export function StageRulesEditor({
                       onClick={() => set(routedModePatch(stage, "usdc", "amounts"))}
                       disabled={disabled}
                     >
-                      Fixed USD amounts
+                      Fixed USDC amounts
                     </ChipButton>
                   </div>
                   <SplitsEditor
@@ -855,7 +859,7 @@ export function StageRulesEditor({
                     disabled={disabled}
                     bucketLabel="USDC payouts"
                     mode={stage.routedModeUsdc === "all" ? "percent" : "amount"}
-                    amountLabel="USD"
+                    amountLabel="USDC"
                     chainIds={chainIds}
                     allowHook
                     showRouting
@@ -925,7 +929,7 @@ export function StageRulesEditor({
                         }`}
                       />
                       <span className="whitespace-nowrap text-xs text-smoke-700">
-                        {unitLabel} max, until rules change
+                        {fundsUnit} max, until rules change
                       </span>
                     </span>
                   ) : null}

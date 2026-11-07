@@ -27,7 +27,8 @@ async function mount(initial: DraftStage) {
       isFirst
       isLast
       index={0}
-      unitLabel="ETH"
+      unitLabel="USD"
+      fundsUnit="ETH"
       disabled={false}
       chainIds={[1]}
       flavor="project"

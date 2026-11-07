@@ -234,6 +234,13 @@ describe('multichain launch validation', () => {
     expect(textOf(launchSection(root))).not.toContain('needs a start')
   })
 
+  it('names the accounting token for payout amounts when issuance is priced in USD', async () => {
+    const root = await mountDraft(draft('project'))
+    await act(async () => root.findByProps({ 'aria-label': 'Rules' }).props.onClick())
+    const editor = root.findAll(node => typeof node.props.fundsUnit === 'string')[0]
+    expect(editor.props).toMatchObject({ unitLabel: 'USD', fundsUnit: 'ETH' })
+  })
+
   it('offers a visible way to add a ruleset', async () => {
     const root = await mountDraft(draft('project'))
     await act(async () => root.findByProps({ 'aria-label': 'Rules' }).props.onClick())

@@ -537,6 +537,12 @@ export function CreateForm() {
     : effectiveBase === "eth"
       ? "ETH"
       : "USD";
+  // Payout and withdrawal limits use each accounting context's own currency.
+  const fundsUnit = customActive
+    ? customMeta.symbol || "TOKEN"
+    : accepts.includes("eth")
+      ? "ETH"
+      : "USDC";
   // Pricing shop items in "the token" only means anything while a custom
   // accounting token is configured. A selection left behind after the custom
   // token is switched off has no token to price against, and the encoder falls
@@ -3694,6 +3700,7 @@ export function CreateForm() {
                       i > 0 ? stageDurationSeconds(stages[i - 1]) : 0
                     }
                     unitLabel={unitLabel}
+                    fundsUnit={fundsUnit}
                     unitChoice={
                       !customOn
                         ? { value: effectiveBase, onChange: setIssuanceBase }
