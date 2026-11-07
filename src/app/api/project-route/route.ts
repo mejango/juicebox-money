@@ -1,5 +1,6 @@
 import { projectHandleFromRoute, decodeProjectRouteSegment } from '@/lib/project-handle-route'
 import { projectRouteSnapshot, resolveProjectRoute } from '@/lib/project-route.server'
+import { legacyHref, legacyPageExists } from '@/lib/urn'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +17,10 @@ export async function GET(request: Request) {
     if (route) return Response.json(projectRouteSnapshot(route), { headers })
   } catch {
     // An unavailable proof must not be reported as a missing project or cached.
+    return Response.json({ error: 'Project link could not be verified.' }, { status: 503, headers })
   }
-  return Response.json({ error: 'Project link could not be verified.' }, { status: 503, headers })
+  return Response.json(
+    { error: 'No project uses this handle.', legacy: await legacyPageExists(legacyHref(`/${decoded}`)) },
+    { status: 404, headers },
+  )
 }

@@ -203,12 +203,16 @@ describe('SearchBox account results', () => {
     const renderer = await render()
     await type(renderer, '@Design.Juicebox')
     await loadHandles()
+    await settle()
 
     expect(renderedText(renderer.root)).toContain(
       'Go to project @design.juicebox',
     )
     expect(mocks.lookupEnsAddress).not.toHaveBeenCalled()
-    expect(mocks.fetch).not.toHaveBeenCalled()
+    expect(mocks.fetch).toHaveBeenCalledOnce()
+    expect(mocks.fetch.mock.calls[0][0]).toBe(
+      '/api/project-route?segment=%40design.juicebox',
+    )
 
     await act(async () => {
       renderer.root.findByType('input').props.onKeyDown({ key: 'Enter' })
@@ -266,11 +270,75 @@ describe('SearchBox account results', () => {
       })
       await Promise.resolve()
     })
+    await settle()
 
     expect(renderedText(renderer.root)).toContain(
       'Go to project @design.juicebox',
     )
     expect(renderedText(renderer.root)).not.toContain('Stale result')
+  })
+})
+
+describe('SearchBox answers', () => {
+  const answersHandle = (status: number, body: unknown = {}) =>
+    mocks.fetch.mockResolvedValue({ ok: status < 400, status, json: async () => body })
+  const pressEnter = (renderer: TestRenderer.ReactTestRenderer) =>
+    act(async () => {
+      renderer.root.findByType('input').props.onKeyDown({ key: 'Enter' })
+    })
+
+  it('says so when a search finds nothing, only after it answers', async () => {
+    const renderer = await render()
+    await type(renderer, 'zzzqqqxx')
+    expect(renderedText(renderer.root)).not.toContain('No matching projects')
+    await settle()
+    expect(renderedText(renderer.root)).toContain('No matching projects.')
+
+    await type(renderer, 'zzzqqqxxy')
+    expect(renderedText(renderer.root)).not.toContain('No matching projects')
+  })
+
+  it('does not call an ENS name unmatched while it resolves', async () => {
+    mocks.lookupEnsAddress.mockResolvedValue(BOB)
+    const renderer = await render()
+    await type(renderer, 'bob.eth')
+    await settle()
+    expect(renderedText(renderer.root)).toContain('View account')
+    expect(renderedText(renderer.root)).not.toContain('No matching projects')
+  })
+
+  it('offers no way to a handle nobody holds', async () => {
+    answersHandle(404, { legacy: false })
+    const renderer = await render()
+    await type(renderer, '@zzzqqqxx')
+    await loadHandles()
+    expect(renderedText(renderer.root)).toContain('Resolving @zzzqqqxx')
+    await settle()
+
+    expect(renderedText(renderer.root)).not.toContain('Go to project')
+    expect(renderedText(renderer.root)).toContain('No matching projects.')
+    await pressEnter(renderer)
+    expect(mocks.assign).not.toHaveBeenCalled()
+  })
+
+  it('offers a handle only the legacy site serves', async () => {
+    answersHandle(404, { legacy: true })
+    const renderer = await render()
+    await type(renderer, '@juicebox')
+    await loadHandles()
+    await settle()
+    expect(renderedText(renderer.root)).toContain('Go to project @juicebox')
+  })
+
+  it('keeps the row when the check cannot finish', async () => {
+    answersHandle(503)
+    const renderer = await render()
+    await type(renderer, '@design.juicebox')
+    await loadHandles()
+    await settle()
+    expect(renderedText(renderer.root)).toContain('Go to project @design.juicebox')
+    await pressEnter(renderer)
+    expect(mocks.assign).toHaveBeenCalledWith('/@design.juicebox')
   })
 })
 
