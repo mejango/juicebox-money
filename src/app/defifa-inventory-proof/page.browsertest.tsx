@@ -51,7 +51,7 @@ export default function DefifaInventoryProof() {
     <h1 className="font-agrandir text-2xl">NFT checkout fixture</h1>
     <p className="text-sm text-smoke-600">Fixture checkout state. Any injected recorded artwork is a historical URI replay, not a live purchase.</p>
     {ready && <p>Flavor: <ProjectFlavor chainId={1} projectId={1} isRevnet={false} /></p>}
-    {ready ? <ShopCartProvider>
+    {ready ? <ShopCartProvider chainId={1}>
       <section aria-label="Payment surface"><PayPanel chainId={1} projectId={1} projectName="Fixture" isRevnet={false} chains={[[1, 1]]} /></section>
       <section aria-label="NFT inventory"><ShopTab chainId={1} projectId={1} isRevnet={false} chains={[[1, 1]]} /></section>
     </ShopCartProvider> : null}

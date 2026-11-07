@@ -152,8 +152,8 @@ vi.mock('@/hooks/useTokenBalances', () => ({
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: m.onRamp, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', async original => {
   const actual = await original<typeof import('@/components/project/ShopCartProvider')>()
-  const empty = { quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }
-  return { ...actual, useShopCart: () => (m.realCart ? actual.useShopCart() : empty) }
+  const empty = { countsByChain: {}, quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }
+  return { ...actual, useShopCart: (...args: Parameters<typeof actual.useShopCart>) => (m.realCart ? actual.useShopCart(...args) : empty) }
 })
 vi.mock('@/providers/preload-para', () => ({ preloadParaHost: () => {} }))
 vi.mock('@/components/project/MarketSection', () => ({ resolveMarket: vi.fn() }))
@@ -771,7 +771,7 @@ describe('a checkout whose items change at the same total', () => {
       return null
     }
     await act(async () => root.render(
-      <ShopCartProvider>
+      <ShopCartProvider chainId={1}>
         <Probe />
         <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
       </ShopCartProvider>,
@@ -807,7 +807,7 @@ describe('a checkout whose items change at the same total', () => {
       return null
     }
     const render = () => act(async () => root.render(
-      <ShopCartProvider>
+      <ShopCartProvider chainId={1}>
         <Probe />
         <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
       </ShopCartProvider>,
@@ -835,7 +835,7 @@ describe('a checkout whose shop read fails', () => {
       return <button type="button" onClick={() => setQuantity(1, 1)}>Add one</button>
     }
     await act(async () => root.render(
-      <ShopCartProvider>
+      <ShopCartProvider chainId={1}>
         <AddOne />
         <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
       </ShopCartProvider>,
@@ -864,6 +864,43 @@ describe('a checkout whose shop read fails', () => {
   })
 })
 
+describe('changing chain with items in the cart', () => {
+  const tier = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, cantBuyWithCredits: false }
+
+  it('keeps each chain its own items and offers the way back', async () => {
+    m.realCart = true
+    m.resolveSuckers = async () => [{ peerChainId: 8453, projectId: 42n }]
+    m.queries.nativeInventory = inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] })
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    function AddOne() {
+      const { setQuantity, count } = useShopCart()
+      return <button type="button" data-count={count} onClick={() => setQuantity(1, 1)}>Add one</button>
+    }
+    await act(async () => root.render(
+      <ShopCartProvider chainId={1}>
+        <AddOne />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42], [8453, 42]]} />
+      </ShopCartProvider>,
+    ))
+    await act(async () => button('Add one').click())
+    expect(host.textContent).toContain('Amount due')
+    const select = host.querySelector<HTMLSelectElement>('select[aria-label="Chain"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, '8453')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    // Tier 1 on Base is not tier 1 on Ethereum: the item waits on its own chain.
+    expect(host.textContent).not.toContain('Amount due')
+    expect(host.textContent).toContain('1 item in your Ethereum cart.')
+    expect(button('Add one').dataset.count).toBe('1')
+    await act(async () => button('Switch').click())
+    expect(select.value).toBe('1')
+    expect(host.textContent).toContain('Amount due')
+    expect(host.textContent).not.toContain('Ethereum cart')
+  })
+})
+
 describe('a checkout whose items are all gone', () => {
   it('just pays, under the same project key, once the cart is emptied', async () => {
     m.realCart = true
@@ -881,7 +918,7 @@ describe('a checkout whose items are all gone', () => {
       return null
     }
     const panel = () => (
-      <ShopCartProvider>
+      <ShopCartProvider chainId={1}>
         <Probe />
         <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
       </ShopCartProvider>

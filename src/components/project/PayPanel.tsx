@@ -254,15 +254,6 @@ export function PayPanel({
 }) {
   const queryClient = useQueryClient();
   const { isConnected, address, openSignIn } = useWallet();
-  const {
-    quantities: cart,
-    items: cartItems,
-    count: cartCount,
-    setQuantity,
-    registerItem,
-    clear: clearCart,
-  } = useShopCart();
-
   // The chain being paid — a project lives on every linked chain, and the
   // payer picks which one. projectId can differ per chain (sucker groups).
   const [deployment, setDeployment] = useState<{
@@ -270,6 +261,15 @@ export function PayPanel({
     projectId: number;
   }>(() => ({ chainId: initialChainId, projectId: initialProjectId }));
   const { chainId, projectId } = deployment;
+  const {
+    quantities: cart,
+    items: cartItems,
+    count: cartCount,
+    countsByChain,
+    setQuantity,
+    registerItem,
+    clear: clearCart,
+  } = useShopCart(chainId);
 
   useEffect(() => {
     setDeployment({ chainId: initialChainId, projectId: initialProjectId });
@@ -1508,6 +1508,24 @@ export function PayPanel({
     );
   }
 
+  const switchChain = (value: string) => {
+    const next = chains.find(([cid]) => cid === Number(value));
+    if (!next) return;
+    setDeployment({
+      chainId: next[0] as JBChainId,
+      projectId: next[1],
+    });
+    setTokenIndex(0);
+    setTokenTouched(false);
+    selectedKeyRef.current = null;
+    setAmount("");
+    setDebouncedAmount("");
+  };
+  // Items waiting on another of this project's chains, until the payer goes back or empties them.
+  const otherChainCart = chains
+    .map(([cid]) => ({ chainId: cid, count: countsByChain[cid] ?? 0 }))
+    .find(other => other.chainId !== chainId && other.count > 0);
+
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
   if (mode === 'pay' && nativeMarket && !pairCheck.linked) {
     return pairCheck.line ? <p role="alert" className="text-sm text-red-600">{pairCheck.line}</p> : <ProjectPayPanelSkeleton embedded />;
@@ -1612,20 +1630,7 @@ export function PayPanel({
         {chains.length > 1 ? (
           <TextSelect
             value={String(chainId)}
-            onChange={(v) => {
-              const next = chains.find(([cid]) => cid === Number(v));
-              if (!next) return;
-              setDeployment({
-                chainId: next[0] as JBChainId,
-                projectId: next[1],
-              });
-              setTokenIndex(0);
-              setTokenTouched(false);
-              selectedKeyRef.current = null;
-              clearCart();
-              setAmount("");
-              setDebouncedAmount("");
-            }}
+            onChange={switchChain}
             disabled={busy}
             ariaLabel="Chain"
             options={chains.map(([cid]) => ({
@@ -2014,6 +2019,20 @@ export function PayPanel({
         </p>
       ) : null}
 
+      {otherChainCart && mode === "pay" ? (
+        <p className="mt-3 text-sm text-smoke-700" role="status">
+          {otherChainCart.count} item{otherChainCart.count === 1 ? "" : "s"} in your{" "}
+          {chainName(otherChainCart.chainId)} cart.{" "}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => switchChain(String(otherChainCart.chainId))}
+            className="font-medium underline underline-offset-2"
+          >
+            Switch
+          </button>
+        </p>
+      ) : null}
       {surfaceError ? (
         <p className="mt-3 text-sm text-red-600">
           Couldn&apos;t verify this project&apos;s accepted tokens — payments

@@ -93,7 +93,7 @@ vi.mock('@/hooks/useTokenBalances', () => ({
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
 vi.mock('@/components/project/ShopCartProvider', async original => ({
   ...(await original<typeof import('@/components/project/ShopCartProvider')>()),
-  useShopCart: () => ({ quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),
+  useShopCart: () => ({ quantities: {}, items: {}, count: 0, countsByChain: {}, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),
 }))
 vi.mock('@/lib/project-token-batch', () => ({
   readClaimCalls: async () => [1, 2].map(index => ({
