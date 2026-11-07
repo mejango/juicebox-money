@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { jbV6ContractAddress, RevnetCoreContracts } from '@bananapus/nana-sdk-core'
 import { JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 
 import {
   aggregateGrants,
   permissionIdsOnChain,
+  projectOwnerRows,
   SHOP_MANAGER_PERMISSION_IDS,
 } from '@/components/project/AuthorityOverview'
 
@@ -120,5 +122,21 @@ describe('shop manager preset', () => {
       JBPermissionIdsV6.MINT_721,
       JBPermissionIdsV6.SET_721_DISCOUNT_PERCENT,
     ])
+  })
+})
+
+describe('a revnet operator grant', () => {
+  const REV_OWNER = jbV6ContractAddress[RevnetCoreContracts.REVOwner][8453]
+  const rows = [{ chainId: 8453, projectId: 5, authority: OP }] as never[]
+
+  // /eth:3 read Inactive while REVOwner.isOperatorOf was true: REVOwner grants, the operator holds.
+  it('is live because REVOwner, the JBProjects owner, granted it', () => {
+    const operator = holder(REV_OWNER, [24], 8453, { isRevnetOperator: true })
+    expect(aggregateGrants([operator] as never[], DEPLOYMENTS, rows)[0].live).toBe(false)
+    expect(aggregateGrants([operator] as never[], DEPLOYMENTS, projectOwnerRows(rows, true))[0].live).toBe(true)
+  })
+
+  it('leaves a project owner comparing with the owner itself', () => {
+    expect(projectOwnerRows(rows, false)).toBe(rows)
   })
 })

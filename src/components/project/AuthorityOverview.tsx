@@ -4,6 +4,7 @@ import {
   JB_CHAINS,
   JBCoreContracts,
   jbV6ContractAddress,
+  RevnetCoreContracts,
   jbPermissionsAbi,
   type JBChainId,
 } from "@bananapus/nana-sdk-core";
@@ -184,6 +185,19 @@ export function aggregateGrants(
       group.rows.some((row) => !samePermissionSet(first, row.permissions));
   }
   return [...groups.values()];
+}
+
+/**
+ * Who a grant must come from to count. A revnet's operator holds its powers as
+ * a grant from REVOwner, the JBProjects owner, not as the owner itself.
+ */
+export function projectOwnerRows<Row extends { chainId: JBChainId; authority: Address | null }>(
+  rows: Row[],
+  isRevnet: boolean,
+): Row[] {
+  if (!isRevnet) return rows;
+  const owners = jbV6ContractAddress[RevnetCoreContracts.REVOwner] as Partial<Record<JBChainId, Address>>;
+  return rows.map((row) => ({ ...row, authority: owners[row.chainId] ?? row.authority }));
 }
 
 export function AuthorityOverview({
@@ -850,6 +864,7 @@ function PermissionsAcrossChains({
   const deploymentKey = deployments
     .map((row) => `${row.chainId}:${row.projectId}`)
     .join(",");
+  const ownerRows = useMemo(() => projectOwnerRows(authorityRows, isRevnet), [authorityRows, isRevnet]);
   // Wildcard grants are scoped to the granting ACCOUNT, so the authority has to be known per chain
   // before they can be fetched.
   const withAuthority = useMemo(
@@ -857,10 +872,10 @@ function PermissionsAcrossChains({
       deployments.map((row) => ({
         ...row,
         authority:
-          authorityRows.find((item) => item.chainId === row.chainId)?.authority ??
+          ownerRows.find((item) => item.chainId === row.chainId)?.authority ??
           null,
       })),
-    [authorityRows, deployments],
+    [ownerRows, deployments],
   );
   const authorityKey = withAuthority
     .map((row) => `${row.chainId}:${row.authority ?? ""}`)
@@ -872,8 +887,8 @@ function PermissionsAcrossChains({
     queryFn: ({ signal }) => getPermissionHoldersAcrossDeployments(withAuthority, { signal }),
   });
   const grants = useMemo(
-    () => aggregateGrants(query.data ?? [], deployments, authorityRows),
-    [authorityRows, deployments, query.data],
+    () => aggregateGrants(query.data ?? [], deployments, ownerRows),
+    [ownerRows, deployments, query.data],
   );
   const [editing, setEditing] = useState<OperatorGrant | "new" | null>(null);
   const [presetIds, setPresetIds] = useState<number[] | undefined>();
@@ -898,13 +913,12 @@ function PermissionsAcrossChains({
     setEditing(null);
     setPresetIds(undefined);
   };
-  const authorityLabel = isRevnet ? "Revnet operator" : "Project owner";
   // The owner never appears in the indexed grants: JBPermissioned._requirePermissionFrom passes on
   // `sender == account` before consulting JBPermissions at all, so the most powerful account on the
   // project holds every power with no grant to index. Listing delegates alone under-reports who can act.
   const owners = useMemo(() => {
     const seen = new Map<string, JBChainId[]>();
-    for (const row of authorityRows) {
+    for (const row of ownerRows) {
       if (!row.authority) continue;
       const key = row.authority.toLowerCase();
       seen.set(key, [...(seen.get(key) ?? []), row.chainId]);
@@ -913,7 +927,7 @@ function PermissionsAcrossChains({
       address: address as Address,
       chains,
     }));
-  }, [authorityRows]);
+  }, [ownerRows]);
 
   return (
     <section ref={sectionRef} className="card scroll-mt-28 p-5">
@@ -936,7 +950,7 @@ function PermissionsAcrossChains({
                 title={owner.address}
               />
               <span className="rounded-full bg-green-50 px-2 py-0.5 text-[11px] font-medium text-green-700">
-                {authorityLabel}
+                {isRevnet ? "Project owner (REVOwner)" : "Project owner"}
               </span>
               <span className="flex items-center gap-1" title="On">
                 {owner.chains.map((chainId) => (
@@ -946,8 +960,9 @@ function PermissionsAcrossChains({
             </div>
           ))}
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            Every power. The {authorityLabel.toLowerCase()} acts directly and never
-            needs a grant, so it holds all of the permissions below.
+            {isRevnet
+              ? "The REVOwner contract holds the owner role and enforces the revnet’s rules. It gives the operator the limited permissions listed below."
+              : "Every power. The project owner acts directly and never needs a grant, so it holds all of the permissions below."}
           </p>
         </div>
       ) : null}
