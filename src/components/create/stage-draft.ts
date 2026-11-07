@@ -1,10 +1,18 @@
 import { formatUnits } from "viem";
 import { decimalOk as numOk } from "@/lib/decimal";
 export { decimalOk as numOk } from "@/lib/decimal";
-import { CASH_OUTS_OFF_REVNET, createSimpleProjectStage, FOREVER_SECONDS, routesAllFunds } from "@/lib/launch";
+import {
+  autoIssuanceMintChain,
+  CASH_OUTS_OFF_REVNET,
+  createSimpleProjectStage,
+  FOREVER_SECONDS,
+  LAUNCH_START_DELAY_SECONDS,
+  routesAllFunds,
+} from "@/lib/launch";
 import { resolvedAddress } from "@/lib/ens";
-import { cashOutTaxValue, formatDateTime } from "@/lib/format";
-import { splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
+import { cashOutTaxValue, formatDateTime, truncateAddress } from "@/lib/format";
+import { chainName } from "@/lib/urn";
+import { isStickyRow, splitOk, splitsTotal, type DraftSplit } from "./SplitsEditor";
 
 /**
  * One stage = one queued ruleset (website/ parity). Every rule here is
@@ -358,7 +366,184 @@ export function routedModePatch(
   };
 }
 
-/** Summary parts for a stage (website/'s stageSummaryRaw). */
+/** The auto-issuance rows a launch encodes, each with its one mint chain and beneficiary. */
+export function encodedAutoIssuances(
+  stage: Pick<DraftStage, "autoIssuances">,
+  chainIds: readonly number[],
+): { count: string; beneficiary: string; chainId: number }[] {
+  return stage.autoIssuances.flatMap((row) => {
+    const chainId = autoIssuanceMintChain(chainIds as number[], row.chainId);
+    const beneficiary = row.perChain[chainId]?.trim() || row.address;
+    return Number(row.count) > 0 && resolvedAddress(beneficiary) !== null
+      ? [{ count: row.count, beneficiary, chainId }]
+      : [];
+  });
+}
+
+/** What the launch review needs beyond the stage itself. */
+export type StageReview = {
+  /** False when ownership goes to the dead address: nobody holds owner permissions. */
+  hasOwner: boolean;
+  chainIds: readonly number[];
+  /** The token payout and withdrawal amounts are encoded in. */
+  fundsUnit: string;
+};
+
+/** Where the terminal sends what splits leave over (JBMultiTerminal _sendPayoutsOf). */
+const leftoverTo = (hasOwner: boolean) =>
+  hasOwner ? "the project owner" : "a dead address, where it's lost";
+
+const addressLabel = (value: string) =>
+  /^0x/i.test(value.trim()) ? truncateAddress(value.trim()) : value.trim();
+
+function recipientLabel(row: DraftSplit, chainIds: readonly number[]): string {
+  const base =
+    row.kind === "address"
+      ? addressLabel(row.recipient)
+      : row.kind === "project"
+        ? `Project #${row.projectId.replace("#", "")}${
+            row.preferAddToBalance || !row.beneficiary.trim()
+              ? ""
+              : ` for ${addressLabel(row.beneficiary)}`
+          }`
+        : isStickyRow(row)
+          ? "Sticky holders"
+          : row.hookKind === "custom"
+            ? `Hook ${addressLabel(row.hookAddress)}`
+            : "Fund market";
+  return chainIds.some((id) => row.perChain[id]?.trim())
+    ? `${base} (varies by chain)`
+    : base;
+}
+
+function percentRecipients(rows: DraftSplit[], chainIds: readonly number[]): string {
+  return rows
+    .map((row) => `${Number(row.value)}% to ${recipientLabel(row, chainIds)}`)
+    .join(", ");
+}
+
+function payoutPart(
+  title: string,
+  rows: DraftSplit[],
+  mode: "all" | "amounts",
+  unit: string,
+  review: StageReview,
+): string {
+  if (mode === "all") {
+    if (rows.length === 0)
+      return `${title}: all funds to ${leftoverTo(review.hasOwner)}`;
+    const left = 100 - splitsTotal(rows, "percent");
+    return `${title}: ${percentRecipients(rows, review.chainIds)}${
+      left > 0 ? `, the rest to ${leftoverTo(review.hasOwner)}` : ""
+    }`;
+  }
+  const total = splitsTotal(rows, "amount");
+  if (total === 0) return `${title}: none set`;
+  const each = review.chainIds.length > 1 ? " on each chain" : "";
+  const varies = rows.some((row) =>
+    review.chainIds.some((id) => row.perChainAmount[id]?.trim()),
+  )
+    ? " (varies by chain)"
+    : "";
+  return `${title}: up to ${total.toLocaleString("en-US")} ${unit}${each}${varies}, ${rows
+    .map((row) => `${Number(row.value).toLocaleString("en-US")} ${unit} to ${recipientLabel(row, review.chainIds)}`)
+    .join(", ")}`;
+}
+
+/** The fund access limits a project stage encodes (launch.ts fundAccessLimitGroups). */
+function fundsParts(stage: DraftStage, multiToken: boolean, review: StageReview): string[] {
+  if (stage.payouts === "none") return ["No payouts or withdrawals"];
+  const parts =
+    stage.payouts !== "routed"
+      ? []
+      : multiToken
+        ? [
+            payoutPart("ETH payouts", stage.payoutSplits, stage.routedMode, "ETH", review),
+            payoutPart("USDC payouts", stage.payoutSplitsUsdc, stage.routedModeUsdc, "USDC", review),
+          ]
+        : [payoutPart("Payouts", stage.payoutSplits, stage.routedMode, review.fundsUnit, review)];
+  if (!stageWithdrawals(stage, multiToken)) return parts;
+  if (!review.hasOwner) return [...parts, "Nobody can withdraw funds"];
+  const each = review.chainIds.length > 1 ? " on each chain" : "";
+  return [
+    ...parts,
+    stage.surplusCapOn
+      ? `Owner can withdraw up to ${
+          multiToken
+            ? `${stage.surplusAmount} ETH and ${stage.surplusAmount} USDC`
+            : `${stage.surplusAmount} ${review.fundsUnit}`
+        }${each}`
+      : `Owner can withdraw ${stage.payouts === "routed" ? "remaining" : "all"} funds`,
+  ];
+}
+
+/** Whether a stage encodes a surplus allowance, the amount only the owner can use. */
+function stageWithdrawals(stage: DraftStage, multiToken: boolean): boolean {
+  return (
+    stage.payouts === "flexible" ||
+    (stage.payouts === "routed" &&
+      !routesAllFunds(stage.payouts, stageRoutesEverything(stage, multiToken)) &&
+      stage.routedSurplusOn)
+  );
+}
+
+const POWER_LABELS: Record<keyof DraftStage["powers"], string> = {
+  setTerminals: "payment contracts",
+  setController: "the contract that manages rules",
+  terminalMigration: "where funds are held",
+  setCustomToken: "the token",
+  addAccountingContext: "accepted tokens",
+  addPriceFeed: "price sources",
+};
+
+function ownerParts(stage: DraftStage): string[] {
+  const powers = (Object.keys(POWER_LABELS) as (keyof DraftStage["powers"])[])
+    .filter((key) => stage.powers[key])
+    .map((key) => POWER_LABELS[key]);
+  return [
+    ...(stage.ownerMinting ? ["Owner can create tokens without payment"] : []),
+    ...(powers.length > 0 ? [`Owner can change ${powers.join(", ")}`] : []),
+  ];
+}
+
+/** Who can take funds out under these stages. "Payout recipients" counts any token paying out. */
+export function launchFundsFact(
+  stages: DraftStage[],
+  flavor: "project" | "revnet",
+  hasOwner: boolean,
+  multiToken: boolean,
+  itemsRedeem = false,
+): string {
+  // REVDeployer gives REVLoans the only surplus allowance, and the operator has no way to funds.
+  if (flavor === "revnet") return "Token holders, by cashing out or taking loans";
+  const routedTokens = (stage: DraftStage): [DraftSplit[], "all" | "amounts"][] =>
+    stage.payouts !== "routed"
+      ? []
+      : multiToken
+        ? [[stage.payoutSplits, stage.routedMode], [stage.payoutSplitsUsdc, stage.routedModeUsdc]]
+        : [[stage.payoutSplits, stage.routedMode]];
+  const routed = stages.flatMap(routedTokens);
+  const paysRecipients = routed.some(([rows]) => rows.length > 0);
+  const paysOwner = routed.some(([rows, mode]) => mode === "all" && splitsTotal(rows, "percent") < 100);
+  const holders = stages.some(
+    (stage) => stage.cashOuts && !routesAllFunds(stage.payouts, stageRoutesEverything(stage, multiToken)),
+  );
+  const who = [
+    ...(hasOwner && (paysOwner || stages.some((stage) => stageWithdrawals(stage, multiToken))) ? ["the project owner"] : []),
+    ...(paysRecipients ? ["payout recipients"] : []),
+    ...(holders ? [itemsRedeem ? "shop item holders" : "token holders"] : []),
+    ...(!hasOwner && paysOwner ? ["anyone, to a dead address, where it's lost"] : []),
+  ];
+  if (who.length === 0)
+    return hasOwner
+      ? "Nobody, until the owner changes the rules"
+      : "Nobody. Funds can't leave the project.";
+  const list = who.length === 1 ? who[0] : `${who.slice(0, -1).join(", ")} and ${who[who.length - 1]}`;
+  return list[0].toUpperCase() + list.slice(1);
+}
+
+/** Summary parts for a stage (website/'s stageSummaryRaw). Pass `review` for the launch
+ *  review's full statement of what the stage encodes; cards use the short form. */
 /** "after 3 cycles of Ruleset #1" / "on Jan 5, 2027 (snapped to Ruleset #1's cycle)". */
 function startLabel(stage: DraftStage, index: number): string {
   if (stage.startMode === "date") {
@@ -376,13 +561,16 @@ export function stageSummaryParts(
   unitLabel: string,
   flavor: "project" | "revnet" = "project",
   multiToken = false,
+  review?: StageReview,
 ): string[] {
   const parts: string[] = [];
   if (index === 0) {
     parts.push(
       scheduledStart(stage) !== null
         ? `Starts ${formatDateTime(scheduledStart(stage)!)}`
-        : "Starts at launch",
+        : review && flavor === "revnet"
+          ? `Starts about ${LAUNCH_START_DELAY_SECONDS / 60} minutes after launch`
+          : "Starts at launch",
     );
   } else if (flavor === "revnet") {
     parts.push(
@@ -395,7 +583,9 @@ export function stageSummaryParts(
   if (flavor !== "revnet")
     parts.push(
       duration === 0
-        ? "Lasts until changed"
+        ? review && !review.hasOwner
+          ? "Lasts forever"
+          : "Lasts until changed"
         : duration === FOREVER_SECONDS
           ? "Lasts forever"
           : `Lasts ${secondsLabel(duration)}`,
@@ -410,19 +600,37 @@ export function stageSummaryParts(
     parts.push("Keeps issuance" + (cutClause ? `, ${cutClause}` : ""));
   } else if (Number(stage.issuanceRate) > 0) {
     parts.push(
-      `Issues ${Number(stage.issuanceRate).toLocaleString("en-US")} per ${unitLabel}` +
+      `Issues ${Number(stage.issuanceRate).toLocaleString("en-US")} tokens per ${unitLabel}` +
         (cutClause ? `, ${cutClause}` : ""),
     );
   } else {
     parts.push("No issuance");
   }
+  if (review && flavor !== "revnet") {
+    if (!stage.acceptPayments) parts.push("Payments paused");
+    parts.push(...fundsParts(stage, multiToken, review));
+  }
   const splitsPct = splitsTotal(stage.reservedSplits, "percent");
-  if (splitsPct > 0)
-    parts.push(
+  if (splitsPct > 0) {
+    const label =
       flavor === "revnet"
         ? `${splitsPct}% to splits`
-        : `${splitsPct}% reserved`,
+        : `${splitsPct}% reserved`;
+    parts.push(
+      review
+        ? `${label}: ${percentRecipients(stage.reservedSplits, review.chainIds)}`
+        : label,
     );
+  }
+  if (review) {
+    for (const row of encodedAutoIssuances(stage, review.chainIds)) {
+      parts.push(
+        `Mints ${Number(row.count).toLocaleString("en-US")} tokens to ${addressLabel(row.beneficiary)}${
+          review.chainIds.length > 1 ? ` on ${chainName(row.chainId)}` : ""
+        }`,
+      );
+    }
+  }
   // Revnets never encode payout limits. Imported drafts may still carry an
   // old project payout mode, but it must not leak into a revnet summary and
   // falsely imply that cash outs are unavailable.
@@ -438,9 +646,14 @@ export function stageSummaryParts(
         ? `${cashOutTaxValue(stageCashOutTax(stage))} cash out tax`
         : `${cashOutTaxValue(CASH_OUTS_OFF_REVNET)} cash out tax`,
     );
-  } else if (stage.cashOuts && !routedAll) {
+  } else if (routedAll) {
+    parts.push("Cash outs off, all funds can be paid out");
+  } else if (stage.cashOuts) {
     parts.push(`${cashOutTaxValue(stageCashOutTax(stage))} cash out tax`);
+  } else {
+    parts.push("Cash outs off");
   }
+  if (review?.hasOwner && flavor !== "revnet") parts.push(...ownerParts(stage));
   return parts;
 }
 

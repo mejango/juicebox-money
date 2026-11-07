@@ -126,7 +126,7 @@ describe('multichain launch validation', () => {
     await act(async () => launchButton(root).props.onClick())
     const modal = root.findByProps({ 'data-tx-confirm': true })
     expect(modal.findAll(node => typeof node.props['data-row'] === 'string').map(node => node.props['data-row']))
-      .toEqual(['Project owner', 'Launching', 'Chains', 'Accounting', 'Rules', 'Creation fees'])
+      .toEqual(['Project', 'Project owner', 'Can move funds', 'Can change rules', 'Launching', 'Chains', 'Accounting', 'Rules', 'Creation fees'])
     expect(textOf(modal.findByProps({ 'data-row': 'Launching' }))).toBe('Simple project')
     expect(textOf(modal.findByProps({ 'data-row': 'Chains' }))).toContain('Optimism Sepolia')
     expect(textOf(modal.findByProps({ 'data-row': 'Accounting' }))).toBe('ETH')
@@ -239,6 +239,64 @@ describe('multichain launch validation', () => {
     await act(async () => root.findByProps({ 'aria-label': 'Rules' }).props.onClick())
     const editor = root.findAll(node => typeof node.props.fundsUnit === 'string')[0]
     expect(editor.props).toMatchObject({ unitLabel: 'USD', fundsUnit: 'ETH' })
+  })
+
+  it('states the money decisions of the draft it will encode, in the summary and the confirmation', async () => {
+    const saved = draft('revnet')
+    saved.owner = '0xdead000000000000000000000000000000000000'
+    saved.ticker = 'REG'
+    saved.stages[0] = {
+      ...saved.stages[0],
+      scheduleOn: true,
+      schedule: '2030-01-01T12:00',
+      reservedSplits: [{ ...newDraftSplit(), value: '20', recipient: '0x1111111111111111111111111111111111111111' }],
+      autoIssuances: [{ id: 'a', count: '1000', address: '0x2222222222222222222222222222222222222222', chainId: null, perChain: {} }],
+    }
+    const root = await mountDraft(saved)
+    const summary = root.findByProps({ 'aria-label': 'Launch summary' })
+    await act(async () => launchButton(root).props.onClick())
+    const modal = root.findByProps({ 'data-tx-confirm': true })
+    for (const text of [textOf(summary), textOf(modal)]) {
+      expect(text).toContain('Multichain regression')
+      expect(text).toContain('No operator')
+      expect(text).toContain('Token holders, by cashing out or taking loans')
+      expect(text).toContain("Nobody. Stages are fixed at launch.")
+      expect(text).toContain('Starts Jan 1, 2030')
+      expect(text).toContain('20% to splits: 20% to 0x1111…1111')
+      expect(text).toContain('Mints 1,000 tokens to 0x2222…2222 on')
+    }
+  })
+
+  it('says nobody can withdraw or change a Simple project with no owner, and what an owner can do', async () => {
+    const off = draft()
+    off.owner = '0xdead000000000000000000000000000000000000'
+    let root = await mountDraft(off)
+    let text = textOf(root.findByProps({ 'aria-label': 'Launch summary' }))
+    expect(text).toContain('No owner')
+    expect(text).toContain("Nobody. Funds can't leave the project.")
+    expect(text).toContain("Nobody. The rules can't change.")
+    expect(text).toContain('Nobody can withdraw funds')
+    expect(text).toContain('Cash outs off')
+    expect(text).not.toContain('Owner can')
+    expect(text).not.toContain('No retained authority')
+    await act(async () => renderer!.unmount())
+    renderer = undefined
+
+    root = await mountDraft(draft())
+    text = textOf(root.findByProps({ 'aria-label': 'Launch summary' }))
+    expect(text).toContain('Owner can withdraw all funds')
+    expect(text).toContain('Owner can create tokens without payment')
+    expect(text).toContain('The project owner, taking effect at once')
+  })
+
+  it('leaves a past step undone while it still blocks the launch', async () => {
+    const blank = draft()
+    blank.name = ''
+    const root = await mountDraft(blank)
+    const nav = root.findByProps({ 'aria-label': 'Create steps' })
+    const tile = (label: string) => nav.findByProps({ 'aria-label': label }).findAllByType('span')[0].props.className
+    expect(tile('Look & Feel')).not.toContain('bg-ink')
+    expect(tile('Flavor')).toContain('bg-ink')
   })
 
   it('offers a visible way to add a ruleset', async () => {
@@ -446,7 +504,7 @@ describe('launch summary creation fees', () => {
     const root = await mountDraft(draft())
     const summary = root.findByProps({ 'aria-label': 'Launch summary' })
     expect(summary.findAllByType('dt').map(textOf)).toEqual([
-      'Project owner', 'Launching', 'Accounting', 'Rules', 'Creation fees',
+      'Project', 'Project owner', 'Can move funds', 'Can change rules', 'Launching', 'Accounting', 'Rules', 'Creation fees',
       'Sepolia', 'Optimism Sepolia', 'Arbitrum Sepolia', 'Base Sepolia',
     ])
     const details = summary.findByType('details')
