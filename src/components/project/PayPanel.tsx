@@ -65,7 +65,7 @@ import {
   payButtonAction,
 } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
-import { useShopCart } from "@/components/project/ShopCartProvider";
+import { useShopCart, useShopTabOpen } from "@/components/project/ShopCartProvider";
 import { contractReverted } from "@/lib/errors";
 import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
 import {
@@ -269,6 +269,7 @@ export function PayPanel({
     registerItem,
     clear: clearCart,
   } = useShopCart();
+  const shopTabOpen = useShopTabOpen();
 
   // The chain being paid — a project lives on every linked chain, and the
   // payer picks which one. projectId can differ per chain (sucker groups).
@@ -1580,7 +1581,25 @@ export function PayPanel({
     </div>;
   }
 
-  const hasShopPreview = !!shop && shop.tiers.length > 0 && mode === "pay";
+  const shopInPay = !!shop && shop.tiers.length > 0 && mode === "pay";
+  const hasShopPreview = shopInPay && !shopTabOpen;
+  const shopCheckoutNotice = !shopInPay || cartCount === 0 ? null : shopRoutesLoading ? (
+    <Skeleton
+      className="mt-2 h-3 w-40 rounded"
+      role="status"
+      aria-label="Loading checkout currencies"
+    />
+  ) : supportedShopContextIndexes.length === 0 ? (
+    <p className="mt-1 text-xs leading-relaxed text-red-600">
+      {shopRouteCheckFailed
+        ? `Couldn't check which payment tokens have a price feed for these items on ${chainName(chainId)}. Try again in a moment.`
+        : `No directly accepted payment token has a verified price feed for these items on ${chainName(chainId)}.`}
+    </p>
+  ) : !shopMatchesToken ? (
+    <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+      Switching to a supported checkout currency…
+    </p>
+  ) : null;
 
   return (
     <div className={hasShopPreview ? undefined : "-mt-3"}>
@@ -1599,23 +1618,7 @@ export function PayPanel({
               All →
             </button>
           </div>
-          {cartCount > 0 && shopRoutesLoading ? (
-            <Skeleton
-              className="mt-2 h-3 w-40 rounded"
-              role="status"
-              aria-label="Loading checkout currencies"
-            />
-          ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
-            <p className="mt-1 text-xs leading-relaxed text-red-600">
-              {shopRouteCheckFailed
-                ? `Couldn't check which payment tokens have a price feed for these items on ${chainName(chainId)}. Try again in a moment.`
-                : `No directly accepted payment token has a verified price feed for these items on ${chainName(chainId)}.`}
-            </p>
-          ) : cartCount > 0 && !shopMatchesToken ? (
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Switching to a supported checkout currency…
-            </p>
-          ) : null}
+          {shopCheckoutNotice}
 
           <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
             {shop.tiers.slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE).map((tier) => {
@@ -1635,13 +1638,13 @@ export function PayPanel({
                 <NftCheckoutCard key={tier.id} tierId={tier.id} name={item.name} image={tier.image} qty={qty}
                   priceLabel={`${formatTokenAmount(price, shop.pricingDecimals)} ${shopPricingSymbol}`}
                   soldOut={soldOut} busy={busy} canAdd={qty < cap}
-                  onSelect={() => setQuantity(tier.id, 1, item)}
-                  onRemove={() => setQuantity(tier.id, qty - 1, item)}
-                  onAdd={() => setQuantity(tier.id, Math.min(cap, qty + 1), item)} />
+                  onSelect={() => setQuantity(tier.id, 1, item)} />
               );
             })}
           </div>
         </div>
+      ) : shopCheckoutNotice ? (
+        <div className="mb-3">{shopCheckoutNotice}</div>
       ) : null}
 
       {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
@@ -1919,15 +1922,17 @@ export function PayPanel({
                   removeDisabled={busy} addDisabled={busy || row.quantity >= row.cap} />
               ))}
               <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-smoke-600">
-                    {cartCount} item{cartCount === 1 ? "" : "s"}
-                  </span>
-                  <span className="tabular-nums text-ink">
-                    {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
-                    {shopPricingSymbol}
-                  </span>
-                </div>
+                {cartAmountDue !== cartTotal ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-smoke-600">
+                      {cartCount} item{cartCount === 1 ? "" : "s"}
+                    </span>
+                    <span className="tabular-nums text-ink">
+                      {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
+                      {shopPricingSymbol}
+                    </span>
+                  </div>
+                ) : null}
                 {!shopCreditsLoading && shopCreditApplied > 0n ? (
                   <div className="flex items-center justify-between gap-3 text-emerald-700">
                     <span>Shop credit applied</span>

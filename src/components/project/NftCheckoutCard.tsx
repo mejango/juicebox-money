@@ -3,7 +3,8 @@
 import { NftCheckoutImage } from '@/components/project/NftCheckoutImage'
 import { QuantityStepper } from '@/components/ui/QuantityStepper'
 
-/** Presentation only: the protocol owner supplies quantities, prices and actions. */
+/** Presentation only: the protocol owner supplies quantities, prices and actions. Without onAdd and
+ *  onRemove a selected card shows its price, for a checkout whose cart line holds the stepper. */
 export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut, busy, canAdd, onSelect, onAdd, onRemove }: {
   tierId: number
   name: string
@@ -14,8 +15,8 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
   busy: boolean
   canAdd: boolean
   onSelect: () => void
-  onAdd: () => void
-  onRemove: () => void
+  onAdd?: () => void
+  onRemove?: () => void
 }) {
   return (
                 <div
@@ -63,6 +64,8 @@ export function NftCheckoutCard({ tierId, name, image, qty, priceLabel, soldOut,
                     >
                       {priceLabel}
                     </button>
+                  ) : !onAdd || !onRemove ? (
+                    <p className="px-2 pb-2 text-[11px] text-smoke-700">{priceLabel}</p>
                   ) : (
                     <QuantityStepper
                       size="sm"

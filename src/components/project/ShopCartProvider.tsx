@@ -6,6 +6,7 @@ import {
   useContext,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 
@@ -113,4 +114,18 @@ export function useShopCart(): ShopCartContextValue {
     throw new Error('useShopCart must be used inside ShopCartProvider.')
   }
   return value
+}
+
+function subscribeToHash(onChange: () => void) {
+  window.addEventListener('hashchange', onChange)
+  return () => window.removeEventListener('hashchange', onChange)
+}
+
+/** The Shop tab has the grid, so the pay card leaves out its preview of the same items. */
+export function useShopTabOpen() {
+  return useSyncExternalStore(
+    subscribeToHash,
+    () => window.location.hash.replace('#', '').split('/')[0] === 'shop',
+    () => false,
+  )
 }

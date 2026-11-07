@@ -779,6 +779,48 @@ describe('a checkout whose items change at the same total', () => {
     expect(request.args[6]).toBe(OTHER_METADATA)
   })
 
+  describe('shop checkout on the pay card', () => {
+    const hat = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
+      cantBuyWithCredits: false, name: 'Hat', description: null, image: null }
+    async function withCart(routes: unknown) {
+      m.realCart = true
+      m.queries.payShop = { data: { tiersComplete: true, hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [hat] } }
+      m.queries.payShopRoutes = routes
+      const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+      let cart!: ReturnType<typeof useShopCart>
+      function Probe() {
+        cart = useShopCart()
+        return null
+      }
+      await act(async () => root.render(
+        <ShopCartProvider>
+          <Probe />
+          <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+        </ShopCartProvider>,
+      ))
+      await act(async () => cart.setQuantity(1, 1))
+    }
+    const supported = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    afterEach(() => { window.location.hash = '' })
+
+    it('has one stepper and one total for an item', async () => {
+      await withCart(supported)
+      expect(document.querySelectorAll('[aria-label="Add one Hat"]')).toHaveLength(1)
+      expect(document.querySelectorAll('[aria-label="Remove one Hat"]')).toHaveLength(1)
+      expect(document.querySelector('[data-nft-checkout-tier="1"]')).not.toBeNull()
+      expect(document.body.textContent).toContain('Amount due')
+      expect(document.body.textContent).not.toContain('1 item')
+    })
+
+    it('leaves the item preview to the Shop tab, keeping the checkout notice', async () => {
+      window.location.hash = '#shop'
+      await withCart({ data: {}, isLoading: false })
+      expect(document.querySelector('[data-nft-checkout-tier="1"]')).toBeNull()
+      expect(document.body.textContent).not.toContain('All →')
+      expect(document.body.textContent).toContain('No directly accepted payment token has a verified price feed')
+    })
+  })
+
   it('prepares again when the shop id target changes for the same items', async () => {
     m.realCart = true
     const tier = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
