@@ -58,6 +58,8 @@ export type Shop = {
   hook: Address
   /** SDK-authenticated native store/snapshot, used only for cosmetic URI reads. */
   store?: Address
+  /** The store has a token URI resolver for this hook, so tiers can be named from it. */
+  hasTokenUriResolver?: boolean
   inventoryBlockNumber?: bigint
   /** Shared implementation address used to key 721 hook metadata. */
   idTarget?: Address
@@ -133,10 +135,15 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
   const mediaTierKey = tiers
     .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}${tier.name === undefined ? '' : `:${tier.name}`}`)
     .join(',')
+  const resolver = !nativeTierIds && shop?.store && shop.hasTokenUriResolver && publicClient
+    ? { client: publicClient, store: shop.store, hook: shop.hook }
+    : undefined
   const query = useKeptQuery<ShopMediaResult>({
     // Old persisted maps could contain a failed fetch cached as a valid {}.
     queryKey: ['shop721Media', 2, chainId, shop?.hook, nativeTierIds === undefined
-      ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
+      ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey]),
+      // Media persisted before the resolver was asked never goes stale, so it needs its own key.
+      ...(resolver ? ['resolver'] : [])],
     meta: PERSIST,
     enabled: !!shop && tiers.length > 0 && (!nativeTierIds || !shop.store || !!publicClient || tiers.every(tier => !!tier.resolvedUri)),
     staleTime: query => query.state.data?.failedTierIds.length ? 0 : Infinity,
@@ -146,7 +153,7 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
       if (nativeTierIds && shop?.protocol === 'defifa') {
         return resolveNativeShopMedia(publicClient, shop, tiers, previous)
       }
-      return resolveShopMedia(tiers, previous)
+      return resolveShopMedia(tiers, previous, resolver)
     },
   })
   return {
