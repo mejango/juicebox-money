@@ -7,7 +7,7 @@ export const CHECKOUT_ACTION_BUTTON_CLASS = 'btn-primary shrink-0 rounded-l-none
 export function CheckoutAmountRow({ amount, currency, action }: {
   amount: ReactNode
   currency: ReactNode
-  action: ReactNode
+  action?: ReactNode
 }) {
   return (
     <div className="input-well flex items-stretch overflow-hidden !p-0">

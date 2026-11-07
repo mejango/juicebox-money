@@ -61,11 +61,13 @@ import {
   buyableAsset,
   defaultsToDollars,
   payButtonAction,
+  pickedTokenIndex,
+  tokensForDollars,
 } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { contractReverted } from "@/lib/errors";
-import { formatTokenAmount } from "@/lib/format";
+import { formatTokenAmount, formatUsd18 } from "@/lib/format";
 import { TIER_UNLIMITED_SUPPLY } from "@/lib/tier-metadata";
 import { tokenSymbol } from "@/lib/token-symbol";
 import {
@@ -84,7 +86,7 @@ import { planShown, sequenceCalls } from "@/lib/reviewed-send";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721, useShop721Media, type Shop, type TierMedia } from "@/hooks/useShop721";
-import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from "@/components/project/CheckoutAmountRow";
+import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS } from "@/components/project/CheckoutAmountRow";
 import { NftCartLine } from "@/components/project/NftCartLine";
 import { shopCartTotal } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
@@ -309,6 +311,9 @@ export function PayPanel({
   // The (address+route) identity of the user's pick, so a background refetch or
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null);
+  const selectedSymbolRef = useRef("");
+  /** A picked token the current chain does not accept, until the payer moves on. */
+  const [droppedToken, setDroppedToken] = useState<string | null>(null);
   const [memo, setMemo] = useState("");
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [sequenceStarted, setSequenceStarted] = useState(false);
@@ -484,10 +489,17 @@ export function PayPanel({
     const key = selectedKeyRef.current;
     // Touched with no token picked: the payer chose dollars, which no refetch removes.
     if (!key) return;
-    const idx = list.findIndex((t) => payTokenKey(t) === key);
+    const idx = pickedTokenIndex(list, key, selectedSymbolRef.current, payTokenKey);
     if (idx >= 0) {
       if (idx !== tokenIndex) setTokenIndex(idx);
+      selectedKeyRef.current = payTokenKey(list[idx]);
     } else {
+      // The digits typed were for the dropped token. Typed dollars still mean dollars.
+      if (!payWithDollars) {
+        setDroppedToken(selectedSymbolRef.current);
+        setAmount("");
+        setDebouncedAmount("");
+      }
       selectedKeyRef.current = null;
       setTokenTouched(false);
       setTokenIndex(0);
@@ -568,10 +580,11 @@ export function PayPanel({
   // A wallet with nothing in it cannot pay in any of these tokens, so the menu opens on "$"
   // rather than on a token the payer would have to go and acquire first. Their own choice wins
   // the moment they make one.
+  // Never dollars where they cannot buy anything: Pay would open a purchase that does nothing.
   useEffect(() => {
-    if (tokenTouched) return;
-    setPayWithDollars(holdsNothing);
-  }, [holdsNothing, tokenTouched]);
+    if (context && !onRamp.supported) setPayWithDollars(false);
+    else if (!tokenTouched) setPayWithDollars(holdsNothing);
+  }, [holdsNothing, tokenTouched, onRamp.supported, context]);
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
   // The Shop tab's read, whose tiers come without resolved URIs: asking the store to resolve a
@@ -581,6 +594,26 @@ export function PayPanel({
   const shop = useMemo(() => inventoryShop ? payShopInfo(inventoryShop, shopMedia ?? {}) : null, [inventoryShop, shopMedia]);
   const shopPending = identity.isPending || (!nativeMarket && inventory.isPending && !inventory.isError);
   const shopFailed = !shop && !nativeMarket && !!inventory.isError;
+
+  // Dollars are what the amount means only while nothing in a cart sets it in tokens.
+  const amountIsDollars = payWithDollars && cartCount === 0;
+  // The digits on screen stop meaning what they meant when their unit changes or the cart that
+  // set them empties. A cart that remains sets its own total below.
+  const previousCartCount = useRef(cartCount);
+  useEffect(() => {
+    const hadItems = previousCartCount.current > 0;
+    previousCartCount.current = cartCount;
+    if (hadItems && cartCount === 0) {
+      setAmount("");
+      setDebouncedAmount("");
+    }
+  }, [cartCount]);
+  useEffect(() => {
+    if (cartCount > 0) return;
+    setAmount("");
+    setDebouncedAmount("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payWithDollars]);
 
   // Keep the shared cart's presentation metadata fresh even before the user
   // opens the Shop tab. Clamp stale quantities against live per-chain supply.
@@ -764,6 +797,7 @@ export function PayPanel({
     if (!preferred) return;
     setTokenIndex(preferred.index);
     selectedKeyRef.current = payTokenKey(preferred.context);
+    selectedSymbolRef.current = preferred.context.symbol;
     setTokenTouched(true);
   }, [
     cartCount,
@@ -905,11 +939,17 @@ export function PayPanel({
       !!context &&
       !!terminalAddress &&
       (amountRaw > 0n || cartCount > 0) &&
+      !amountIsDollars &&
       mode === "pay" && !nativeMarket && identity.isSuccess,
     // Keep the last verified quote mounted while the next amount is quoted.
     // The receipt gently dims it below, and submission stays blocked until the
-    // fresh quote arrives.
-    placeholderData: (previous) => previous,
+    // fresh quote arrives. Another token's or chain's is no hint at all.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === chainId &&
+      previousQuery?.queryKey[3] === context?.token &&
+      previousQuery?.queryKey[4] === context?.viaRouter
+        ? previous
+        : undefined,
     retry: false,
     queryFn: () =>
       prepareUserPay(publicClient!, {
@@ -924,6 +964,68 @@ export function PayPanel({
       }),
   });
   const preview = prepared?.preview;
+
+  // ---- What the amount is worth in dollars ----
+  // Display only: nothing sends these. Paying with dollars buys the token first, and the payment
+  // after that gets its own quote and review. A token with no price simply shows no figure.
+  const { data: tokensPerDollar, isLoading: dollarPriceLoading } = useQuery({
+    queryKey: ["payTokensPerDollar", chainId, projectId, context?.currency, decimals],
+    enabled: !!publicClient && !!context && mode === "pay" && amountRaw > 0n,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: jbV6ContractAddress[JBCoreContracts.JBPrices][chainId],
+        abi: jbPricesAbi,
+        functionName: "pricePerUnitOf",
+        args: [BigInt(projectId), BigInt(context!.currency), BigInt(BASE_CURRENCY_USD), BigInt(decimals)],
+      }),
+  });
+  const dollarsInToken =
+    amountIsDollars && tokensPerDollar ? tokensForDollars(debouncedAmount, tokensPerDollar) : 0n;
+  const { data: dollarQuote, isFetching: dollarQuoteLoading } = useQuery({
+    queryKey: [
+      "payDollarQuote",
+      chainId,
+      projectId,
+      context?.token,
+      context?.viaRouter,
+      terminalAddress,
+      dollarsInToken.toString(),
+      address ?? null,
+    ],
+    enabled:
+      !!publicClient && !!context && !!terminalAddress && mode === "pay" &&
+      dollarsInToken > 0n && !nativeMarket && identity.isSuccess,
+    retry: false,
+    queryFn: () =>
+      prepareUserPay(publicClient!, {
+        chainId,
+        terminal: terminalAddress!,
+        projectId: BigInt(projectId),
+        token: context!.token,
+        amount: dollarsInToken,
+        beneficiary: address ?? zeroAddress,
+      }),
+  });
+  const amountUsd = !amountIsDollars && tokensPerDollar && amountRaw > 0n
+    ? (amountRaw * 10n ** 18n) / tokensPerDollar
+    : null;
+
+  // What the receipt reads, and whether it still answers what is typed.
+  const receipt = amountIsDollars ? dollarQuote : prepared;
+  const receiptPending =
+    amount !== debouncedAmount ||
+    (amountIsDollars
+      ? dollarPriceLoading || dollarQuoteLoading
+      : previewLoading || previewIsPrevious);
+  const receiptPendingClass = receiptPending ? "opacity-40" : "";
+  const showReceipt =
+    mode === "pay" &&
+    (amountIsDollars
+      ? dollarPriceLoading || dollarQuoteLoading || (dollarsInToken > 0n && !!dollarQuote && dollarQuote.preview.beneficiaryTokenCount > 0n)
+      : amountRaw > 0n && !previewError && (previewLoading || (!!preview && preview.beneficiaryTokenCount > 0n)));
+  const receiptIsEstimate = amountIsDollars || (!!prepared && prepared.minReturnedTokens < (preview?.beneficiaryTokenCount ?? 0n));
   // The payment whose quote the payer asked to read again, until that read settles.
   // A background refetch keeps the notice; only the payer's own retry says Refreshing.
   const [quoteRetryFor, setQuoteRetryFor] = useState<string | null>(null);
@@ -1513,15 +1615,17 @@ export function PayPanel({
   const switchChain = (value: string) => {
     const next = chains.find(([cid]) => cid === Number(value));
     if (!next) return;
+    setDroppedToken(null);
+    // Digits typed for a token stay with that token: its new chain's list keeps it or says it can't.
+    if (context && amount.trim() && !selectedKeyRef.current) {
+      selectedKeyRef.current = payTokenKey(context);
+      selectedSymbolRef.current = context.symbol;
+      setTokenTouched(true);
+    }
     setDeployment({
       chainId: next[0] as JBChainId,
       projectId: next[1],
     });
-    setTokenIndex(0);
-    setTokenTouched(false);
-    selectedKeyRef.current = null;
-    setAmount("");
-    setDebouncedAmount("");
   };
   // Items waiting on another of this project's chains, until the payer goes back or empties them.
   const otherChainCart = chains
@@ -1655,7 +1759,7 @@ export function PayPanel({
       </div>
       {mode === "addbalance" ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
-          Adds funds without minting tokens — useful for refills and refunds.
+          Adds to the project balance. You get no {projectTokenLabel}.
         </p>
       ) : null}
 
@@ -1667,10 +1771,10 @@ export function PayPanel({
             inputMode="decimal"
             // Dollars are shown with their sign and stored without it: everything downstream
             // — the preview, the amount sent to the provider — parses a number.
-            value={payWithDollars && amount ? `$${amount}` : amount}
+            value={amountIsDollars && amount ? `$${amount}` : amount}
             onChange={(e) => setAmount(e.target.value.replace(/^\$/, ""))}
             disabled={busy}
-            placeholder={payWithDollars ? "$0.00" : "0.00"}
+            placeholder={amountIsDollars ? "$0.00" : "0.00"}
             aria-label="Amount"
             className={CHECKOUT_AMOUNT_INPUT_CLASS}
           />
@@ -1686,6 +1790,7 @@ export function PayPanel({
               value={payWithDollars ? BUY_OPTION : String(tokenIndex)}
               onChange={(value) => {
                 setTokenTouched(true);
+                setDroppedToken(null);
                 if (value === BUY_OPTION) {
                   // Selecting dollars buys nothing yet. The payer types what
                   // they want to spend first, and Pay explains the swap they
@@ -1699,7 +1804,10 @@ export function PayPanel({
                 // Remember the explicit pick so a refetch/chain-switch remaps
                 // to this exact token instead of snapping back to list[0].
                 const picked = contexts[i];
-                if (picked) selectedKeyRef.current = payTokenKey(picked);
+                if (picked) {
+                  selectedKeyRef.current = payTokenKey(picked);
+                  selectedSymbolRef.current = picked.symbol;
+                }
                 setTokenTouched(true);
               }}
               disabled={busy}
@@ -1735,40 +1843,16 @@ export function PayPanel({
             </span>
           )}
             {/* Inside the field, under the token it refers to. */}
-        </>} action={
-          <button
-            onClick={submit}
-            // Warm what the click opens on approach, so it never waits for a download:
-            // the review when connected, Para's runtime when this reads "Sign in".
-            onPointerEnter={isConnected ? preloadReview : preloadParaHost}
-            onFocus={isConnected ? preloadReview : preloadParaHost}
-            onPointerDown={isConnected ? preloadReview : preloadParaHost}
-            onTouchStart={isConnected ? undefined : preloadParaHost}
-            disabled={
-              formBlocked ||
-              (isConnected && cartBlocked) ||
-              // Paying in dollars is a purchase, not a send: it needs an
-              // amount and nothing else. The checks below are about a token
-              // this payer does not hold yet.
-              (isConnected &&
-                !payWithDollars &&
-                ((amountRaw <= 0n &&
-                  !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
-                  (mode === "pay" && !previewReady))) ||
-              (isConnected && payWithDollars && amount.trim() === "")
-            }
-            className={CHECKOUT_ACTION_BUTTON_CLASS}
-          >
-            {payActionLabel}
-          </button>
-        } />
-        {/* No gap: the invisible spacer at the end has to match the pay
-            button's width exactly, or the balance drifts off the token
-            selector it sits under. */}
+        </>} />
         <div className="mt-1.5 flex items-start">
           <div className="min-w-0 flex-1 pr-3">
             {pairCheck.line ? (
               <p role="alert" className="text-xs text-error-500">{pairCheck.line}</p>
+            ) : null}
+            {amountUsd !== null ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>
+                About {formatUsd18(amountUsd)}
+              </p>
             ) : null}
             {notStarted ? (
               <p className="text-xs text-smoke-700">
@@ -1793,15 +1877,6 @@ export function PayPanel({
               </span>
             ) : null}
           </div>
-          {/* The pay button lives inside the field's well, so without a
-              matching spacer this column right-aligns to the button's edge
-              instead of the field's. */}
-          <span
-            aria-hidden="true"
-            className="invisible shrink-0 px-5 text-sm font-medium"
-          >
-            {payActionLabel}
-          </span>
         </div>
         {/* What "$" costs, said where it is spent. A payer who picked dollars is one step from a
           purchase they did not ask for, so the swap is named before it starts rather than
@@ -1844,21 +1919,16 @@ export function PayPanel({
           </div>
         </ModalShell>
       ) : null}
-      {mode === "pay" &&
-        amountRaw > 0n &&
-        !previewError &&
-        (previewLoading || (preview && preview.beneficiaryTokenCount > 0n)) ? (
+      {showReceipt ? (
           <div className="mt-3">
-            <p className="text-xs text-smoke-500">Estimated tokens</p>
-            {preview && preview.beneficiaryTokenCount > 0n ? (
+            <p className="text-xs text-smoke-500">{receiptIsEstimate ? "You get about" : "You get"}</p>
+            {receipt && receipt.preview.beneficiaryTokenCount > 0n ? (
               <p
                 aria-live="polite"
-                aria-busy={previewLoading}
-                className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
-                  previewLoading ? "text-smoke-500" : "text-ink"
-                }`}
+                aria-busy={receiptPending}
+                className={`font-agrandir text-xl font-medium text-ink transition-opacity duration-200 ${receiptPendingClass}`}
               >
-                {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{" "}
+                {formatTokenAmount(receipt.preview.beneficiaryTokenCount, 18)}{" "}
                 {projectTokenLabel}
               </p>
             ) : (
@@ -1868,6 +1938,19 @@ export function PayPanel({
                 aria-label="Calculating token return"
               />
             )}
+            {amountIsDollars ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>Before card or bank fees</p>
+            ) : receiptIsEstimate && prepared ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>
+                At least {formatTokenAmount(prepared.minReturnedTokens, 18)} {projectTokenLabel}
+              </p>
+            ) : null}
+            {receipt && receipt.preview.reservedTokenCount > 0n ? (
+              <p className={`mt-1 text-xs text-smoke-500 ${receiptPendingClass}`}>
+                Other recipients get {formatTokenAmount(receipt.preview.reservedTokenCount, 18)}{" "}
+                {projectTokenLabel}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -1962,27 +2045,10 @@ export function PayPanel({
             </div>
           ) : null}
 
-          {preview && preview.reservedTokenCount > 0n ? (
-            <p className="mt-1.5 text-xs text-smoke-500">
-              Other recipients get {formatTokenAmount(preview.reservedTokenCount, 18)}{" "}
-              {projectTokenLabel}
-            </p>
-          ) : null}
         </div>
       ) : null}
 
-      {/* The note follows the full receipt preview: tokens, shop items, and splits. */}
-      <input
-        type="text"
-        value={memo}
-        onChange={(e) => setMemo(e.target.value.slice(0, 256))}
-        disabled={busy}
-        placeholder="Add a note (optional)"
-        aria-label="Note"
-        className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-      />
-
-      {mode === "pay" && amountRaw > 0n && previewFailure instanceof PaySwapQuoteFailedError ? (
+      {mode === "pay" && !amountIsDollars && amountRaw > 0n && previewFailure instanceof PaySwapQuoteFailedError ? (
         <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
           {quoteRetryFor === paymentInputs ? "Refreshing…" : (
             <>
@@ -1997,7 +2063,7 @@ export function PayPanel({
             </>
           )}
         </p>
-      ) : mode === "pay" && amountRaw > 0n && previewError ? (
+      ) : mode === "pay" && !amountIsDollars && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
           until the preview works.{" "}
@@ -2033,6 +2099,49 @@ export function PayPanel({
         </p>
       ) : null}
 
+      {/* The note and the action follow the full receipt: tokens, shop items, and splits. */}
+      <div className="mt-3 flex items-stretch gap-2">
+        <input
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value.slice(0, 256))}
+          disabled={busy}
+          placeholder="Add a public note (optional)"
+          aria-label="Note"
+          className="input-well min-h-[44px] min-w-0 flex-1 px-3.5 text-sm disabled:opacity-60"
+        />
+        <button
+            onClick={submit}
+            // Warm what the click opens on approach, so it never waits for a download:
+            // the review when connected, Para's runtime when this reads "Sign in".
+            onPointerEnter={isConnected ? preloadReview : preloadParaHost}
+            onFocus={isConnected ? preloadReview : preloadParaHost}
+            onPointerDown={isConnected ? preloadReview : preloadParaHost}
+            onTouchStart={isConnected ? undefined : preloadParaHost}
+            disabled={
+              formBlocked ||
+              (isConnected && cartBlocked) ||
+              // Paying in dollars is a purchase, not a send: it needs an
+              // amount and nothing else. The checks below are about a token
+              // this payer does not hold yet.
+              (isConnected &&
+                !payWithDollars &&
+                ((amountRaw <= 0n &&
+                  !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
+                  (mode === "pay" && !previewReady))) ||
+              (isConnected && payWithDollars && amount.trim() === "")
+            }
+            className="btn-primary min-h-[44px] shrink-0 px-5 text-sm disabled:opacity-60"
+          >
+            {payActionLabel}
+          </button>
+      </div>
+
+      {droppedToken ? (
+        <p className="mt-3 text-sm text-smoke-700" role="status">
+          {droppedToken} isn&apos;t accepted on {chainName(chainId)}.
+        </p>
+      ) : null}
       {otherChainCart && mode === "pay" ? (
         <p className="mt-3 text-sm text-smoke-700" role="status">
           {otherChainCart.count} item{otherChainCart.count === 1 ? "" : "s"} in your{" "}

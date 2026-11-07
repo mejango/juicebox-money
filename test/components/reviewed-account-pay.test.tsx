@@ -112,7 +112,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
 vi.mock('@tanstack/react-query', async importOriginal => {
   const actual = await importOriginal<typeof import('@tanstack/react-query')>()
   return { ...actual, useQueryClient: () => displayQueries,
-    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => options.queryKey[0] === 'prepareUserPay'
+    useQuery: (options: Parameters<typeof actual.useQuery>[0]) => options.queryKey[0] === 'prepareUserPay' || options.queryKey[0] === 'payDollarQuote'
       ? actual.useQuery(options, prepareQueries)
       : options.queryKey[0] === 'suckerGroup'
       ? actual.useQuery({ ...options, retry: false }, displayQueries)
@@ -901,6 +901,94 @@ describe('changing chain with items in the cart', () => {
   })
 })
 
+describe('the pay receipt', () => {
+  const WEI_PER_DOLLAR = 448363759259978n
+  const setSelect = async (label: string, value: string) => {
+    const select = host.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!.call(select, value)
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+  }
+  const settle = () => act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
+  const amountInput = () => host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!
+  const quotedAmounts = () => vi.mocked(m.prepareUserPay).mock.calls.map(call => ((call as unknown[])[1] as { amount: bigint }).amount)
+
+  it('quotes dollars at the dollar price, never as that many tokens', async () => {
+    m.onRamp = true
+    m.queries.payTokensPerDollar = { data: WEI_PER_DOLLAR, isLoading: false }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+    await setSelect('Payment token', 'buy')
+    await typeAmount('25')
+    await settle()
+    await waitUntil(() => quotedAmounts().length > 0)
+    expect(quotedAmounts()).toEqual([25n * WEI_PER_DOLLAR])
+    expect(amountInput().value).toBe('$25')
+    await waitUntil(() => host.textContent!.includes('You get about'))
+    expect(host.textContent).toContain('Before card or bank fees')
+  })
+
+  it('clears the digits when their unit changes', async () => {
+    m.onRamp = true
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />))
+    await typeAmount('25')
+    await setSelect('Payment token', 'buy')
+    expect(amountInput().value).toBe('')
+  })
+
+  it('states what the payer gets, the minimum and other recipients, then the note and the action', async () => {
+    m.prepareUserPay = vi.fn(async () => ({ ...PREPARED, preview: { beneficiaryTokenCount: 10n ** 21n, reservedTokenCount: 5n * 10n ** 20n } }))
+    m.queries.payTokensPerDollar = { data: WEI_PER_DOLLAR, isLoading: false }
+    await enterAmount('1')
+    const text = host.textContent!
+    expect(text).toContain('You get about')
+    expect(text).not.toContain('Estimated tokens')
+    expect(text).toContain('At least 700 TKN')
+    expect(text).toContain('Other recipients get 500 TKN')
+    expect(text).toMatch(/About \$2,230\.33/)
+    const note = host.querySelector<HTMLInputElement>('input[aria-label="Note"]')!
+    expect(note.placeholder).toBe('Add a public note (optional)')
+    const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+    const receipt = [...host.querySelectorAll('p')].find(p => p.textContent === 'You get about')!
+    expect(follows(amountInput(), receipt)).toBe(true)
+    expect(follows(receipt, note)).toBe(true)
+    expect(follows(note, button('Pay'))).toBe(true)
+  })
+
+  it('keeps the amount and token across a chain change, and quotes again', async () => {
+    m.resolveSuckers = async () => [{ peerChainId: 8453, projectId: 42n }]
+    m.queries.paySurface = { data: { contexts: [contextFor('erc20'), contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42], [8453, 42]]} />))
+    await setSelect('Payment token', '1')
+    await typeAmount('0.5')
+    await settle()
+    await waitUntil(() => quotedAmounts().length > 0)
+    const before = vi.mocked(m.prepareUserPay).mock.calls.length
+    // Base lists the same tokens the other way round.
+    m.queries.paySurface = { data: { contexts: [contextFor('native'), contextFor('erc20')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false }
+    await setSelect('Chain', '8453')
+    await settle()
+    expect(amountInput().value).toBe('0.5')
+    const token = host.querySelector<HTMLSelectElement>('select[aria-label="Payment token"]')
+    expect(token === null ? 'ETH' : token.selectedOptions[0].textContent).toBe('ETH')
+    await waitUntil(() => vi.mocked(m.prepareUserPay).mock.calls.length > before)
+    expect((vi.mocked(m.prepareUserPay).mock.calls.at(-1) as unknown[])[1]).toMatchObject({ chainId: 8453, amount: 5n * 10n ** 17n })
+  })
+
+  it('clears the amount and says why when the new chain does not take the token', async () => {
+    m.resolveSuckers = async () => [{ peerChainId: 8453, projectId: 42n }]
+    m.queries.paySurface = { data: { contexts: [contextFor('erc20'), contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false }
+    await act(async () => root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42], [8453, 42]]} />))
+    await typeAmount('25')
+    m.queries.paySurface = { data: { contexts: [contextFor('native')], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] }, isError: false }
+    await setSelect('Chain', '8453')
+    await settle()
+    // 25 USDC must never become 25 ETH.
+    expect(amountInput().value).toBe('')
+    expect(host.textContent).toContain("USDC isn't accepted on Base.")
+  })
+})
+
 describe('a checkout whose items are all gone', () => {
   it('just pays, under the same project key, once the cart is emptied', async () => {
     m.realCart = true
@@ -937,9 +1025,11 @@ describe('a checkout whose items are all gone', () => {
     await act(async () => root.render(panel()))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     expect(cart.count).toBe(0)
-    // Nothing blocks: the amount pays as a plain payment, held by the project's one payment key.
-    const pay = [...host.querySelectorAll('button')].find(item => item.textContent === 'Pay')!
-    expect(pay.disabled).toBe(false)
+    // The digits were the items' total: gone with them, so an item sold elsewhere never becomes a blind payment.
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Amount"]')!.value).toBe('')
+    // Nothing else blocks: a new amount pays as a plain payment, held by the project's one payment key.
+    await typeAmount('1')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
   })
 })
 
