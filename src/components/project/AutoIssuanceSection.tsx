@@ -13,7 +13,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { AutoIssueAcrossChains, AutoIssueAllocation } from '@/components/project/ProjectTokenBatchFlow'
 import type { ProjectPair } from '@/lib/sucker-group'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { SkeletonTable } from '@/components/ui/Skeleton'
+import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
 import type { BsAutoIssuanceEvent } from '@/lib/loans-queries'
 import {
   formatDate,
@@ -198,7 +198,7 @@ function AutoIssueRow({
 
   // The stage this allocation belongs to (for the stage number + unlock date),
   // matched by stored stageId against the chain's queued rulesets.
-  const { data: stage } = useQuery({
+  const { data: stage, isPending: stagePending } = useQuery({
     ...allRulesetsQuery(publicClient!, { chainId, projectId: BigInt(projectId), size: 50n }),
     enabled: !!publicClient,
     select: all => {
@@ -232,7 +232,9 @@ function AutoIssueRow({
       }),
   })
 
-  const available = (remaining ?? 0n) > 0n
+  // REVOwner.autoIssueFor reverts until the stage starts, whatever amount is stored for it.
+  const locked = !!stage && stage.start > Math.floor(Date.now() / 1000)
+  const available = !locked && (remaining ?? 0n) > 0n
   const stageLabel = stage ? `Stage ${stage.number}` : `#${row.stageId}`
   const status = available
     ? 'Available'
@@ -263,7 +265,13 @@ function AutoIssueRow({
         {stage?.start ? formatDate(stage.start) : '—'}
       </td>
       <td className="py-2 text-right">
-        {available ? (
+        {locked ? (
+          <button type="button" disabled className="text-xs font-medium text-bluebs-600 disabled:opacity-50">
+            Distribute
+          </button>
+        ) : stagePending ? (
+          <Skeleton className="ml-auto h-4 w-16" />
+        ) : available ? (
           <DistributeFlow
             home={home}
             chainId={chainId}
