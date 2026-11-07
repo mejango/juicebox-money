@@ -22,6 +22,7 @@ import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 
 import {
   numOk,
+  routedModePatch,
   secondsLabel,
   stageCashOutTax,
   stageDurationSeconds,
@@ -791,14 +792,14 @@ export function StageRulesEditor({
               <div className="mt-1 flex flex-wrap gap-2">
                 <ChipButton
                   active={stage.routedMode === "all"}
-                  onClick={() => set({ routedMode: "all" })}
+                  onClick={() => set(routedModePatch(stage, "eth", "all"))}
                   disabled={disabled}
                 >
                   Split all funds by %
                 </ChipButton>
                 <ChipButton
                   active={stage.routedMode === "amounts"}
-                  onClick={() => set({ routedMode: "amounts" })}
+                  onClick={() => set(routedModePatch(stage, "eth", "amounts"))}
                   disabled={disabled}
                 >
                   Fixed {unitLabel} amounts
@@ -834,14 +835,14 @@ export function StageRulesEditor({
                   <div className="mt-1 flex flex-wrap gap-2">
                     <ChipButton
                       active={stage.routedModeUsdc === "all"}
-                      onClick={() => set({ routedModeUsdc: "all" })}
+                      onClick={() => set(routedModePatch(stage, "usdc", "all"))}
                       disabled={disabled}
                     >
                       Split all funds by %
                     </ChipButton>
                     <ChipButton
                       active={stage.routedModeUsdc === "amounts"}
-                      onClick={() => set({ routedModeUsdc: "amounts" })}
+                      onClick={() => set(routedModePatch(stage, "usdc", "amounts"))}
                       disabled={disabled}
                     >
                       Fixed USD amounts

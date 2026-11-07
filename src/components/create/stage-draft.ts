@@ -318,6 +318,30 @@ export function stageRoutesEverything(
     : [stage.routedMode === "all"];
 }
 
+/**
+ * A payout token's switch between percent and fixed amounts. One field holds both
+ * units, so its numbers are cleared: 20% must never become 20 ETH.
+ */
+export function routedModePatch(
+  stage: DraftStage,
+  token: "eth" | "usdc",
+  mode: "all" | "amounts",
+): Partial<DraftStage> {
+  const [modeKey, splitsKey] =
+    token === "eth"
+      ? (["routedMode", "payoutSplits"] as const)
+      : (["routedModeUsdc", "payoutSplitsUsdc"] as const);
+  if (stage[modeKey] === mode) return {};
+  return {
+    [modeKey]: mode,
+    [splitsKey]: stage[splitsKey].map((row) => ({
+      ...row,
+      value: "",
+      perChainAmount: {},
+    })),
+  };
+}
+
 /** Summary parts for a stage (website/'s stageSummaryRaw). */
 /** "after 3 cycles of Ruleset #1" / "on Jan 5, 2027 (snapped to Ruleset #1's cycle)". */
 function startLabel(stage: DraftStage, index: number): string {
