@@ -576,7 +576,7 @@ export function RevnetPriceCard({
             : null
         }
         ammPrice={
-          references?.amm ? { value: references.amm, label: 'AMM price' } : null
+          references?.amm ? { value: references.amm, label: 'Pool price' } : null
         }
         ammLiquidity={ammLiquidity}
         pairSymbol={pool?.pair.symbol ?? null}

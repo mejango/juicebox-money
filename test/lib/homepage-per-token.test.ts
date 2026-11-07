@@ -105,8 +105,8 @@ describe('homepage per-token data', () => {
     expect(reserves.points?.map(point => point.valueUsd)).toEqual([10, 2_010, 2_015, 2_005, 2_025])
     expect(reserves.points?.at(-1)?.chains).toEqual([
       { chainId: 1, valueUsd: 2_005 },
-      { chainId: 42161, valueUsd: 0 },
       { chainId: 8453, valueUsd: 20 },
+      { chainId: 42161, valueUsd: 0 },
       { chainId: 10, valueUsd: 0 },
     ])
   })

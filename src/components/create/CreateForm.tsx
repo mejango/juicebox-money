@@ -30,6 +30,7 @@ import { AddressLabel } from "@/components/ui/AddressLabel";
 import { ProjectLink } from "@/components/ProjectLink";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
+import { byChainOrder } from "@/lib/chainDisplay";
 import { friendlyError } from "@/lib/errors";
 import { captureWalletContext } from "@/lib/wallet-context";
 import { revertedReceipt } from "@/lib/reviewed-call";
@@ -86,7 +87,6 @@ import {
   FOREVER_SECONDS,
   chainsWithoutLpSplitHook,
   activeChainOverrides,
-  autoIssuanceMintChain,
   launchCallForRecovery,
   buildLaunchRequest,
   prepareLaunchSchedule,
@@ -127,6 +127,10 @@ import {
   stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
+  encodedAutoIssuances,
+  launchFundsFact,
+  scheduledStart,
+  scheduledStartOk,
   type DraftStage,
 } from "./stage-draft";
 import type { ChartStage } from "@/components/project/chartUtils";
@@ -401,7 +405,7 @@ export function CreateForm() {
   const [issuanceBase, setIssuanceBase] = useState<"eth" | "usd" | null>(null);
   const [bridge, setBridge] = useState<LaunchPlan["bridge"]>("ccip");
   const [bridgeOpen, setBridgeOpen] = useState(false);
-  /** Link the selected chains with suckers so the token and treasury bridge
+  /** Link the selected chains with suckers so the token and balance bridge
    *  between them. Unlinked, each chain gets an independent project that
    *  shares only the configuration. Only meaningful above one chain. */
   const [linkChains, setLinkChains] = useState(true);
@@ -435,7 +439,7 @@ export function CreateForm() {
   /** Project owner (or revnet operator). The dead address permanently disables
    *  retained authority; an empty enabled field uses the connected wallet. */
   const [owner, setOwner] = useState(PERMANENTLY_DISABLED_AUTHORITY);
-  const [authorityMode, setAuthorityMode] = useState<"create" | "existing">("create");
+  const [authorityMode, setAuthorityMode] = useState<"create" | "existing">("existing");
   const [authoritySigners, setAuthoritySigners] = useState<string[]>(["", "", ""]);
   const [authorityThreshold, setAuthorityThreshold] = useState(2);
   const [ticker, setTicker] = useState("");
@@ -535,6 +539,12 @@ export function CreateForm() {
     : effectiveBase === "eth"
       ? "ETH"
       : "USD";
+  // Payout and withdrawal limits use each accounting context's own currency.
+  const fundsUnit = customActive
+    ? customMeta.symbol || "TOKEN"
+    : accepts.includes("eth")
+      ? "ETH"
+      : "USDC";
   // Pricing shop items in "the token" only means anything while a custom
   // accounting token is configured. A selection left behind after the custom
   // token is switched off has no token to price against, and the encoder falls
@@ -770,9 +780,6 @@ export function CreateForm() {
     setOwnerPerChainOpen(false);
   };
   const createsAuthoritySafe = authorityEnabled && authorityMode === "create";
-  const authorityDescription = flavor === "revnet"
-    ? "The operator handles the revnet's day-to-day operations with the limited controls listed above."
-    : "The owner holds the project and manages its rules and funds.";
   const ownerOk = !authorityEnabled || (createsAuthoritySafe
     ? validateAuthorityPolicy(authoritySigners, authorityThreshold)
     : (owner.trim() === "" || resolvedAddress(owner) !== null) &&
@@ -826,11 +833,10 @@ export function CreateForm() {
     const closes = afterApplies && afterMode !== "cycle";
     const count = stages.length + Number(closes);
     const firstMust =
-      first.scheduleOn && first.schedule
-        ? Math.floor(new Date(first.schedule).getTime() / 1000)
-        : selected.length > 1 || count > 1
-          ? now + (count > 1 && notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS)
-          : 0;
+      scheduledStart(first) ??
+      (selected.length > 1 || count > 1
+        ? now + (count > 1 && notice ? SCHEDULE_PREPARATION_SECONDS : LAUNCH_START_DELAY_SECONDS)
+        : 0);
     if (count < 2) return { musts: [firstMust], starts: [firstMust || now] };
     return orderedRulesetSchedule({
       firstStart: firstMust,
@@ -990,6 +996,7 @@ export function CreateForm() {
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],
     [badStage === -1, `Ruleset #${badStage + 1} needs a duration to advance.`, 2],
+    [isSimpleProject || scheduledStartOk(stages[0], Math.floor(Date.now() / 1000)), `${flavor === "revnet" ? "Stage" : "Ruleset"} #1 needs a start at least an hour from now.`, 2],
     [stagedApprovalOk, "Custom approval contracts need rulesets queued one at a time. Use a standard notice to launch several together.", 2],
     [itemsOk, "Complete or remove unfinished shop items.", storeStep],
   ];
@@ -1030,7 +1037,7 @@ export function CreateForm() {
   const toggleChain = (id: number) => {
     if (busy) return;
     setSelected((prev) =>
-      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id].sort(),
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id].sort(byChainOrder),
     );
   };
 
@@ -1251,24 +1258,11 @@ export function CreateForm() {
       // Each row's beneficiary resolves against the ROW's mint chain (where
       // the tokens land), never the config chain — every chain must encode
       // the SAME row list for the cross-chain configuration hash to match.
-      autoIssuances: stage.autoIssuances
-        .filter((a) => {
-          const mintChain = autoIssuanceMintChain(selected, a.chainId);
-          return (
-            Number(a.count) > 0 &&
-            resolvedAddress(a.perChain[mintChain]?.trim() || a.address) !== null
-          );
-        })
-        .map((a) => {
-          const mintChain = autoIssuanceMintChain(selected, a.chainId);
-          return {
-            chainId: mintChain,
-            count: parseUnits(a.count, 18),
-            beneficiary: resolvedAddress(
-              a.perChain[mintChain]?.trim() || a.address,
-            )!,
-          };
-        }),
+      autoIssuances: encodedAutoIssuances(stage, selected).map((row) => ({
+        chainId: row.chainId,
+        count: parseUnits(row.count, 18),
+        beneficiary: resolvedAddress(row.beneficiary)!,
+      })),
       allowSetTerminals: false,
       allowSetController: false,
       allowTerminalMigration: false,
@@ -1299,9 +1293,7 @@ export function CreateForm() {
     if (flavor === "revnet") {
       starts = [];
       let start =
-        stages[0].scheduleOn && stages[0].schedule
-          ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
-          : now;
+        scheduledStart(stages[0]) ?? now;
       stages.forEach((stage, i) => {
         if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
         starts.push(start);
@@ -1365,9 +1357,7 @@ export function CreateForm() {
         if (flavor === "revnet") {
           planStages = [];
           let start =
-            stages[0].scheduleOn && stages[0].schedule
-              ? Math.floor(new Date(stages[0].schedule).getTime() / 1000)
-              : deployStart;
+            scheduledStart(stages[0]) ?? deployStart;
           stages.forEach((stage, i) => {
             if (i > 0) start = revnetStageStart(start, stages[i - 1], stage);
             planStages.push(toRevnetStageRules(stage, i, start, chainId));
@@ -2510,7 +2500,7 @@ export function CreateForm() {
       {resolvedAuthoritySafe ? <AddressLabel address={resolvedAuthoritySafe.address} /> : null}
     </span>
   ) : !authorityEnabled ? (
-    "No retained authority"
+    flavor === "revnet" ? "No operator" : "No owner"
   ) : ownerOverrides.length > 0 ? (
     "Set per chain"
   ) : resolvedAddress(owner.trim()) ? (
@@ -2524,12 +2514,48 @@ export function CreateForm() {
   );
   const scheduleDescription = Object.values(pinnedRef.current?.plans ?? restoredSessionRef.current?.plans ?? {})
     .map(launchScheduleDescription).find(Boolean);
-  const launchRows: TxConfirmRow[] = [
-    ...(scheduleDescription ? [{ label: "Schedule", value: scheduleDescription }] : []),
+  // Both reviews read the draft the launch encodes; Simple reads its encoded preset.
+  const review = { hasOwner: authorityEnabled, chainIds: selected, fundsUnit };
+  const reviewStages = isSimpleProject ? [newSimpleProjectDraftStage()] : stages;
+  const authorityRows: TxConfirmRow[] = [
+    { label: "Project", value: name.trim() || "Name needed" },
     {
       label: flavor === "revnet" ? "Revnet operator" : "Project owner",
       value: ownerValue,
     },
+    {
+      label: "Can move funds",
+      value: launchFundsFact(reviewStages, rulesFlavor, authorityEnabled, multiToken, storeConfig.itemsRedeem),
+    },
+    {
+      label: "Can change rules",
+      // Only the owner can queue rulesets (JBController queueRulesetsOf), and a revnet has none.
+      value: flavor === "revnet"
+        ? "Nobody. Stages are fixed at launch."
+        : !authorityEnabled
+          ? "Nobody. The rules can't change."
+          : !isSimpleProject && !deadlineApplies
+            ? "Nobody. These rules last forever."
+            : isSimpleProject || approvalDeadline === "none"
+              ? "The project owner, taking effect at once"
+              : approvalDeadline === "custom"
+                ? "The project owner, through a custom approval contract"
+                : `The project owner, with ${APPROVAL_LABELS[approvalDeadline]} notice`,
+    },
+  ];
+  const stageRows: TxConfirmRow[] = reviewStages.map((stage, i) => ({
+    label: isSimpleProject ? "Rules" : `${flavor === "revnet" ? "Stage" : "Ruleset"} #${i + 1}`,
+    value: (
+      <ul className="list-disc space-y-0.5 pl-5">
+        {stageSummaryParts(stage, i, unitLabel, rulesFlavor, multiToken, review).map((part) => (
+          <li key={part}>{part}</li>
+        ))}
+      </ul>
+    ),
+  }));
+  const launchRows: TxConfirmRow[] = [
+    ...(scheduleDescription ? [{ label: "Schedule", value: scheduleDescription }] : []),
+    ...authorityRows.slice(0, 2),
     ...(resolvedAuthoritySafe || createsAuthoritySafe ? [{
       label: "Multisig signers",
       value: <span className="flex min-w-0 flex-col gap-1 font-mono text-xs">
@@ -2538,6 +2564,7 @@ export function CreateForm() {
         ))}
       </span>,
     }] : []),
+    ...authorityRows.slice(2),
     {
       label: "Launching",
       value:
@@ -2559,17 +2586,7 @@ export function CreateForm() {
         ? `$${customMeta?.symbol ?? "TOKEN"}`
         : accepts.map((t) => (t === "eth" ? "ETH" : "USDC")).join(" + "),
     },
-    ...(isSimpleProject
-      ? [
-          {
-            label: "Rules",
-            value: `Issues 10,000 tokens per ${unitLabel} | Unlimited owner withdrawals | Cash outs off`,
-          },
-        ]
-      : stages.map((stage, i) => ({
-          label: `${flavor === "revnet" ? "Stage" : "Ruleset"} #${i + 1}`,
-          value: stageSummary(stage, i, unitLabel, rulesFlavor, multiToken),
-        }))),
+    ...stageRows,
     ...(stickySplits.length > 0
       ? [
           {
@@ -2831,8 +2848,7 @@ export function CreateForm() {
           Start a project<span className="text-split-500">.</span>
         </h1>
         <p className="mt-3 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">
-          Give it a name, answer a few questions, and launch. Live in minutes —
-          rules stay flexible unless you lock&nbsp;them&nbsp;in.
+          Give it a name, answer a few questions, and launch.
         </p>
         <Image
           src={createIllustration}
@@ -2900,7 +2916,7 @@ export function CreateForm() {
                 className={`flex h-7 w-7 items-center justify-center rounded-full font-agrandir text-xs font-medium sm:h-8 sm:w-8 sm:text-sm ${
                   step === i
                     ? STEP_TILES[i]
-                    : i < step
+                    : i < step && !launchIssues.some(([, , issueStep]) => issueStep === i)
                       ? "bg-ink text-bone"
                       : "border-2 border-smoke-300 bg-white text-smoke-500"
                 }`}
@@ -3000,7 +3016,7 @@ export function CreateForm() {
                 </button>{" "}
                 {linkChains
                   ? `so your token${
-                      customOn ? "" : " and treasury"
+                      customOn ? "" : " and balance"
                     } can move between them.`
                   : "— each chain launches its own project and nothing moves between them."}
               </p>
@@ -3011,7 +3027,7 @@ export function CreateForm() {
                     onToggle={() => !busy && setLinkChains((on) => !on)}
                     disabled={busy}
                     title="Link these chains"
-                    blurb="Deploys suckers so the token and treasury bridge between every selected chain. Unlinked, each chain gets a separate project that only shares this configuration."
+                    blurb="Deploys suckers so the token and balance bridge between every selected chain. Unlinked, each chain gets a separate project that only shares this configuration."
                   />
                   {linkChains ? (
                     <div className="mt-3">
@@ -3206,7 +3222,7 @@ export function CreateForm() {
                   <span className="mt-2 block">{OPERATOR_LIMITS}</span>
                 </>
               ) : (
-                "Assign a project owner with full project-level authority. Leave this off to send ownership to a permanent dead address."
+                "One address owns the project, and can change its rules and withdraw funds. Off means nobody can, ever."
               )
             }
           />
@@ -3215,7 +3231,6 @@ export function CreateForm() {
               <span className="field-label">
                 {flavor === "revnet" ? "Revnet operator" : "Project owner"}
               </span>
-              <p className="mt-2 text-xs leading-relaxed text-smoke-700">{authorityDescription}</p>
               <p className="mb-3 mt-2 text-xs leading-relaxed text-smoke-700">
                 {authorityMode === "create"
                   ? "Create a multisig so its signers approve decisions together. "
@@ -3228,7 +3243,7 @@ export function CreateForm() {
                 >
                   {authorityMode === "create"
                     ? flavor === "revnet" ? "Already have an operator in mind?" : "Already have an owner in mind?"
-                    : "Create a new multisig?"}
+                    : "Create a multisig"}
                 </button>
               </p>
               {authorityMode === "create" ? (
@@ -3700,6 +3715,7 @@ export function CreateForm() {
                       i > 0 ? stageDurationSeconds(stages[i - 1]) : 0
                     }
                     unitLabel={unitLabel}
+                    fundsUnit={fundsUnit}
                     unitChoice={
                       !customOn
                         ? { value: effectiveBase, onChange: setIssuanceBase }
@@ -3723,16 +3739,14 @@ export function CreateForm() {
             </p>
           ) : null}
 
-          {flavor === "revnet" ? (
-            <div className="mt-4">
-              <AddButton
-                onClick={() => addStage("revnet")}
-                disabled={busy}
-              >
-                Add a stage
-              </AddButton>
-            </div>
-          ) : null}
+          <div className="mt-4">
+            <AddButton
+              onClick={() => (flavor === "revnet" ? addStage("revnet") : addStage())}
+              disabled={busy}
+            >
+              {flavor === "revnet" ? "Add a stage" : "Add a ruleset"}
+            </AddButton>
+          </div>
 
           {flavor !== "revnet" && afterApplies ? (
             <div className="mt-5 border-t border-smoke-200 pt-4">
@@ -3742,29 +3756,23 @@ export function CreateForm() {
               <div className="mt-2 flex flex-wrap items-center gap-2.5">
                 <select
                   value={afterMode}
-                  onChange={(e) => {
-                    if (e.target.value === "custom") {
-                      addStage();
-                      setAfterMode("wait");
-                    } else {
-                      setAfterMode(e.target.value as typeof afterMode);
-                    }
-                  }}
+                  onChange={(e) => setAfterMode(e.target.value as typeof afterMode)}
                   disabled={busy}
                   className="input-well select-caret min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
                 >
                   <option value="wait">Wait</option>
                   <option value="terminal">Terminate</option>
                   <option value="cycle">Cycle</option>
-                  <option value="custom">Custom…</option>
                 </select>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {afterMode === "wait"
-                  ? "The project idles — payments and issuance pause until the project owner queues more rules."
+                  ? authorityEnabled
+                    ? "Payments and issuance pause until the owner queues more rules."
+                    : "Payments and issuance stop for good."
                   : afterMode === "terminal"
-                    ? "These terms are locked in forever — they can never be changed again."
-                    : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes. To hand off to new rules after a set number of cycles or on a date, pick Custom… and set when it starts."}
+                    ? "These terms are locked in forever."
+                    : "The ruleset repeats each time it ends."}
               </p>
             </div>
           ) : null}
@@ -4044,7 +4052,7 @@ export function CreateForm() {
                     [
                       "noNewTiersWithReserves",
                       "Lock reserved items after launch",
-                      "New items added later can never set aside reserved inventory.",
+                      "New items added later can never have reserved inventory.",
                     ],
                     [
                       "noNewTiersWithVotes",
@@ -4135,14 +4143,12 @@ export function CreateForm() {
         </div>
 
         <dl aria-label="Launch summary" className="launch-summary mt-5 text-sm">
-          <div>
-            <dt className="text-smoke-700">
-              {flavor === "revnet" ? "Revnet operator" : "Project owner"}
-            </dt>
-            <dd>
-              {ownerValue}
-            </dd>
-          </div>
+          {authorityRows.map((row) => (
+            <div key={String(row.label)}>
+              <dt className="text-smoke-700">{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
           <div>
             <dt className="text-smoke-700">Launching</dt>
             <dd>
@@ -4182,62 +4188,21 @@ export function CreateForm() {
               </dd>
             </div>
           ) : null}
-          {isSimpleProject ? (
-            <div>
-              <dt className="text-smoke-700">Rules</dt>
-              <dd>
-                <ul className="list-disc space-y-0.5 pl-5">
-                  <li>Starts at launch and lasts until changed</li>
-                  <li>Issues 10,000 tokens per {unitLabel}</li>
-                  <li>Unlimited owner withdrawals; cash outs off</li>
-                  <li>All owner controls stay editable</li>
-                  <li>Later rule changes can take effect immediately</li>
-                </ul>
-              </dd>
+          {stageRows.map((row) => (
+            <div key={String(row.label)}>
+              <dt className="text-smoke-700">{row.label}</dt>
+              <dd>{row.value}</dd>
             </div>
-          ) : (
-            stages.map((stage, i) => (
-              <div key={stage.id}>
-                <dt className="text-smoke-700">
-                  {flavor === "revnet" ? "Stage" : "Ruleset"} #{i + 1}
-                </dt>
-                <dd>
-                  <ul className="list-disc space-y-0.5 pl-5">
-                    {stageSummaryParts(
-                      stage,
-                      i,
-                      unitLabel,
-                      rulesFlavor,
-                      multiToken,
-                    ).map((part) => (
-                      <li key={part}>{part}</li>
-                    ))}
-                  </ul>
-                </dd>
-              </div>
-            ))
-          )}
+          ))}
           {!isSimpleProject && flavor !== "revnet" && afterApplies ? (
             <div>
               <dt className="text-smoke-700">Afterwards</dt>
               <dd>
                 {afterMode === "wait"
-                  ? "Wait for new rules"
+                  ? authorityEnabled ? "Wait for new rules" : "Payments and issuance stop"
                   : afterMode === "terminal"
                     ? "Terminate — locked forever"
                     : "Cycle — repeats"}
-              </dd>
-            </div>
-          ) : null}
-          {!isSimpleProject && flavor !== "revnet" && deadlineApplies ? (
-            <div>
-              <dt className="text-smoke-700">Rule changes</dt>
-              <dd>
-                {approvalDeadline === "none"
-                  ? "Immediate"
-                  : approvalDeadline === "custom"
-                    ? "Custom approval contract"
-                    : `${APPROVAL_LABELS[approvalDeadline]} notice`}
               </dd>
             </div>
           ) : null}

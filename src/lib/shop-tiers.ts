@@ -69,3 +69,39 @@ export async function readAllActiveTiers(
   }
   return tiers
 }
+
+type CategoryTier = { id: number; category: number }
+type CategoryMedia = Readonly<Record<number, { categoryName?: string }>> | undefined
+
+function categoryNameOf(tiers: readonly CategoryTier[], media: CategoryMedia, id: number) {
+  const named = tiers.find(tier => tier.category === id && media?.[tier.id]?.categoryName)
+  return named && media?.[named.id]?.categoryName
+}
+
+/** Every category a shop has, labelled from its items' metadata. */
+export function shopCategories(tiers: readonly CategoryTier[], media: CategoryMedia) {
+  const ids = [...new Set(tiers.map(tier => tier.category))].sort((a, b) => a - b)
+  return ids.map(id => ({
+    id,
+    name: categoryNameOf(tiers, media, id) || (id === 0 ? 'General' : `Category ${id}`),
+  }))
+}
+
+/**
+ * The categories worth a filter chip. A number no metadata names tells a shopper nothing, and its
+ * items stay under All. An item whose metadata failed to load proves nothing, so its category keeps
+ * its chip until it does. General only reads as a choice beside a category that has a name.
+ */
+export function shopCategoryChips(
+  tiers: readonly CategoryTier[],
+  media: CategoryMedia,
+  mediaFailed: boolean,
+) {
+  const categories = shopCategories(tiers, media)
+  if (categories.length < 2) return []
+  const real = ({ id }: { id: number }) =>
+    !!categoryNameOf(tiers, media, id) ||
+    (mediaFailed && tiers.some(tier => tier.category === id && !media?.[tier.id]))
+  if (!categories.some(real)) return []
+  return categories.filter(category => category.id === 0 || real(category))
+}

@@ -10,14 +10,14 @@ import { LoansSection, tokenMeta } from '@/components/project/LoansSection'
 import { accountingContextsQuery } from '@/lib/project-display-queries'
 import { projectTokenQuery } from '@/lib/project-token-query'
 
-const mocks = vi.hoisted(() => ({ client: { readContract: vi.fn() }, run: vi.fn() }))
+const mocks = vi.hoisted(() => ({ client: { readContract: vi.fn() }, run: vi.fn(), isViewAs: false }))
 const HOLDER = '0x1111111111111111111111111111111111111111' as Address
 const CUSTOM = '0x2222222222222222222222222222222222222222' as Address
 const TERMINAL = '0x3333333333333333333333333333333333333333' as Address
 
 vi.mock('wagmi', () => ({ usePublicClient: () => mocks.client }))
 vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: HOLDER }) }))
-vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => ({ address: HOLDER }) }))
+vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => ({ address: HOLDER, isViewAs: mocks.isViewAs }) }))
 vi.mock('@/hooks/useReviewedAction', async () => ({
   ...await import('@/lib/reviewed-call'),
   useReviewedAction: () => ({ busy: false, phase: 'idle', run: mocks.run, dismiss: vi.fn() }),
@@ -81,6 +81,18 @@ beforeEach(() => {
 afterEach(() => { act(() => root.unmount()); host.remove(); client.clear() })
 
 describe('loan token units', () => {
+  it('asks to exit View as on the viewed holder\'s loan instead of a dead-end repay', async () => {
+    mocks.isViewAs = true
+    try {
+      await mount()
+      const button = [...host.querySelectorAll('button')].find(item => item.textContent === 'Exit View as to repay')
+      expect(button?.disabled).toBe(true)
+      expect(host.textContent).not.toContain('Your connected account changed')
+    } finally {
+      mocks.isViewAs = false
+    }
+  })
+
   it('keeps unknown custom units unavailable and recovers through the existing context query', async () => {
     await mount()
     expect(host.textContent).toContain('Some loan amounts are unavailable')

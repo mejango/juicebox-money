@@ -56,3 +56,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
   if (globalThis.navigator && Object.hasOwn(globalThis.navigator, 'locks')) delete (globalThis.navigator as { locks?: unknown }).locks
 })
+
+// next/link's idle prefetch needs a browser global the node environment lacks.
+vi.mock('next/link', async () => {
+  const { createElement } = await import('react')
+  return {
+    default: ({ href, prefetch: _prefetch, ...rest }: { href: string; prefetch?: boolean } & Record<string, unknown>) =>
+      createElement('a', { href, ...rest }),
+  }
+})

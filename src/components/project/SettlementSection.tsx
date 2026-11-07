@@ -27,7 +27,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
-import { AddressLabel } from '@/components/ui/AddressLabel'
+import { AddressLink } from '@/components/ui/AddressLink'
 import {
   encodeFunctionData,
   type Abi,
@@ -717,7 +717,7 @@ function MovementGroup({
               <tr key={m.id} className="border-t border-smoke-100">
                 <td className="py-1.5 pr-3 text-smoke-700">{timeAgo(m.timestamp)}</td>
                 <td className="py-1.5 pr-3">
-                  <AddressLabel address={m.beneficiary} />
+                  <AddressLink address={m.beneficiary} />
                 </td>
                 <td className="py-1.5 text-right">
                   {formatTokenAmount(BigInt(m.projectTokenCount))}

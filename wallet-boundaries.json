@@ -10,14 +10,14 @@
     },
     {
       "file": "src/components/project/EditSplitsFlow.tsx",
-      "line": 411,
+      "line": 412,
       "api": "request",
       "boundary": "navigator.locks.request over each destination's split journal key: cross-tab coordination, never a wallet RPC.",
       "test": "test/components/edit-splits-multichain.test.tsx"
     },
     {
       "file": "src/components/project/QueueRulesetFlow.tsx",
-      "line": 734,
+      "line": 756,
       "api": "request",
       "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
       "test": "test/components/queue-ruleset-multichain.test.tsx"

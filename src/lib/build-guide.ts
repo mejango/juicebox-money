@@ -136,7 +136,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'points',
         items: [
-          { key: 'Chains', text: 'Ethereum, Optimism, Base, and Arbitrum, plus their Sepolia test networks. Find the list in the SDK’s SUPPORTED_CHAINS and JB_CHAINS.' },
+          { key: 'Chains', text: 'Ethereum, Base, Arbitrum, and Optimism, plus their Sepolia test networks. Find the list in the SDK’s SUPPORTED_CHAINS and JB_CHAINS.' },
           { key: 'Source', text: '[the V6 source](https://github.com/Bananapus/version-6) is current. Older Juicebox versions are not interchangeable with it, and this site redirects unknown routes to the legacy app for those.' },
         ],
       },
@@ -170,7 +170,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Cash out', 'JBMultiTerminal.cashOutTokensOf (prepareHookAwareCashOut)'],
           ['Send payouts', 'JBMultiTerminal.sendPayoutsOf'],
           ['Withdraw surplus allowance', 'JBMultiTerminal.useAllowanceOf'],
-          ['Send tokens set aside for other recipients', 'JBController.sendReservedTokensToSplitsOf'],
+          ['Send reserved tokens to other recipients', 'JBController.sendReservedTokensToSplitsOf'],
           ['Schedule new terms', 'JBController.queueRulesetsOf (buildQueueRulesetsTx)'],
           ['Edit recipients and shares', 'JBController.setSplitGroupsOf (buildSetSplitGroupsTx)'],
           ['Create a transferable token contract (ERC-20)', 'JBController.deployERC20For (buildDeployErc20Tx)'],
@@ -262,8 +262,8 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Duration', 'How long each cycle lasts: 1 day to a year, Flexible (0), or Forever. Timed cycles repeat until replaced. Flexible rules have no cycle boundary; notice and approval still apply'],
           ['Issuance', 'New tokens per ETH or USD paid, before reserved tokens. Default 10,000. Leave blank on a later ruleset to continue the previous rate after any scheduled cuts'],
           ['Issuance cut', 'How much the new-token rate falls each cycle. Revnets express this as “cut X% every N days”'],
-          ['Reserved split', 'The share of new tokens set aside for other recipients. Add recipients to set the total'],
-          ['Cash outs', 'Let holders exchange tokens for available project funds. The cash out tax controls how much stays for remaining holders: 0% gives a proportional share; 100% turns cash outs off. Revnets may also delay when cash outs begin'],
+          ['Reserved split', 'The share of new tokens reserved for other recipients. Add recipients to set the total'],
+          ['Cash outs', 'Let holders exchange tokens for available project funds. The cash out tax controls how much stays for remaining holders: 0 gives a proportional share; 1 turns cash outs off. Revnets may also delay when cash outs begin'],
           ['Payouts', 'None, payments to the owner within a limit, or payments to named recipients. Set amounts or percentage shares for each accepted asset. Limits apply per cycle and per chain'],
           ['Surplus allowance', 'How much the owner can withdraw beyond the regular spending limit'],
           ['Accept payments', 'Off pauses paying'],
@@ -326,7 +326,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         rows: [
           ['Rulesets', 'Read current and upcoming terms. Schedule a change under the project’s timing and approval rules'],
           ['Funds', 'Send funds to chosen recipients, use the owner’s extra withdrawal allowance, or add funds'],
-          ['Owners', 'See holders and balances. Send tokens set aside for recipients, or create tokens scheduled by a revnet'],
+          ['Owners', 'See holders and balances. Send reserved tokens to recipients, or create tokens scheduled by a revnet'],
           ['Shop', 'Add items, create reserved copies, replace media, and redeem items'],
           ['Admin', 'Manage permissions, ownership, names, links, and token details. Use the contract and market controls allowed by the current rules'],
           ['Extras', 'Export current terms as a .jb file, create a payment-forwarding address, and manage funds supplied to markets'],
@@ -531,7 +531,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Cash out',
     paragraphs: [
-      'Holders exchange tokens for part of the surplus: the balance not scheduled for payouts. The cash out tax sets how much stays for remaining holders; 0% returns a proportional share, 100% turns cash outs off. The tokens are burned.',
+      'Holders exchange tokens for part of the surplus: the balance not scheduled for payouts. The cash out tax sets how much stays for remaining holders; 0 returns a proportional share, 1 turns cash outs off. The tokens are burned.',
       'Quote with previewCashOutFrom, which runs the project’s data hook and any buyback decision; a surplus-only calculation can disagree with the real transaction. The route decides where the minimum goes: minTokensReclaimed on the terminal path, buyback metadata on the pool path. Re-quote after any change to rules, supply, balance, pool, or fees.',
     ],
     blocks: [
@@ -863,7 +863,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['contracts'],
     title: 'Fees, in detail',
     paragraphs: [
-      'The 2.5% fee applies to payouts, surplus allowance withdrawals, and cash outs with a tax above 0%. It is paid into the fee revnet, which returns its tokens to the fee recipient.',
+      'The 2.5% fee applies to payouts, surplus allowance withdrawals, and cash outs with a tax above 0. It is paid into the fee revnet, which returns its tokens to the fee recipient.',
     ],
     blocks: [
       {

@@ -15,7 +15,6 @@ import { mergeCrossChainActivityGroups, SPLITS_TOTAL_PERCENT } from '@bananapus/
 import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
-import { AddressLabel } from '@/components/ui/AddressLabel'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import {
@@ -468,9 +467,9 @@ export function combinedActivityParts(
       return undefined
     }
   }
-  const gotNode = (chainId: number, who: string, count: string) => (
+  const gotNode = (who: string, count: string) => (
     <>
-      <ActorLink href={addressUrl(chainId, who)} actor={who} /> got{' '}
+      <ActorLink actor={who} /> got{' '}
       <span className="font-medium">
         {formatCompactTokenAmount(count)} {tokenUnit}
       </span>
@@ -489,7 +488,7 @@ export function combinedActivityParts(
       if (!issued) return
       parts[index] = {
         ...parts[index],
-        action: gotNode(entry.chainId, pay.beneficiary, pay.newlyIssuedTokenCount),
+        action: gotNode(pay.beneficiary, pay.newlyIssuedTokenCount),
       }
     })
   }
@@ -548,7 +547,7 @@ export function combinedActivityParts(
       ...parts[mintIndex],
       action: fanOut ? (
         <>
-          {gotNode(entry.chainId, mint.beneficiary, mint.beneficiaryTokenCount)}
+          {gotNode(mint.beneficiary, mint.beneficiaryTokenCount)}
           {reserve}
         </>
       ) : (
@@ -589,15 +588,12 @@ export function combinedActivityParts(
             ) : receipt.hook && receipt.hook.toLowerCase() !== zeroAddress ? (
               // A custom hook owns the split; its projectId is the hook's own data, not a project.
               <>
-                <ActorLink href={addressUrl(entry.chainId, receipt.hook)} actor={receipt.hook} /> hook
+                <ActorLink contract chainId={entry.chainId} actor={receipt.hook} /> hook
               </>
             ) : receipt.splitProjectId > 0 ? (
               <>project #{receipt.splitProjectId}</>
             ) : (
-              <ActorLink
-                href={addressUrl(entry.chainId, receipt.beneficiary)}
-                actor={receipt.beneficiary}
-              />
+              <ActorLink actor={receipt.beneficiary} />
             )}
           </>
         ),
@@ -734,11 +730,6 @@ const ACTION_BULLET_CLASS =
 function txUrl(chainId: number, txHash: string): string | null {
   const host = explorerHostname(chainId)
   return host ? `https://${host}/tx/${txHash}` : null
-}
-
-function addressUrl(chainId: number, address: string): string | null {
-  const host = explorerHostname(chainId)
-  return host ? `https://${host}/address/${address}` : null
 }
 
 /**
@@ -943,7 +934,7 @@ export function activityParts(
   ) : event.projectTransferEvent ? (
     <>
       transferred ownership to{' '}
-      <AddressLabel address={event.projectTransferEvent.owner} />
+      <ActorLink actor={event.projectTransferEvent.owner} />
     </>
   ) : event.operatorPermissionsSetEvent ? (
     <>
@@ -952,7 +943,7 @@ export function activityParts(
         ? 'revnet operator'
         : 'operator'}{' '}
       permissions for{' '}
-      <AddressLabel address={event.operatorPermissionsSetEvent.operator} />
+      <ActorLink actor={event.operatorPermissionsSetEvent.operator} />
     </>
   ) : event.rulesetQueuedEvent ? (
     <>reconfigured the project</>
@@ -1099,10 +1090,9 @@ function Row({
   const event = group[0]
   const { actor, actions, direction, kind, headline, memo, amountUsd, amountRaw, amountAsset } =
     combinedActivityParts(group, tokenUnit)
-  const actorLink = actor ? addressUrl(event.chainId, actor) : null
   const link = txUrl(event.chainId, event.txHash)
   const relativeTime = timeAgo(event.timestamp)
-  const actorNode = <ActorLink href={actorLink} actor={actor} />
+  const actorNode = <ActorLink actor={actor} />
   const amountToken = activityAmountToken(amountRaw, amountAsset, accountingToken, event.chainId)
   // No amount and no flow tag = nothing for the title slot; the actor takes
   // its place (bare, no "to/from/by") instead of leaving a blank line.

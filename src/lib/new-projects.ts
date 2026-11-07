@@ -8,6 +8,7 @@ export type NewProject = {
   key: string
   href: string
   name: string
+  projectId: number
   tagline: string | null
   logoUri: string | null
   createdAt: number
@@ -46,6 +47,7 @@ const cachedNewProjects = unstable_cache(
         tagline: project.projectTagline,
         logoUri: project.logoUri,
         createdAt: project.createdAt,
+        projectId: project.projectId,
       }]
     })
   },

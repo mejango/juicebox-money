@@ -15,6 +15,7 @@ import { useReadContract } from 'wagmi'
 import { TxProgress } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { buildBurnTokensRequest } from '@/lib/burnTokens'
 import { formatTokenAmount } from '@/lib/format'
@@ -33,6 +34,8 @@ export function BurnTokensFlow({
   showHeading?: boolean
 }) {
   const { address, isConnected, openSignIn } = useWallet()
+  // The balance reads for the account on screen; the burn stays with the connected wallet.
+  const { address: viewed, isViewAs } = useViewedAccount()
   const tx = useReviewedAction(chainId)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
@@ -52,9 +55,9 @@ export function BurnTokensFlow({
     abi: jbTokensAbi,
     address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId],
     functionName: 'totalBalanceOf',
-    args: [address ?? zeroAddress, BigInt(projectId)],
+    args: [viewed ?? zeroAddress, BigInt(projectId)],
     chainId,
-    query: { enabled: !!address },
+    query: { enabled: !!viewed },
   })
   const { data: controller, refetch: refetchController } = useReadContract({
     abi: jbDirectoryAbi,
@@ -68,6 +71,7 @@ export function BurnTokensFlow({
   const sending = tx.busy || tx.phase === 'review'
 
   async function review() {
+    if (isViewAs) return
     if (!isConnected) return openSignIn()
     if (!address || !controller || tokenCount <= 0n || exceedsBalance) return
     setError(null)
@@ -159,32 +163,40 @@ export function BurnTokensFlow({
         <h3 className="font-agrandir text-lg font-medium">Burn tokens</h3>
       ) : null}
       <p className="mt-1 text-sm text-smoke-700">
-        Permanently remove tokens from supply without receiving treasury funds.
+        Permanently remove tokens from supply without receiving funds.
         Internal credits are burned before claimed ERC-20 tokens.
-      </p>
-      <p className="mt-2 text-sm text-smoke-700">
-        {balance === undefined
-          ? 'Checking your balance…'
-          : `You hold ${formatTokenAmount(balance, 18)} ${tokenSymbol}.`}
       </p>
       <label className="mt-3 block">
         <span className="field-label">Amount to burn</span>
-        <input
-          className="field mt-1.5 w-full"
-          inputMode="decimal"
-          value={amount}
-          onChange={event => setAmount(event.target.value)}
-          placeholder="0"
-        />
+        <div className="input-well mt-1.5 flex items-center px-4">
+          <input
+            inputMode="decimal"
+            autoComplete="off"
+            value={amount}
+            onChange={event => setAmount(event.target.value)}
+            placeholder="0"
+            aria-label={`Amount of ${tokenSymbol} to burn`}
+            className="min-h-[44px] w-full bg-transparent text-lg font-medium outline-none placeholder:text-smoke-500"
+          />
+          <span className="ml-2 shrink-0 text-sm font-medium text-smoke-700">{tokenSymbol}</span>
+          {balance ? (
+            <button
+              type="button"
+              className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
+              onClick={() => setAmount(formatUnits(balance, 18))}
+            >
+              Max
+            </button>
+          ) : null}
+        </div>
       </label>
-      <button
-        type="button"
-        className="btn-secondary mt-2 text-xs"
-        disabled={balance === undefined || balance === 0n}
-        onClick={() => (balance ? setAmount(formatUnits(balance, 18)) : setAmount(''))}
-      >
-        Use max
-      </button>
+      <p className="mt-1 text-xs text-smoke-700">
+        {!viewed
+          ? 'Sign in to see your balance.'
+          : balance === undefined
+            ? 'Checking your balance…'
+            : `You hold ${formatTokenAmount(balance, 18)} ${tokenSymbol}.`}
+      </p>
       <label className="mt-3 block">
         <span className="field-label">Memo (optional)</span>
         <input
@@ -205,11 +217,12 @@ export function BurnTokensFlow({
           disabled={
             sending ||
             preparing ||
+            isViewAs ||
             (isConnected && (!controller || tokenCount <= 0n || exceedsBalance))
           }
           onClick={review}
         >
-          {isConnected ? 'Burn tokens permanently' : 'Sign in to burn'}
+          {isViewAs ? 'Exit View as to burn' : isConnected ? 'Burn tokens permanently' : 'Sign in to burn'}
         </button>
       </div>
       {plan || preparing ? (

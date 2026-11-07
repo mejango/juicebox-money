@@ -24,7 +24,6 @@ import { hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
-import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ADD_SHOP_MANAGER_HASH } from '@/components/project/AuthorityOverview'
 import {
@@ -33,6 +32,7 @@ import {
   ShopTabSkeleton,
 } from '@/components/LoadingSkeletons'
 import { Skeleton, SkeletonTable } from '@/components/ui/Skeleton'
+import { shopCategories, shopCategoryChips } from '@/lib/shop-tiers'
 import { describeTransferSchedule } from '@/lib/transfer-schedule'
 import {
   AddShopItemsModal,
@@ -64,7 +64,7 @@ import {
   timeAgo,
 } from '@/lib/format'
 import { TIER_UNLIMITED_SUPPLY } from '@/lib/tier-metadata'
-import { ShopMediaStatus } from '@/components/project/ShopMediaStatus'
+import { ShopMediaStatus, ShopReadFailed } from '@/components/project/ShopMediaStatus'
 import { chainName } from '@/lib/urn'
 import { useLinkedDeployments } from '@/lib/sucker-group'
 import { wagmiConfig } from '@/providers/Providers'
@@ -179,7 +179,7 @@ export function ShopTab({
   const [mintTierId, setMintTierId] = useState<number | null>(null)
   const [replaceTierId, setReplaceTierId] = useState<number | null>(null)
 
-  const { data: shop, isLoading, isError } = useShop721(chainId, projectId, isRevnet)
+  const { data: shop, isLoading, isError, isFetching, refetch } = useShop721(chainId, projectId, isRevnet)
 
   // Collection name/symbol — the 721 hook is itself the collection contract.
   const { data: collectionMeta } = useReadContracts({
@@ -213,30 +213,23 @@ export function ShopTab({
   const media = useShop721Media(chainId, shop)
   const mediaById = media.data
 
-  const categories = useMemo(() => {
-    if (!shop) return []
-    const ids = [...new Set(shop.tiers.map(tier => tier.category))].sort(
-      (a, b) => a - b,
-    )
-    return ids.map(id => {
-      const named = shop.tiers.find(
-        tier => tier.category === id && mediaById?.[tier.id]?.categoryName,
-      )
-      return {
-        id,
-        name:
-          (named && mediaById?.[named.id]?.categoryName) ||
-          (id === 0 ? 'General' : `Category ${id}`),
-      }
-    })
-  }, [shop, mediaById])
+  const categories = useMemo(
+    () => shopCategories(shop?.tiers ?? [], mediaById),
+    [shop, mediaById],
+  )
+  const categoryChips = useMemo(
+    () => shopCategoryChips(shop?.tiers ?? [], mediaById, media.hasFailures),
+    [shop, mediaById, media.hasFailures],
+  )
+  // A chip can leave as metadata arrives; its filter must not strand the grid on hidden items.
+  const activeCategory = categoryChips.some(chip => chip.id === category) ? category : null
 
   const visibleTiers = useMemo(() => {
     if (!shop) return []
-    return category === null
+    return activeCategory === null
       ? shop.tiers
-      : shop.tiers.filter(tier => tier.category === category)
-  }, [shop, category])
+      : shop.tiers.filter(tier => tier.category === activeCategory)
+  }, [shop, activeCategory])
   const cartTotal = useMemo(() => {
     if (!shop) return 0n
     return shop.tiers.reduce(
@@ -315,19 +308,20 @@ export function ShopTab({
 
   if (isLoading) return <ShopTabSkeleton />
 
-  if (isError || !shop) {
+  // A failed refresh keeps the inventory it already has. Checkout reads its own prices.
+  if (!shop || (isError && shop.protocol === 'defifa')) {
     return (
       <div className="card p-5">
         <span className="field-label">Shop</span>
-        <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          {isError
-            ? "Couldn't load the shop right now — try again in a moment."
-            : `No store yet.${
-                isRevnet
-                  ? ' The operator can add items for supporters to buy.'
-                  : ''
-              }`}
-        </p>
+        <div className="mt-2">
+          {isError ? (
+            <ShopReadFailed message="Couldn't load the shop." fetching={isFetching} retry={refetch} />
+          ) : (
+            <p className="text-sm leading-relaxed text-smoke-700">
+              No store yet.{isRevnet ? ' The operator can add items for supporters to buy.' : ''}
+            </p>
+          )}
+        </div>
       </div>
     )
   }
@@ -362,6 +356,7 @@ export function ShopTab({
 
   const inventory = (
     <div className="space-y-5">
+      {isError ? <ShopReadFailed message="Couldn't refresh the shop." fetching={isFetching} retry={refetch} /> : null}
       <ShopMediaStatus failed={media.hasFailures} fetching={media.isFetching} retry={media.refetch} />
       <div className="flex flex-wrap justify-end gap-x-5 gap-y-2">
         {shop.tiers.length > 0 ? addItemsButton : null}
@@ -390,17 +385,17 @@ export function ShopTab({
         </div>
       ) : (
         <>
-          {categories.length > 1 ? (
+          {categoryChips.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {[{ id: null as number | null, name: 'All' }, ...categories].map(
+              {[{ id: null as number | null, name: 'All' }, ...categoryChips].map(
                 cat => (
                   <button
                     key={cat.id ?? 'all'}
                     type="button"
                     onClick={() => setCategory(cat.id)}
-                    aria-pressed={category === cat.id}
+                    aria-pressed={activeCategory === cat.id}
                     className={`min-h-[40px] rounded-lg border px-3.5 text-xs font-medium transition-colors focus-visible:outline-none ${
-                      category === cat.id
+                      activeCategory === cat.id
                         ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700 shadow-[0_1px_4px_rgba(39,79,245,0.12)]'
                         : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
                     }`}
@@ -447,6 +442,7 @@ export function ShopTab({
             <dt className="text-smoke-700">Address</dt>
             <dd>
               <AddressLink
+                explorer
                 address={shop.hook}
                 chainId={chainId}
                 className="text-ink"
@@ -547,7 +543,7 @@ export function ShopTab({
               .getElementById('project-pay-card')
               ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
           }
-          className="fixed bottom-4 left-4 right-4 z-50 flex min-h-[52px] items-center justify-between rounded-xl bg-bluebs-600 px-5 text-sm font-medium text-white shadow-xl lg:hidden"
+          className="fixed bottom-4 left-4 right-4 z-50 flex min-h-[52px] items-center justify-between rounded-xl bg-bluebs-600 px-5 text-sm font-medium text-white shadow-xl lg:sticky lg:left-auto lg:right-auto lg:z-10 lg:w-full"
         >
           <span>
             Checkout, {cartCount} item{cartCount === 1 ? '' : 's'}
@@ -1077,7 +1073,7 @@ function CustomerAllCard({
             />
             <span className="min-w-0 truncate text-right text-smoke-700">
               {itemLabel(names, purchase.tierId)} →{' '}
-              <AddressLabel address={purchase.beneficiary} />
+              <AddressLink address={purchase.beneficiary} />
             </span>
           </div>
         ))}
@@ -1917,6 +1913,7 @@ function TierSaleRouting({
                     `Project ${split.projectId.toString()}`
                   ) : (
                     <AddressLink
+                      explorer={toHook}
                       address={toHook ? split.hook : split.beneficiary}
                       chainId={chainId}
                     />

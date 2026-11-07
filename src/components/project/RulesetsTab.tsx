@@ -24,7 +24,8 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { getPublicClient } from "@wagmi/core";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { editReservedSplitsHash, useTabHashAction } from "@/components/project/Tabs";
 import { zeroAddress, type PublicClient } from "viem";
 import { SplitRecipient } from "@/components/project/SplitRecipient";
 import { usePublicClient } from "wagmi";
@@ -35,6 +36,7 @@ import { EditSplitsFlow } from "@/components/project/EditSplitsFlow";
 import { QueueRulesetFlow } from "@/components/project/QueueRulesetFlow";
 import {
   billionthsToPct,
+  cashOutTaxValue,
   fmtPct,
   formatCountdown,
   formatDate,
@@ -161,7 +163,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "reservedPercent",
-      label: "Tokens set aside",
+      label: "Reserved tokens",
       raw: String(m.reservedPercent),
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
     },
@@ -173,7 +175,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
         m.cashOutTaxRate >= 10_000
           ? "Disabled"
           : m.cashOutTaxRate > 0
-            ? basisPoints(m.cashOutTaxRate)
+            ? cashOutTaxValue(m.cashOutTaxRate)
             : "None",
     },
     {
@@ -421,7 +423,7 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Tokens set aside",
+      label: "Reserved tokens",
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
       hint:
         m.reservedPercent > 0
@@ -435,7 +437,7 @@ function ruleRows(
         m.cashOutTaxRate >= 10_000
           ? "Disabled"
           : m.cashOutTaxRate > 0
-            ? `Taxed ${basisPoints(m.cashOutTaxRate)}`
+            ? `Taxed ${cashOutTaxValue(m.cashOutTaxRate)}`
             : "No tax",
     },
     {
@@ -488,7 +490,7 @@ function ruleRows(
     },
     {
       section: "Other rules",
-      label: "Accept more treasury tokens",
+      label: "Accept more tokens",
       value: m.allowAddAccountingContext ? "Allowed" : "Not allowed",
     },
     {
@@ -671,6 +673,8 @@ export function RulesetsTab({
   const queryClient = useQueryClient();
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const [selectedRulesetId, setSelectedRulesetId] = useState<number | null>(null);
+  // The editor only exists on the current ruleset.
+  useTabHashAction(editReservedSplitsHash(false), useCallback(() => setSelectedRulesetId(null), []));
 
   const projectChains = useMemo(() => {
     const source = chains.length ? chains : [[chainId, projectId]];
@@ -960,7 +964,7 @@ export function RulesetsTab({
             {rows
               .filter(
                 (row) =>
-                  row.section === "Token" && row.label !== "Tokens set aside",
+                  row.section === "Token" && row.label !== "Reserved tokens",
               )
               .map((row) => (
                 <StackedRule
@@ -978,7 +982,7 @@ export function RulesetsTab({
                   .filter(
                     (row) =>
                       row.section === "Token" &&
-                      row.label === "Tokens set aside",
+                      row.label === "Reserved tokens",
                   )
                   .map((row) => (
                     <StackedRule
@@ -1018,6 +1022,7 @@ export function RulesetsTab({
                         title="reserved recipients"
                         rulesetId={BigInt(rulesetId)}
                         chains={projectChains}
+                        openOnHash={editReservedSplitsHash(false)}
                       />
                     </div>
                   ) : null}

@@ -15,7 +15,7 @@ description: Launch, check, pay into, cash out of, and run Juicebox projects on 
 
 # Juicebox
 
-${JUICEBOX_ONE_LINER} juicebox.money runs Juicebox V6 on Ethereum, Optimism, Base, and Arbitrum.
+${JUICEBOX_ONE_LINER} juicebox.money runs Juicebox V6 on Ethereum, Base, Arbitrum, and Optimism.
 
 ## Tools
 

@@ -79,7 +79,7 @@ export async function resolveSafeBatchRoute({
     return {
       kind: 'unavailable',
       authorityKind: identity.kind === 'safe' ? 'safe' : 'eoa',
-      reason: 'Connect a wallet first.',
+      reason: 'Sign in first.',
     }
   }
   const same = connected.toLowerCase() === authority.toLowerCase()
@@ -284,7 +284,7 @@ export async function submitSafeBatch({
   if (!calls.length) throw new Error('Add at least one step to the batch.')
   if (problems.length) throw new Error(problems[0].message)
   const connected = getAccount(wagmiConfig).address
-  if (!connected) throw new Error('Connect a wallet first.')
+  if (!connected) throw new Error('Sign in first.')
   const client = clientFor(chainId)
 
   if (route.kind === 'eoa') {

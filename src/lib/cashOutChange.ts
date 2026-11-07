@@ -1,3 +1,5 @@
+import { cashOutTaxValue } from '@/lib/format'
+
 export type CashOutObservation = {
   balance: bigint
   tokenSupply: bigint
@@ -58,7 +60,7 @@ export function explainCashOutChange(
   }
   if (current.cashOutTax !== previous.cashOutTax) {
     causes.push(
-      `the cash-out tax changed from ${formatTax(previous.cashOutTax)} to ${formatTax(current.cashOutTax)}`,
+      `the cash-out tax changed from ${cashOutTaxValue(previous.cashOutTax)} to ${cashOutTaxValue(current.cashOutTax)}`,
     )
   }
 
@@ -92,9 +94,6 @@ function valuationChanged(
   return current.balanceUsd * previous.balance !== previous.balanceUsd * current.balance
 }
 
-function formatTax(value: number): string {
-  return `${(value / 100).toFixed(2).replace(/\.?0+$/, '')}%`
-}
 
 function joinCauses(causes: string[]): string {
   if (causes.length === 1) return causes[0]

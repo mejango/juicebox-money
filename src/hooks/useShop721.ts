@@ -6,6 +6,7 @@ import { JB_CHAINS, type JBChainId } from '@bananapus/nana-sdk-core'
 import type { Address, PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { PERSIST } from '@/lib/query-persist'
+import { recoveringRead } from '@/lib/read-recovery'
 
 /*
  * The project's 721 shop reads, shared by the Shop tab, the pay box and activity rows. Kept out
@@ -58,6 +59,8 @@ export type Shop = {
   hook: Address
   /** SDK-authenticated native store/snapshot, used only for cosmetic URI reads. */
   store?: Address
+  /** The store has a token URI resolver for this hook, so tiers can be named from it. */
+  hasTokenUriResolver?: boolean
   inventoryBlockNumber?: bigint
   /** Shared implementation address used to key 721 hook metadata. */
   idTarget?: Address
@@ -112,7 +115,7 @@ export function useShop721(chainId: JBChainId, projectId: number, isRevnet: bool
     meta: PERSIST,
     enabled: !!publicClient,
     staleTime: 60_000,
-    retry: 1,
+    ...recoveringRead,
     // The reads load on demand, so the home activity rail stays light.
     queryFn: async () =>
       (await import('@/lib/shop-read')).readShop(publicClient!, chainId, projectId, isRevnet, nativeSymbol),
@@ -133,10 +136,14 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
   const mediaTierKey = tiers
     .map(tier => `${tier.id}:${tier.encodedIpfsUri}:${tier.resolvedUri}${tier.name === undefined ? '' : `:${tier.name}`}`)
     .join(',')
+  const resolver = !nativeTierIds && shop?.store && shop.hasTokenUriResolver && publicClient
+    ? { client: publicClient, store: shop.store, hook: shop.hook }
+    : undefined
   const query = useKeptQuery<ShopMediaResult>({
     // Old persisted maps could contain a failed fetch cached as a valid {}.
+    // Media persisted before the resolver was asked never goes stale, so resolved media has its own key.
     queryKey: ['shop721Media', 2, chainId, shop?.hook, nativeTierIds === undefined
-      ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
+      ? `${resolver ? 'resolver:' : ''}${mediaTierKey}` : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
     meta: PERSIST,
     enabled: !!shop && tiers.length > 0 && (!nativeTierIds || !shop.store || !!publicClient || tiers.every(tier => !!tier.resolvedUri)),
     staleTime: query => query.state.data?.failedTierIds.length ? 0 : Infinity,
@@ -146,7 +153,7 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
       if (nativeTierIds && shop?.protocol === 'defifa') {
         return resolveNativeShopMedia(publicClient, shop, tiers, previous)
       }
-      return resolveShopMedia(tiers, previous)
+      return resolveShopMedia(tiers, previous, resolver)
     },
   })
   return {

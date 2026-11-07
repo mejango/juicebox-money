@@ -1,11 +1,13 @@
+import Link from 'next/link'
 import type { ReactNode } from 'react'
 import { SafeBadge } from '@/components/SafeBadge'
 import { explorerAddressUrl } from '@/lib/chainDisplay'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 
 /**
- * A truncated address that links to the chain's block explorer, or a plain
- * span when the chain has none. `className` styles both the link and the
+ * A truncated address that opens its account page. `explorer` is for contracts
+ * and the account page itself: it links the chain's block explorer, or renders a
+ * plain span when the chain has none. `className` styles both the link and the
  * fallback span (the link additionally gets hover:underline); `children`
  * replaces the truncated-address label and `note` appends the muted
  * annotation some tables show after the address.
@@ -22,6 +24,7 @@ export function AddressLink({
   note,
   title,
   showSafe = false,
+  explorer = false,
 }: {
   address: string
   chainId?: number
@@ -30,11 +33,16 @@ export function AddressLink({
   note?: ReactNode
   title?: string
   showSafe?: boolean
+  explorer?: boolean
 }) {
   // Resolved through the app's single explorer registry (lib/chainDisplay).
-  const url = chainId !== undefined ? explorerAddressUrl(chainId, address) : null
+  const url = explorer && chainId !== undefined ? explorerAddressUrl(chainId, address) : null
   const label = children ?? <AddressLabel address={address} />
-  const core = url ? (
+  const core = !explorer ? (
+    <Link href={`/account/${address}`} prefetch={false} title={title} className={`${className} hover:underline`}>
+      {label}
+    </Link>
+  ) : url ? (
     <a
       href={url}
       target="_blank"

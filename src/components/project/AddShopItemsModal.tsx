@@ -15,6 +15,7 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { shortError } from '@/lib/errors'
 import { pinStoreItemDrafts, type PinnedStoreItemDraft } from '@/lib/store-items'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch } from '@/lib/project-batch'
 import { buildShopAddCalls, distinctShopTargets, pendingShopBatch, readShopSnapshot, reverifyShopCall, type ShopCallContext, type ShopSnapshot, type ShopWriteTarget } from '@/lib/shop-batch'
@@ -66,7 +67,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
 
   const toggleChain = (id: JBChainId) => {
     if (busy || review) return
-    setSelected(current => current.includes(id) ? current.filter(chain => chain !== id) : [...current, id].sort((a, b) => a - b))
+    setSelected(current => current.includes(id) ? current.filter(chain => chain !== id) : [...current, id].sort(byChainOrder))
     setMessage(null)
   }
   const handleReview = async () => {
@@ -162,7 +163,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
       <div className="callout callout-info text-xs">
         {isConnected
           ? 'Choose destination chains, then review each shop’s items. Eligible chains share one funding transaction; Safe and unsupported chains proceed in separate rounds.'
-          : 'Sign in with the shop owner or an authorized manager wallet to add items.'}
+          : 'Sign in with the shop owner or an authorized operator to add items.'}
       </div>
 
       <StoreEditor
@@ -255,8 +256,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                     label: `Item ${index + 1}`,
                     value: `${item.name.trim()} — ${item.price} ${savedContext?.snapshot.target.pricing.symbol ?? activePricing.symbol}`,
                   })),
-                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshReview?.snapshots) ?? []).map(snapshot => ({ label: `${chainName(snapshot.target.chainId)} · project #${snapshot.target.projectId}`, value: `Next item ID at review: ${BigInt(snapshot.maxTierId ?? '0') + 1n}; ${snapshot.target.pricing.decimals} price decimals` })),
-                  ...(batch?.calls.flatMap(call => (call.context as ShopCallContext).items.map(item => ({ label: `${chainName(call.chainId)} · ${item.name}`, value: `Expected item #${item.tierId} · quantity: ${item.supply || 'unlimited'}` }))) ?? freshReview?.snapshots.flatMap(snapshot => [...freshReview.items].sort((a, b) => a.category - b.category).map((item, index) => ({ label: `${chainName(snapshot.target.chainId)} · ${item.name}`, value: `Expected item #${BigInt(snapshot.maxTierId ?? '0') + BigInt(index) + 1n} · quantity: ${item.perChainSupply[snapshot.target.chainId]?.trim() || item.supply || 'unlimited'}` }))) ?? []),
+                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshReview?.snapshots) ?? []).map(snapshot => ({ label: `${chainName(snapshot.target.chainId)}, project #${snapshot.target.projectId}`, value: `Next item ID at review: ${BigInt(snapshot.maxTierId ?? '0') + 1n}; ${snapshot.target.pricing.decimals} price decimals` })),
+                  ...(batch?.calls.flatMap(call => (call.context as ShopCallContext).items.map(item => ({ label: `${chainName(call.chainId)}, ${item.name}`, value: `Expected item #${item.tierId}, quantity: ${item.supply || 'unlimited'}` }))) ?? freshReview?.snapshots.flatMap(snapshot => [...freshReview.items].sort((a, b) => a.category - b.category).map((item, index) => ({ label: `${chainName(snapshot.target.chainId)}, ${item.name}`, value: `Expected item #${BigInt(snapshot.maxTierId ?? '0') + BigInt(index) + 1n}, quantity: ${item.perChainSupply[snapshot.target.chainId]?.trim() || item.supply || 'unlimited'}` }))) ?? []),
                   {
                     label: 'On',
                     value: review.chainIds.map(chainId => chainName(chainId)).join(', '),

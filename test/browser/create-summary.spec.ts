@@ -35,7 +35,7 @@ for (const width of [320, 1280]) {
         labelWhiteSpace: getComputedStyle(label).whiteSpace,
       }
     }))
-    expect(rows.map(row => row.label)).toEqual(['Project owner', 'Launching', 'Chains', 'Accounting', 'Rules', 'Creation fees'])
+    expect(rows.map(row => row.label)).toEqual(['Project', 'Project owner', 'Can move funds', 'Can change rules', 'Launching', 'Chains', 'Accounting', 'Rules', 'Creation fees'])
     expect(rows.find(row => row.label === 'Launching')?.value).toBe('Simple project')
     expect(rows.find(row => row.label === 'Accounting')?.value).toBe('ETH')
     expect(rows.find(row => row.label === 'Rules')?.value).toContain('Issues 10,000 tokens per ETH')

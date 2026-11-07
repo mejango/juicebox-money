@@ -1,7 +1,6 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
-import { fetchMetadataJson } from '@/lib/metadata-json'
 
 import {
   accountingContextsQuery,
@@ -10,7 +9,6 @@ import {
 } from '@/lib/project-display-queries'
 import { contextRows, TxProgress, type TxConfirmRow } from "@/components/ui/TxProgress";
 import {
-  bytes32ToCidV0,
   JBCoreContracts,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
@@ -37,10 +35,10 @@ import {
   tokenCurrencyId,
 } from "@bananapus/nana-sdk-core/v6";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
+import { recoveringRead } from "@/lib/read-recovery";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
-import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -50,9 +48,8 @@ import {
   zeroAddress,
   type Address,
   type Hex,
-  type PublicClient,
 } from "viem";
-import { usePublicClient } from "wagmi";
+import { usePayPublicClient } from "@/hooks/usePayPublicClient";
 import { getAccount } from "@wagmi/core";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
 import { liveStep, revertedReceipt, reviewedCall, useReviewedAction, type TxRequest } from "@/hooks/useReviewedAction";
@@ -63,17 +60,14 @@ import {
   buyableAsset,
   defaultsToDollars,
   payButtonAction,
+  pickedTokenIndex,
+  tokensForDollars,
 } from "@/lib/pay-choices";
 import { useOnRamp } from "@/components/GetFunds";
-import { useShopCart } from "@/components/project/ShopCartProvider";
+import { useShopCart, useShopTabOpen } from "@/components/project/ShopCartProvider";
 import { contractReverted } from "@/lib/errors";
-import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
-import {
-  TIER_UNLIMITED_SUPPLY,
-  parseTierMetadataJson,
-  pickTierMetadata,
-  tierMediaImageUrl,
-} from "@/lib/tier-metadata";
+import { formatTokenAmount, formatUsd18 } from "@/lib/format";
+import { TIER_UNLIMITED_SUPPLY } from "@/lib/tier-metadata";
 import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
@@ -90,9 +84,8 @@ import { preloadReview } from "@/lib/preload-review";
 import { planShown, sequenceCalls } from "@/lib/reviewed-send";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
-import { useShop721 } from '@/hooks/useShop721'
-import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE } from "@/hooks/useShop721";
-import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from "@/components/project/CheckoutAmountRow";
+import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721, useShop721Media, type Shop, type TierMedia } from "@/hooks/useShop721";
+import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS } from "@/components/project/CheckoutAmountRow";
 import { NftCartLine } from "@/components/project/NftCartLine";
 import { shopCartTotal } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
@@ -179,30 +172,6 @@ function payTokenKey(t: Pick<PayContext, "token" | "viaRouter" | "terminal">): s
   return `${t.token.toLowerCase()}:${t.viaRouter}:${t.terminal.toLowerCase()}`;
 }
 
-async function resolvePayTierMetadata(tier: {
-  resolvedUri?: string;
-  encodedIpfsUri: `0x${string}`;
-}) {
-  const resolved = tier.resolvedUri
-    ? parseTierMetadataJson(tier.resolvedUri)
-    : null;
-  if (resolved && Object.keys(resolved).length > 0) {
-    return pickTierMetadata(resolved);
-  }
-
-  const cid = bytes32ToCidV0(tier.encodedIpfsUri);
-  if (!cid) return null;
-  try {
-    const json = await fetchMetadataJson(appIpfsUrl(`ipfs://${cid}`)!, {
-      signal: AbortSignal.timeout(8_000),
-    });
-    return json && typeof json === "object"
-      ? pickTierMetadata(json as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
 type ShopInfo = {
   /** Whether `tiers` is the shop's FULL inventory. The cart prunes rows against it, so a
    *  truncated list would silently delete items the shopper added from the Shop tab. */
@@ -227,6 +196,32 @@ type ShopInfo = {
     image: string | null;
   }[];
 };
+
+function payShopInfo(shop: Shop, media: Record<number, TierMedia>): ShopInfo {
+  return {
+    // readShop walks every page, so an absent id is a removed tier and not a truncation.
+    tiersComplete: true,
+    hook: shop.hook,
+    idTarget: shop.idTarget!,
+    pricingCurrency: shop.pricing.currency,
+    pricingDecimals: shop.pricing.decimals,
+    tiers: shop.tiers.filter(tier => tier.initial > 0).map(tier => ({
+      id: tier.id,
+      price: tier.price,
+      discountPercent: tier.discountPercent,
+      remaining: tier.remaining,
+      initial: tier.initial,
+      unlimited: tier.initial >= TIER_UNLIMITED_SUPPLY,
+      // Fail closed if a legacy store does not return flags: charging
+      // fresh funds is safer than underfunding a credit-restricted mint.
+      cantBuyWithCredits: tier.flags?.cantBuyWithCredits ?? true,
+      // Metadata is cosmetic: a tier without it still sells.
+      name: media[tier.id]?.name ?? null,
+      description: media[tier.id]?.description ?? null,
+      image: media[tier.id]?.image ?? null,
+    })),
+  };
+}
 
 type ShopPayRoute = {
   supported: boolean;
@@ -261,14 +256,7 @@ export function PayPanel({
 }) {
   const queryClient = useQueryClient();
   const { isConnected, address, openSignIn } = useWallet();
-  const {
-    quantities: cart,
-    items: cartItems,
-    count: cartCount,
-    setQuantity,
-    registerItem,
-    clear: clearCart,
-  } = useShopCart();
+  const shopTabOpen = useShopTabOpen();
 
   // The chain being paid — a project lives on every linked chain, and the
   // payer picks which one. projectId can differ per chain (sucker groups).
@@ -277,6 +265,15 @@ export function PayPanel({
     projectId: number;
   }>(() => ({ chainId: initialChainId, projectId: initialProjectId }));
   const { chainId, projectId } = deployment;
+  const {
+    quantities: cart,
+    items: cartItems,
+    count: cartCount,
+    countsByChain,
+    setQuantity,
+    registerItem,
+    clear: clearCart,
+  } = useShopCart(chainId);
 
   useEffect(() => {
     setDeployment({ chainId: initialChainId, projectId: initialProjectId });
@@ -284,7 +281,7 @@ export function PayPanel({
 
   // Another chain's deployment comes from the indexer: it is paid only once the onchain registry links it.
   const pairCheck = useLinkedPair([initialChainId, initialProjectId], [chainId, projectId], chains.length > 1);
-  const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
+  const publicClient = usePayPublicClient(chainId);
   const inventory = useShop721(chainId, projectId, isRevnet);
   const identity = useProjectNftProtocol(chainId, projectId, isRevnet);
   const nativeMarket = identity.data?.protocol === 'defifa';
@@ -315,6 +312,9 @@ export function PayPanel({
   // The (address+route) identity of the user's pick, so a background refetch or
   // chain switch remaps the index to the same token rather than clobbering it.
   const selectedKeyRef = useRef<string | null>(null);
+  const selectedSymbolRef = useRef("");
+  /** A picked token the current chain does not accept, until the payer moves on. */
+  const [droppedToken, setDroppedToken] = useState<string | null>(null);
   const [memo, setMemo] = useState("");
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [sequenceStarted, setSequenceStarted] = useState(false);
@@ -358,11 +358,10 @@ export function PayPanel({
   // ONLY when a preview through the attached entry confirms it can route them (else a
   // dead route reverts at pay time). Built atomically so the token list is
   // never a partial/desynced snapshot.
-  const { data: surface, isError: surfaceError } = useQuery(projectDisplayQuery(queryClient, {
+  const { data: surface, isError: surfaceError, isFetching: surfaceFetching, refetch: refetchSurface } = useQuery(projectDisplayQuery(queryClient, {
     queryKey: projectDisplayKey({ chainId, projectId: BigInt(projectId) }, "paySurface"),
     enabled: !!publicClient,
-
-    retry: 1,
+    ...recoveringRead,
     queryFn: async (reader): Promise<PaySurface> => {
       const client = publicClient!;
       const pid = BigInt(projectId);
@@ -491,12 +490,19 @@ export function PayPanel({
     const key = selectedKeyRef.current;
     // Touched with no token picked: the payer chose dollars, which no refetch removes.
     if (!key) return;
-    const idx = list.findIndex((t) => payTokenKey(t) === key);
+    const idx = pickedTokenIndex(list, key, selectedSymbolRef.current, payTokenKey);
     if (idx >= 0) {
       if (idx !== tokenIndex) setTokenIndex(idx);
+      selectedKeyRef.current = payTokenKey(list[idx]);
     } else {
+      // The digits typed were for the dropped token. Typed dollars still mean dollars.
+      if (!payWithDollars) {
+        setDroppedToken(selectedSymbolRef.current);
+        setAmount("");
+        setDebouncedAmount("");
+      }
       selectedKeyRef.current = null;
-      setTokenTouched(false);
+      if (!payWithDollars) setTokenTouched(false);
       setTokenIndex(0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -575,66 +581,40 @@ export function PayPanel({
   // A wallet with nothing in it cannot pay in any of these tokens, so the menu opens on "$"
   // rather than on a token the payer would have to go and acquire first. Their own choice wins
   // the moment they make one.
+  // Never dollars where they cannot buy anything: Pay would open a purchase that does nothing.
   useEffect(() => {
-    if (tokenTouched) return;
-    setPayWithDollars(holdsNothing);
-  }, [holdsNothing, tokenTouched]);
+    if (context && !onRamp.supported) setPayWithDollars(false);
+    else if (!tokenTouched) setPayWithDollars(holdsNothing);
+  }, [holdsNothing, tokenTouched, onRamp.supported, context]);
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
-  const { data: shop } = useQuery({
-    queryKey: ["payShop", chainId, projectId, isRevnet],
-    enabled: !!publicClient && identity.isSuccess && !nativeMarket,
-    staleTime: 120_000,
-    retry: 1,
-    queryFn: async (): Promise<ShopInfo | null> => {
-      const client = publicClient!;
-      // Paged to completion, like ShopTab. A single 200-tier page truncated the shop, and the
-      // effect below then DELETED any cart row outside that window — so items added from the
-      // Shop tab silently disappeared from the cart on a large shop.
-      const resolved = await getProjectNftInventory(client, {
-        chainId,
-        projectId: BigInt(projectId),
-        isRevnet,
-        tierLimit: 1,
-      });
-      if (!resolved || resolved.protocol !== 'jb721') return null;
-      const rawTiers = await readAllActiveTiers(client, resolved.store, resolved.hook, true);
-      // One read now carries flags too, so the second `tiersOf` call this used to make — and
-      // its `.catch(() => [])`, which quietly failed every tier closed — is gone.
-      const tiers = rawTiers.filter((tier) => tier.initialSupply > 0);
-      return {
-        /** The read walked every page, so an absent id is a removed tier and not a truncation. */
-        tiersComplete: true,
-        hook: resolved.hook,
-        idTarget: resolved.metadataIdTarget,
-        pricingCurrency: resolved.pricing.currency,
-        pricingDecimals: resolved.pricing.decimals,
-        tiers: await Promise.all(
-          tiers.map(async (t) => {
-            // Metadata is cosmetic — a tier without it still sells.
-            const meta = await resolvePayTierMetadata(t);
-            const name = meta?.name ?? null;
-            const description = meta?.description ?? null;
-            const image = tierMediaImageUrl(meta?.image) ?? null;
-            return {
-              id: t.id,
-              price: t.price,
-              discountPercent: t.discountPercent,
-              remaining: t.remainingSupply,
-              initial: t.initialSupply,
-              unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
-              // Fail closed if a legacy store does not return flags: charging
-              // fresh funds is safer than underfunding a credit-restricted mint.
-              cantBuyWithCredits: t.flags?.cantBuyWithCredits ?? true,
-              name,
-              description,
-              image,
-            };
-          }),
-        ),
-      };
-    },
-  });
+  // The Shop tab's read, whose tiers come without resolved URIs: asking the store to resolve a
+  // whole page reverts on a large shop. Only a verified generic shop is sold from here.
+  const inventoryShop = identity.isSuccess && !nativeMarket && inventory.data?.protocol === "jb721" ? inventory.data : null;
+  const { data: shopMedia } = useShop721Media(chainId, inventoryShop);
+  const shop = useMemo(() => inventoryShop ? payShopInfo(inventoryShop, shopMedia ?? {}) : null, [inventoryShop, shopMedia]);
+  const shopPending = identity.isPending || (!nativeMarket && inventory.isPending && !inventory.isError);
+  const shopFailed = !shop && !nativeMarket && !!inventory.isError;
+
+  // Dollars are what the amount means only while nothing in a cart sets it in tokens.
+  const amountIsDollars = payWithDollars && cartCount === 0;
+  // The digits on screen stop meaning what they meant when their unit changes or the cart that
+  // set them empties. A cart that remains sets its own total below.
+  const previousCartCount = useRef(cartCount);
+  useEffect(() => {
+    const hadItems = previousCartCount.current > 0;
+    previousCartCount.current = cartCount;
+    if (hadItems && cartCount === 0) {
+      setAmount("");
+      setDebouncedAmount("");
+    }
+  }, [cartCount]);
+  useEffect(() => {
+    if (cartCount > 0) return;
+    setAmount("");
+    setDebouncedAmount("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [payWithDollars]);
 
   // Keep the shared cart's presentation metadata fresh even before the user
   // opens the Shop tab. Clamp stale quantities against live per-chain supply.
@@ -644,7 +624,8 @@ export function PayPanel({
     for (const tier of shop.tiers) {
       registerItem({
         tierId: tier.id,
-        name: tier.name ?? `Item #${tier.id}`,
+        // A tier whose media hasn't resolved says nothing: a name already registered stands.
+        name: tier.name ?? undefined,
         image: tier.image ?? undefined,
       });
       const quantity = cart[tier.id] ?? 0;
@@ -818,6 +799,7 @@ export function PayPanel({
     if (!preferred) return;
     setTokenIndex(preferred.index);
     selectedKeyRef.current = payTokenKey(preferred.context);
+    selectedSymbolRef.current = preferred.context.symbol;
     setTokenTouched(true);
   }, [
     cartCount,
@@ -959,11 +941,17 @@ export function PayPanel({
       !!context &&
       !!terminalAddress &&
       (amountRaw > 0n || cartCount > 0) &&
+      !amountIsDollars &&
       mode === "pay" && !nativeMarket && identity.isSuccess,
     // Keep the last verified quote mounted while the next amount is quoted.
     // The receipt gently dims it below, and submission stays blocked until the
-    // fresh quote arrives.
-    placeholderData: (previous) => previous,
+    // fresh quote arrives. Another token's or chain's is no hint at all.
+    placeholderData: (previous, previousQuery) =>
+      previousQuery?.queryKey[1] === chainId &&
+      previousQuery?.queryKey[3] === context?.token &&
+      previousQuery?.queryKey[4] === context?.viaRouter
+        ? previous
+        : undefined,
     retry: false,
     queryFn: () =>
       prepareUserPay(publicClient!, {
@@ -978,6 +966,68 @@ export function PayPanel({
       }),
   });
   const preview = prepared?.preview;
+
+  // ---- What the amount is worth in dollars ----
+  // Display only: nothing sends these. Paying with dollars buys the token first, and the payment
+  // after that gets its own quote and review. A token with no price simply shows no figure.
+  const { data: tokensPerDollar, isLoading: dollarPriceLoading } = useQuery({
+    queryKey: ["payTokensPerDollar", chainId, projectId, context?.currency, decimals],
+    enabled: !!publicClient && !!context && mode === "pay" && amountRaw > 0n,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () =>
+      publicClient!.readContract({
+        address: jbV6ContractAddress[JBCoreContracts.JBPrices][chainId],
+        abi: jbPricesAbi,
+        functionName: "pricePerUnitOf",
+        args: [BigInt(projectId), BigInt(context!.currency), BigInt(BASE_CURRENCY_USD), BigInt(decimals)],
+      }),
+  });
+  const dollarsInToken =
+    amountIsDollars && tokensPerDollar ? tokensForDollars(debouncedAmount, tokensPerDollar) : 0n;
+  const { data: dollarQuote, isFetching: dollarQuoteLoading } = useQuery({
+    queryKey: [
+      "payDollarQuote",
+      chainId,
+      projectId,
+      context?.token,
+      context?.viaRouter,
+      terminalAddress,
+      dollarsInToken.toString(),
+      address ?? null,
+    ],
+    enabled:
+      !!publicClient && !!context && !!terminalAddress && mode === "pay" &&
+      dollarsInToken > 0n && !nativeMarket && identity.isSuccess,
+    retry: false,
+    queryFn: () =>
+      prepareUserPay(publicClient!, {
+        chainId,
+        terminal: terminalAddress!,
+        projectId: BigInt(projectId),
+        token: context!.token,
+        amount: dollarsInToken,
+        beneficiary: address ?? zeroAddress,
+      }),
+  });
+  const amountUsd = !amountIsDollars && tokensPerDollar && amountRaw > 0n
+    ? (amountRaw * 10n ** 18n) / tokensPerDollar
+    : null;
+
+  // What the receipt reads, and whether it still answers what is typed.
+  const receipt = amountIsDollars ? dollarQuote : prepared;
+  const receiptPending =
+    amount !== debouncedAmount ||
+    (amountIsDollars
+      ? dollarPriceLoading || dollarQuoteLoading
+      : previewLoading || previewIsPrevious);
+  const receiptPendingClass = receiptPending ? "opacity-40" : "";
+  const showReceipt =
+    mode === "pay" &&
+    (amountIsDollars
+      ? dollarPriceLoading || dollarQuoteLoading || (dollarsInToken > 0n && !!dollarQuote && dollarQuote.preview.beneficiaryTokenCount > 0n)
+      : amountRaw > 0n && !previewError && (previewLoading || (!!preview && preview.beneficiaryTokenCount > 0n)));
+  const receiptIsEstimate = amountIsDollars || (!!prepared && prepared.minReturnedTokens < (preview?.beneficiaryTokenCount ?? 0n));
   // The payment whose quote the payer asked to read again, until that read settles.
   // A background refetch keeps the notice; only the payer's own retry says Refreshing.
   const [quoteRetryFor, setQuoteRetryFor] = useState<string | null>(null);
@@ -1214,6 +1264,8 @@ export function PayPanel({
     !pairCheck.linked ||
     notStarted ||
     surfaceError ||
+    // An unverified project is never paid: its protocol decides what a payment must carry.
+    (mode === "pay" && !identity.isSuccess) ||
     terminalBlocked ||
     addBalanceViaRouter ||
     (surface?.pausePay && mode === "pay");
@@ -1562,6 +1614,26 @@ export function PayPanel({
     );
   }
 
+  const switchChain = (value: string) => {
+    const next = chains.find(([cid]) => cid === Number(value));
+    if (!next) return;
+    setDroppedToken(null);
+    // Digits typed for a token stay with that token: its new chain's list keeps it or says it can't.
+    if (context && amount.trim() && !selectedKeyRef.current) {
+      selectedKeyRef.current = payTokenKey(context);
+      selectedSymbolRef.current = context.symbol;
+      setTokenTouched(true);
+    }
+    setDeployment({
+      chainId: next[0] as JBChainId,
+      projectId: next[1],
+    });
+  };
+  // Items waiting on another of this project's chains, until the payer goes back or empties them.
+  const otherChainCart = chains
+    .map(([cid]) => ({ chainId: cid, count: countsByChain[cid] ?? 0 }))
+    .find(other => other.chainId !== chainId && other.count > 0);
+
   const addBalanceAction = <button type="button" className="btn-secondary px-4 py-2" disabled={busy} onClick={() => setMode('addbalance')}>Add to balance</button>;
   if (mode === 'pay' && nativeMarket && !pairCheck.linked) {
     return pairCheck.line ? <p role="alert" className="text-sm text-red-600">{pairCheck.line}</p> : <ProjectPayPanelSkeleton embedded />;
@@ -1569,18 +1641,45 @@ export function PayPanel({
   if (mode === 'pay' && nativeMarket && inventory.data?.protocol === 'defifa') {
     return <div className="space-y-4"><DefifaCheckout chainId={chainId} projectId={projectId} shop={inventory.data} />{addBalanceAction}</div>;
   }
-  if (mode === 'pay' && (!identity.isSuccess || nativeMarket)) {
-    const pending = nativeMarket ? inventory : identity;
-    const failed = pending.isError || (nativeMarket && inventory.isSuccess && inventory.data?.protocol !== 'defifa');
+  if (mode === 'pay' && nativeMarket) {
+    const failed = inventory.isError || (inventory.isSuccess && inventory.data?.protocol !== 'defifa');
     if (!failed) return <ProjectPayPanelSkeleton embedded />;
     return <div className="space-y-2 text-sm text-smoke-600">
-      <p>{nativeMarket ? 'Could not read Defifa NFT tiers.' : 'Could not verify this project’s NFT protocol.'}</p>
-      <button type="button" className="btn-secondary" onClick={() => void pending.refetch()}>Retry</button>
-      {addBalanceAction}
+      <p>Could not read Defifa NFT tiers.</p>
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className="btn-secondary px-4 py-2" onClick={() => void inventory.refetch()}>Retry</button>
+        {addBalanceAction}
+      </div>
     </div>;
   }
 
-  const hasShopPreview = !!shop && shop.tiers.length > 0 && mode === "pay";
+  // One line for every read Pay refuses without. The verdict waits while a read is being tried again.
+  const payDetailsFailed = surfaceError || (mode === "pay" && identity.isError);
+  const payDetailsRetrying = surfaceFetching || identity.isFetching;
+  const retryPayDetails = () => {
+    if (surfaceError) void refetchSurface();
+    if (identity.isError) void identity.refetch();
+  };
+
+  const shopInPay = !!shop && shop.tiers.length > 0 && mode === "pay";
+  const hasShopPreview = shopInPay && !shopTabOpen;
+  const shopCheckoutNotice = !shopInPay || cartCount === 0 ? null : shopRoutesLoading ? (
+    <Skeleton
+      className="mt-2 h-3 w-40 rounded"
+      role="status"
+      aria-label="Loading checkout currencies"
+    />
+  ) : supportedShopContextIndexes.length === 0 ? (
+    <p className="mt-1 text-xs leading-relaxed text-red-600">
+      {shopRouteCheckFailed
+        ? `Couldn't check which payment tokens have a price feed for these items on ${chainName(chainId)}. Try again in a moment.`
+        : `No directly accepted payment token has a verified price feed for these items on ${chainName(chainId)}.`}
+    </p>
+  ) : !shopMatchesToken ? (
+    <p className="mt-1 text-xs leading-relaxed text-smoke-700">
+      Switching to a supported checkout currency…
+    </p>
+  ) : null;
 
   return (
     <div className={hasShopPreview ? undefined : "-mt-3"}>
@@ -1599,23 +1698,7 @@ export function PayPanel({
               All →
             </button>
           </div>
-          {cartCount > 0 && shopRoutesLoading ? (
-            <Skeleton
-              className="mt-2 h-3 w-40 rounded"
-              role="status"
-              aria-label="Loading checkout currencies"
-            />
-          ) : cartCount > 0 && supportedShopContextIndexes.length === 0 ? (
-            <p className="mt-1 text-xs leading-relaxed text-red-600">
-              {shopRouteCheckFailed
-                ? `Couldn't check which payment tokens have a price feed for these items on ${chainName(chainId)}. Try again in a moment.`
-                : `No directly accepted payment token has a verified price feed for these items on ${chainName(chainId)}.`}
-            </p>
-          ) : cartCount > 0 && !shopMatchesToken ? (
-            <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              Switching to a supported checkout currency…
-            </p>
-          ) : null}
+          {shopCheckoutNotice}
 
           <div className="mt-2 flex gap-2 overflow-x-auto pb-3">
             {shop.tiers.slice(0, NFT_CHECKOUT_PREVIEW_PAGE_SIZE).map((tier) => {
@@ -1628,20 +1711,20 @@ export function PayPanel({
               );
               const item = {
                 tierId: tier.id,
-                name: tier.name ?? `Item #${tier.id}`,
+                name: tier.name ?? undefined,
                 image: tier.image ?? undefined,
               };
               return (
-                <NftCheckoutCard key={tier.id} tierId={tier.id} name={item.name} image={tier.image} qty={qty}
+                <NftCheckoutCard key={tier.id} tierId={tier.id} name={tier.name ?? `Item #${tier.id}`} image={tier.image} qty={qty}
                   priceLabel={`${formatTokenAmount(price, shop.pricingDecimals)} ${shopPricingSymbol}`}
                   soldOut={soldOut} busy={busy} canAdd={qty < cap}
-                  onSelect={() => setQuantity(tier.id, 1, item)}
-                  onRemove={() => setQuantity(tier.id, qty - 1, item)}
-                  onAdd={() => setQuantity(tier.id, Math.min(cap, qty + 1), item)} />
+                  onSelect={() => setQuantity(tier.id, 1, item)} />
               );
             })}
           </div>
         </div>
+      ) : shopCheckoutNotice ? (
+        <div className="mb-3">{shopCheckoutNotice}</div>
       ) : null}
 
       {/* Mode on chain — subtle underlined text dropdowns (website/ parity) */}
@@ -1666,20 +1749,7 @@ export function PayPanel({
         {chains.length > 1 ? (
           <TextSelect
             value={String(chainId)}
-            onChange={(v) => {
-              const next = chains.find(([cid]) => cid === Number(v));
-              if (!next) return;
-              setDeployment({
-                chainId: next[0] as JBChainId,
-                projectId: next[1],
-              });
-              setTokenIndex(0);
-              setTokenTouched(false);
-              selectedKeyRef.current = null;
-              clearCart();
-              setAmount("");
-              setDebouncedAmount("");
-            }}
+            onChange={switchChain}
             disabled={busy}
             ariaLabel="Chain"
             options={chains.map(([cid]) => ({
@@ -1693,7 +1763,7 @@ export function PayPanel({
       </div>
       {mode === "addbalance" ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
-          Adds funds without minting tokens — useful for refills and refunds.
+          Adds to the project balance. You get no {projectTokenLabel}.
         </p>
       ) : null}
 
@@ -1705,15 +1775,18 @@ export function PayPanel({
             inputMode="decimal"
             // Dollars are shown with their sign and stored without it: everything downstream
             // — the preview, the amount sent to the provider — parses a number.
-            value={payWithDollars && amount ? `$${amount}` : amount}
+            value={amountIsDollars && amount ? `$${amount}` : amount}
             onChange={(e) => setAmount(e.target.value.replace(/^\$/, ""))}
             disabled={busy}
-            placeholder={payWithDollars ? "$0.00" : "0.00"}
+            placeholder={amountIsDollars ? "$0.00" : "0.00"}
             aria-label="Amount"
             className={CHECKOUT_AMOUNT_INPUT_CLASS}
           />
         } currency={<>
-{contexts.length > 1 || onRamp.supported ? (
+{!surface ? (
+            // The unit is unknown until the project's tokens are read: no token is implied meanwhile.
+            surfaceError ? null : <Skeleton className="h-4 w-10 rounded" role="status" aria-label="Loading payment tokens" />
+          ) : contexts.length > 1 || onRamp.supported ? (
             // Valued by INDEX, not address — a token can appear direct and
             // via-router, so the option must stay in lock-step with the
             // selected context (website/ fund-loss fix).
@@ -1721,6 +1794,7 @@ export function PayPanel({
               value={payWithDollars ? BUY_OPTION : String(tokenIndex)}
               onChange={(value) => {
                 setTokenTouched(true);
+                setDroppedToken(null);
                 if (value === BUY_OPTION) {
                   // Selecting dollars buys nothing yet. The payer types what
                   // they want to spend first, and Pay explains the swap they
@@ -1734,7 +1808,10 @@ export function PayPanel({
                 // Remember the explicit pick so a refetch/chain-switch remaps
                 // to this exact token instead of snapping back to list[0].
                 const picked = contexts[i];
-                if (picked) selectedKeyRef.current = payTokenKey(picked);
+                if (picked) {
+                  selectedKeyRef.current = payTokenKey(picked);
+                  selectedSymbolRef.current = picked.symbol;
+                }
                 setTokenTouched(true);
               }}
               disabled={busy}
@@ -1770,40 +1847,16 @@ export function PayPanel({
             </span>
           )}
             {/* Inside the field, under the token it refers to. */}
-        </>} action={
-          <button
-            onClick={submit}
-            // Warm what the click opens on approach, so it never waits for a download:
-            // the review when connected, Para's runtime when this reads "Sign in".
-            onPointerEnter={isConnected ? preloadReview : preloadParaHost}
-            onFocus={isConnected ? preloadReview : preloadParaHost}
-            onPointerDown={isConnected ? preloadReview : preloadParaHost}
-            onTouchStart={isConnected ? undefined : preloadParaHost}
-            disabled={
-              formBlocked ||
-              (isConnected && cartBlocked) ||
-              // Paying in dollars is a purchase, not a send: it needs an
-              // amount and nothing else. The checks below are about a token
-              // this payer does not hold yet.
-              (isConnected &&
-                !payWithDollars &&
-                ((amountRaw <= 0n &&
-                  !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
-                  (mode === "pay" && !previewReady))) ||
-              (isConnected && payWithDollars && amount.trim() === "")
-            }
-            className={CHECKOUT_ACTION_BUTTON_CLASS}
-          >
-            {payActionLabel}
-          </button>
-        } />
-        {/* No gap: the invisible spacer at the end has to match the pay
-            button's width exactly, or the balance drifts off the token
-            selector it sits under. */}
+        </>} />
         <div className="mt-1.5 flex items-start">
           <div className="min-w-0 flex-1 pr-3">
             {pairCheck.line ? (
               <p role="alert" className="text-xs text-error-500">{pairCheck.line}</p>
+            ) : null}
+            {amountUsd !== null ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>
+                About {formatUsd18(amountUsd)}
+              </p>
             ) : null}
             {notStarted ? (
               <p className="text-xs text-smoke-700">
@@ -1828,15 +1881,6 @@ export function PayPanel({
               </span>
             ) : null}
           </div>
-          {/* The pay button lives inside the field's well, so without a
-              matching spacer this column right-aligns to the button's edge
-              instead of the field's. */}
-          <span
-            aria-hidden="true"
-            className="invisible shrink-0 px-5 text-sm font-medium"
-          >
-            {payActionLabel}
-          </span>
         </div>
         {/* What "$" costs, said where it is spent. A payer who picked dollars is one step from a
           purchase they did not ask for, so the swap is named before it starts rather than
@@ -1879,21 +1923,16 @@ export function PayPanel({
           </div>
         </ModalShell>
       ) : null}
-      {mode === "pay" &&
-        amountRaw > 0n &&
-        !previewError &&
-        (previewLoading || (preview && preview.beneficiaryTokenCount > 0n)) ? (
+      {showReceipt ? (
           <div className="mt-3">
-            <p className="text-xs text-smoke-500">Estimated tokens</p>
-            {preview && preview.beneficiaryTokenCount > 0n ? (
+            <p className="text-xs text-smoke-500">{receiptIsEstimate ? "You get about" : "You get"}</p>
+            {receipt && receipt.preview.beneficiaryTokenCount > 0n ? (
               <p
                 aria-live="polite"
-                aria-busy={previewLoading}
-                className={`font-agrandir text-xl font-medium transition-colors duration-200 ${
-                  previewLoading ? "text-smoke-500" : "text-ink"
-                }`}
+                aria-busy={receiptPending}
+                className={`font-agrandir text-xl font-medium text-ink transition-opacity duration-200 ${receiptPendingClass}`}
               >
-                {formatTokenAmount(preview.beneficiaryTokenCount, 18)}{" "}
+                {formatTokenAmount(receipt.preview.beneficiaryTokenCount, 18)}{" "}
                 {projectTokenLabel}
               </p>
             ) : (
@@ -1903,12 +1942,38 @@ export function PayPanel({
                 aria-label="Calculating token return"
               />
             )}
+            {amountIsDollars ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>Before card or bank fees</p>
+            ) : receiptIsEstimate && prepared ? (
+              <p className={`text-xs text-smoke-500 ${receiptPendingClass}`}>
+                At least {formatTokenAmount(prepared.minReturnedTokens, 18)} {projectTokenLabel}
+              </p>
+            ) : null}
+            {receipt && receipt.preview.reservedTokenCount > 0n ? (
+              <p className={`mt-1 text-xs text-smoke-500 ${receiptPendingClass}`}>
+                Other recipients get {formatTokenAmount(receipt.preview.reservedTokenCount, 18)}{" "}
+                {projectTokenLabel}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>
 
       {/* Selected shop items share the payment receipt shown above. */}
-      {mode === "pay" && cartCount > 0 ? (
+      {mode === "pay" && cartCount > 0 && shopFailed ? (
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          Couldn&apos;t read this project&apos;s shop.{" "}
+          <button
+            type="button"
+            onClick={() => void inventory.refetch()}
+            className="font-medium underline underline-offset-2"
+          >
+            Try again
+          </button>
+        </p>
+      ) : mode === "pay" && cartCount > 0 && !shop && shopPending ? (
+        <Skeleton className="mt-4 h-16 w-full rounded-lg" role="status" aria-label="Loading your items" />
+      ) : mode === "pay" && cartCount > 0 && shop ? (
         <div className="mt-4">
           {selectedCartRows.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
@@ -1919,15 +1984,17 @@ export function PayPanel({
                   removeDisabled={busy} addDisabled={busy || row.quantity >= row.cap} />
               ))}
               <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-smoke-600">
-                    {cartCount} item{cartCount === 1 ? "" : "s"}
-                  </span>
-                  <span className="tabular-nums text-ink">
-                    {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
-                    {shopPricingSymbol}
-                  </span>
-                </div>
+                {cartAmountDue !== cartTotal ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-smoke-600">
+                      {cartCount} item{cartCount === 1 ? "" : "s"}
+                    </span>
+                    <span className="tabular-nums text-ink">
+                      {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
+                      {shopPricingSymbol}
+                    </span>
+                  </div>
+                ) : null}
                 {!shopCreditsLoading && shopCreditApplied > 0n ? (
                   <div className="flex items-center justify-between gap-3 text-emerald-700">
                     <span>Shop credit applied</span>
@@ -1984,27 +2051,10 @@ export function PayPanel({
             </div>
           ) : null}
 
-          {preview && preview.reservedTokenCount > 0n ? (
-            <p className="mt-1.5 text-xs text-smoke-500">
-              Other recipients get {formatTokenAmount(preview.reservedTokenCount, 18)}{" "}
-              {projectTokenLabel}
-            </p>
-          ) : null}
         </div>
       ) : null}
 
-      {/* The note follows the full receipt preview: tokens, shop items, and splits. */}
-      <input
-        type="text"
-        value={memo}
-        onChange={(e) => setMemo(e.target.value.slice(0, 256))}
-        disabled={busy}
-        placeholder="Add a note (optional)"
-        aria-label="Note"
-        className="input-well mt-3 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-      />
-
-      {mode === "pay" && amountRaw > 0n && previewFailure instanceof PaySwapQuoteFailedError ? (
+      {mode === "pay" && !amountIsDollars && amountRaw > 0n && previewFailure instanceof PaySwapQuoteFailedError ? (
         <p className="mt-2 text-sm text-smoke-700" aria-live="polite">
           {quoteRetryFor === paymentInputs ? "Refreshing…" : (
             <>
@@ -2019,7 +2069,7 @@ export function PayPanel({
             </>
           )}
         </p>
-      ) : mode === "pay" && amountRaw > 0n && previewError ? (
+      ) : mode === "pay" && !amountIsDollars && amountRaw > 0n && previewError ? (
         <p className="mt-2 text-sm text-red-600">
           Couldn&apos;t verify what this payment returns — paying is disabled
           until the preview works.{" "}
@@ -2055,10 +2105,73 @@ export function PayPanel({
         </p>
       ) : null}
 
-      {surfaceError ? (
-        <p className="mt-3 text-sm text-red-600">
-          Couldn&apos;t verify this project&apos;s accepted tokens — payments
-          are disabled.
+      {/* The note and the action follow the full receipt: tokens, shop items, and splits. */}
+      <div className="mt-3 flex items-stretch gap-2">
+        <input
+          type="text"
+          value={memo}
+          onChange={(e) => setMemo(e.target.value.slice(0, 256))}
+          disabled={busy}
+          placeholder="Add a public note"
+          aria-label="Note"
+          className="input-well min-h-[44px] min-w-0 flex-1 px-3.5 text-sm disabled:opacity-60"
+        />
+        <button
+            onClick={submit}
+            // Warm what the click opens on approach, so it never waits for a download:
+            // the review when connected, Para's runtime when this reads "Sign in".
+            onPointerEnter={isConnected ? preloadReview : preloadParaHost}
+            onFocus={isConnected ? preloadReview : preloadParaHost}
+            onPointerDown={isConnected ? preloadReview : preloadParaHost}
+            onTouchStart={isConnected ? undefined : preloadParaHost}
+            disabled={
+              formBlocked ||
+              (isConnected && cartBlocked) ||
+              // Paying in dollars is a purchase, not a send: it needs an
+              // amount and nothing else. The checks below are about a token
+              // this payer does not hold yet.
+              (isConnected &&
+                !payWithDollars &&
+                ((amountRaw <= 0n &&
+                  !(mode === "pay" && cartCount > 0 && cartAmountDue === 0n)) ||
+                  (mode === "pay" && !previewReady))) ||
+              (isConnected && payWithDollars && amount.trim() === "")
+            }
+            className="btn-primary min-h-[44px] shrink-0 px-5 text-sm disabled:opacity-60"
+          >
+            {payActionLabel}
+          </button>
+      </div>
+
+      {droppedToken ? (
+        <p className="mt-3 text-sm text-smoke-700" role="status">
+          {droppedToken} isn&apos;t accepted on {chainName(chainId)}.
+        </p>
+      ) : null}
+      {otherChainCart && mode === "pay" ? (
+        <p className="mt-3 text-sm text-smoke-700" role="status">
+          {otherChainCart.count} item{otherChainCart.count === 1 ? "" : "s"} in your{" "}
+          {chainName(otherChainCart.chainId)} cart.{" "}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => switchChain(String(otherChainCart.chainId))}
+            className="font-medium underline underline-offset-2"
+          >
+            Switch
+          </button>
+        </p>
+      ) : null}
+      {payDetailsFailed && !payDetailsRetrying ? (
+        <p role="alert" className="mt-3 text-sm text-red-600">
+          Couldn&apos;t load this project&apos;s payment details.{" "}
+          <button
+            type="button"
+            onClick={retryPayDetails}
+            className="font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
         </p>
       ) : null}
       {surface?.pausePay && mode === "pay" ? (

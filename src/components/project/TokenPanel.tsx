@@ -12,7 +12,6 @@ import { erc20Abi, zeroAddress } from 'viem'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { currentRulesetQuery } from '@/lib/project-display-queries'
 import { chainName } from '@/lib/urn'
-import { ChainIcon } from '@/components/ChainIcon'
 import { TokenPanelSkeleton } from '@/components/LoadingSkeletons'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
@@ -26,13 +25,10 @@ import { ConceptTerm } from '@/components/project/ConceptTerm'
 export function TokenPanel({
   chainId,
   projectId,
-  chainIds,
   compact = false,
 }: {
   chainId: JBChainId
   projectId: number
-  /** Every chain the project exists on (same token address everywhere). */
-  chainIds: number[]
   /** Condense token metadata into one wrapping line above a larger panel. */
   compact?: boolean
 }) {
@@ -66,12 +62,6 @@ export function TokenPanel({
       {
         abi: erc20Abi,
         address: tokenAddress as `0x${string}`,
-        functionName: 'name',
-        chainId,
-      },
-      {
-        abi: erc20Abi,
-        address: tokenAddress as `0x${string}`,
         functionName: 'symbol',
         chainId,
       },
@@ -98,22 +88,15 @@ export function TokenPanel({
   // doesn't).
   const rows: {
     label: string
-    centerCompact?: boolean
     centerFull?: boolean
     dd: ReactNode
   }[] = deployed
     ? [
         {
-          label: 'Name',
-          dd: (
-            <dd className="font-medium text-ink">{meta?.[0]?.result ?? '—'}</dd>
-          ),
-        },
-        {
           label: 'Symbol',
           dd: (
             <dd className="font-medium text-ink">
-              {meta?.[1]?.result ? `$${meta[1].result}` : '—'}
+              {meta?.[0]?.result ? `$${meta[0].result}` : '—'}
             </dd>
           ),
         },
@@ -133,6 +116,7 @@ export function TokenPanel({
           dd: (
             <dd>
               <AddressLink
+                explorer
                 address={tokenAddress!}
                 chainId={chainId}
                 className="text-ink"
@@ -140,22 +124,6 @@ export function TokenPanel({
             </dd>
           ),
         },
-        ...(chainIds.length > 1
-          ? [
-              {
-                label: 'On',
-                centerCompact: true,
-                centerFull: true,
-                dd: (
-                  <dd className="flex items-center gap-1">
-                    {chainIds.map(id => (
-                      <ChainIcon key={id} chainId={id} size={16} standalone />
-                    ))}
-                  </dd>
-                ),
-              },
-            ]
-          : []),
       ]
     : []
 
@@ -171,7 +139,7 @@ export function TokenPanel({
           }
         >
           {rows.map(row => {
-            const center = compact ? row.centerCompact : row.centerFull
+            const center = !compact && row.centerFull
             return (
               <div
                 key={row.label}

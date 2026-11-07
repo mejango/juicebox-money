@@ -30,6 +30,7 @@ import {
   formatUsd18,
   treasuryUsdValue,
 } from '@/lib/format'
+import { contractReverted } from '@/lib/errors'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
@@ -67,6 +68,30 @@ export function treasuryTotal(
         rows.filter(row => row.balance !== 0n && row.usd == null).map(row => row.symbol),
       ),
     ],
+  }
+}
+
+/**
+ * The USD price of one whole accounting-token unit, at 18 decimals: JBPrices checks the project's
+ * feeds first, then protocol defaults. Null when the chain answers that no feed exists. A read
+ * that fails throws, since the token may well have a price: its chain is unread, not unpriced.
+ */
+export async function readTreasuryUsdPrice(
+  client: PublicClient,
+  prices: Address,
+  projectId: bigint,
+  currency: number,
+): Promise<bigint | null> {
+  try {
+    return await client.readContract({
+      address: prices,
+      abi: jbPricesAbi,
+      functionName: 'pricePerUnitOf',
+      args: [projectId, BigInt(USD_CURRENCY_ID(6)), BigInt(currency), 18n],
+    })
+  } catch (error) {
+    if (contractReverted(error)) return null
+    throw error
   }
 }
 
@@ -119,25 +144,8 @@ async function readChainTreasury(
           tokenSymbol(client, context.token, { chainId }),
         ])
 
-        // JBPrices checks this project's feeds first, then protocol defaults.
-        // Asking for 18 decimals gives an exact fixed-point USD price for one
-        // whole accounting-token unit.
         const usdPrice =
-          balance === 0n
-            ? 0n
-            : await client
-                .readContract({
-                  address: prices,
-                  abi: jbPricesAbi,
-                  functionName: 'pricePerUnitOf',
-                  args: [
-                    projectId,
-                    BigInt(USD_CURRENCY_ID(6)),
-                    BigInt(context.currency),
-                    18n,
-                  ],
-                })
-                .catch(() => null)
+          balance === 0n ? 0n : await readTreasuryUsdPrice(client, prices, projectId, context.currency)
         const usd = treasuryUsdValue({
           balance,
           usdPrice,
@@ -307,8 +315,10 @@ export function ProjectStats({
     staleTime: 30000,
     queryKey: ['projectTreasuryUsd', chains],
     meta: PERSIST,
-
     retry: 1,
+    // A chain that couldn't be read is read again until the total is known.
+    refetchInterval: (query: { state: { data?: { value: { failedChainIds: number[] } } } }) =>
+      query.state.data?.value.failedChainIds.length ? 20_000 : false,
     queryFn: async (reader) => {
       const chainResults = await Promise.all(
         chains.map(pair => readChainTreasury(config, pair, reader)),
@@ -416,7 +426,7 @@ export function ProjectStats({
             Raised by chain
           </p>
           <div className="space-y-2">
-            {raisedByChain.map(row => (
+            {raisedByChain.filter(row => BigInt(row.usd) !== 0n || BigInt(row.volume ?? 0) !== 0n).map(row => (
               <div
                 key={row.chainId}
                 className="flex items-start justify-between gap-4 text-xs"
@@ -460,12 +470,10 @@ export function ProjectStats({
               Balance breakdown
             </p>
             <div className="space-y-2">
-              {data?.rows.map((row, index) => (
+              {data?.rows.filter(row => row.balance !== 0n).map((row, index) => (
                 <div
                   key={`${row.chainId}-${row.symbol}-${index}`}
-                  className={`flex items-start justify-between gap-4 text-xs ${
-                    row.balance === 0n ? 'opacity-50' : ''
-                  }`}
+                  className="flex items-start justify-between gap-4 text-xs"
                 >
                   <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
                     <ChainIcon chainId={row.chainId} size={17} />

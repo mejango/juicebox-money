@@ -1,4 +1,5 @@
 import { bendystraw, BsProject } from './bendystraw'
+import { byChainOrder } from './chainDisplay'
 import { fillIndexedMetadata } from './project-metadata-fill'
 import { readIndexedMetadataJson } from './metadata-json.server'
 import { legacyProjectHref, toUrn } from './urn'
@@ -14,6 +15,7 @@ export type TrendingCard = {
   external: boolean
   version: number
   name: string
+  projectId: number
   tagline: string | null
   logoUri: string | null
   /** The group's payment volume, each payment valued in USD at its own time. 18-dec. */
@@ -90,11 +92,12 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         external: group.version !== 6,
         version: group.version,
         name: representative.name ?? `Project ${representative.projectId}`,
+        projectId: representative.projectId,
         tagline: representative.projectTagline,
         logoUri: representative.logoUri,
         volumeUsd: group.volumeUsd,
         paymentsCount: group.paymentsCount,
-        chainIds: members.map(m => m.chainId),
+        chainIds: members.map(m => m.chainId).sort(byChainOrder),
         trendingScore: BigInt(group.trendingScore),
       },
     ]

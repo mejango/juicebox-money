@@ -30,7 +30,9 @@ import {
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
+import { recoveringRead } from '@/lib/read-recovery'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
@@ -88,16 +90,18 @@ export function GetLoanFlow({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const { isConnected, address, openSignIn } = useWallet()
+  // The balance reads for the account on screen; the loan stays with the connected wallet.
+  const { address: viewed, isViewAs } = useViewedAccount()
 
   // Wallet state is client-only; keep SSR + first client render identical.
   const [mounted, setMounted] = useState(false)
   useEffect(() => setMounted(true), [])
 
-  const { data: contexts, isLoading: contextsLoading } = useQuery({
+  const { data: contexts, isLoading: contextsLoading, isError: contextsError, isFetching: contextsFetching, refetch: refetchContexts } = useQuery({
     queryKey: ['accountingContexts', chainId, projectId],
     enabled: !!publicClient,
     staleTime: 60_000,
-    retry: 1,
+    ...recoveringRead,
     queryFn: () =>
       getAccountingContexts(publicClient!, {
         chainId,
@@ -142,9 +146,9 @@ export function GetLoanFlow({
     abi: jbTokensAbi,
     address: jbV6ContractAddress[JBCoreContracts.JBTokens][chainId] as Address,
     functionName: 'totalBalanceOf',
-    args: address ? [address, BigInt(projectId)] : undefined,
+    args: viewed ? [viewed, BigInt(projectId)] : undefined,
     chainId,
-    query: { enabled: !!address, staleTime: 30_000 },
+    query: { enabled: !!viewed, staleTime: 30_000 },
   })
 
   // The cash-out delay, so we can say WHY loans are locked when they are.
@@ -294,6 +298,7 @@ export function GetLoanFlow({
   }
 
   const handleReview = async () => {
+    if (isViewAs) return
     if (!isConnected || !address) {
       openSignIn()
       return
@@ -446,8 +451,19 @@ export function GetLoanFlow({
         After 10 years, any tokens backing an unpaid loan are lost.
       </p>
 
-      {contextsLoading ? (
+      {contextsLoading || (contextsFetching && !contexts) ? (
         <FormFieldsSkeleton rows={3} label="Loading loan terms" />
+      ) : contextsError && !contexts ? (
+        <p role="alert" className="mt-3 text-sm leading-relaxed text-red-600">
+          Couldn&apos;t read this revnet&apos;s loan token.{' '}
+          <button
+            type="button"
+            onClick={() => void refetchContexts()}
+            className="font-medium underline underline-offset-2"
+          >
+            Retry
+          </button>
+        </p>
       ) : ctxs.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
           This revnet doesn’t accept a token to borrow on this chain.
@@ -488,7 +504,7 @@ export function GetLoanFlow({
                   disabled={busy}
                   className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
                 >
-                  MAX
+                  Max
                 </button>
               ) : null}
             </div>
@@ -520,18 +536,6 @@ export function GetLoanFlow({
             </label>
           ) : null}
 
-          {collateral > 0n ? (
-            <p className="text-xs text-smoke-700">
-              {borrowableFetching
-                ? 'Checking how much you can borrow…'
-                : borrowableNow === undefined
-                  ? 'Could not read the live loan quote — try again shortly.'
-                  : borrowableNow > 0n && meta
-                    ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
-                    : 'Loans are locked until this revnet’s cash-out delay passes.'}
-            </p>
-          ) : null}
-
           <label className="block">
             <span className="field-label">
               <ConceptTerm note={PROTOCOL_CONCEPTS.prepaidFee}>Prepaid fee</ConceptTerm>
@@ -551,19 +555,27 @@ export function GetLoanFlow({
                 </option>
               ))}
             </select>
-            <span className="mt-1 block text-xs text-smoke-700">
-              Paid when the loan opens. Paying more gives you longer before
-              repayment costs start growing.
-            </span>
           </label>
+
+          {collateral > 0n ? (
+            <p className="text-xs text-smoke-700">
+              {borrowableFetching
+                ? 'Checking how much you can borrow…'
+                : borrowableNow === undefined
+                  ? 'Could not read the live loan quote — try again shortly.'
+                  : borrowableNow > 0n && meta
+                    ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
+                    : 'Loans are locked until this revnet’s cash-out delay passes.'}
+            </p>
+          ) : null}
 
           <div className="flex justify-end">
             <button
               onClick={handleReview}
-              disabled={busy || (isConnected && collateral <= 0n)}
+              disabled={busy || isViewAs || (isConnected && collateral <= 0n)}
               className="btn-primary min-h-[44px] px-5 text-sm"
             >
-              {!isConnected ? 'Sign in to continue' : 'Open the loan'}
+              {isViewAs ? 'Exit View as to get a loan' : !isConnected ? 'Sign in to continue' : 'Open the loan'}
             </button>
           </div>
 

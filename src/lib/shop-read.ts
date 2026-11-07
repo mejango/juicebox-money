@@ -17,6 +17,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 import type { Shop, ShopTier, TierMedia, ShopMediaResult } from '@/hooks/useShop721'
+import { contractReverted } from '@/lib/errors'
 import { appIpfsUrl } from '@/lib/format'
 import { readAllActiveTiers, readTierPage } from '@/lib/shop-tiers'
 import {
@@ -231,6 +232,17 @@ export async function readShop(
       .then(flags => ({ ...flags }))
     .catch(() => null)
 
+  // Display-only. A failed read asks each tier instead, where a failure stays retryable.
+  const hasTokenUriResolver = await client
+    .readContract({
+      address: resolved.store,
+      abi: jb721TiersHookStoreAbi,
+      functionName: 'tokenUriResolverOf',
+      args: [resolved.hook],
+    })
+    .then(resolver => resolver !== zeroAddress)
+    .catch(() => true)
+
   const tiers: ShopTier[] = rawTiers.map(tier => ({
     id: tier.id,
     price: tier.price,
@@ -250,6 +262,8 @@ export async function readShop(
     protocol: resolved.protocol,
     capabilities: resolved.capabilities,
     hook: resolved.hook,
+    store: resolved.store,
+    hasTokenUriResolver,
     idTarget,
     cashOutEnabled,
     transfersPaused: current
@@ -273,7 +287,10 @@ export async function readShop(
 }
 
 /** Valid absent/empty metadata is {}, while transport and parse failures remain retryable. */
-export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
+export async function resolveTierMedia(
+  tier: ShopTier,
+  readResolvedUri?: () => Promise<string>,
+): Promise<TierMedia> {
   const pick = (json: Record<string, unknown>): TierMedia => {
     const meta = pickTierMetadata(json)
     return {
@@ -291,6 +308,17 @@ export async function resolveTierMedia(tier: ShopTier): Promise<TierMedia> {
     ? parseTierMetadataJson(tier.resolvedUri)
     : null
   if (resolved) return pick(resolved)
+
+  // A digest can address bare artwork with no name, so the shop's resolver answers first. Only a
+  // revert means it has nothing for this tier; a failed read stays retryable.
+  if (readResolvedUri) {
+    const uri = await readResolvedUri().catch((error: unknown) => {
+      if (contractReverted(error)) return ''
+      throw error
+    })
+    const read = uri ? parseTierMetadataJson(uri) : null
+    if (read && Object.keys(read).length > 0) return pick(read)
+  }
 
   const cid = bytes32ToCidV0(tier.encodedIpfsUri)
   const url = cid ? appIpfsUrl(`ipfs://${cid}`) : null
@@ -329,8 +357,18 @@ async function loadShopMedia(
   return { media, failedTierIds: failedTierIds.sort((a, b) => a - b) }
 }
 
-export function resolveShopMedia(tiers: ShopTier[], previous?: Record<number, TierMedia>) {
-  return loadShopMedia(tiers, resolveTierMedia, previous)
+/** With a resolver source, ten tiers at a time: one call asking for many resolved URIs can revert. */
+export function resolveShopMedia(
+  tiers: ShopTier[],
+  previous?: Record<number, TierMedia>,
+  resolver?: { client: PublicClient; store: Address; hook: Address },
+) {
+  if (!resolver) return loadShopMedia(tiers, tier => resolveTierMedia(tier), previous)
+  const { client, store, hook } = resolver
+  return loadShopMedia(tiers, tier => resolveTierMedia(tier, async () => {
+    const [row] = await readTierPage(client, store, hook, BigInt(tier.id), true, { size: 1n })
+    return row?.id === tier.id ? row.resolvedUri : ''
+  }), previous, 10)
 }
 
 /** The query owner admits a small preview page; at most two URI reads run together. */

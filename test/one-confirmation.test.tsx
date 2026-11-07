@@ -91,9 +91,13 @@ vi.mock('@/hooks/useTokenBalances', () => ({
   useTokenBalances: () => ({ balances: new Map([['0x7777777777777777777777777777777777777777', 10n ** 24n]]) }),
 }))
 vi.mock('@/components/GetFunds', () => ({ useOnRamp: () => ({ supported: false, buy: () => {} }) }))
+vi.mock('@/hooks/usePayPublicClient', async () => {
+  const { usePublicClient } = await import('wagmi')
+  return { usePayPublicClient: (chainId: number) => usePublicClient({ chainId } as never) }
+})
 vi.mock('@/components/project/ShopCartProvider', async original => ({
   ...(await original<typeof import('@/components/project/ShopCartProvider')>()),
-  useShopCart: () => ({ quantities: {}, items: {}, count: 0, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),
+  useShopCart: () => ({ quantities: {}, items: {}, count: 0, countsByChain: {}, setQuantity: () => {}, registerItem: () => {}, clear: () => {} }),
 }))
 vi.mock('@/lib/project-token-batch', () => ({
   readClaimCalls: async () => [1, 2].map(index => ({
@@ -305,7 +309,7 @@ describe('one confirmation per action', () => {
   })
 
   it('wallet-action:one-confirmation cash-out: one review for the pool approvals and the sale', async () => {
-    page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42, accountingToken: RECLAIM_TOKEN, accountingTokenSymbol: 'USDC' }))
+    page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(input => String(input.getAttribute('aria-label')).startsWith('Amount of'), '2')
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
     const { dialogs, sent } = await act1('Sell 2 JBT on the pool', 3)

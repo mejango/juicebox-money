@@ -161,8 +161,6 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
   const { actor, actions, direction, kind, headline, memo, amountUsd } = parts
   const amountToken = feedAmountToken(parts, event.project, event.chainId)
   const explorer = explorerHostname(event.chainId)
-  const actorUrl =
-    actor && explorer ? `https://${explorer}/address/${actor}` : null
   const txLink = explorer
     ? `https://${explorer}/tx/${event.txHash}`
     : null
@@ -225,7 +223,7 @@ function Row({ group }: { group: BsAccountActivityEvent[] }) {
           <p className="mt-1 flex min-w-0 items-center gap-1 text-xs text-smoke-500">
             {actorPrefix(direction)}{' '}
             <span className="min-w-0 truncate">
-              <ActorLink href={actorUrl} actor={actor} />
+              <ActorLink actor={actor} />
             </span>
           </p>
           {isV6 ? (

@@ -3,14 +3,13 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useCallback, useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
-import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
 import { combinedActivityParts, feedAmountToken, groupSameTxEvents } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
+import { LoadMoreRow } from './LoadMoreRow'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
 
@@ -87,7 +86,6 @@ export function FreshActivity({
       setLoading(false)
     }
   }, [events.length, hasMore, loading])
-  const markerRef = useInfiniteScroll({ hasMore, loading, loadMore })
 
   return (
     <ul className="min-h-[420px] divide-y divide-smoke-100">
@@ -101,15 +99,7 @@ export function FreshActivity({
             <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
           {(hasMore || loading) && (
-            <li
-              ref={markerRef}
-              className="flex h-16 items-center justify-center text-xs text-smoke-500"
-              aria-live="polite"
-            >
-              <span className={loading ? 'animate-pulse' : ''}>
-                {loading ? 'Loading more activity…' : 'More activity'}
-              </span>
-            </li>
+            <LoadMoreRow label="More activity" loading={loading} onLoadMore={loadMore} />
           )}
         </>
       )}
@@ -142,12 +132,8 @@ function Row({
   const parts = combinedActivityParts(group, tokenUnit)
   const amountToken = feedAmountToken(parts, event.project, event.chainId)
   const actor = parts.actor
-  const explorer = explorerHostname(event.chainId)
-  const actorUrl = explorer
-    ? `https://${explorer}/address/${actor}`
-    : null
   const relativeTime = timeAgo(event.timestamp)
-  const actorNode = <ActorLink href={actorUrl} actor={actor} />
+  const actorNode = <ActorLink actor={actor} />
 
   return (
     <li className="h-28 overflow-hidden px-4 py-3 transition-colors hover:bg-smoke-25">

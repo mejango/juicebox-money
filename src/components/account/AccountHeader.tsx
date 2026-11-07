@@ -68,6 +68,7 @@ export function AccountHeader({
           </h1>
           <p className="mt-1 text-sm">
             <AddressLink
+              explorer
               address={address}
               // An address is not chain-specific, so link the explorer for a chain this
               // account actually appears on. Hard-coding mainnet sent every testnet user to

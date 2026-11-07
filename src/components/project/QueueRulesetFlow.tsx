@@ -2,6 +2,7 @@
 
 import {
   JBCoreContracts,
+  JBRouterTerminalContracts,
   SPLITS_TOTAL_PERCENT,
   USDC_ADDRESSES,
   NATIVE_TOKEN,
@@ -47,15 +48,18 @@ import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
 import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
+import { FlowError } from "@/lib/errors";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
 import { loadRelayrPendingSession, relayrCallsScope, RELAYR_REQUEST_REFRESH_SECONDS } from "@/lib/relayr";
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
   billionthsToPct,
+  cashOutTaxValue,
   etherscanTxUrl,
   formatDuration,
   toLocalDateTimeInput,
 } from "@/lib/format";
+import { TaxValueInput } from "@/components/create/ui";
 import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
@@ -297,6 +301,12 @@ export function pctToBp(pct: string): number {
   return Math.min(PERCENT_OUT_OF_10000_MAX, Math.round(n * 100));
 }
 
+/** A cash out tax the field can queue: 100 is cash outs off (JBConstants.MAX_CASH_OUT_TAX_RATE). */
+function taxPctOk(pct: string): boolean {
+  const n = Number(pct);
+  return Number.isFinite(n) && n >= 0 && n <= 100;
+}
+
 /**
  * What a fund-access limit is DENOMINATED in. The base currencies (JBCurrencyIds:
  * ETH = 1, USD = 2) name a unit of account, not a token; any other id is the
@@ -451,7 +461,7 @@ export function QueueRulesetFlow({
 
   // Load everything the editor prefills from, once we know the wallet can
   // queue for the project (avoid the reads for everyone else).
-  const { data, isLoading, isError } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["queueRulesetPrefill", chainId, projectId, controller],
     enabled: !isRevnet && canEdit && !!publicClient && knownController,
     staleTime: 30_000,
@@ -494,7 +504,7 @@ export function QueueRulesetFlow({
   } else if (isError || !data) {
     body = (
       <p className="text-sm text-smoke-700">
-        Couldn&apos;t load this project&apos;s current rules right now.
+        {error instanceof FlowError ? error.message : "Couldn't load this project's current rules right now."}
       </p>
     );
   } else {
@@ -551,6 +561,20 @@ type PrefillData = {
   sources: Partial<Record<QueueAction, PrefillSource>>;
 };
 
+/**
+ * This editor carries forward JBMultiTerminal's fund access limits only. The
+ * router registry beside it stays safe: queueRulesetsOf never touches the
+ * directory's terminals, and the registry only forwards payments, so limits
+ * under it could never be used. Any other terminal could hold limits this
+ * editor would drop.
+ */
+export function assertQueueableTerminals(terminals: readonly Address[], chainId: JBChainId): void {
+  const safe = [v6Address("JBMultiTerminal", chainId), jbV6ContractAddress[JBRouterTerminalContracts.JBRouterTerminalRegistry][chainId]].map(address => address?.toLowerCase());
+  if (terminals.some(address => !safe.includes(address.toLowerCase()))) {
+    throw new FlowError(`${chainName(chainId)} uses a custom terminal. Use its own ruleset editor to preserve all fund access limits.`);
+  }
+}
+
 async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, projectId: number, controller: Address): Promise<PrefillData> {
       const pid = BigInt(projectId);
       const limitsAddr = v6Address("JBFundAccessLimits", chainId);
@@ -558,9 +582,7 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
       const terminal = v6Address("JBMultiTerminal", chainId);
 
       const terminals = await publicClient.readContract({ address: v6Address("JBDirectory", chainId), abi: jbDirectoryAbi, functionName: "terminalsOf", args: [pid] });
-      if (terminals.some(address => address.toLowerCase() !== terminal.toLowerCase())) {
-        throw new Error(`${chainName(chainId)} uses a custom terminal. Use its own ruleset editor to preserve all fund access limits.`);
-      }
+      assertQueueableTerminals(terminals, chainId);
 
       const [current, upcomingRead, latestRead, contexts] = await Promise.all([
         getCurrentRuleset(publicClient, { chainId, projectId: pid }),
@@ -1241,7 +1263,8 @@ function RulesetEditorForm({
   // different — and immutable — encoding from the one shown.
   const weightValid = isWeightValid(state.weight);
   const limitsOk = (rules: EditorState) =>
-    rules.limits.every((l) => l.mode !== "limited" || Number(l.amount) > 0);
+    rules.limits.every((l) => l.mode !== "limited" || Number(l.amount) > 0) &&
+    taxPctOk(rules.cashOutTaxPct);
   const limitsValid = limitsOk(state);
   const stagesRules = [state, ...followers.map((f) => f.rules)];
   const followersValid = followers.every(
@@ -1810,13 +1833,19 @@ function RulesFields({
           onChange={(v) => set("reservedPct", v)}
           disabled={disabled}
         />
-        <PctField
-          label="Cash-out tax"
-          note={PROTOCOL_CONCEPTS.cashOutTax}
-          value={rules.cashOutTaxPct}
-          onChange={(v) => set("cashOutTaxPct", v)}
-          disabled={disabled}
-        />
+        <label className="block">
+          <span className="field-label">
+            <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash-out tax</ConceptTerm>
+          </span>
+          <TaxValueInput
+            pct={rules.cashOutTaxPct}
+            onPct={(v) => set("cashOutTaxPct", v)}
+            disabled={disabled}
+            className={`input-well mt-1.5 min-h-[40px] w-full px-3 text-sm tabular-nums outline-none disabled:opacity-60 ${
+              taxPctOk(rules.cashOutTaxPct) ? "" : "!border-red-400"
+            }`}
+          />
+        </label>
       </div>
 
       <section>
@@ -2098,7 +2127,7 @@ function describe(s: EditorState): { label: string; value: string }[] {
     },
     { label: "Issuance cut", value: `${Number(s.weightCutPct)}%` },
     { label: "Reserved", value: `${Number(s.reservedPct)}%` },
-    { label: "Cash-out tax", value: `${Number(s.cashOutTaxPct)}%` },
+    { label: "Cash-out tax", value: cashOutTaxValue(pctToBp(s.cashOutTaxPct)) },
     { label: "Payments", value: s.pausePay ? "Paused" : "Open" },
     {
       label: "Payouts",

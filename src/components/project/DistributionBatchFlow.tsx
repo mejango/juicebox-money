@@ -33,7 +33,7 @@ function distributionReviewRows(distributions: readonly Distribution[], distribu
     const recipientTotal = item.splits.reduce((sum, split) => sum + split.percent, 0)
     const allocated = item.splits.reduce((sum, split) => sum + amount * BigInt(split.percent) / 1_000_000_000n, 0n)
     return [
-      { label: chainName(item.chainId), value: `Project #${item.projectId} · ${formatTokenAmount(amount, decimals)} ${item.symbol}`, strong: true },
+      { label: chainName(item.chainId), value: `Project #${item.projectId}, ${formatTokenAmount(amount, decimals)} ${item.symbol}`, strong: true },
       { label: 'Controller', value: item.controller, mono: true },
       ...(item.kind === 'payouts' ? [
         { label: 'Terminal', value: item.terminal, mono: true },
@@ -211,13 +211,13 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
         const context = payout?.contexts.find(item => item.token.toLowerCase() === draft.token.toLowerCase())
         const line = context?.limits.find(item => item.currency === Number(draft.currency))
         return <fieldset key={project.chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3">
-          <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={selected.has(project.chainId)} disabled={busy || (!!option?.error && !selected.has(project.chainId))} onChange={() => setSelected(previous => { const next = new Set(previous); if (next.has(project.chainId)) next.delete(project.chainId); else next.add(project.chainId); return next })} />{chainName(project.chainId)} · Project #{project.projectId}</label>
+          <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={selected.has(project.chainId)} disabled={busy || (!!option?.error && !selected.has(project.chainId))} onChange={() => setSelected(previous => { const next = new Set(previous); if (next.has(project.chainId)) next.delete(project.chainId); else next.add(project.chainId); return next })} />{chainName(project.chainId)}, Project #{project.projectId}</label>
           {!option ? <p className="text-xs text-smoke-600">Reading this destination…</p> : option.error ? <p className="text-xs text-red-700">{option.error}</p> : option.reserved ? <p className="text-sm">{formatTokenAmount(option.reserved.pending)} {option.reserved.symbol} pending</p> : null}
           {selected.has(project.chainId) && payout ? <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-xs text-smoke-700">Accounting token<select aria-label={`Accounting token on ${chainName(project.chainId)}`} className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.token} disabled={busy} onChange={event => {
               const nextContext = payout.contexts.find(item => item.token === event.target.value)
               setDrafts(previous => ({ ...previous, [project.chainId]: { token: event.target.value, currency: String(nextContext?.limits.find(item => item.remaining > 0n)?.currency ?? ''), amount: '' } }))
-            }}><option value="">Choose a token</option>{payout.contexts.map(item => <option key={item.token} value={item.token}>{item.symbol} · {item.token.slice(0, 8)}… · {item.decimals} decimals</option>)}</select></label>
+            }}><option value="">Choose a token</option>{payout.contexts.map(item => <option key={item.token} value={item.token}>{item.symbol}, {item.token.slice(0, 8)}…, {item.decimals} decimals</option>)}</select></label>
             <label className="text-xs text-smoke-700">Payout currency<select aria-label={`Payout currency on ${chainName(project.chainId)}`} className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.currency} disabled={busy || !context} onChange={event => setDrafts(previous => ({ ...previous, [project.chainId]: { ...draft, currency: event.target.value, amount: '' } }))}><option value="">Choose a currency</option>{context?.limits.filter(item => item.amount > 0n).map(item => <option key={item.currency} value={item.currency}>{payoutCurrency(item.currency, context.currency, context.symbol)}</option>)}</select></label>
             <label className="text-xs text-smoke-700">Amount<input aria-label={`Payout amount on ${chainName(project.chainId)}`} type="text" inputMode="decimal" className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.amount} disabled={busy || !line} onChange={event => setDrafts(previous => ({ ...previous, [project.chainId]: { ...draft, amount: event.target.value } }))} /></label>
             {context && line ? <p className="self-end text-xs text-smoke-600">Remaining limit: {formatTokenAmount(line.remaining, context.decimals)} {payoutCurrency(line.currency, context.currency, context.symbol)}. Balance: {formatTokenAmount(context.balance, context.decimals)} {context.symbol}.</p> : null}

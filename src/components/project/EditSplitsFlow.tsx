@@ -20,7 +20,8 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { replaceProjectTabHash, useTabHashAction } from '@/components/project/Tabs'
 import {
   zeroAddress,
   isAddress,
@@ -520,6 +521,7 @@ export function EditSplitsFlow({
   rulesetId,
   isRevnet = false,
   chains = [],
+  openOnHash,
 }: {
   chainId: JBChainId
   projectId: number
@@ -528,6 +530,8 @@ export function EditSplitsFlow({
   rulesetId: bigint
   isRevnet?: boolean
   chains?: readonly (readonly [number, number])[]
+  /** Opens the editor, in view, when the URL reaches this hash. */
+  openOnHash?: string
 }) {
   const { isConnected, address } = useWallet()
   const queryClient = useQueryClient()
@@ -660,6 +664,7 @@ export function EditSplitsFlow({
       authority={actionAuthority}
       chains={chains}
       onPending={() => void refreshPending()}
+      openOnHash={openOnHash}
     />
   )
 }
@@ -674,6 +679,7 @@ function EditSplitsModal({
   authority,
   chains,
   onPending,
+  openOnHash,
 }: {
   chainId: JBChainId
   projectId: number
@@ -684,11 +690,26 @@ function EditSplitsModal({
   authority: Address
   chains: readonly (readonly [number, number])[]
   onPending: () => void
+  openOnHash?: string
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
 
   const [open, setOpen] = useState(false)
+  const editor = useRef<HTMLDivElement>(null)
+  const scrollOnOpen = useRef(false)
+  const openFromHash = useCallback(() => {
+    // The request is spent: a reload or Back shouldn't open the editor again.
+    replaceProjectTabHash(window.location.hash.slice(0, window.location.hash.lastIndexOf('/')))
+    scrollOnOpen.current = true
+    setOpen(true)
+  }, [])
+  useTabHashAction(openOnHash, openFromHash)
+  useEffect(() => {
+    if (!open || !scrollOnOpen.current) return
+    scrollOnOpen.current = false
+    editor.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [open])
   const [drafts, setDrafts] = useState<DraftSplit[]>([])
   const [lockedRows, setLockedRows] = useState<RawSplit[]>([])
   const [baseline, setBaseline] = useState<string | null>(null)
@@ -952,7 +973,7 @@ function EditSplitsModal({
   }
 
   return (
-    <div className="mt-3 rounded-xl border border-smoke-200 p-4">
+    <div ref={editor} className="mt-3 scroll-mt-28 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-medium text-ink">Edit {title}</span>
         <button

@@ -32,6 +32,7 @@ import { FreshActivity } from '@/components/FreshActivity'
 import { HomepageDiscoveryLayout } from '@/components/HomepageDiscoveryLayout'
 import { ProjectLogo } from '@/components/ProjectLogo'
 import { ProjectLink } from '@/components/ProjectLink'
+import { ProjectRowName, repeatedNames } from '@/components/ProjectRowName'
 import { PowerYourPlatform } from '@/components/PowerYourPlatform'
 import { TopProjectRows } from '@/components/TopProjectRows'
 import { SecuredReserves } from '@/components/SecuredReserves'
@@ -83,7 +84,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Share with a team or community',
     description:
-      'Set aside payouts and incentives for contributors, partners, customers, and other supporters.',
+      'Send payouts and incentives to contributors, partners, customers, and other supporters.',
     illustration: splitsIllustration,
     art: 'wide',
   },
@@ -105,7 +106,7 @@ const JUICEBOX_FEATURES = [
     art: 'tall',
   },
   {
-    title: 'Move between networks',
+    title: 'Move between chains',
     description:
       'Let holders move tokens and their backing funds between supported networks.',
     illustration: settlementIllustration,
@@ -193,10 +194,10 @@ function HomepageDiscovery() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-[1800px] px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
+      className="mx-auto max-w-7xl px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
     >
       <HomepageDiscoveryLayout
-        hero={<HeroColumn />}
+        hero={<Hero />}
         summary={
           <Suspense fallback={<ReservesSkeleton />}>
             <ReservesPanel />
@@ -206,9 +207,7 @@ function HomepageDiscovery() {
           <DashboardColumn
             title="Latest"
             headingClassName="hidden sm:flex"
-            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
           >
-            {/* Ghost rows must outrun the card, which fills the column on wide screens. */}
             <Suspense fallback={<ActivityRows rows={14} />}>
               <ActivityPanel />
             </Suspense>
@@ -217,7 +216,7 @@ function HomepageDiscovery() {
         trending={
           <DashboardColumn
             title="Trending"
-            headingClassName="hidden xl:flex"
+            headingClassName="hidden"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TrendingPanel />
@@ -227,8 +226,7 @@ function HomepageDiscovery() {
         top={
           <DashboardColumn
             title="Top"
-            headingClassName="hidden xl:flex"
-            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+            headingClassName="hidden"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TopPanel />
@@ -238,8 +236,7 @@ function HomepageDiscovery() {
         newProjects={
           <DashboardColumn
             title="New"
-            headingClassName="hidden xl:flex"
-            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
+            headingClassName="hidden"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <NewPanel />
@@ -326,16 +323,14 @@ function DashboardColumn({
   title,
   children,
   headingClassName,
-  panelClassName = '',
 }: {
   title: string
   children: ReactNode
   headingClassName: string
-  panelClassName?: string
 }) {
   return (
     <section
-      className="flex min-w-0 flex-col xl:h-full"
+      className="flex min-w-0 flex-col"
       aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
     >
       <h2
@@ -344,18 +339,14 @@ function DashboardColumn({
       >
         {title}
       </h2>
-      <div
-        data-scroll-container
-        className={`card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] ${panelClassName}`}
-      >
-        {children}
-      </div>
+      <div className="card min-h-[420px]">{children}</div>
     </section>
   )
 }
 
 function ProjectRows({ cards }: { cards: TrendingCard[] }) {
   if (!cards.length) return <EmptyProjects />
+  const repeated = repeatedNames(cards)
   return (
     <ol className="divide-y divide-smoke-100">
       {cards.map((card, index) => (
@@ -376,13 +367,12 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
               eager={index < 4}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
-                {card.name}
-              </span>
+              <ProjectRowName
+                name={card.name}
+                projectId={card.projectId}
+                repeated={repeated.has(card.name)}
+              />
               <span className="mt-0.5 block text-xs leading-snug text-smoke-600">
-                <span className="block text-[10px] uppercase tracking-wide text-smoke-500">
-                  Recent
-                </span>
                 <span className="block">
                   Payments:{' '}
                   <span className="tabular-nums text-smoke-700">
@@ -413,6 +403,7 @@ function ProjectRows({ cards }: { cards: TrendingCard[] }) {
 
 function NewProjectRows({ projects }: { projects: NewProject[] }) {
   if (!projects.length) return <EmptyProjects />
+  const repeated = repeatedNames(projects)
   return (
     <ol className="divide-y divide-smoke-100">
       {projects.map((project, index) => (
@@ -433,9 +424,11 @@ function NewProjectRows({ projects }: { projects: NewProject[] }) {
               eager={index < 4}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
-                {project.name}
-              </span>
+              <ProjectRowName
+                name={project.name}
+                projectId={project.projectId}
+                repeated={repeated.has(project.name)}
+              />
               <span className="mt-0.5 block text-xs text-smoke-600">
                 Launched:{' '}
                 <span className="tabular-nums text-smoke-700">
@@ -463,41 +456,41 @@ function EmptyProjects() {
   )
 }
 
-function HeroColumn() {
+function Hero() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6 xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
+    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6">
       {/* Phones keep the illustration close under the header; wider screens
           let it drop toward the headline. */}
-      <div className="mb-3 translate-y-2 sm:translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
+      <div className="mb-3 translate-y-2 sm:translate-y-8">
         <Image
           src={juiceboxHero}
           alt=""
           priority
-          sizes="(min-width: 1280px) 360px, 280px"
-          className="mx-auto mb-2 h-auto w-full max-w-[330px] xl:mb-0 xl:max-h-[390px] xl:max-w-[390px] xl:object-contain"
+          sizes="330px"
+          className="mx-auto mb-2 h-auto w-full max-w-[330px]"
         />
       </div>
       <div className="mx-auto w-full shrink-0 [container-type:inline-size]">
         {/* Nowrap segments set the only allowed break points, so a narrow
             column reads "Fund your / thing." — never one word per line. */}
-        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
+        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)]">
           <span className="whitespace-nowrap">Fund your</span>{' '}
           <span className="whitespace-nowrap">
             thing<span className="text-split-500">.</span>
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
+        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700">
           {JUICEBOX_ONE_LINER}
         </p>
         {/* /create is the heaviest route (~70 KiB); fetch it on click, not on view. */}
         <Link
           href="/create"
           prefetch={false}
-          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm xl:mt-4"
+          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm"
         >
           Start a project
         </Link>
-        <AuditPromptLink className="mt-8 text-sm text-smoke-600 xl:mt-6" />
+        <AuditPromptLink className="mt-8 text-sm text-smoke-600" />
       </div>
     </section>
   )

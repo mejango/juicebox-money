@@ -268,7 +268,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
               ? [
                   { label: 'Item', value: itemName },
                   { label: 'New media', value: plan.mediaName },
-                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshPlan?.snapshots) ?? []).map(snapshot => ({ label: chainName(snapshot.target.chainId), value: `Project #${snapshot.target.projectId} · item #${snapshot.tierId}` })),
+                  ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshPlan?.snapshots) ?? []).map(snapshot => ({ label: chainName(snapshot.target.chainId), value: `Project #${snapshot.target.projectId}, item #${snapshot.tierId}` })),
                 ]
               : []
           }

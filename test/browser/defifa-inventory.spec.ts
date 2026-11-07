@@ -106,7 +106,7 @@ for (const width of [390, 1280]) {
       await expect(card).toContainText('Away team')
       await expect(card.locator('img')).toHaveCount(0)
       await card.getByRole('button', { name: 'Away team', exact: true }).click()
-      await expect(card.getByRole('group', { name: 'Away team quantity', exact: true })).toContainText('1')
+      await expect(surface.getByRole('button', { name: 'Remove one Away team', exact: true }).first()).toBeVisible()
       await expect(surface.locator('[data-nft-checkout-tier="1"]')).toContainText('Home team')
       await expect(surface.locator('img')).toHaveCount(0)
       await expect(surface).toContainText('Away team')

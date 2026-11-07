@@ -1311,3 +1311,36 @@ Review: Unknown custom loan units remain unavailable with context retry. Fresh r
 - **Resource budget:** One bounded cache-boundary fix and one actual production regression. Keep other approved runtime files frozen; no SDK work, extra cache infrastructure, dependency upgrades or scope expansion.
 
 Review: Defifa sequence identity is chain-qualified, with exact same-chain legacy recovery and foreign-record protection. Financial readers preserve unavailable versus real zero; the fixed-root public display action makes Refresh recover a cached unavailable page. Independent Astra passed 68 focused tests and reviewed the actual supported standalone production proof (cache HIT, no healthy reads before the UI action, real action POST, two fresh reads, known total restored). Full static/dependency/audit/build/artifact checks pass; aggregate 2678.5/2679KiB, all existing route and lazy/style caps unchanged. Approval artifact SHA256 15c5b8cf42b8ffd6c8582ef4d2d8c0a998da2d43a899decea59e3afff7fcc67f. No contract, SDK or dependency changes. Final-head full CI remains required for publication evidence; no new merge authority inferred.
+
+## 2026-11-07 juicebox.money UX review fixes
+
+Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-review/juicebox-money/` in the workspace, `ux-walker/verification.json` and `ux-flow/report.md`.
+
+## Plan refinement
+
+- **Objective:** Fix every item jango marked Fix (j01 to j31, c01, p01 to p10) on juicebox.money. A bad path 404s on this site, always. Success is each symptom gone, proven by a test or render, with no regression in `npm run check`.
+- **System fit:** Live walk finding, serial verification, Fix decision, stream fix, integration, full check, Codex, PR, merge by jango. Owners: PayPanel and shop-read for pay and shop, OwnersTab and Tabs for routes, CreateForm and stage-draft for launch review, proxy and not-found for 404s. Consumers are the live site and agents reading llms.txt. Nothing here signs, and no contract changes.
+- **Reuse and simplicity:** Copy revnet's fixes and SDK helpers before writing code. One formatter for the tax, one list for chain order, one reader for shop tiers. No new client layer. A behavior-preserving extraction is its own commit.
+- **Evidence and unknowns:** Each change needs symptom, authority with file and line, and a failing then passing test or a render. verification.json is a hypothesis to confirm, not proof. Unknowns to resolve in stream: j05 whether the router terminal stays in place when rules queue; j25 how much of the pacing lives in the SDK; p07 RECENT window; c01 which legacy paths the old site really serves. Decisions: Simple's default owner is unchanged (j09 copy only); split on revnet pages, reserved on Custom.
+- **Verification:** Targeted vitest per stream, typecheck and lint per stream, `npm run check` on integration, desktop and 390 renders of changed surfaces, two Codex passes. Not exercised: connected wallet and real transactions, stated in the PR.
+- **Resource budget:** Six streams in worktrees split by owning files, then p10 sequentially after merge since it crosses every file. No live walkers in parallel, to avoid RPC load. Replan if a stream finds a verification claim false or needs an SDK release.
+
+## Items
+
+- [x] Stream A, pay: j01, j02, j26, j17, j18, j25, p01, p02
+- [x] Stream B, shop: j03, j27, p03
+- [x] Stream C, project page: j04, j06, j07, j14, j15, j24, p04, p08
+- [x] Stream D, authority and holders: j05, j08, j13, j16, j19, j28, p06
+- [x] Stream E, create and tax: j09, j10, j11, j12, j23, p05, p09
+- [x] Stream F, search, 404, home, docs: j20, j21, j22, c01, p07, j29, j30, j31
+- [x] Sequential, after merge: p10
+- [x] Integration: full check, renders, two Codex passes, PR
+
+## Review (2026-11-07)
+
+- Every item marked Fix is in the PR. j21 follows the note: a bad path 404s on this site.
+- `npm run check`: 3,520 unit tests and 90 browser tests pass. Budgets bumped 1 to 2 KiB per route, 13 KiB all scripts.
+- Renders: new code against live juicebox.money /api and RPC at true 1280 and 390, View as a real holder. Custom project not rendered: every project tried is a revnet.
+- Codex: two passes, three findings, all fixed with tests.
+- Correction: owners is revnet-only, holders everywhere else.
+

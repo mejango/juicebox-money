@@ -1,9 +1,10 @@
 'use client'
 
 import { useCallback, useState } from 'react'
-import { useInfiniteScroll } from '@/hooks/useInfiniteScroll'
 import type { TopBalanceProject } from '@/lib/top-projects'
+import { LoadMoreRow } from './LoadMoreRow'
 import { ProjectLogo } from './ProjectLogo'
+import { ProjectRowName, repeatedNames } from './ProjectRowName'
 import { ProjectLink } from './ProjectLink'
 
 const PAGE_SIZE = 8
@@ -45,7 +46,7 @@ export function TopProjectRows({
       setLoading(false)
     }
   }, [hasMore, loading, projects.length])
-  const markerRef = useInfiniteScroll({ hasMore, loading, loadMore })
+  const repeated = repeatedNames(projects)
 
   if (!projects.length) {
     return (
@@ -78,9 +79,11 @@ export function TopProjectRows({
               eager={index < 4}
             />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium group-hover:text-bluebs-600">
-                {project.name}
-              </span>
+              <ProjectRowName
+                name={project.name}
+                projectId={project.projectId}
+                repeated={repeated.has(project.name)}
+              />
               <span className="mt-0.5 block text-xs text-smoke-600">
                 Balance:{' '}
                 <span className="tabular-nums text-smoke-700">
@@ -96,15 +99,7 @@ export function TopProjectRows({
         </li>
       ))}
       {(hasMore || loading) && (
-        <li
-          ref={markerRef}
-          className="flex h-16 items-center justify-center text-xs text-smoke-500"
-          aria-live="polite"
-        >
-          <span className={loading ? 'animate-pulse' : ''}>
-            {loading ? 'Loading more projects…' : 'More projects'}
-          </span>
-        </li>
+        <LoadMoreRow label="More projects" loading={loading} onLoadMore={loadMore} />
       )}
     </ol>
   )

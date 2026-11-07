@@ -30,7 +30,7 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -56,7 +56,7 @@ import {
   type Split as SplitRow,
 } from '@/components/project/SplitRecipient'
 import { TokenPanel } from '@/components/project/TokenPanel'
-import { SubTabs } from '@/components/project/Tabs'
+import { SubTabs, editReservedSplitsHash, useTabHashAction } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
@@ -69,6 +69,7 @@ import { useLinkedDeployments } from '@/lib/sucker-group'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
+import { clientFor } from '@/lib/authority'
 import type { BsParticipant } from '@/lib/bendystraw'
 import { netOfCashOutFee } from '@/lib/cashOut'
 import {
@@ -78,6 +79,7 @@ import {
 } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
@@ -105,18 +107,17 @@ export function OwnersTab({
 }) {
   // Liquidity edits and the rest of the tab reach another chain only once the onchain registry links its project.
   // The token batch flows take every listed pair: they find saved batches by it and check each pair themselves.
-  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
+  const { deployments: chains, line, pending } = useLinkedDeployments([chainId, projectId], listed)
   return (
     <div className="space-y-5">
       {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
       <TokenPanel
         chainId={chainId}
         projectId={projectId}
-        chainIds={chains.map(([cid]) => cid)}
         compact
       />
       <SubTabs
-        hashParent="tokens"
+        hashParent={isRevnet ? 'owners' : 'tokens'}
         tabs={[
           {
             label: 'Accounts',
@@ -134,6 +135,8 @@ export function OwnersTab({
                   projectId={projectId}
                   suckerGroupId={suckerGroupId}
                   chains={chains}
+                  groupPending={pending}
+                  isRevnet={isRevnet}
                 />
               </div>
             ),
@@ -257,15 +260,33 @@ function YouCard({
 
   const multiChain = chains.length > 1
 
-  // Every holder action is a primary control except Burn: it is the one
-  // destructive option here, so it stays visually quieter (revnet.money
-  // parity).
+  const { data: heldByChain } = useQuery({
+    queryKey: ['youHeldByChain', address, chains],
+    enabled: !!address,
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: () =>
+      Promise.all(
+        chains.map(([cid, pid]) =>
+          clientFor(cid as JBChainId).readContract({
+            abi: jbTokensAbi,
+            address: jbV6ContractAddress[JBCoreContracts.JBTokens][cid as JBChainId] as Address,
+            functionName: 'totalBalanceOf',
+            args: [address!, BigInt(pid)],
+          }),
+        ),
+      ),
+  })
+  // Only a settled zero on every chain hides the actions: a failed read keeps them.
+  const holdsNothing = !!heldByChain?.every(balance => balance === 0n)
+
+  // Cash out is the card's one primary action.
   const actionBtn = (id: YouAction, label: string) => (
     <button
       type="button"
       onClick={() => setAction(id)}
       className={`${
-        id === 'burn' ? 'btn-secondary' : 'btn-primary'
+        id === 'cashOut' ? 'btn-primary' : 'btn-secondary'
       } min-h-[40px] px-4 text-sm`}
       aria-haspopup="dialog"
       aria-expanded={action === id}
@@ -348,11 +369,11 @@ function YouCard({
           {!isRevnet ? <ClaimCreditsAcrossChains home={[chainId, projectId]} chains={listed} holder={address!} /> : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {actionBtn('cashOut', 'Cash out')}
-            {isRevnet ? actionBtn('loan', 'Get a loan') : null}
-            {multiChain ? actionBtn('move', 'Move between chains') : null}
+            {!holdsNothing ? actionBtn('cashOut', 'Cash out') : null}
+            {!holdsNothing && isRevnet ? actionBtn('loan', 'Get a loan') : null}
+            {!holdsNothing && multiChain ? actionBtn('move', 'Move between chains') : null}
             {actionBtn('liquidity', 'Add liquidity')}
-            {actionBtn('burn', 'Burn')}
+            {!holdsNothing ? actionBtn('burn', 'Burn') : null}
           </div>
 
           {action && actionTitle ? (
@@ -385,6 +406,7 @@ function YouCard({
                   chainId={chainId}
                   projectId={projectId}
                   chains={chains}
+                  tokenSymbol={collateralSymbol}
                 />
               ) : (
                 <AddLiquidityFlow
@@ -871,11 +893,16 @@ function AllHoldersCard({
   projectId,
   suckerGroupId,
   chains,
+  groupPending,
+  isRevnet,
 }: {
   chainId: JBChainId
   projectId: number
   suckerGroupId: string | null
+  isRevnet: boolean
   chains: [number, number][]
+  /** The group check is still out, so `chains` may be only the home deployment. */
+  groupPending: boolean
 }) {
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const tokenUnit = projectToken?.symbol || 'tokens'
@@ -891,6 +918,7 @@ function AllHoldersCard({
     meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
+    enabled: !groupPending,
     queryFn: async () => {
       const qs = new URLSearchParams({ refs: refsParam })
       if (suckerGroupId) qs.set('suckerGroupId', suckerGroupId)
@@ -932,7 +960,7 @@ function AllHoldersCard({
     return [...byAddress.values()]
       .map(holder => ({
         ...holder,
-        chains: [...holder.chains].sort((a, b) => a - b),
+        chains: [...holder.chains].sort(byChainOrder),
       }))
       .sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0))
   }, [data])
@@ -952,16 +980,15 @@ function AllHoldersCard({
   // truncated = we only know it's at least that many.
   const exact = !!data && data.totalCount <= data.items.length
   const holderCount = exact ? String(holders.length) : `${holders.length}+`
-  const holderCountLine = `${holderCount} ${
-    holders.length === 1 && exact ? 'holder' : 'holders'
-  }`
+  const holderNoun = isRevnet ? 'owner' : 'holder'
+  const holderCountLine = `${holderCount} ${holderNoun}${holders.length === 1 && exact ? '' : 's'}`
 
   return (
     <div className="card overflow-hidden p-5">
       <div>
         <span className="field-label">All</span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          Token owners paid in, received splits, received auto-issuance, or got
+          {isRevnet ? 'Token owners' : 'Holders'} paid in, received splits, received auto-issuance, or got
           them second-hand.
         </p>
         {data?.groupExtended ? (
@@ -973,7 +1000,7 @@ function AllHoldersCard({
           </p>
         ) : null}
       </div>
-      {isLoading ? (
+      {groupPending || isLoading ? (
         <HolderDistributionSkeleton rows={5} />
       ) : isError ? (
         <p className="mt-2 text-sm text-smoke-700">
@@ -1197,6 +1224,8 @@ function ReservedCard({
   }
 
   const [chosenStageIndex, setChosenStageIndex] = useState<number | null>(null)
+  // The editor only exists on the current stage.
+  useTabHashAction(isRevnet ? editReservedSplitsHash(true) : undefined, useCallback(() => setChosenStageIndex(null), []))
   const activeStageIndex = stages.length
     ? Math.min(
         Math.max(chosenStageIndex ?? currentStageIndex, 0),
@@ -1250,8 +1279,7 @@ function ReservedCard({
           {isRevnet ? 'Splits' : 'Reserved tokens'}
         </span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          A share of every batch of new tokens is set aside for the recipients
-          below.
+          A share of every batch of new tokens goes to the recipients below.
         </p>
       </div>
       {isRevnet ? (
@@ -1306,7 +1334,7 @@ function ReservedCard({
             <div className="grid grid-cols-[minmax(150px,0.75fr)_minmax(190px,1fr)_minmax(180px,0.9fr)] gap-4 border-y border-smoke-200 px-3 py-2 text-xs text-smoke-500">
               <span>Account</span>
               <span>Percentage</span>
-              <span>Pending splits</span>
+              <span>Pending</span>
             </div>
             <div className="space-y-5 pt-5">
               {chains.map(([cid, pid]) => (
@@ -1339,6 +1367,7 @@ function ReservedCard({
           rulesetId={BigInt(rulesetId)}
           chains={chains}
           isRevnet
+          openOnHash={editReservedSplitsHash(true)}
         />
       ) : null}
     </div>

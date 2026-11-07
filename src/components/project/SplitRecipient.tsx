@@ -40,7 +40,7 @@ export function SplitRecipient({
     return <StickyRecipient split={split} chainId={chainId} />
   }
   if (split.hook !== zeroAddress) {
-    return <AddressLink address={split.hook} chainId={chainId} note="hook" />
+    return <AddressLink explorer address={split.hook} chainId={chainId} note="hook" />
   }
   if (split.projectId > 0n) {
     return (

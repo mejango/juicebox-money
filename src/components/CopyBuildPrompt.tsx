@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { PLATFORM_BUILD_PROMPT } from '@/lib/build-prompt'
+import { COPY_BLOCKED_MESSAGE, ManualCopyField } from './ManualCopyField'
 
 const SKILLS_URL = 'https://github.com/mejango/juicebox-skills'
 
@@ -45,23 +46,17 @@ export function CopyBuildPrompt({ className = '' }: { className?: string }) {
         {status === 'copied'
           ? 'Prompt copied. Paste it into your assistant and describe your product.'
           : status === 'failed'
-            ? 'Copy was blocked by your browser. Select and copy the prompt below.'
+            ? COPY_BLOCKED_MESSAGE
             : ''}
       </p>
       <details className="mt-2" open={status === 'failed' ? true : undefined}>
         <summary className="min-h-11 py-3 text-bluebs-700 underline underline-offset-4">
           Read or manually copy the prompt
         </summary>
-        <label htmlFor="juicebox-build-prompt" className="mb-2 block font-medium">
-          Juicebox build prompt
-        </label>
-        <textarea
+        <ManualCopyField
           id="juicebox-build-prompt"
-          readOnly
+          label="Juicebox build prompt"
           value={PLATFORM_BUILD_PROMPT}
-          rows={10}
-          spellCheck={false}
-          className="block w-full rounded-lg border border-smoke-300 bg-white p-3 text-sm leading-relaxed text-ink"
         />
       </details>
     </details>

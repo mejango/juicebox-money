@@ -41,7 +41,7 @@ function ExternalLinkIcon() {
 }
 
 /**
- * The owner/operator row(s). One row when every chain agrees; a per-chain
+ * The owner/operator row(s), for what the header can't say: a per-chain
  * breakdown when they differ (a project's owner — or a revnet's operator —
  * can be set independently on each chain).
  */
@@ -70,6 +70,8 @@ function AuthorityRows({
   );
 
   if (uniform) {
+    // The page header already names an owner every chain agrees on.
+    if (known.length === authorities.length) return null;
     return (
       <div className="flex items-center justify-between gap-3 pt-1">
         <dt className="shrink-0 text-smoke-700">{label}</dt>
@@ -185,16 +187,17 @@ export function OverviewTab({
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <TokenPanel
-          chainId={chainId}
-          projectId={projectId}
-          chainIds={chains.map(([id]) => id)}
-        />
+        <TokenPanel chainId={chainId} projectId={projectId} />
 
         <div className="card p-5">
           <span className="field-label">Details</span>
           <dl className="mt-2 space-y-1.5 text-sm">
-            {chains.map(([id, pid]) => (
+            {chains.every(([, pid]) => pid === projectId) ? (
+              <div className="flex items-center justify-between gap-3">
+                <dt className="text-smoke-700">Project</dt>
+                <dd className="text-ink">#{projectId}</dd>
+              </div>
+            ) : chains.map(([id, pid]) => (
               <div key={id} className="flex items-center justify-between gap-3">
                 <dt className="flex items-center gap-1.5 text-smoke-700">
                   <ChainIcon chainId={id} size={16} />

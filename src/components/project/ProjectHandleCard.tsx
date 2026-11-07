@@ -1059,7 +1059,7 @@ export function ProjectHandleCard({
                         : busy === 'claim'
                           ? 'Step 2 of 2 — publishing handle…'
                           : !address
-                            ? 'Connect to set up handle'
+                            ? 'Sign in to set up handle'
                             : setupPhase === 'authority-claim'
                               ? 'Resume: publish handle'
                               : 'Set verified handle'}
@@ -1148,7 +1148,7 @@ export function ProjectHandleCard({
                     className="btn-secondary mt-2 min-h-[36px] px-3 text-xs disabled:opacity-50"
                   >
                     {!address
-                      ? 'Connect to deploy Safe'
+                      ? 'Sign in to deploy Safe'
                       : busy === 'safe'
                         ? 'Deploying Safe…'
                         : 'Deploy same Safe on Ethereum'}

@@ -48,8 +48,8 @@ export default async function FirstPaymentPage() {
         { type: 'table', label: 'What success looks like', rows: [
           ['Identity', 'protocolVersion is 6, chainId is 84532, and projectId is "1".'],
           ['Evidence', 'blockNumber and blockHash identify when the data was read. controller is the managing contract found through JBDirectory.'],
-          ['Terms', 'ruleset.id is nonzero. In metadata, reservedPercent is the share of new tokens set aside for others; cashOutTaxRate shapes how much stays for remaining holders; pausePay stops payments. dataHook names any extension that can change a payment or cash out. Compare these fields with the project’s Terms view.'],
-          ['Units', 'Large whole numbers print as strings. reservedPercent and cashOutTaxRate use a scale of 10,000: 6200 means 62%. weight gives new tokens per unit of the project’s pricing currency, before setting aside the reserved share. Divide it by 10^18 for the displayed rate.'],
+          ['Terms', 'ruleset.id is nonzero. In metadata, reservedPercent is the share of new tokens reserved for others; cashOutTaxRate shapes how much stays for remaining holders; pausePay stops payments. dataHook names any extension that can change a payment or cash out. Compare these fields with the project’s Terms view.'],
+          ['Units', 'Large whole numbers print as strings. reservedPercent and cashOutTaxRate use a scale of 10,000: 6200 means 62% reserved or a cash out tax of 0.62. weight gives new tokens per unit of the project’s pricing currency, before setting aside the reserved share. Divide it by 10^18 for the displayed rate.'],
         ] },
         { type: 'text', text: 'Set JB_PROJECT_ID to read another Base Sepolia project. Set BASE_SEPOLIA_RPC_URL to use another service for reading that network. Always compare both the network and project ID.' },
       ],
@@ -90,11 +90,11 @@ export default async function FirstPaymentPage() {
     {
       id: 'inspect', part: 'Inspect', title: 'Check what happened',
       paragraphs: [
-        'Open Base Sepolia project 1 in Juicescan. Keep your transaction hash and the token recipient’s address handy. The receipt shows whether the payment succeeded; the transaction details show where the money and tokens went.',
+        'Open Base Sepolia project 1. Keep your transaction hash and the token recipient’s address handy. The receipt shows whether the payment succeeded; the transaction details show where the money and tokens went.',
       ],
       blocks: [
         { type: 'links', items: [
-          { href: 'https://juicebox.center/inspect/basesep/1', label: 'Inspect Base Sepolia project 1 in Juicescan' },
+          { href: '/basesep:1', label: 'Inspect Base Sepolia project 1' },
           { href: 'https://sepolia.basescan.org/', label: 'Look up your transaction hash on Base Sepolia' },
         ] },
         { type: 'steps', items: [
@@ -136,7 +136,7 @@ export default async function FirstPaymentPage() {
         <nav aria-label="First payment resources" className="mt-6 flex flex-wrap gap-4 underline underline-offset-4">
           <Link href="/learn">Learn Juicebox</Link>
           <Link href="/build">Build reference</Link>
-          <a href="https://juicebox.center/inspect/basesep/1">Inspect the example</a>
+          <Link href="/basesep:1" prefetch={false}>Inspect the example</Link>
         </nav>
       </header>
       <GuideSections sections={sections} ariaLabel="First payment" />
