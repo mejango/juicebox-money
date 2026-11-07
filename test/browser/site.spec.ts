@@ -537,30 +537,27 @@ for (const viewport of viewports) {
         } else if ('create' in route) {
           await exerciseCreateWizard(page, viewport.label)
         } else {
-          // Latest and Trending can both show the same project at xl widths.
+          // Latest and Trending can both show the same project.
           // This assertion exercises the selected Trending feed specifically.
           const fixtureProject = page.locator('#home-trending-panel').getByRole('link', {
             name: 'Open Browser Fixture Project',
             exact: true,
           })
-          // The responsive discovery layout starts on Latest (phones) or Top
-          // (tablet/desktop). Select Trending when it is not concurrently
-          // visible at the xl layout before asserting its fixture card.
-          if (viewport.width < 1280) {
-            const label = viewport.width < 640
-              ? 'Project feeds'
-              : 'Project rankings'
-            const trendingTab = page
-              .getByRole('tablist', { name: label })
-              .getByRole('tab', { name: 'Trending', exact: true })
-            // The production page can become actionable while React is still
-            // hydrating. Retry the user interaction until its selected state
-            // confirms that the client handler received it.
-            await expect(async () => {
-              await trendingTab.click()
-              await expect(trendingTab).toHaveAttribute('aria-selected', 'true')
-            }).toPass()
-          }
+          // The discovery layout starts on Top. Select Trending before asserting
+          // its fixture card.
+          const label = viewport.width < 640
+            ? 'Project feeds'
+            : 'Project rankings'
+          const trendingTab = page
+            .getByRole('tablist', { name: label })
+            .getByRole('tab', { name: 'Trending', exact: true })
+          // The production page can become actionable while React is still
+          // hydrating. Retry the user interaction until its selected state
+          // confirms that the client handler received it.
+          await expect(async () => {
+            await trendingTab.click()
+            await expect(trendingTab).toHaveAttribute('aria-selected', 'true')
+          }).toPass()
           await expect(fixtureProject).toBeVisible()
           if (viewport.width < 640) {
             await page
