@@ -13,6 +13,7 @@ import {
   normalizeBendystrawEndpoint,
   requestBendystraw,
   resolveBendystrawNetwork,
+  resolveProjectDeployments as resolveSdkProjectDeployments,
   selectBendystrawEndpoint,
   jbV6ContractAddress,
   type BendystrawCachePolicy,
@@ -24,6 +25,7 @@ import {
   compileBendystrawOperation,
   requestPersistedBendystraw,
 } from '@bananapus/nana-sdk-core/bendystraw-operations'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { fillIndexedMetadata, type MetadataLoader } from '@/lib/project-metadata-fill'
 
 type VersionedProjectRef = Required<BendystrawProjectRef>
@@ -1282,7 +1284,13 @@ export function projectGroupIsIncomplete(
   return !!project.suckerGroupId && !members.some(member => matchesProjectRef(member, [project]))
 }
 
-export { resolveProjectDeployments } from '@bananapus/nana-sdk-core'
+/** The project's verified deployments, in display order. The SDK returns them by chain ID. */
+export function resolveProjectDeployments<T extends Parameters<typeof resolveSdkProjectDeployments>[0]>(
+  home: T,
+  members: readonly T[],
+): T[] {
+  return resolveSdkProjectDeployments(home, members).sort((a, b) => byChainOrder(a.chainId, b.chainId))
+}
 
 /**
  * Sum indexed payments over the same verified deployment set used for the

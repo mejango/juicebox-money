@@ -52,6 +52,26 @@ const CHAIN_DISPLAY = {
 
 type DisplayChainId = keyof typeof CHAIN_DISPLAY
 
+/** Mainnets in display order. Every chain list on the site follows this one. */
+export const PRODUCTION_CHAIN_IDS = [1, 8453, 42161, 10] as const
+const CHAIN_DISPLAY_ORDER: readonly number[] = [
+  ...PRODUCTION_CHAIN_IDS,
+  11155111,
+  84532,
+  421614,
+  11155420,
+]
+
+/** Sort key for a chain list. An unknown chain sorts last, by chain ID. */
+function chainSortIndex(chainId: number): number {
+  const index = CHAIN_DISPLAY_ORDER.indexOf(chainId)
+  return index < 0 ? CHAIN_DISPLAY_ORDER.length + chainId : index
+}
+
+export function byChainOrder(a: number, b: number): number {
+  return chainSortIndex(a) - chainSortIndex(b)
+}
+
 function displayChain(chainId: number) {
   return CHAIN_DISPLAY[chainId as DisplayChainId]
 }

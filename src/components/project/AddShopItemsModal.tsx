@@ -15,6 +15,7 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { shortError } from '@/lib/errors'
 import { pinStoreItemDrafts, type PinnedStoreItemDraft } from '@/lib/store-items'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { loadProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch } from '@/lib/project-batch'
 import { buildShopAddCalls, distinctShopTargets, pendingShopBatch, readShopSnapshot, reverifyShopCall, type ShopCallContext, type ShopSnapshot, type ShopWriteTarget } from '@/lib/shop-batch'
@@ -66,7 +67,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
 
   const toggleChain = (id: JBChainId) => {
     if (busy || review) return
-    setSelected(current => current.includes(id) ? current.filter(chain => chain !== id) : [...current, id].sort((a, b) => a - b))
+    setSelected(current => current.includes(id) ? current.filter(chain => chain !== id) : [...current, id].sort(byChainOrder))
     setMessage(null)
   }
   const handleReview = async () => {

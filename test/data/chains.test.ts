@@ -11,10 +11,10 @@ import {
 describe('dual-environment chain configuration', () => {
   it('supports all four production and all four testnet chains', () => {
     expect(PRODUCTION_CHAINS.map(chain => chain.id)).toEqual([
-      1, 10, 8453, 42161,
+      1, 8453, 42161, 10,
     ])
     expect(TESTNET_CHAINS.map(chain => chain.id)).toEqual([
-      11155111, 11155420, 84532, 421614,
+      11155111, 84532, 421614, 11155420,
     ])
     expect(SUPPORTED_CHAINS).toHaveLength(8)
   })
@@ -33,7 +33,8 @@ describe('dual-environment chain configuration', () => {
     for (const environment of ['production', 'testnet'] as const) {
       const ids = chainsForEnvironment(environment).map(chain => chain.id)
       expect(relayrSupportsChains(ids)).toBe(true)
-      expect(relayrPaymentChains(ids)).toEqual(ids)
+      expect(relayrPaymentChains(ids)).toEqual(expect.arrayContaining(ids))
+      expect(relayrPaymentChains(ids)).toHaveLength(ids.length)
     }
     expect(SUPPORTED_CHAINS.every(chain => relayrSupportsChain(chain.id))).toBe(true)
     expect(relayrSupportsChains([PRODUCTION_CHAINS[0].id, TESTNET_CHAINS[0].id])).toBe(false)

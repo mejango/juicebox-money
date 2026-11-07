@@ -3,6 +3,7 @@
 import { useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { refreshHomepageReserves } from '@/app/actions/homepage-reserves'
+import { PRODUCTION_CHAIN_IDS } from '@/lib/chainDisplay'
 import { formatAmount } from '@/lib/format'
 import type { HomepageReserves } from '@/lib/homepage-reserves'
 import { chainName } from '@/lib/urn'
@@ -136,9 +137,9 @@ export function SecuredReserves({ data }: { data: HomepageReserves }) {
           <span
             className="inline-flex items-center gap-1"
             role="img"
-            aria-label="Ethereum, Arbitrum, Base, and Optimism"
+            aria-label="Ethereum, Base, Arbitrum, and Optimism"
           >
-            {[1, 42161, 8453, 10].map(chainId => (
+            {PRODUCTION_CHAIN_IDS.map(chainId => (
               <ChainIcon key={chainId} chainId={chainId} size={14} />
             ))}
           </span>

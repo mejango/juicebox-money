@@ -450,7 +450,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-omnichain",
     "title": "Projects across chains",
     "paragraphs": [
-      "A project can run on Ethereum, Optimism, Base, and Arbitrum at once. Each chain has its own project ID, balance, and tokens.",
+      "A project can run on Ethereum, Base, Arbitrum, and Optimism at once. Each chain has its own project ID, balance, and tokens.",
       "Moving tokens between chains takes three steps: send from one chain, wait for the bridge, then claim on the other. Your tokens carry their share of the balance with them. Keep the transaction link until you’ve claimed; a confirmed send doesn’t mean the tokens have arrived."
     ],
     "blocks": [

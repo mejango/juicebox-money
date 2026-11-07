@@ -30,6 +30,7 @@ import { AddressLabel } from "@/components/ui/AddressLabel";
 import { ProjectLink } from "@/components/ProjectLink";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { useWallet } from "@/hooks/useWallet";
+import { byChainOrder } from "@/lib/chainDisplay";
 import { friendlyError } from "@/lib/errors";
 import { captureWalletContext } from "@/lib/wallet-context";
 import { revertedReceipt } from "@/lib/reviewed-call";
@@ -1030,7 +1031,7 @@ export function CreateForm() {
   const toggleChain = (id: number) => {
     if (busy) return;
     setSelected((prev) =>
-      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id].sort(),
+      prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id].sort(byChainOrder),
     );
   };
 

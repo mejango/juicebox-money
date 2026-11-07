@@ -136,7 +136,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'points',
         items: [
-          { key: 'Chains', text: 'Ethereum, Optimism, Base, and Arbitrum, plus their Sepolia test networks. Find the list in the SDK’s SUPPORTED_CHAINS and JB_CHAINS.' },
+          { key: 'Chains', text: 'Ethereum, Base, Arbitrum, and Optimism, plus their Sepolia test networks. Find the list in the SDK’s SUPPORTED_CHAINS and JB_CHAINS.' },
           { key: 'Source', text: '[the V6 source](https://github.com/Bananapus/version-6) is current. Older Juicebox versions are not interchangeable with it, and this site redirects unknown routes to the legacy app for those.' },
         ],
       },

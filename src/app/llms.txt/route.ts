@@ -13,7 +13,7 @@ const LLMS_TXT = `# Juicebox
 > ${JUICEBOX_ONE_LINER}
 > A Juicebox project takes payments, issues tokens as incentives, pays out on a
 > schedule, and lets holders cash out, under rules its owner sets. This site runs Juicebox V6 on
-> Ethereum, Optimism, Base, and Arbitrum, reading the contracts and Bendystraw, an
+> Ethereum, Base, Arbitrum, and Optimism, reading the contracts and Bendystraw, an
 > index of their records.
 
 ## URL grammar

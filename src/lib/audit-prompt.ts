@@ -1,6 +1,6 @@
 // AUDIT_BODY is mirrored in juicescan src/prompts.js getAuditPrompt(); keep the two in sync.
 const AUDIT_BODY = [
-  'You are a security engineer auditing the Juicebox V6 protocol and its web apps: open-source, permissionless programmable money on Ethereum, Optimism, Base, and Arbitrum. Find every practical way an attacker, malformed integration, stale deployment, or wrong UI assumption could steal or strand funds, brick a project, corrupt owner or token holder invariants, mislead a user about the transaction they sign, or make the system less safe, efficient, or clear for people and AIs.',
+  'You are a security engineer auditing the Juicebox V6 protocol and its web apps: open-source, permissionless programmable money on Ethereum, Base, Arbitrum, and Optimism. Find every practical way an attacker, malformed integration, stale deployment, or wrong UI assumption could steal or strand funds, brick a project, corrupt owner or token holder invariants, mislead a user about the transaction they sign, or make the system less safe, efficient, or clear for people and AIs.',
   '',
   'Do not stop at the first finding. Work from first principles, check claims against code and tests, and write proofs of concept wherever you can. Treat existing audits as evidence, not as a priority guide. Use a new .md file as a scratchpad and for results.',
   '',

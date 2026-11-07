@@ -630,7 +630,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "rows": [
           [
             "https://bendystraw.up.railway.app/graphql",
-            "Mainnets: Ethereum, Optimism, Base, Arbitrum. No API key needed"
+            "Mainnets: Ethereum, Base, Arbitrum, Optimism. No API key needed"
           ],
           [
             "https://testnet.bendystraw.xyz/graphql",

@@ -78,6 +78,7 @@ import {
 } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
@@ -932,7 +933,7 @@ function AllHoldersCard({
     return [...byAddress.values()]
       .map(holder => ({
         ...holder,
-        chains: [...holder.chains].sort((a, b) => a - b),
+        chains: [...holder.chains].sort(byChainOrder),
       }))
       .sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0))
   }, [data])

@@ -1,4 +1,5 @@
 import { bendystraw, BsProject } from './bendystraw'
+import { byChainOrder } from './chainDisplay'
 import { fillIndexedMetadata } from './project-metadata-fill'
 import { readIndexedMetadataJson } from './metadata-json.server'
 import { legacyProjectHref, toUrn } from './urn'
@@ -94,7 +95,7 @@ async function getBendystrawTrending(limit: number): Promise<TrendingCard[]> {
         logoUri: representative.logoUri,
         volumeUsd: group.volumeUsd,
         paymentsCount: group.paymentsCount,
-        chainIds: members.map(m => m.chainId),
+        chainIds: members.map(m => m.chainId).sort(byChainOrder),
         trendingScore: BigInt(group.trendingScore),
       },
     ]

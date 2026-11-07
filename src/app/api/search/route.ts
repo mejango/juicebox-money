@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSuckerGroupProjects, searchProjects } from '@/lib/bendystraw'
+import { byChainOrder } from '@/lib/chainDisplay'
 
 /**
  * Free-text project search, proxied server-side so the bendystraw endpoint and
@@ -58,7 +59,7 @@ export async function GET(req: NextRequest) {
           p.searchTicker ??
           members.find(member => member.searchTicker)?.searchTicker ??
           null,
-        chainIds: Array.from(new Set(members.map(member => member.chainId))),
+        chainIds: Array.from(new Set(members.map(member => member.chainId))).sort(byChainOrder),
       })),
     })
   } catch {

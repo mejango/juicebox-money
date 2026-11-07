@@ -69,7 +69,9 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
   // Leaving ends the batch's wait for a Safe to execute a call; the call stays submitted.
   const flowSignal = useUnmountSignal()
   const queryClient = useQueryClient()
-  const scope = projectBatchScope(action, chains[0]?.[0] ?? 0, chains[0]?.[1] ?? 0)
+  // Saved batches are found by this key, so it stays on the lowest chain ID whatever the list's display order.
+  const scopePair = chains.reduce<ProjectTokenDestination | undefined>((low, pair) => (!low || pair[0] < low[0] ? pair : low), undefined)
+  const scope = projectBatchScope(action, scopePair?.[0] ?? 0, scopePair?.[1] ?? 0)
   const [initial] = useState(() => {
     try { return { batch: loadProjectBatch(scope), error: null } }
     catch (failure) { return { batch: null, error: failure instanceof Error ? failure.message : 'Could not read the saved batch.' } }

@@ -43,8 +43,8 @@ describe('Bendystraw project identity is treated as untrusted input', () => {
 
     expect(deployments.map(row => [row.chainId, row.projectId])).toEqual([
       [1, 7],
-      [10, 12],
       [8453, 99],
+      [10, 12],
     ])
   })
 

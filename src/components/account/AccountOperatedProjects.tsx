@@ -4,6 +4,7 @@ import { ProjectLogo } from '@/components/ProjectLogo'
 import { accountProjectHref } from '@/components/account/AccountProjectCard'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { BsOperatorGrant, BsProject } from '@/lib/bendystraw'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { permissionDefinition } from '@/lib/permissions'
 
 export type OperatedProjectGroup = {
@@ -42,7 +43,7 @@ export function groupOperatorGrants(
     groups.set(key, group)
   }
   return [...groups.values()].sort(
-    (a, b) => a.chainId - b.chainId || a.projectId - b.projectId,
+    (a, b) => byChainOrder(a.chainId, b.chainId) || a.projectId - b.projectId,
   )
 }
 
