@@ -140,10 +140,9 @@ export function useShop721Media(chainId: JBChainId, shop: Shop | null | undefine
     : undefined
   const query = useKeptQuery<ShopMediaResult>({
     // Old persisted maps could contain a failed fetch cached as a valid {}.
+    // Media persisted before the resolver was asked never goes stale, so resolved media has its own key.
     queryKey: ['shop721Media', 2, chainId, shop?.hook, nativeTierIds === undefined
-      ? mediaTierKey : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey]),
-      // Media persisted before the resolver was asked never goes stale, so it needs its own key.
-      ...(resolver ? ['resolver'] : [])],
+      ? `${resolver ? 'resolver:' : ''}${mediaTierKey}` : JSON.stringify(['preview', shop?.store, shop?.inventoryBlockNumber?.toString(), mediaTierKey])],
     meta: PERSIST,
     enabled: !!shop && tiers.length > 0 && (!nativeTierIds || !shop.store || !!publicClient || tiers.every(tier => !!tier.resolvedUri)),
     staleTime: query => query.state.data?.failedTierIds.length ? 0 : Infinity,
