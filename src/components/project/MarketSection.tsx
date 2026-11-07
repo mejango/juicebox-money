@@ -21,6 +21,8 @@ import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
+  encodeAbiParameters,
+  keccak256,
   type Address,
   type PublicClient,
 } from 'viem'
@@ -82,7 +84,7 @@ import { formatPrice } from './chartUtils'
  * rather than rendering a guess.
  */
 
-// PoolManager.extsload(bytes32) -> bytes32 — the only PoolManager call we make.
+// PoolManager.extsload, the only PoolManager call we make.
 const extsloadAbi = [
   {
     type: 'function',
@@ -90,6 +92,13 @@ const extsloadAbi = [
     stateMutability: 'view',
     inputs: [{ name: 'slot', type: 'bytes32' }],
     outputs: [{ type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'extsload',
+    stateMutability: 'view',
+    inputs: [{ name: 'slots', type: 'bytes32[]' }],
+    outputs: [{ type: 'bytes32[]' }],
   },
 ] as const
 
@@ -400,7 +409,8 @@ type LpOwner = {
 
 type LpPosition = {
   tokenId: bigint
-  owner: Address
+  /** Null for a band read from live tick state. */
+  owner: Address | null
   tickLower: number
   tickUpper: number
   liquidity: bigint
@@ -414,12 +424,12 @@ type RawLog = {
   blockNumber?: string | bigint
 }
 
-const LP_LOG_WINDOW = 45_000n
+// Center answers -32005 for an eth_getLogs span of 500 blocks or more, on every chain.
+const LP_LOG_WINDOW = 500n
 const LP_LOG_BATCH_WINDOWS = 8
 const LP_LOG_REORG_OVERLAP = 128n
-// Bounds RPC load: the buyback pools are recent, so their Initialize event sits
-// well within this many windows of the chain tip. Beyond it, we degrade to a
-// note rather than issue an unbounded number of eth_getLogs requests.
+// Bounds RPC load: beyond this many windows of the chain tip, the wallet's own
+// positions read fails rather than issuing unbounded eth_getLogs requests.
 const LP_MAX_WINDOWS = 80
 
 function hexBlock(n: bigint): string {
@@ -432,14 +442,8 @@ export async function getPoolLogs(
   poolId: `0x${string}`,
   from: bigint,
   to: bigint,
-  onlyInitialize: boolean,
 ): Promise<RawLog[]> {
-  const topics = [
-    onlyInitialize
-      ? INITIALIZE_TOPIC
-      : [INITIALIZE_TOPIC, MODIFY_LIQUIDITY_TOPIC],
-    poolId,
-  ]
+  const topics = [[INITIALIZE_TOPIC, MODIFY_LIQUIDITY_TOPIC], poolId]
   return (await client.request({
     method: 'eth_getLogs',
     params: [
@@ -515,7 +519,7 @@ async function scanKnownPoolRange(
     }
     const batches = await Promise.all(
       spans.map(({ lo, hi }) =>
-        getPoolLogs(client, pm, poolId, lo, hi, false),
+        getPoolLogs(client, pm, poolId, lo, hi),
       ),
     )
     for (const logs of batches) {
@@ -525,18 +529,17 @@ async function scanKnownPoolRange(
 }
 
 /**
- * Every PositionManager NFT id ever used in this pool. Port of website
- * lpPoolPositionTokenIds: try one wide eth_getLogs (works on archive providers
- * for a single pool's small, topic-filtered result set); on failure, scan
- * backward in bounded windows until the pool's Initialize event is found.
- * Incomplete history throws — it never becomes a silently short list.
+ * Every PositionManager NFT id ever used in this pool: scan backward in bounded
+ * windows until the pool's Initialize event is found. Incomplete history throws,
+ * it never becomes a silently short list.
  */
 async function scanPoolTokenIds(
   client: PublicClient,
   pm: Address,
   posm: Address,
-  poolId: `0x${string}`,
+  pool: Pick<Extract<MarketResult, { status: 'pool' }>, 'poolId' | 'key'>,
 ): Promise<bigint[]> {
+  const { poolId } = pool
   const latest = await client.getBlockNumber()
   const cacheKey = `${client.chain?.id ?? 'unknown'}:${pm.toLowerCase()}:${posm.toLowerCase()}:${poolId.toLowerCase()}`
   let cached = poolHistoryCache.get(cacheKey)
@@ -544,6 +547,8 @@ async function scanPoolTokenIds(
     poolHistoryCache.delete(cacheKey)
     cached = undefined
   }
+  // A position with liquidity always has initialized ticks.
+  if (!cached && !(await readPoolTickRanges(client, pm, pool)).length) return []
   const state: ScanState = {
     initBlock: cached?.initBlock ?? null,
     ids: new Map(),
@@ -568,54 +573,33 @@ async function scanPoolTokenIds(
       state,
     )
   } else {
-    // Find the single indexed Initialize event first. Unlike an all-history
-    // ModifyLiquidity request, this remains cheap even for an old pool.
-    try {
-      const logs = await getPoolLogs(client, pm, poolId, 0n, latest, true)
-      for (const log of logs) collectPoolLog(log, posm, state)
-    } catch {
-      state.initBlock = null
-    }
-
-    if (state.initBlock != null) {
-      await scanKnownPoolRange(
-        client,
-        pm,
-        posm,
-        poolId,
-        state.initBlock,
-        latest,
-        state,
+    // Range-limited RPC: walk backwards in parallel batches until the
+    // Initialize event proves that the accumulated history is complete.
+    let cursor = latest
+    let windows = 0
+    while (state.initBlock == null && windows < LP_MAX_WINDOWS) {
+      const spans: { lo: bigint; hi: bigint }[] = []
+      for (
+        let n = 0;
+        n < LP_LOG_BATCH_WINDOWS && windows < LP_MAX_WINDOWS;
+        n++
+      ) {
+        const lo = cursor >= LP_LOG_WINDOW ? cursor - LP_LOG_WINDOW + 1n : 0n
+        spans.push({ lo, hi: cursor })
+        windows++
+        if (lo === 0n) break
+        cursor = lo - 1n
+      }
+      const batches = await Promise.all(
+        spans.map(({ lo, hi }) =>
+          getPoolLogs(client, pm, poolId, lo, hi),
+        ),
       )
-    } else {
-      // Range-limited RPC: walk backwards in parallel batches until the
-      // Initialize event proves that the accumulated history is complete.
-      let cursor = latest
-      let windows = 0
-      while (state.initBlock == null && windows < LP_MAX_WINDOWS) {
-        const spans: { lo: bigint; hi: bigint }[] = []
-        for (
-          let n = 0;
-          n < LP_LOG_BATCH_WINDOWS && windows < LP_MAX_WINDOWS;
-          n++
-        ) {
-          const lo = cursor >= LP_LOG_WINDOW ? cursor - LP_LOG_WINDOW + 1n : 0n
-          spans.push({ lo, hi: cursor })
-          windows++
-          if (lo === 0n) break
-          cursor = lo - 1n
-        }
-        const batches = await Promise.all(
-          spans.map(({ lo, hi }) =>
-            getPoolLogs(client, pm, poolId, lo, hi, false),
-          ),
-        )
-        for (const logs of batches) {
-          for (const log of logs) collectPoolLog(log, posm, state)
-        }
-        if (spans.at(-1)?.lo === 0n && state.initBlock == null) {
-          throw new Error('Pool initialization log not found')
-        }
+      for (const logs of batches) {
+        for (const log of logs) collectPoolLog(log, posm, state)
+      }
+      if (spans.at(-1)?.lo === 0n && state.initBlock == null) {
+        throw new Error('Pool initialization log not found')
       }
     }
   }
@@ -634,14 +618,79 @@ async function scanPoolTokenIds(
     .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
 }
 
+// Pool.State field offsets, from v4-core's StateLibrary.
+const POOL_TICKS_OFFSET = 4n
+const POOL_TICK_BITMAP_OFFSET = 5n
+const MAX_TICK = 887_272
+// Center answers 413 to a call of about 7,000 slots.
+const EXTSLOAD_BATCH = 1_000
+
+/**
+ * The pool's liquidity per price band, from PoolManager's tick bitmap and
+ * liquidityNet at one block. Covers every sender, and its cost does not grow
+ * with the pool's age. Bands are split at every initialized tick, so they are
+ * not individual positions. Mirrored in revnet-money's market reads.
+ */
+export async function readPoolTickRanges(
+  client: PublicClient,
+  pm: Address,
+  pool: Pick<Extract<MarketResult, { status: 'pool' }>, 'poolId' | 'key'>,
+): Promise<{ tickLower: number; tickUpper: number; liquidity: bigint }[]> {
+  const blockNumber = await client.getBlockNumber()
+  const spacing = pool.key.tickSpacing
+  const stateSlot = BigInt(poolStateSlot(pool.poolId))
+  const mappingSlot = (key: number, offset: bigint) =>
+    keccak256(encodeAbiParameters(
+      [{ type: 'int256' }, { type: 'uint256' }],
+      [BigInt(key), stateSlot + offset],
+    ))
+  const load = async (slots: `0x${string}`[]) => {
+    const batches: `0x${string}`[][] = []
+    for (let index = 0; index < slots.length; index += EXTSLOAD_BATCH) {
+      batches.push(slots.slice(index, index + EXTSLOAD_BATCH))
+    }
+    const values = await Promise.all(batches.map(batch => client.readContract({
+      address: pm,
+      abi: extsloadAbi,
+      functionName: 'extsload',
+      args: [batch],
+      blockNumber,
+    })))
+    return values.flat() as `0x${string}`[]
+  }
+
+  const firstWord = Math.floor(-MAX_TICK / spacing) >> 8
+  const lastWord = Math.floor(MAX_TICK / spacing) >> 8
+  const words = await load(Array.from(
+    { length: lastWord - firstWord + 1 },
+    (_, index) => mappingSlot(firstWord + index, POOL_TICK_BITMAP_OFFSET),
+  ))
+  const ticks: number[] = []
+  words.forEach((word, index) => {
+    const bits = BigInt(word)
+    if (bits === 0n) return
+    for (let bit = 0; bit < 256; bit++) {
+      if ((bits >> BigInt(bit)) & 1n) ticks.push(((firstWord + index) * 256 + bit) * spacing)
+    }
+  })
+  if (!ticks.length) return []
+
+  const infos = await load(ticks.map(tick => mappingSlot(tick, POOL_TICKS_OFFSET)))
+  const ranges: { tickLower: number; tickUpper: number; liquidity: bigint }[] = []
+  let liquidity = 0n
+  ticks.forEach((tick, index) => {
+    liquidity += BigInt.asIntN(128, BigInt(infos[index]) >> 128n)
+    if (index + 1 < ticks.length) ranges.push({ tickLower: tick, tickUpper: ticks[index + 1], liquidity })
+  })
+  if (liquidity !== 0n) throw new Error('Pool tick state does not net to zero.')
+  return ranges
+}
+
 type PositionDetail = {
   tokenId: bigint
   info: bigint
   owner: Address | null
   liquidity: bigint
-  /** Set when the row came from the index, where ticks are already decoded. */
-  tickLower?: number
-  tickUpper?: number
 }
 
 /** Read each position (info, owner, liquidity) and verify it belongs to the
@@ -711,10 +760,9 @@ async function readPositionDetails(
 }
 
 /**
- * Enumerate + aggregate the pool's V4 LP positions. Port of website
- * readLpPositions: finds tokenIds from ModifyLiquidity logs (salt == tokenId),
- * reads each, then maps liquidity to exact pair/project-token amounts. Null
- * position manager (e.g. OP Sepolia) -> unavailable; incomplete reads throw.
+ * Aggregate the pool's V4 liquidity, mapped to exact pair and project-token
+ * amounts. Null position manager (e.g. OP Sepolia) -> unavailable; incomplete
+ * reads throw.
  */
 export async function readLpPositions(
   client: PublicClient,
@@ -727,24 +775,18 @@ export async function readLpPositions(
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return { status: 'unavailable' }
 
-  // One indexed query replaces the walk back to the pool's Initialize. Nothing
-  // indexed reads the same as a pool with no positions, so it falls through to
-  // the scan rather than rendering an empty pool.
+  // The index names each position's owner. A pool it has nothing for still has
+  // live tick state, which gives the same amounts and depth without the providers.
   const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal })
-  const details: PositionDetail[] = indexed
+  const details = indexed
     ? indexed.map(row => ({
         tokenId: BigInt(row.tokenId),
-        info: 1n,
         owner: row.owner as Address,
         liquidity: BigInt(row.liquidity),
         tickLower: row.tickLower,
         tickUpper: row.tickUpper,
       }))
-    : await (async () => {
-        const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
-        if (!tokenIds.length) return []
-        return readPositionDetails(client, posm, tokenIds, pool.poolId)
-      })()
+    : (await readPoolTickRanges(client, pm, pool)).map(band => ({ ...band, tokenId: 0n, owner: null }))
   if (!details.length) return { status: 'empty' }
 
   const { sqrtP, pairIsC0, pair, price } = pool
@@ -755,9 +797,8 @@ export async function readLpPositions(
   const byOwner = new Map<string, LpOwner>()
 
   for (const p of details) {
-    if (!p.owner || p.liquidity <= 0n || p.info === 0n) continue
-    const tickUpper = p.tickUpper ?? tickUpperOf(p.info)
-    const tickLower = p.tickLower ?? tickLowerOf(p.info)
+    if (p.liquidity <= 0n) continue
+    const { tickLower, tickUpper } = p
     const amounts = getAmountsForLiquidity(
       sqrtP,
       sqrtAtTick(tickLower),
@@ -777,6 +818,7 @@ export async function readLpPositions(
       pair: pairAmt,
       tok: tokAmt,
     })
+    if (!p.owner) continue
     // Value each owner's stake in pair-token terms.
     const val = Number(pairAmt) / pairScale + (Number(tokAmt) / 1e18) * price
     const k = p.owner.toLowerCase()
@@ -881,7 +923,7 @@ export async function readUserLpPositions(
       .filter(position => position.liquidity > 0n)
   }
 
-  const tokenIds = await scanPoolTokenIds(client, pm, posm, pool.poolId)
+  const tokenIds = await scanPoolTokenIds(client, pm, posm, pool)
   if (!tokenIds.length) return []
   const details = await readPositionDetails(client, posm, tokenIds, pool.poolId)
 
@@ -1004,6 +1046,8 @@ export function MarketSection({
     data: lp,
     isLoading: lpLoading,
     isError: lpError,
+    isFetching: lpFetching,
+    refetch: refetchLp,
   } = useKeptQuery(
     cachedQuery({
       // The positions are priced from the captured `market` snapshot, and the
@@ -1149,8 +1193,16 @@ export function MarketSection({
           <LiquidityBodySkeleton />
         ) : lpError ? (
           <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-            Couldn&apos;t read the pool&apos;s liquidity positions here right
-            now. The market price above is still live.
+            Couldn&apos;t read the pool&apos;s liquidity right now. The market
+            price above is still live.{' '}
+            <button
+              type="button"
+              className="underline disabled:opacity-50"
+              disabled={lpFetching}
+              onClick={() => void refetchLp()}
+            >
+              Retry
+            </button>
           </p>
         ) : !lp || lp.status === 'unavailable' ? (
           <p className="mt-3 text-sm leading-relaxed text-smoke-700">

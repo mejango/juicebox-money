@@ -30,7 +30,7 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -56,7 +56,7 @@ import {
   type Split as SplitRow,
 } from '@/components/project/SplitRecipient'
 import { TokenPanel } from '@/components/project/TokenPanel'
-import { SubTabs } from '@/components/project/Tabs'
+import { SubTabs, editReservedSplitsHash, useTabHashAction } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
@@ -79,6 +79,7 @@ import {
 } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
+import { byChainOrder } from '@/lib/chainDisplay'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
@@ -106,18 +107,17 @@ export function OwnersTab({
 }) {
   // Liquidity edits and the rest of the tab reach another chain only once the onchain registry links its project.
   // The token batch flows take every listed pair: they find saved batches by it and check each pair themselves.
-  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
+  const { deployments: chains, line, pending } = useLinkedDeployments([chainId, projectId], listed)
   return (
     <div className="space-y-5">
       {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
       <TokenPanel
         chainId={chainId}
         projectId={projectId}
-        chainIds={chains.map(([cid]) => cid)}
         compact
       />
       <SubTabs
-        hashParent="tokens"
+        hashParent={isRevnet ? 'owners' : 'tokens'}
         tabs={[
           {
             label: 'Accounts',
@@ -135,6 +135,7 @@ export function OwnersTab({
                   projectId={projectId}
                   suckerGroupId={suckerGroupId}
                   chains={chains}
+                  groupPending={pending}
                 />
               </div>
             ),
@@ -891,11 +892,14 @@ function AllHoldersCard({
   projectId,
   suckerGroupId,
   chains,
+  groupPending,
 }: {
   chainId: JBChainId
   projectId: number
   suckerGroupId: string | null
   chains: [number, number][]
+  /** The group check is still out, so `chains` may be only the home deployment. */
+  groupPending: boolean
 }) {
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const tokenUnit = projectToken?.symbol || 'tokens'
@@ -911,6 +915,7 @@ function AllHoldersCard({
     meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
+    enabled: !groupPending,
     queryFn: async () => {
       const qs = new URLSearchParams({ refs: refsParam })
       if (suckerGroupId) qs.set('suckerGroupId', suckerGroupId)
@@ -952,7 +957,7 @@ function AllHoldersCard({
     return [...byAddress.values()]
       .map(holder => ({
         ...holder,
-        chains: [...holder.chains].sort((a, b) => a - b),
+        chains: [...holder.chains].sort(byChainOrder),
       }))
       .sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0))
   }, [data])
@@ -993,7 +998,7 @@ function AllHoldersCard({
           </p>
         ) : null}
       </div>
-      {isLoading ? (
+      {groupPending || isLoading ? (
         <HolderDistributionSkeleton rows={5} />
       ) : isError ? (
         <p className="mt-2 text-sm text-smoke-700">
@@ -1217,6 +1222,8 @@ function ReservedCard({
   }
 
   const [chosenStageIndex, setChosenStageIndex] = useState<number | null>(null)
+  // The editor only exists on the current stage.
+  useTabHashAction(isRevnet ? editReservedSplitsHash(true) : undefined, useCallback(() => setChosenStageIndex(null), []))
   const activeStageIndex = stages.length
     ? Math.min(
         Math.max(chosenStageIndex ?? currentStageIndex, 0),
@@ -1359,6 +1366,7 @@ function ReservedCard({
           rulesetId={BigInt(rulesetId)}
           chains={chains}
           isRevnet
+          openOnHash={editReservedSplitsHash(true)}
         />
       ) : null}
     </div>

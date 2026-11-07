@@ -9,12 +9,13 @@ import {
   sepolia,
 } from '@bananapus/nana-sdk-core/chains'
 
-export const PRODUCTION_CHAINS = [mainnet, optimism, base, arbitrum] as const
+// Literal tuples for wagmi's types. test/chain-order.test.ts holds them to the display order in chainDisplay.ts.
+export const PRODUCTION_CHAINS = [mainnet, base, arbitrum, optimism] as const
 export const TESTNET_CHAINS = [
   sepolia,
-  optimismSepolia,
   baseSepolia,
   arbitrumSepolia,
+  optimismSepolia,
 ] as const
 export const SUPPORTED_CHAINS = [
   ...PRODUCTION_CHAINS,

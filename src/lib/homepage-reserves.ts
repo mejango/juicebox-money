@@ -6,6 +6,7 @@ import {
   getProjectTokenBalanceMoments,
   getProjectTokenBalances,
 } from './bendystraw'
+import { PRODUCTION_CHAIN_IDS } from './chainDisplay'
 import { truncateAddress } from './format'
 import { getHomepageBalanceGroups } from './top-projects'
 import { knownTokenSymbol } from './token-symbol'
@@ -36,7 +37,7 @@ export type HomepageReserves = {
   feePoints: ReservePoint[] | null
 }
 
-const RESERVE_CHAIN_IDS = [1, 42161, 8453, 10] as const
+const RESERVE_CHAIN_IDS = PRODUCTION_CHAIN_IDS
 const FEE_PROJECT_ID = 1
 
 function downsample(points: ReservePoint[]): ReservePoint[] {

@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSuckerGroupProjects, searchProjects } from '@/lib/bendystraw'
+import { byChainOrder } from '@/lib/chainDisplay'
+
+function landing<T extends { chainId: number; projectId: number }>(representative: T, members: readonly T[]) {
+  const { chainId, projectId } = [representative, ...members]
+    .reduce((first, member) => (byChainOrder(member.chainId, first.chainId) < 0 ? member : first))
+  return { chainId, projectId }
+}
 
 /**
  * Free-text project search, proxied server-side so the bendystraw endpoint and
@@ -49,8 +56,8 @@ export async function GET(req: NextRequest) {
     )
     return NextResponse.json({
       projects: projects.map(({ representative: p, members }) => ({
-        projectId: p.projectId,
-        chainId: p.chainId,
+        // One project, one landing: the first chain in display order, not whichever has the most volume today.
+        ...landing(p, members),
         name: p.name,
         logoUri: p.logoUri,
         projectTagline: p.projectTagline,
@@ -58,7 +65,7 @@ export async function GET(req: NextRequest) {
           p.searchTicker ??
           members.find(member => member.searchTicker)?.searchTicker ??
           null,
-        chainIds: Array.from(new Set(members.map(member => member.chainId))),
+        chainIds: Array.from(new Set(members.map(member => member.chainId))).sort(byChainOrder),
       })),
     })
   } catch {
