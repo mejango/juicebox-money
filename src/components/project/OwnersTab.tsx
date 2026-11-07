@@ -113,7 +113,6 @@ export function OwnersTab({
       <TokenPanel
         chainId={chainId}
         projectId={projectId}
-        chainIds={chains.map(([cid]) => cid)}
         compact
       />
       <SubTabs

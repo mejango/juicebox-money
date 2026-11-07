@@ -416,7 +416,7 @@ export function ProjectStats({
             Raised by chain
           </p>
           <div className="space-y-2">
-            {raisedByChain.map(row => (
+            {raisedByChain.filter(row => BigInt(row.usd) !== 0n || BigInt(row.volume ?? 0) !== 0n).map(row => (
               <div
                 key={row.chainId}
                 className="flex items-start justify-between gap-4 text-xs"
@@ -460,12 +460,10 @@ export function ProjectStats({
               Balance breakdown
             </p>
             <div className="space-y-2">
-              {data?.rows.map((row, index) => (
+              {data?.rows.filter(row => row.balance !== 0n).map((row, index) => (
                 <div
                   key={`${row.chainId}-${row.symbol}-${index}`}
-                  className={`flex items-start justify-between gap-4 text-xs ${
-                    row.balance === 0n ? 'opacity-50' : ''
-                  }`}
+                  className="flex items-start justify-between gap-4 text-xs"
                 >
                   <span className="inline-flex min-w-0 items-center gap-1.5 text-smoke-600">
                     <ChainIcon chainId={row.chainId} size={17} />

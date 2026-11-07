@@ -16,7 +16,7 @@ vi.mock('wagmi', () => ({
     m.read(options)
     return options.functionName === 'tokenOf' ? m.token : m.supply
   },
-  useReadContracts: () => ({ data: [{ result: 'Project token' }, { result: 'TEST' }] }),
+  useReadContracts: () => ({ data: [{ result: 'TEST' }] }),
 }))
 vi.mock('@tanstack/react-query', () => ({ useQuery: () => m.ruleset }))
 vi.mock('@/lib/project-display-queries', () => ({
@@ -27,7 +27,7 @@ vi.mock('@/components/ui/AddressLink', () => ({ AddressLink: ({ address }: { add
 vi.mock('@/components/project/ConceptTerm', () => ({ ConceptTerm: ({ children }: { children: string }) => children }))
 import { TokenPanel } from '@/components/project/TokenPanel'
 
-const panel = () => renderToStaticMarkup(<TokenPanel chainId={1} projectId={12} chainIds={[1]} />)
+const panel = () => renderToStaticMarkup(<TokenPanel chainId={1} projectId={12} />)
 beforeEach(() => {
   m.token = { data: zeroAddress, isLoading: false }
   m.supply = { data: 0n, isLoading: false, isSuccess: true }
@@ -60,8 +60,10 @@ describe('project token and credit availability', () => {
   it('keeps deployed ERC-20 metadata and disables credit-only supply reads', () => {
     m.token.data = '0x1111111111111111111111111111111111111111'
     const html = panel()
-    expect(html).toContain('Project token')
     expect(html).toContain('$TEST')
+    expect(html).toContain('ERC-20')
+    expect(html).not.toContain('>Name<')
+    expect(html).not.toContain('>On<')
     expect(html).not.toContain('does not currently offer')
     expect(m.read).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'totalSupplyOf', query: expect.objectContaining({ enabled: false }) }))
   })
