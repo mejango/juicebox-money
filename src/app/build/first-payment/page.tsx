@@ -90,11 +90,11 @@ export default async function FirstPaymentPage() {
     {
       id: 'inspect', part: 'Inspect', title: 'Check what happened',
       paragraphs: [
-        'Open Base Sepolia project 1 in Juicescan. Keep your transaction hash and the token recipient’s address handy. The receipt shows whether the payment succeeded; the transaction details show where the money and tokens went.',
+        'Open Base Sepolia project 1. Keep your transaction hash and the token recipient’s address handy. The receipt shows whether the payment succeeded; the transaction details show where the money and tokens went.',
       ],
       blocks: [
         { type: 'links', items: [
-          { href: 'https://juicebox.center/inspect/basesep/1', label: 'Inspect Base Sepolia project 1 in Juicescan' },
+          { href: '/basesep:1', label: 'Inspect Base Sepolia project 1' },
           { href: 'https://sepolia.basescan.org/', label: 'Look up your transaction hash on Base Sepolia' },
         ] },
         { type: 'steps', items: [
@@ -136,7 +136,7 @@ export default async function FirstPaymentPage() {
         <nav aria-label="First payment resources" className="mt-6 flex flex-wrap gap-4 underline underline-offset-4">
           <Link href="/learn">Learn Juicebox</Link>
           <Link href="/build">Build reference</Link>
-          <a href="https://juicebox.center/inspect/basesep/1">Inspect the example</a>
+          <Link href="/basesep:1">Inspect the example</Link>
         </nav>
       </header>
       <GuideSections sections={sections} ariaLabel="First payment" />
