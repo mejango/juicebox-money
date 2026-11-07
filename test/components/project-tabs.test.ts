@@ -142,7 +142,7 @@ describe('project tab hashes', () => {
         createElement(ProjectTabs, { tabs, sidebar: 'sidebar', activity: 'activity' }),
         {
           createNodeMock: element =>
-            element.props['data-project-tab-scroll']
+            (element.props as Record<string, unknown>)['data-project-tab-scroll']
               ? {
                   scrollIntoView,
                   querySelector: () => null,

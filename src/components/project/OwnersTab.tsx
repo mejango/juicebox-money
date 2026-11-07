@@ -106,7 +106,7 @@ export function OwnersTab({
 }) {
   // Liquidity edits and the rest of the tab reach another chain only once the onchain registry links its project.
   // The token batch flows take every listed pair: they find saved batches by it and check each pair themselves.
-  const { deployments: chains, line } = useLinkedDeployments([chainId, projectId], listed)
+  const { deployments: chains, line, pending } = useLinkedDeployments([chainId, projectId], listed)
   return (
     <div className="space-y-5">
       {line ? <p role="alert" className="text-xs text-error-500">{line}</p> : null}
@@ -135,6 +135,7 @@ export function OwnersTab({
                   projectId={projectId}
                   suckerGroupId={suckerGroupId}
                   chains={chains}
+                  groupPending={pending}
                 />
               </div>
             ),
@@ -872,11 +873,14 @@ function AllHoldersCard({
   projectId,
   suckerGroupId,
   chains,
+  groupPending,
 }: {
   chainId: JBChainId
   projectId: number
   suckerGroupId: string | null
   chains: [number, number][]
+  /** The group check is still out, so `chains` may be only the home deployment. */
+  groupPending: boolean
 }) {
   const { data: projectToken } = useProjectTokenSymbol(chainId, projectId)
   const tokenUnit = projectToken?.symbol || 'tokens'
@@ -892,6 +896,7 @@ function AllHoldersCard({
     meta: PERSIST,
     staleTime: 60_000,
     retry: 1,
+    enabled: !groupPending,
     queryFn: async () => {
       const qs = new URLSearchParams({ refs: refsParam })
       if (suckerGroupId) qs.set('suckerGroupId', suckerGroupId)
@@ -974,7 +979,7 @@ function AllHoldersCard({
           </p>
         ) : null}
       </div>
-      {isLoading ? (
+      {groupPending || isLoading ? (
         <HolderDistributionSkeleton rows={5} />
       ) : isError ? (
         <p className="mt-2 text-sm text-smoke-700">

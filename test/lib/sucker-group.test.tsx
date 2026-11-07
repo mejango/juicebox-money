@@ -55,7 +55,9 @@ describe('a section that writes to every listed deployment', () => {
   it('keeps only the page\'s own deployment until the group is read, then adds the linked ones', async () => {
     const { first, seen } = await linked()
     expect(first.deployments).toEqual([listed[0]])
+    expect(first.pending).toBe(true)
     expect(seen.deployments).toEqual(listed.slice(0, 2))
+    expect(seen.pending).toBe(false)
     expect(seen.line).toBe("The Optimism project listed here isn't linked onchain.")
   })
   it('hands back the same list when the registry links every deployment', async () => {

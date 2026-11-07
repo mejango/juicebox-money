@@ -93,6 +93,8 @@ export function useLinkedDeployments<T extends Deployment>(home: ProjectPair, it
       // The caller's own list when nothing is left out, so its identity stays stable.
       deployments: (out ? items.filter(item => sameDeployment(pairOf(item), own) || (!!data && inGroup(data, pairOf(item)))) : items) as T[],
       line: !out ? null : data ? unlinkedPairLine(pairOf(out)[0]) : isError ? unconfirmedPairLine(pairOf(out)[0]) : null,
+      // Others are left out only because the group is still being read. A total over this list isn't final yet.
+      pending: !!out && !data && !isError,
     }
   }, [items, data, isError, homeChain, homeProject])
 }
