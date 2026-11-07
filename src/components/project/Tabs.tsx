@@ -289,7 +289,7 @@ export function ProjectTabs({
           <div
             ref={tabRow}
             data-project-tab-scroll
-            className="scrollbar-none flex min-w-0 flex-1 touch-pan-x gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
+            className="scrollbar-none flex min-w-0 flex-1 scroll-mt-28 touch-pan-x gap-1 overflow-x-auto overflow-y-hidden overscroll-x-contain"
           >
             <div
               role="tablist"

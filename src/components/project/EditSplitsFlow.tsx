@@ -973,7 +973,7 @@ function EditSplitsModal({
   }
 
   return (
-    <div ref={editor} className="mt-3 rounded-xl border border-smoke-200 p-4">
+    <div ref={editor} className="mt-3 scroll-mt-28 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-medium text-ink">Edit {title}</span>
         <button
