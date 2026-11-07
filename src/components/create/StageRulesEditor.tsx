@@ -13,14 +13,19 @@ import {
   splitOk,
   splitsTotal,
 } from "./SplitsEditor";
-import { AddButton, CheckRow, ChipButton, OptionRow, SubSection } from "./ui";
+import { AddButton, CheckRow, ChipButton, OptionRow, SubSection, TaxValueInput } from "./ui";
+import { cashOutTaxValue } from "@/lib/format";
+import { timestampToLocalDateTimeInput } from "@/lib/time-zone";
 import { AddressField } from "./AddressField";
 import { DateTimeField } from "@/components/ui/DateTimeField";
 import { ChainSelect } from "@/components/ChainSelect";
 import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 
 import {
+  MIN_START_LEAD_SECONDS,
   numOk,
+  routedModePatch,
+  scheduledStartOk,
   secondsLabel,
   stageCashOutTax,
   stageDurationSeconds,
@@ -50,9 +55,9 @@ const DURATION_PRESETS: [number, string][] = [
 
 const CASH_OUT_TAXES = [
   { rate: 0, label: "No tax" },
-  { rate: 1000, label: "10% tax" },
-  { rate: 3000, label: "30% tax" },
-  { rate: 5000, label: "50% tax" },
+  { rate: 1000, label: "0.1" },
+  { rate: 3000, label: "0.3" },
+  { rate: 5000, label: "0.5" },
 ] as const;
 
 /** Off/On cash-out choice plus the tax picker shown while cash outs are on. */
@@ -97,8 +102,7 @@ function TaxPicker({
       {cashOutsOn ? (
         <>
           <p className="mt-2 text-xs leading-relaxed text-smoke-700">
-            A cash out tax leaves part of a partial cash out for holders who stay.
-            It sets a curve, so a 10% setting does not simply subtract 10%.
+            A higher tax leaves more for the holders who stay.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {CASH_OUT_TAXES.map((tax) => (
@@ -131,24 +135,18 @@ function TaxPicker({
           </div>
           {stage.taxCustomOn ? (
             <div className="mt-2 flex items-center gap-2.5">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={stage.taxCustomPct}
-                onChange={(e) =>
-                  set({
-                    cashOuts: true,
-                    taxCustomPct: e.target.value.slice(0, 5),
-                  })
-                }
+              <TaxValueInput
+                pct={stage.taxCustomPct}
+                onPct={(taxCustomPct) => set({ cashOuts: true, taxCustomPct })}
                 disabled={disabled}
-                placeholder="15"
+                placeholder="0.15"
+                ariaLabel="Cash out tax"
                 className={`input-well min-h-[40px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
                   stageTaxOk(stage) ? "" : "!border-red-400"
                 }`}
               />
               <span className="text-sm text-smoke-700">
-                % tax (up to 99.99)
+                tax, from 0 to 0.9999
               </span>
             </div>
           ) : null}
@@ -169,6 +167,7 @@ export function StageRulesEditor({
   index,
   prevDuration = 0,
   unitLabel,
+  fundsUnit,
   unitChoice,
   disabled,
   chainIds,
@@ -184,6 +183,9 @@ export function StageRulesEditor({
   /** Previous ruleset's duration in seconds (0 = flexible); reminds the user what a cycle is. */
   prevDuration?: number;
   unitLabel: string;
+  /** The token payout and withdrawal amounts are encoded in. Each limit's currency is its
+   *  accounting token, whatever the issuance is priced in. */
+  fundsUnit: string;
   /** When set, the issuance unit is a choice (ETH/USD) picked inline. */
   unitChoice?: {
     value: "eth" | "usd";
@@ -202,6 +204,9 @@ export function StageRulesEditor({
   const set = (patch: Partial<DraftStage>) => onChange({ ...stage, ...patch });
   const toggleOpen = (key: string) =>
     set({ open: { ...stage.open, [key]: !stage.open[key] } });
+  // One section open at a time; the fee disclosure inside Payouts keeps its own state.
+  const toggleSection = (key: string) =>
+    set({ open: { fees: !!stage.open.fees, [key]: !stage.open[key] } });
 
   const duration = stageDurationSeconds(stage);
   const reservedPercent = splitsTotal(stage.reservedSplits, "percent");
@@ -261,15 +266,15 @@ export function StageRulesEditor({
             : "No payout amounts set"
           : stage.routedMode === "all"
             ? `Routing all funds to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`
-            : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${unitLabel} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
+            : `Routing ${splitsTotal(stage.payoutSplits, "amount").toLocaleString("en-US")} ${fundsUnit} to ${validPayoutSplits} recipient${validPayoutSplits === 1 ? "" : "s"}`) +
     (stage.payouts !== "none" && stage.holdFees ? " | fees held" : "");
 
   const cashOutsSummary = routedAll
     ? "Off — all funds committed to payouts"
     : isRevnet && !stage.cashOuts
-      ? "On | 99.99% tax"
+      ? `On | ${cashOutTaxValue(CASH_OUTS_OFF_REVNET)} tax`
       : stage.cashOuts
-      ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${stageCashOutTax(stage) / 100}% tax`}`
+      ? `On | ${stageCashOutTax(stage) === 0 ? "no tax" : `${cashOutTaxValue(stageCashOutTax(stage))} tax`}`
       : "Off";
 
   return (
@@ -279,7 +284,7 @@ export function StageRulesEditor({
         label="Timing"
         summary={timingSummary}
         open={!!stage.open.timing}
-        onToggle={() => toggleOpen("timing")}
+        onToggle={() => toggleSection("timing")}
       >
         {isFirst ? (
           <div className="mb-3">
@@ -296,10 +301,16 @@ export function StageRulesEditor({
                 onChange={(schedule) => set({ schedule })}
                 disabled={disabled}
                 ariaLabel="Project launch date and time"
+                min={timestampToLocalDateTimeInput(Date.now() + MIN_START_LEAD_SECONDS * 1000)}
                 wrapperClassName="mt-2"
                 inputClassName="input-well min-h-[44px] w-full px-3.5 text-sm disabled:opacity-60"
               />
             ) : null}
+            {scheduledStartOk(stage, Math.floor(Date.now() / 1000)) ? null : (
+              <p className="mt-2 text-xs text-red-600">
+                Choose a start at least an hour from now.
+              </p>
+            )}
           </div>
         ) : null}
 
@@ -400,9 +411,8 @@ export function StageRulesEditor({
             </div>
             <span className="field-label">Duration</span>
             <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-              How long these rules run. Flexible rules last until the project
-              owner changes them; a fixed duration locks them in, and the next
-              ruleset starts when it ends.
+              Flexible lasts until the owner changes it. A fixed duration locks
+              the rules until it ends.
             </p>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
               <select
@@ -471,16 +481,11 @@ export function StageRulesEditor({
         label="New tokens"
         summary={tokensSummary}
         open={!!stage.open.tokens}
-        onToggle={() => toggleOpen("tokens")}
+        onToggle={() => toggleSection("tokens")}
       >
         <p className="text-xs leading-relaxed text-smoke-700">
-          Set how many new {tokenLabel} each payment creates. This is the
-          issuance rate. You can set aside a share for chosen recipients;
-          payers receive the rest. The cash out rules below decide whether
-          holders can exchange {tokenLabel} for project funds.
-          {!isFirst
-            ? " Leave the rate empty to keep the previous ruleset’s rate."
-            : ""}
+          New {tokenLabel} each payment creates.
+          {!isFirst ? " Leave empty to keep the previous rate." : ""}
         </p>
         <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-2">
           <input
@@ -602,11 +607,9 @@ export function StageRulesEditor({
             <div className="mt-5 border-t border-smoke-200 pt-4">
               <span className="field-label">Tokens without payment</span>
               <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                Set aside {tokenLabel} for named wallets, without a payment.
-                Anyone can create these tokens for the recipients once the stage
-                starts. This is called auto-issuance.
+                {tokenLabel} for named wallets, created once the stage starts.
                 {chainIds.length > 1
-                  ? " Each mint happens once for the whole launch, on the chain you pick per row."
+                  ? " Each row mints once, on the chain you pick."
                   : ""}
               </p>
               {stage.autoIssuances.map((row) => (
@@ -726,7 +729,6 @@ export function StageRulesEditor({
             {reservedOn ? (
               <p className="text-xs leading-relaxed text-smoke-700">
                 Each recipient gets a percentage of new {tokenLabel}.
-                These percentages add up to the total set aside.
               </p>
             ) : null}
             <SplitsEditor
@@ -759,11 +761,9 @@ export function StageRulesEditor({
           label="Payouts"
           summary={payoutsSummary}
           open={!!stage.open.payouts}
-          onToggle={() => toggleOpen("payouts")}
+          onToggle={() => toggleSection("payouts")}
         >
           <p className="text-xs leading-relaxed text-smoke-700">
-            Set who can receive project funds. These transfers are payouts.
-            Funds beyond the unused payout budget can back cash outs.
             The payout budget resets each time the rules repeat.
           </p>
           <div className="mt-3 space-y-2">
@@ -797,23 +797,23 @@ export function StageRulesEditor({
               <div className="mt-1 flex flex-wrap gap-2">
                 <ChipButton
                   active={stage.routedMode === "all"}
-                  onClick={() => set({ routedMode: "all" })}
+                  onClick={() => set(routedModePatch(stage, "eth", "all"))}
                   disabled={disabled}
                 >
                   Split all funds by %
                 </ChipButton>
                 <ChipButton
                   active={stage.routedMode === "amounts"}
-                  onClick={() => set({ routedMode: "amounts" })}
+                  onClick={() => set(routedModePatch(stage, "eth", "amounts"))}
                   disabled={disabled}
                 >
-                  Fixed {unitLabel} amounts
+                  Fixed {fundsUnit} amounts
                 </ChipButton>
               </div>
               <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                 {stage.routedMode === "all"
-                  ? "All funds are available for payouts, divided by these percentages."
-                  : `Each recipient gets up to their ${unitLabel} amount. Funds beyond the unused budget stay available for cash outs.`}
+                  ? `All funds can be paid out by these percentages.${routedAll ? " Holders can't cash out." : ""}`
+                  : `Each recipient gets up to their ${fundsUnit} amount. The rest can back cash outs.`}
               </p>
               <SplitsEditor
                 splits={stage.payoutSplits}
@@ -821,7 +821,7 @@ export function StageRulesEditor({
                 disabled={disabled}
                 bucketLabel="payouts"
                 mode={payoutsMode}
-                amountLabel={unitLabel}
+                amountLabel={fundsUnit}
                 chainIds={chainIds}
                 allowHook
                 showRouting
@@ -840,17 +840,17 @@ export function StageRulesEditor({
                   <div className="mt-1 flex flex-wrap gap-2">
                     <ChipButton
                       active={stage.routedModeUsdc === "all"}
-                      onClick={() => set({ routedModeUsdc: "all" })}
+                      onClick={() => set(routedModePatch(stage, "usdc", "all"))}
                       disabled={disabled}
                     >
                       Split all funds by %
                     </ChipButton>
                     <ChipButton
                       active={stage.routedModeUsdc === "amounts"}
-                      onClick={() => set({ routedModeUsdc: "amounts" })}
+                      onClick={() => set(routedModePatch(stage, "usdc", "amounts"))}
                       disabled={disabled}
                     >
-                      Fixed USD amounts
+                      Fixed USDC amounts
                     </ChipButton>
                   </div>
                   <SplitsEditor
@@ -859,7 +859,7 @@ export function StageRulesEditor({
                     disabled={disabled}
                     bucketLabel="USDC payouts"
                     mode={stage.routedModeUsdc === "all" ? "percent" : "amount"}
-                    amountLabel="USD"
+                    amountLabel="USDC"
                     chainIds={chainIds}
                     allowHook
                     showRouting
@@ -929,7 +929,7 @@ export function StageRulesEditor({
                         }`}
                       />
                       <span className="whitespace-nowrap text-xs text-smoke-700">
-                        {unitLabel} max, until rules change
+                        {fundsUnit} max, until rules change
                       </span>
                     </span>
                   ) : null}
@@ -978,7 +978,7 @@ export function StageRulesEditor({
         label="Cash outs"
         summary={cashOutsSummary}
         open={!!stage.open.cashouts}
-        onToggle={() => toggleOpen("cashouts")}
+        onToggle={() => toggleSection("cashouts")}
       >
         {isRevnet ? (
           <>
@@ -992,9 +992,8 @@ export function StageRulesEditor({
             />
             {!stage.cashOuts ? (
               <p className="mt-3 rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                Revnets can&apos;t fully disable cash outs — Off applies the
-                maximum 99.99% tax, so partial cash outs return next to nothing
-                while cashing out every token still claims the full treasury.
+                Off applies the maximum tax of {cashOutTaxValue(CASH_OUTS_OFF_REVNET)},
+                so partial cash outs return next to nothing.
               </p>
             ) : null}
           </>
@@ -1010,7 +1009,7 @@ export function StageRulesEditor({
             set={set}
             disabled={disabled}
             offBlurb="Tokens are for support and standing — holders can't pull funds out."
-            onBlurb={`Holders can exchange ${tokenLabel} for funds not set aside for payouts. This remaining balance is called surplus.`}
+            onBlurb={`Holders can exchange ${tokenLabel} for funds not set aside for payouts.`}
           />
         )}
       </SubSection>
@@ -1028,7 +1027,7 @@ export function StageRulesEditor({
               .join(" | ") || "Standard"
           }
           open={!!stage.open.owner}
-          onToggle={() => toggleOpen("owner")}
+          onToggle={() => toggleSection("owner")}
         >
           <CheckRow
             checked={stage.ownerMinting}
@@ -1109,7 +1108,7 @@ export function StageRulesEditor({
               .join(", ") || "None"
           }
           open={!!stage.open.extras}
-          onToggle={() => toggleOpen("extras")}
+          onToggle={() => toggleSection("extras")}
         >
           <div className="space-y-2">
             <CheckRow

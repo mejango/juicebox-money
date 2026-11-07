@@ -1,6 +1,7 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
+import { taxPctFromValue, taxValueFromPct } from '@/lib/format'
 
 /** Shared create-flow UI primitives. */
 
@@ -255,5 +256,44 @@ export function SubSection({
       </button>
       {open ? <div className="px-4 pb-4">{children}</div> : null}
     </div>
+  )
+}
+
+/**
+ * A cash out tax typed as a value from 0 to 1, kept as the 0-100 percent string
+ * the draft and the encoders use. What was typed stays on screen ("0." while
+ * typing "0.15") until the draft changes from elsewhere.
+ */
+export function TaxValueInput({
+  pct,
+  onPct,
+  disabled,
+  className,
+  placeholder,
+  ariaLabel,
+}: {
+  pct: string
+  onPct: (pct: string) => void
+  disabled: boolean
+  className?: string
+  placeholder?: string
+  ariaLabel?: string
+}) {
+  const [typed, setTyped] = useState('')
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={taxPctFromValue(typed) === pct ? typed : taxValueFromPct(pct)}
+      onChange={e => {
+        const value = e.target.value.slice(0, 6)
+        setTyped(value)
+        onPct(taxPctFromValue(value))
+      }}
+      disabled={disabled}
+      placeholder={placeholder}
+      aria-label={ariaLabel}
+      className={className}
+    />
   )
 }
