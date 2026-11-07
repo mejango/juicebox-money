@@ -134,8 +134,8 @@ export function AutoIssuanceSection({
       <div>
         <span className="field-label">Tokens without payment</span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          These recipients have tokens set aside at launch. Once their stage
-          starts, anyone can create the tokens for them. This is called auto-issuance.
+          These recipients have tokens scheduled at launch. Once their stage
+          starts, anyone can create the tokens for them.
         </p>
       </div>
       <AutoIssueAcrossChains home={home} chains={chains} onDone={() => { void refetch() }} />
@@ -147,7 +147,7 @@ export function AutoIssuanceSection({
         </p>
       ) : rows.length === 0 ? (
         <p className="mt-3 text-sm leading-relaxed text-smoke-700">
-          This revnet has no tokens set aside this way.
+          This revnet has no tokens scheduled this way.
         </p>
       ) : (
         <div

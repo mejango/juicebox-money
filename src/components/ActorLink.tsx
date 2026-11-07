@@ -1,23 +1,22 @@
-import { AddressLabel } from '@/components/ui/AddressLabel'
+import { AddressLink } from '@/components/ui/AddressLink'
 
-/** An activity row's actor: an explorer link when one resolves, else plain text. */
+/** An activity row's actor: opens the account page, or the explorer for a contract. */
 export function ActorLink({
-  href,
   actor,
+  chainId,
+  contract = false,
 }: {
-  href: string | null
   actor: string
+  chainId?: number
+  contract?: boolean
 }) {
-  return href ? (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
+  if (!actor) return null
+  return (
+    <AddressLink
+      address={actor}
+      chainId={chainId}
+      explorer={contract}
       className="text-smoke-700 underline decoration-smoke-400 underline-offset-2 hover:text-ink"
-    >
-      <AddressLabel address={actor} />
-    </a>
-  ) : (
-    <AddressLabel address={actor} className="text-smoke-700" />
+    />
   )
 }

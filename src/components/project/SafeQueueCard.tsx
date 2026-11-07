@@ -75,7 +75,7 @@ import { LoadingText } from "@/components/ui/LoadingText";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useSafeConnection } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
-import { AddressLabel } from "@/components/ui/AddressLabel";
+import { AddressLink } from "@/components/ui/AddressLink";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
@@ -147,7 +147,7 @@ function SignerList({ owners, you }: { owners: readonly string[]; you?: string }
       {owners.map((owner, index) => (
         <span key={owner}>
           {index ? ", " : null}
-          <AddressLabel address={owner} />
+          <AddressLink address={owner} />
           {you && owner.toLowerCase() === you.toLowerCase() ? " (you)" : null}
         </span>
       ))}

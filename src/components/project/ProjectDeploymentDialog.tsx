@@ -62,7 +62,7 @@ export default function ProjectDeploymentDialog({
               <select className="min-h-11 w-full rounded border border-smoke-300 bg-white p-2" value={selected} onChange={event => onSelect(Number(event.target.value))}>
                 {deployments.map((deployment, index) => (
                   <option key={`${deployment.chainId}:${deployment.projectId}:${deployment.version}`} value={index}>
-                    {chainName(deployment.chainId)} · #{deployment.projectId} · V{deployment.version}
+                    {chainName(deployment.chainId)}, #{deployment.projectId}, V{deployment.version}
                   </option>
                 ))}
               </select>
@@ -76,7 +76,7 @@ export default function ProjectDeploymentDialog({
             {error ? <p role="alert">{error}</p> : null}
             {report ? (
               <>
-                <p className="text-xs text-smoke-600">Checked {report.checkedAt}{report.deployment.checkedBlock ? ` · Block ${report.deployment.checkedBlock}` : ''}</p>
+                <p className="text-xs text-smoke-600">Checked {report.checkedAt}{report.deployment.checkedBlock ? `, Block ${report.deployment.checkedBlock}` : ''}</p>
                 {report.deployment.operator ? <p className="break-all text-xs text-smoke-600">Checked operator: {report.deployment.operator}</p> : null}
                 <section aria-label="Indexer availability" className="rounded-lg border border-smoke-200 p-3">
                   <h3 className="font-medium">Indexer availability</h3>

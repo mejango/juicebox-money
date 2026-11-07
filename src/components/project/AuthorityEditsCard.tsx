@@ -763,7 +763,7 @@ export function MetadataEditor({
     const custom = parseCustomProperties(customText)
     if (!custom.ok) { setError(custom.error); return }
     const account = getAccount(wagmiConfig).address
-    if (!account) { setError('Connect a wallet first.'); return }
+    if (!account) { setError('Sign in first.'); return }
     setBusy(true)
     try {
       const pending = readMetadataReview(rows)
@@ -825,18 +825,18 @@ export function MetadataEditor({
         const nextUri = await pins.get(key)!
         destinations.push({ chainId: row.chainId, projectId: row.projectId,
           indexedAuthority: row.indexedAuthority, ...baseline, nextUri })
-        confirmationRows.push({ label: row.name, value: `Project ${row.projectId} · ${baseline.controller}` })
+        confirmationRows.push({ label: row.name, value: `Project ${row.projectId}, ${baseline.controller}` })
         for (const [field, label, , after] of changed) {
           const before = typeof existing[field] === 'string' ? existing[field] as string : ''
-          confirmationRows.push({ label: `${row.name} · ${label}`, value: `${reviewValue(before)} → ${reviewValue(after)}` })
+          confirmationRows.push({ label: `${row.name}, ${label}`, value: `${reviewValue(before)} → ${reviewValue(after)}` })
         }
-        if (logoFile) confirmationRows.push({ label: `${row.name} · Logo`, value: existing.logoUri ? 'Replaced' : 'Added' })
+        if (logoFile) confirmationRows.push({ label: `${row.name}, Logo`, value: existing.logoUri ? 'Replaced' : 'Added' })
         for (const key of customKeys) confirmationRows.push({
-          label: `${row.name} · Custom property ${key}`,
+          label: `${row.name}, Custom property ${key}`,
           value: key in custom.properties ? 'Set to the reviewed value' : 'Removed',
         })
         if (!changed.length && !logoFile && !customKeys.length) {
-          confirmationRows.push({ label: `${row.name} · Fields`, value: 'Unchanged — this chain’s profile is re-pinned as is' })
+          confirmationRows.push({ label: `${row.name}, Fields`, value: 'Unchanged — this chain’s profile is re-pinned as is' })
         }
       }
       const nextReview: MetadataReview = { account, isRevnet, scope: '', destinations, rows: confirmationRows }

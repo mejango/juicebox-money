@@ -84,7 +84,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Share with a team or community',
     description:
-      'Set aside payouts and incentives for contributors, partners, customers, and other supporters.',
+      'Send payouts and incentives to contributors, partners, customers, and other supporters.',
     illustration: splitsIllustration,
     art: 'wide',
   },
@@ -106,7 +106,7 @@ const JUICEBOX_FEATURES = [
     art: 'tall',
   },
   {
-    title: 'Move between networks',
+    title: 'Move between chains',
     description:
       'Let holders move tokens and their backing funds between supported networks.',
     illustration: settlementIllustration,

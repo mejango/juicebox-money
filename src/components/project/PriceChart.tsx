@@ -376,7 +376,7 @@ export function PriceChart({
               onToggle={() => setShowCashOut(current => !current)}
             />
             <PriceSummary
-              label="AMM price"
+              label="Pool price"
               note={
                 priceConcept("pool", { tokenSymbol: symbol, baseSymbol }) +
                 (amm && ammLiquidity

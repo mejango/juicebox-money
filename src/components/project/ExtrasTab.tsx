@@ -287,7 +287,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                   {' '}Beneficiary: {session.calls[0].beneficiary === zeroAddress ? 'Whoever sends the ETH' : session.calls[0].beneficiary}.</p>
                 {session.outcomes.map((outcome, index) => (
                   <div key={outcome.chainId} className="mt-4 rounded-xl border border-smoke-200 p-3">
-                    <p className="text-sm font-medium">{chainName(outcome.chainId)} · project #{session.calls[index].projectId} · {outcome.state}</p>
+                    <p className="text-sm font-medium">{chainName(outcome.chainId)}, project #{session.calls[index].projectId}, {outcome.state}</p>
                     {outcome.state === 'verified' && outcome.payer ? (
                       <PayerDeployedPanel payer={outcome.payer} chainId={outcome.chainId}
                         txUrl={outcome.hash ? explorerTxUrl(outcome.chainId, outcome.hash) : null}
@@ -334,7 +334,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                   {projects.map(([id, pid]) => <label key={id} className="mt-2 flex items-center gap-2 text-sm">
                     <input type="checkbox" aria-label={`Deploy on ${chainName(id)} project #${pid}`} checked={selectedChains.includes(id)} disabled={busy}
                       onChange={e => { setSelectedChains(current => e.target.checked ? [...current, id] : current.filter(value => value !== id)); invalidate() }} />
-                    <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)} · project #{pid}
+                    <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)}, project #{pid}
                   </label>)}
                 </fieldset>
                 <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
@@ -441,7 +441,8 @@ function PayerAddressList({
               <div className="min-w-0 font-mono text-xs">
                 {isAddress(row.address) ? (
                   <AddressLink
-                    address={row.address}
+                    explorer
+                address={row.address}
                     chainId={row.chainId}
                     className="text-ink"
                   />

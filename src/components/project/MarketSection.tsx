@@ -1134,6 +1134,7 @@ export function MarketSection({
             </span>
             {pm ? (
               <AddressLink
+                explorer
                 address={pm}
                 chainId={chainId}
                 className="text-xs text-smoke-500 hover:text-ink"

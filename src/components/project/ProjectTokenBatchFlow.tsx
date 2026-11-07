@@ -93,8 +93,8 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
   try { savedForDisplay = loadProjectBatch(scope) } catch { /* Preserve the recovery warning. */ }
 
   const requireAccount = (): Address => {
-    if (!address) throw new Error('Connect a wallet first.')
-    if (holder && !isAddressEqual(holder, address)) throw new Error('Connect the holder’s wallet to claim these credits.')
+    if (!address) throw new Error('Sign in first.')
+    if (holder && !isAddressEqual(holder, address)) throw new Error('Sign in as the token owner to claim these credits.')
     const saved = loadProjectBatch(scope)
     if (saved && !isAddressEqual(saved.account, address)) throw new Error('Connect the wallet that started this saved batch.')
     return address
@@ -153,7 +153,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
       setReviewBatchId(result.id)
       if (result.status === 'complete') {
         setComplete(true)
-        setStatus(isClaim ? 'All selected credits are now ERC-20 tokens in the holder’s wallet.' : 'Every reviewed allocation has been distributed.')
+        setStatus(isClaim ? 'All selected credits are now ERC-20 tokens in the token owner’s wallet.' : 'Every reviewed allocation has been distributed.')
         await Promise.all([
           queryClient.invalidateQueries({ queryKey: ['yourPosition'] }),
           queryClient.invalidateQueries({ queryKey: ['autoIssueAmount'] }),
@@ -177,7 +177,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
   const confirmation: TxConfirmRow[] = (review ?? []).flatMap(call => {
     const context = call.context as ClaimContext | AutoIssueContext
     return [
-      { label: `${chainName(call.chainId)} · Project ${call.projectId}`, value: `${formatTokenAmount(BigInt(context.amount))} ${context.symbol}`, strong: true },
+      { label: `${chainName(call.chainId)}, Project ${call.projectId}`, value: `${formatTokenAmount(BigInt(context.amount))} ${context.symbol}`, strong: true },
       { label: 'To', value: context.kind === 'claim-credits' ? context.holder : context.beneficiary, mono: true },
       ...(context.kind === 'auto-issuance' ? [{ label: 'Stage', value: context.stageId }] : []),
       { label: 'Token', value: context.token ?? 'Project credits', mono: true },
@@ -205,7 +205,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
       {open ? <TxProgress
         open title={complete ? 'Completed' : review ? `Confirm ${isClaim ? 'claims' : allocation && review.length === 1 ? 'distribution' : 'auto issuance'}` : title}
         rows={confirmation}
-        steps={(review ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)} · ${call.label}` }))}
+        steps={(review ?? []).map(call => ({ key: call.id, title: `${chainName(call.chainId)}, ${call.label}` }))}
         activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
         onClose={() => {
           if (busy) return
@@ -222,7 +222,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
           ? { label: allocation ? 'Review allocation' : 'Review selected chains', onClick: () => void prepare(), disabled: discard.active }
           : error || savedForDisplay ? { label: 'Resume original batch', onClick: () => void submit(), disabled: discard.active } : null}
       >
-        {!review && !allocation ? <ChainPicker label="Apply on" rows={chains.map(([chainId, projectId]) => ({ chainId, name: `${chainName(chainId)} · Project ${projectId}` }))}
+        {!review && !allocation ? <ChainPicker label="Apply on" rows={chains.map(([chainId, projectId]) => ({ chainId, name: `${chainName(chainId)}, Project ${projectId}` }))}
           selected={selected} onChange={setSelected} disabled={busy} /> : null}
         <p className="mt-3 text-sm text-smoke-700">
           {isClaim ? 'Each selected chain contributes its live claimable credits. The tokens stay with the same holder.'

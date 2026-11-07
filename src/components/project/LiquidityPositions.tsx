@@ -831,7 +831,7 @@ function ChainLpRows({
         <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
           Market
           <span className="block text-smoke-500">
-            #{group.tokenSide.tokenId.toString()} · #{group.pairSide.tokenId.toString()}
+            #{group.tokenSide.tokenId.toString()}, #{group.pairSide.tokenId.toString()}
           </span>
         </td>
         <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">

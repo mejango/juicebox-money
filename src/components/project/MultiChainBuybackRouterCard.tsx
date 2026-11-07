@@ -456,6 +456,7 @@ function ActionRow({
                     typeof value === 'string' &&
                     value.startsWith('0x') ? (
                     <AddressLink
+                      explorer
                       address={value as Address}
                       chainId={row.chainId}
                       className="font-mono text-xs text-ink"
@@ -479,6 +480,7 @@ function ActionRow({
           typeof uniformValue === 'string' &&
           uniformValue.startsWith('0x') ? (
             <AddressLink
+              explorer
               address={uniformValue as Address}
               chainId={availableRows[0].chainId}
               className="font-mono text-xs text-ink"

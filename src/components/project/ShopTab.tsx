@@ -24,7 +24,6 @@ import { hasPermissions, JBPermissionIdsV6 } from '@bananapus/nana-sdk-core/v6'
 import { usePublicClient, useReadContract, useReadContracts } from 'wagmi'
 import { getPublicClient } from 'wagmi/actions'
 import { ChainIcon } from '@/components/ChainIcon'
-import { AddressLabel } from '@/components/ui/AddressLabel'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ADD_SHOP_MANAGER_HASH } from '@/components/project/AuthorityOverview'
 import {
@@ -443,6 +442,7 @@ export function ShopTab({
             <dt className="text-smoke-700">Address</dt>
             <dd>
               <AddressLink
+                explorer
                 address={shop.hook}
                 chainId={chainId}
                 className="text-ink"
@@ -1073,7 +1073,7 @@ function CustomerAllCard({
             />
             <span className="min-w-0 truncate text-right text-smoke-700">
               {itemLabel(names, purchase.tierId)} →{' '}
-              <AddressLabel address={purchase.beneficiary} />
+              <AddressLink address={purchase.beneficiary} />
             </span>
           </div>
         ))}
@@ -1913,6 +1913,7 @@ function TierSaleRouting({
                     `Project ${split.projectId.toString()}`
                   ) : (
                     <AddressLink
+                      explorer={toHook}
                       address={toHook ? split.hook : split.beneficiary}
                       chainId={chainId}
                     />

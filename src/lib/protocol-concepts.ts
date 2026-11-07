@@ -13,7 +13,7 @@
 export const PROTOCOL_CONCEPTS = {
   /** tokenCount = amount * weight / weightRatio (JBTerminalStore.sol:1165-1175). */
   issuance:
-    'How many new tokens a payment creates per unit paid, before any are set aside for other recipients. The rules set this rate; trading does not.',
+    'How many new tokens a payment creates per unit paid, before any go to other recipients. The rules set this rate; trading does not.',
 
   /** JBRuleset.weightCutPercent — the issuance weight is reduced by this each cycle. */
   issuanceCut:
@@ -22,16 +22,16 @@ export const PROTOCOL_CONCEPTS = {
   /** JBRulesetMetadataResolver.reservedPercent — the share of newly minted tokens routed to
    *  the reserved split list instead of the payer. */
   reservedShare:
-    'The share of new tokens set aside for chosen recipients. The payer gets the rest.',
+    'The share of new tokens that goes to chosen recipients. The payer gets the rest.',
 
   /** REVOwner.autoIssueFor: named beneficiaries can receive their allocation after stage start. */
   autoIssuance:
-    'Tokens set aside for named recipients without a payment. They can be created once their stage starts.',
+    'Tokens scheduled for named recipients without a payment. They can be created once their stage starts.',
 
   /** JBCashOuts.cashOutFrom — 0 returns the exact proportional share of surplus; a higher rate
    *  returns less than proportional; MAX returns nothing. */
   cashOutTax:
-    'A setting that leaves more money for remaining holders when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.',
+    'A setting that leaves more money for remaining token owners when someone cashes out part of the token supply. At 0, the formula returns a proportional share of funds not set aside for payouts. Higher settings return less; at 1 it returns nothing.',
 
   /** JBFundAccessLimitGroup.payoutLimits — "maximum amounts distributable to splits per ruleset
    *  cycle". Resets every cycle. */
@@ -56,7 +56,7 @@ export const PROTOCOL_CONCEPTS = {
 
   /** JB721 tier flag `transfersPausable` — only tiers that opted in are affected. */
   itemTransfers:
-    'Whether holders can send shop items to someone else during this stage. A pause affects only items created with this control enabled.',
+    'Whether item owners can send shop items to someone else during this stage. A pause affects only items created with this control enabled.',
 } as const
 
 /**

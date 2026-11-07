@@ -315,7 +315,7 @@ export async function runAuthorityCalls({
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
   const { address: connected, chainId: startChainId } = getAccount(wagmiConfig)
-  if (!connected) throw new Error('Connect a wallet first.')
+  if (!connected) throw new Error('Sign in first.')
   const walletGuards = new Map(calls.map(call => [call, captureWalletContext(wagmiConfig, {
     account: call.authority, chainId: call.chainId,
   })]))

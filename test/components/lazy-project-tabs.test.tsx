@@ -37,7 +37,7 @@ it('shows accessible local loading feedback while a tab chunk is pending and ret
     'Loading back office',
     'Loading extras',
     'Loading funds',
-    'Loading token holders',
+    'Loading token owners',
     'Loading rulesets',
     'Loading shop',
     'Loading terms',

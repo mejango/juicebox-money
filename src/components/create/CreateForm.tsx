@@ -4052,7 +4052,7 @@ export function CreateForm() {
                     [
                       "noNewTiersWithReserves",
                       "Lock reserved items after launch",
-                      "New items added later can never set aside reserved inventory.",
+                      "New items added later can never have reserved inventory.",
                     ],
                     [
                       "noNewTiersWithVotes",
@@ -4097,8 +4097,8 @@ export function CreateForm() {
                       }))
                     }
                     disabled={busy}
-                    title="Let holders cash out their items"
-                    blurb="Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules."
+                    title="Let item owners cash out their items"
+                    blurb="Item owners can give up their items for a share of funds not set aside for payouts, under the cash out rules."
                   />
                 )}
               </div>

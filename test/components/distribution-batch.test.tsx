@@ -164,13 +164,13 @@ describe('distribution batch reviews and recovery', () => {
       return { status: 'complete', calls, completedIds: [calls[0].id] }
     })
     const renderer = await mount('reserved')
-    expect(text(renderer)).toContain('Project #17 · 100 AAA')
+    expect(text(renderer)).toContain('Project #17, 100 AAA')
     await click(renderer, 'Confirm test distributions')
     expect(mocks.verify).toHaveBeenCalledWith(calls[0].context, { status: 'success', logs: [] })
     expect(text(renderer)).toContain('Distributions confirmed')
-    expect(text(renderer)).toContain('Project #17 · 150 AAA')
+    expect(text(renderer)).toContain('Project #17, 150 AAA')
     expect(text(renderer)).toContain('75 AAA (50%)')
-    expect(text(renderer)).not.toContain('Project #17 · 100 AAA')
+    expect(text(renderer)).not.toContain('Project #17, 100 AAA')
   })
 
   it('restores original context for unpaid revalidation and keeps the review when its source has drifted', async () => {

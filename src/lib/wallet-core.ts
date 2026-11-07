@@ -41,7 +41,7 @@ export async function connectedWallet(
   },
 ) {
   const before = getAccount(wagmiConfig)
-  if (!before.address) throw new Error('Connect a wallet first.')
+  if (!before.address) throw new Error('Sign in first.')
   if (before.chainId !== chainId) {
     await switchChain(wagmiConfig, { chainId }).catch(error => {
       // Safe apps cannot switch chains; the wagmi error only names the connector.

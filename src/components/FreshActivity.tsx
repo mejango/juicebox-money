@@ -4,7 +4,6 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useCallback, useEffect, useState } from 'react'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
-import { explorerHostname } from '@/lib/chainDisplay'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
@@ -133,12 +132,8 @@ function Row({
   const parts = combinedActivityParts(group, tokenUnit)
   const amountToken = feedAmountToken(parts, event.project, event.chainId)
   const actor = parts.actor
-  const explorer = explorerHostname(event.chainId)
-  const actorUrl = explorer
-    ? `https://${explorer}/address/${actor}`
-    : null
   const relativeTime = timeAgo(event.timestamp)
-  const actorNode = <ActorLink href={actorUrl} actor={actor} />
+  const actorNode = <ActorLink actor={actor} />
 
   return (
     <li className="h-28 overflow-hidden px-4 py-3 transition-colors hover:bg-smoke-25">

@@ -80,9 +80,9 @@ describe('rules sections', () => {
     expect(editor.stage().open).toMatchObject({ timing: true, fees: true })
     await editor.click('Payouts')
     expect(editor.stage().open).toEqual({ payouts: true, fees: true })
-    expect(textOf(editor.root())).toContain("Holders can't cash out.")
+    expect(textOf(editor.root())).toContain("Token owners can't cash out.")
     await editor.click('Fixed ETH amounts')
-    expect(textOf(editor.root())).not.toContain("Holders can't cash out.")
+    expect(textOf(editor.root())).not.toContain("Token owners can't cash out.")
   })
 
   it('offers tax chips as values from 0 to 1 without changing their rates', async () => {

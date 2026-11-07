@@ -8,7 +8,7 @@ describe('verified project flavor', () => {
     identity.result.data = { protocol: 'defifa' }
     expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Defifa')
     identity.result.data = { protocol: 'jb721' }
-    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Custom')
+    expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet={false} />)).toBe('Custom project')
     identity.result.data = null
     expect(renderToStaticMarkup(<ProjectFlavor chainId={1} projectId={1} isRevnet />)).toBe('Revnet')
   })

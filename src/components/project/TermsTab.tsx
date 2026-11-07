@@ -205,7 +205,7 @@ export function TermsTab({
                   </span>
                 </th>
                 <th className="pb-2 pr-4 font-medium">
-                  <ConceptTerm note={PROTOCOL_CONCEPTS.reservedShare}>Set aside</ConceptTerm>
+                  <ConceptTerm note={PROTOCOL_CONCEPTS.reservedShare}>Split</ConceptTerm>
                 </th>
                 <th className="pb-2 font-medium">
                   <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash out tax</ConceptTerm>

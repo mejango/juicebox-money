@@ -978,7 +978,7 @@ function AllHoldersCard({
   const exact = !!data && data.totalCount <= data.items.length
   const holderCount = exact ? String(holders.length) : `${holders.length}+`
   const holderCountLine = `${holderCount} ${
-    holders.length === 1 && exact ? 'holder' : 'holders'
+    holders.length === 1 && exact ? 'owner' : 'owners'
   }`
 
   return (
@@ -1277,8 +1277,7 @@ function ReservedCard({
           {isRevnet ? 'Splits' : 'Reserved tokens'}
         </span>
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-          A share of every batch of new tokens is set aside for the recipients
-          below.
+          A share of every batch of new tokens goes to the recipients below.
         </p>
       </div>
       {isRevnet ? (
@@ -1333,7 +1332,7 @@ function ReservedCard({
             <div className="grid grid-cols-[minmax(150px,0.75fr)_minmax(190px,1fr)_minmax(180px,0.9fr)] gap-4 border-y border-smoke-200 px-3 py-2 text-xs text-smoke-500">
               <span>Account</span>
               <span>Percentage</span>
-              <span>Pending splits</span>
+              <span>Pending</span>
             </div>
             <div className="space-y-5 pt-5">
               {chains.map(([cid, pid]) => (

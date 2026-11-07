@@ -935,7 +935,7 @@ function PermissionsAcrossChains({
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
         {isRevnet
           ? "Every account that can act on this revnet, and what each one can do. The revnet operator’s powers come with the role, including any NFT powers granted at launch."
-          : "Every account that can act on this project, and what each one can do — this is where shop managers get their power to add, mint, or reprice items. Each row shows exactly what is granted and on which chains."}
+          : "Every account that can act on this project, and what each one can do — this is where shop operators get their power to add, mint, or reprice items. Each row shows exactly what is granted and on which chains."}
       </p>
 
       {owners.length ? (
@@ -1332,7 +1332,7 @@ export function PermissionEditor({
     <div className="mt-5 rounded-xl border border-smoke-200 p-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
-          {grant ? "Edit permissions" : presetIds ? "Add shop manager" : "Add operator"}
+          {grant ? "Edit permissions" : presetIds ? "Add shop operator" : "Add operator"}
         </p>
         <button
           type="button"

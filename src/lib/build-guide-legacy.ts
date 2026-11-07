@@ -58,7 +58,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Send funds and reserved tokens",
     "paragraphs": [
-      "Payouts send funds to the project’s chosen recipients. Reserved tokens are new tokens set aside for other recipients. Anyone can normally trigger these distributions, but the ownerMustSendPayouts setting can restrict payouts to the owner or an operator with SEND_PAYOUTS permission."
+      "Payouts send funds to the project’s chosen recipients. Reserved tokens are new tokens reserved for other recipients. Anyone can normally trigger these distributions, but the ownerMustSendPayouts setting can restrict payouts to the owner or an operator with SEND_PAYOUTS permission."
     ],
     "blocks": [
       {

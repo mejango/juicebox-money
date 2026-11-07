@@ -163,7 +163,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "reservedPercent",
-      label: "Tokens set aside",
+      label: "Reserved tokens",
       raw: String(m.reservedPercent),
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
     },
@@ -423,7 +423,7 @@ function ruleRows(
     },
     {
       section: "Token",
-      label: "Tokens set aside",
+      label: "Reserved tokens",
       value: m.reservedPercent > 0 ? basisPoints(m.reservedPercent) : "None",
       hint:
         m.reservedPercent > 0
@@ -964,7 +964,7 @@ export function RulesetsTab({
             {rows
               .filter(
                 (row) =>
-                  row.section === "Token" && row.label !== "Tokens set aside",
+                  row.section === "Token" && row.label !== "Reserved tokens",
               )
               .map((row) => (
                 <StackedRule
@@ -982,7 +982,7 @@ export function RulesetsTab({
                   .filter(
                     (row) =>
                       row.section === "Token" &&
-                      row.label === "Tokens set aside",
+                      row.label === "Reserved tokens",
                   )
                   .map((row) => (
                     <StackedRule

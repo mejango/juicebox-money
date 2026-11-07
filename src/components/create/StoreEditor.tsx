@@ -367,7 +367,7 @@ export function StoreEditor({
               <div>
                 <span className="field-label">Reserve inventory</span>
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Set aside some of this item for a specific wallet as others
+                  Reserve some of this item for a specific wallet as others
                   buy it.
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2.5">
@@ -419,7 +419,7 @@ export function StoreEditor({
                       isRevnet ? "Non-transferable" : "Allow rulesets to pause transfers",
                       isRevnet
                         ? "This item can be created or destroyed, but cannot move between wallets."
-                        : "The current rules can stop holders from sending this item to another wallet. Creating and destroying it stay allowed.",
+                        : "The current rules can stop item owners from sending this item to another wallet. Creating and destroying it stay allowed.",
                     ],
                     [
                       "cantBeRemoved",

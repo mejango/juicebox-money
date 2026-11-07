@@ -709,7 +709,7 @@ export async function executeSafeTx(
   refuseRefund(tx)
   await reverifyAuthority?.()
   const expectedAccount = getAccount(wagmiConfig).address
-  if (!expectedAccount) throw new Error('Connect a wallet first.')
+  if (!expectedAccount) throw new Error('Sign in first.')
   const state = await readLiveSafeState(chainId, safe)
   canonicalSafeTxHash(chainId, safe, tx)
   assertSafeTxNonce(state, tx, 'execute')
@@ -909,7 +909,7 @@ async function approveSafeHashOnChain(
   reverifyAuthority?: () => Promise<void>,
 ): Promise<ConfirmedContractWrite> {
   const expectedAccount = getAccount(wagmiConfig).address
-  if (!expectedAccount) throw new Error('Connect a wallet first.')
+  if (!expectedAccount) throw new Error('Sign in first.')
   const args = [hash] as const
   const data = encodeFunctionData({
     abi: SAFE_EXEC_ABI,
