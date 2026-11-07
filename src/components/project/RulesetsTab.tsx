@@ -24,7 +24,8 @@ import {
 } from "@bananapus/nana-sdk-core/v6";
 import { getPublicClient } from "@wagmi/core";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { editReservedSplitsHash, useTabHashAction } from "@/components/project/Tabs";
 import { zeroAddress, type PublicClient } from "viem";
 import { SplitRecipient } from "@/components/project/SplitRecipient";
 import { usePublicClient } from "wagmi";
@@ -671,6 +672,8 @@ export function RulesetsTab({
   const queryClient = useQueryClient();
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined;
   const [selectedRulesetId, setSelectedRulesetId] = useState<number | null>(null);
+  // The editor only exists on the current ruleset.
+  useTabHashAction(editReservedSplitsHash(false), useCallback(() => setSelectedRulesetId(null), []));
 
   const projectChains = useMemo(() => {
     const source = chains.length ? chains : [[chainId, projectId]];
@@ -1018,6 +1021,7 @@ export function RulesetsTab({
                         title="reserved recipients"
                         rulesetId={BigInt(rulesetId)}
                         chains={projectChains}
+                        openOnHash={editReservedSplitsHash(false)}
                       />
                     </div>
                   ) : null}

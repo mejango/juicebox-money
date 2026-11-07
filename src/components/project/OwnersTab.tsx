@@ -30,7 +30,7 @@ import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -56,7 +56,7 @@ import {
   type Split as SplitRow,
 } from '@/components/project/SplitRecipient'
 import { TokenPanel } from '@/components/project/TokenPanel'
-import { SubTabs } from '@/components/project/Tabs'
+import { SubTabs, editReservedSplitsHash, useTabHashAction } from '@/components/project/Tabs'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { AddressLabel, AddressText } from '@/components/ui/AddressLabel'
 import { ModalShell } from '@/components/ui/ModalShell'
@@ -1203,6 +1203,8 @@ function ReservedCard({
   }
 
   const [chosenStageIndex, setChosenStageIndex] = useState<number | null>(null)
+  // The editor only exists on the current stage.
+  useTabHashAction(isRevnet ? editReservedSplitsHash(true) : undefined, useCallback(() => setChosenStageIndex(null), []))
   const activeStageIndex = stages.length
     ? Math.min(
         Math.max(chosenStageIndex ?? currentStageIndex, 0),
@@ -1345,6 +1347,7 @@ function ReservedCard({
           rulesetId={BigInt(rulesetId)}
           chains={chains}
           isRevnet
+          openOnHash={editReservedSplitsHash(true)}
         />
       ) : null}
     </div>

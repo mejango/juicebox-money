@@ -277,3 +277,36 @@ it('invalidates completed authority evidence without treating a queued Safe prop
     expect(client.getQueryState(['projectDisplay', 6, 1, '17', 'currentRuleset'])?.isInvalidated).toBe(true)
   })
 })
+
+it('opens the split editor, in view, when the URL asks for it, and only once', async () => {
+  const listeners = new Set<() => void>()
+  const location = { hash: '#owners/splits/edit', pathname: '/eth:17' }
+  const history = Object.assign(
+    Object.create({ replaceState: (_state: unknown, _title: string, hash: string) => { location.hash = hash } }),
+    { state: null },
+  )
+  vi.stubGlobal('window', {
+    location,
+    history,
+    addEventListener: (type: string, listener: () => void) => { if (type === 'hashchange') listeners.add(listener) },
+    removeEventListener: (type: string, listener: () => void) => { if (type === 'hashchange') listeners.delete(listener) },
+    dispatchEvent: () => { for (const listener of listeners) listener(); return true },
+  })
+  const scrollIntoView = vi.fn()
+  await act(async () => {
+    renderer = create(
+      <QueryClientProvider client={client}>
+        <EditSplitsFlow chainId={1} projectId={17} groupId={RESERVED_TOKEN_SPLIT_GROUP_ID} title="recipients" rulesetId={111n} chains={chains} openOnHash="#owners/splits/edit" />
+      </QueryClientProvider>,
+      { createNodeMock: element => (element.type === 'div' ? { scrollIntoView } : null) },
+    )
+  })
+  await flush()
+  const text = JSON.stringify(renderer!.toJSON())
+  expect(text).toContain('Cancel')
+  expect(scrollIntoView).toHaveBeenCalledTimes(1)
+  expect(location.hash).toBe('#owners/splits')
+  await act(async () => renderer!.unmount())
+  renderer = undefined
+  vi.unstubAllGlobals()
+})

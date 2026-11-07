@@ -75,6 +75,23 @@ export function pushProjectTabHash(hash: string): void {
   commitProjectTabHash(() => pushTabHash(hash))
 }
 
+/** Where the reserved split editor lives. The last segment asks it to open. */
+export const editReservedSplitsHash = (isRevnet: boolean) =>
+  isRevnet ? '#owners/splits/edit' : '#rulesets/edit-reserved'
+
+/** Run `action` when the URL reaches `hash`: on mount, since tabs mount lazily, and on later changes. */
+export function useTabHashAction(hash: string | undefined, action: () => void): void {
+  useEffect(() => {
+    if (!hash) return
+    const apply = () => {
+      if (window.location.hash === hash) action()
+    }
+    apply()
+    window.addEventListener('hashchange', apply)
+    return () => window.removeEventListener('hashchange', apply)
+  }, [hash, action])
+}
+
 /**
  * The shared tab machinery every variant renders (SubTabs here, AccountTabs
  * on the account view): the tablist row and the lazily-mounted panels. A

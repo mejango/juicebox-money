@@ -27,7 +27,7 @@ import { ChainIcon } from '@/components/ChainIcon'
 import { ActionRowsSkeleton } from '@/components/LoadingSkeletons'
 import { AddressLabel } from '@/components/ui/AddressLabel'
 import type { AuthorityDeployment } from '@/components/project/AuthorityOverview'
-import { replaceProjectTabHash } from '@/components/project/Tabs'
+import { editReservedSplitsHash, pushProjectTabHash } from '@/components/project/Tabs'
 import { ChainPicker } from '@/components/ui/ChainPicker'
 import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
@@ -270,11 +270,7 @@ export function AuthorityEditsCard({
             differs={false}
             actionLabel="Edit reserved splits"
             open={false}
-            onToggle={() => {
-              replaceProjectTabHash(
-                isRevnet ? '#owners/splits' : '#rulesets',
-              )
-            }}
+            onToggle={() => pushProjectTabHash(editReservedSplitsHash(isRevnet))}
           >
             <p className="mt-2 text-xs leading-relaxed text-smoke-500">
               Opens the live split editor, which preserves locked recipients and
