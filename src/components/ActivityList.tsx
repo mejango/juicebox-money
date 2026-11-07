@@ -15,7 +15,6 @@ import { mergeCrossChainActivityGroups, SPLITS_TOTAL_PERCENT } from '@bananapus/
 import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
-import { AddressLink } from '@/components/ui/AddressLink'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import {
@@ -935,7 +934,7 @@ export function activityParts(
   ) : event.projectTransferEvent ? (
     <>
       transferred ownership to{' '}
-      <AddressLink address={event.projectTransferEvent.owner} />
+      <ActorLink actor={event.projectTransferEvent.owner} />
     </>
   ) : event.operatorPermissionsSetEvent ? (
     <>
@@ -944,7 +943,7 @@ export function activityParts(
         ? 'revnet operator'
         : 'operator'}{' '}
       permissions for{' '}
-      <AddressLink address={event.operatorPermissionsSetEvent.operator} />
+      <ActorLink actor={event.operatorPermissionsSetEvent.operator} />
     </>
   ) : event.rulesetQueuedEvent ? (
     <>reconfigured the project</>

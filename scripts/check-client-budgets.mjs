@@ -36,7 +36,9 @@ const RENDER_ERROR = '$RX('
 // Next 16.4.2 (security fix for GHSA-2464-fhr4-w9xw) adds 0.3 to 1.2 KiB to every route's framework chunks.
 const routes = [
   // 342 -> 345: core's reviewed run and Relayr round plan (SDK 4.0.0).
-  { route: '/', path: '/', kib: 345, text: 'Fund your' },
+  // 345 -> 346, /create 400 -> 402, /[urn] 526 -> 528, /account 419 -> 420, all scripts 2687 -> 2700:
+  // read recovery, RPC lanes, shop checkout and shared create review rows from the UX review.
+  { route: '/', path: '/', kib: 346, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
   { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment.' },
@@ -46,18 +48,18 @@ const routes = [
   // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.
   // 399 -> 398: SDK 4.0.0 Relayr round plan, measured 397.0.
   // Ordered stage preparation and receipt verification: measured 399.4 KiB.
-  { route: '/create', path: '/create', kib: 400, text: 'Start a project' },
+  { route: '/create', path: '/create', kib: 402, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
   // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 526, text: 'Browser Fixture Project' },
+  { route: '/[urn]', path: '/eth:1', kib: 528, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 419, text: 'Holdings' },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 420, text: 'Holdings' },
   // A path a page rejects calls notFound(); pages stream, so it answers 200 with
   // the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -76,7 +78,7 @@ const budgets = {
   // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
   // node-forge 1.4.3 (Para SDK security patch, lazy wallet chunk): measured 2682.8 KiB, rounded up only.
   // Buyback 2.0.0 rollout presets and LP move: measured 2686.6 KiB, rounded up only.
-  allScripts: 2687 * KIB,
+  allScripts: 2700 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
