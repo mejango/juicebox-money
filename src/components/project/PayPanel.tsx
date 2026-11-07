@@ -1,7 +1,6 @@
 "use client";
 
 import { projectDisplayKey } from '@/lib/project-display-cache'
-import { fetchMetadataJson } from '@/lib/metadata-json'
 
 import {
   accountingContextsQuery,
@@ -10,7 +9,6 @@ import {
 } from '@/lib/project-display-queries'
 import { contextRows, TxProgress, type TxConfirmRow } from "@/components/ui/TxProgress";
 import {
-  bytes32ToCidV0,
   JBCoreContracts,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
@@ -40,7 +38,6 @@ import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
-import { readAllActiveTiers } from "@/lib/shop-tiers";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -67,13 +64,8 @@ import {
 import { useOnRamp } from "@/components/GetFunds";
 import { useShopCart } from "@/components/project/ShopCartProvider";
 import { contractReverted } from "@/lib/errors";
-import { appIpfsUrl, formatTokenAmount } from "@/lib/format";
-import {
-  TIER_UNLIMITED_SUPPLY,
-  parseTierMetadataJson,
-  pickTierMetadata,
-  tierMediaImageUrl,
-} from "@/lib/tier-metadata";
+import { formatTokenAmount } from "@/lib/format";
+import { TIER_UNLIMITED_SUPPLY } from "@/lib/tier-metadata";
 import { tokenSymbol } from "@/lib/token-symbol";
 import {
   buildAddToBalanceRequest,
@@ -90,8 +82,7 @@ import { preloadReview } from "@/lib/preload-review";
 import { planShown, sequenceCalls } from "@/lib/reviewed-send";
 import { replaceProjectTabHash } from "@/components/project/Tabs";
 import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
-import { useShop721 } from '@/hooks/useShop721'
-import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE } from "@/hooks/useShop721";
+import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721, useShop721Media, type Shop, type TierMedia } from "@/hooks/useShop721";
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS, CHECKOUT_ACTION_BUTTON_CLASS } from "@/components/project/CheckoutAmountRow";
 import { NftCartLine } from "@/components/project/NftCartLine";
 import { shopCartTotal } from "@/lib/shop-cart-total";
@@ -179,30 +170,6 @@ function payTokenKey(t: Pick<PayContext, "token" | "viaRouter" | "terminal">): s
   return `${t.token.toLowerCase()}:${t.viaRouter}:${t.terminal.toLowerCase()}`;
 }
 
-async function resolvePayTierMetadata(tier: {
-  resolvedUri?: string;
-  encodedIpfsUri: `0x${string}`;
-}) {
-  const resolved = tier.resolvedUri
-    ? parseTierMetadataJson(tier.resolvedUri)
-    : null;
-  if (resolved && Object.keys(resolved).length > 0) {
-    return pickTierMetadata(resolved);
-  }
-
-  const cid = bytes32ToCidV0(tier.encodedIpfsUri);
-  if (!cid) return null;
-  try {
-    const json = await fetchMetadataJson(appIpfsUrl(`ipfs://${cid}`)!, {
-      signal: AbortSignal.timeout(8_000),
-    });
-    return json && typeof json === "object"
-      ? pickTierMetadata(json as Record<string, unknown>)
-      : null;
-  } catch {
-    return null;
-  }
-}
 type ShopInfo = {
   /** Whether `tiers` is the shop's FULL inventory. The cart prunes rows against it, so a
    *  truncated list would silently delete items the shopper added from the Shop tab. */
@@ -227,6 +194,32 @@ type ShopInfo = {
     image: string | null;
   }[];
 };
+
+function payShopInfo(shop: Shop, media: Record<number, TierMedia>): ShopInfo {
+  return {
+    // readShop walks every page, so an absent id is a removed tier and not a truncation.
+    tiersComplete: true,
+    hook: shop.hook,
+    idTarget: shop.idTarget!,
+    pricingCurrency: shop.pricing.currency,
+    pricingDecimals: shop.pricing.decimals,
+    tiers: shop.tiers.filter(tier => tier.initial > 0).map(tier => ({
+      id: tier.id,
+      price: tier.price,
+      discountPercent: tier.discountPercent,
+      remaining: tier.remaining,
+      initial: tier.initial,
+      unlimited: tier.initial >= TIER_UNLIMITED_SUPPLY,
+      // Fail closed if a legacy store does not return flags: charging
+      // fresh funds is safer than underfunding a credit-restricted mint.
+      cantBuyWithCredits: tier.flags?.cantBuyWithCredits ?? true,
+      // Metadata is cosmetic: a tier without it still sells.
+      name: media[tier.id]?.name ?? null,
+      description: media[tier.id]?.description ?? null,
+      image: media[tier.id]?.image ?? null,
+    })),
+  };
+}
 
 type ShopPayRoute = {
   supported: boolean;
@@ -581,60 +574,13 @@ export function PayPanel({
   }, [holdsNothing, tokenTouched]);
 
   // ---- 721 shop strip: hook + tiers, priced in the shop's currency ----
-  const { data: shop } = useQuery({
-    queryKey: ["payShop", chainId, projectId, isRevnet],
-    enabled: !!publicClient && identity.isSuccess && !nativeMarket,
-    staleTime: 120_000,
-    retry: 1,
-    queryFn: async (): Promise<ShopInfo | null> => {
-      const client = publicClient!;
-      // Paged to completion, like ShopTab. A single 200-tier page truncated the shop, and the
-      // effect below then DELETED any cart row outside that window — so items added from the
-      // Shop tab silently disappeared from the cart on a large shop.
-      const resolved = await getProjectNftInventory(client, {
-        chainId,
-        projectId: BigInt(projectId),
-        isRevnet,
-        tierLimit: 1,
-      });
-      if (!resolved || resolved.protocol !== 'jb721') return null;
-      const rawTiers = await readAllActiveTiers(client, resolved.store, resolved.hook, true);
-      // One read now carries flags too, so the second `tiersOf` call this used to make — and
-      // its `.catch(() => [])`, which quietly failed every tier closed — is gone.
-      const tiers = rawTiers.filter((tier) => tier.initialSupply > 0);
-      return {
-        /** The read walked every page, so an absent id is a removed tier and not a truncation. */
-        tiersComplete: true,
-        hook: resolved.hook,
-        idTarget: resolved.metadataIdTarget,
-        pricingCurrency: resolved.pricing.currency,
-        pricingDecimals: resolved.pricing.decimals,
-        tiers: await Promise.all(
-          tiers.map(async (t) => {
-            // Metadata is cosmetic — a tier without it still sells.
-            const meta = await resolvePayTierMetadata(t);
-            const name = meta?.name ?? null;
-            const description = meta?.description ?? null;
-            const image = tierMediaImageUrl(meta?.image) ?? null;
-            return {
-              id: t.id,
-              price: t.price,
-              discountPercent: t.discountPercent,
-              remaining: t.remainingSupply,
-              initial: t.initialSupply,
-              unlimited: t.initialSupply >= TIER_UNLIMITED_SUPPLY,
-              // Fail closed if a legacy store does not return flags: charging
-              // fresh funds is safer than underfunding a credit-restricted mint.
-              cantBuyWithCredits: t.flags?.cantBuyWithCredits ?? true,
-              name,
-              description,
-              image,
-            };
-          }),
-        ),
-      };
-    },
-  });
+  // The Shop tab's read, whose tiers come without resolved URIs: asking the store to resolve a
+  // whole page reverts on a large shop. Only a verified generic shop is sold from here.
+  const inventoryShop = identity.isSuccess && !nativeMarket && inventory.data?.protocol === "jb721" ? inventory.data : null;
+  const { data: shopMedia } = useShop721Media(chainId, inventoryShop);
+  const shop = useMemo(() => inventoryShop ? payShopInfo(inventoryShop, shopMedia ?? {}) : null, [inventoryShop, shopMedia]);
+  const shopPending = identity.isPending || (!nativeMarket && inventory.isPending && !inventory.isError);
+  const shopFailed = !shop && !nativeMarket && !!inventory.isError;
 
   // Keep the shared cart's presentation metadata fresh even before the user
   // opens the Shop tab. Clamp stale quantities against live per-chain supply.
@@ -1908,7 +1854,20 @@ export function PayPanel({
       </div>
 
       {/* Selected shop items share the payment receipt shown above. */}
-      {mode === "pay" && cartCount > 0 ? (
+      {mode === "pay" && cartCount > 0 && shopFailed ? (
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          Couldn&apos;t read this project&apos;s shop.{" "}
+          <button
+            type="button"
+            onClick={() => void inventory.refetch()}
+            className="font-medium underline underline-offset-2"
+          >
+            Try again
+          </button>
+        </p>
+      ) : mode === "pay" && cartCount > 0 && !shop && shopPending ? (
+        <Skeleton className="mt-4 h-16 w-full rounded-lg" role="status" aria-label="Loading your items" />
+      ) : mode === "pay" && cartCount > 0 && shop ? (
         <div className="mt-4">
           {selectedCartRows.length > 0 ? (
             <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">

@@ -169,6 +169,18 @@ const contextFor = (token: 'native' | 'erc20') =>
     ? { token: NATIVE, decimals: 18, currency: 61166, symbol: 'ETH', terminal: TERMINAL, viaRouter: false }
     : { token: USDC, decimals: 6, currency: 909516616, symbol: 'USDC', terminal: TERMINAL, viaRouter: false }
 
+/** A shop as the Shop tab's reader returns it, from the fields a checkout reads. */
+function inventoryOf(shop: { hook: Address; idTarget: Address; pricingCurrency: number; pricingDecimals: number; tiers: { id: number; price: bigint; discountPercent: number; remaining: number; initial: number; cantBuyWithCredits: boolean }[] } | null) {
+  return {
+    isSuccess: true, isError: false, refetch: vi.fn(),
+    data: shop && {
+      protocol: 'jb721', hook: shop.hook, idTarget: shop.idTarget, cashOutEnabled: false, transfersPaused: null, transferPauseByStage: null, configFlags: null,
+      pricing: { currency: shop.pricingCurrency, decimals: shop.pricingDecimals, symbol: 'ETH' },
+      tiers: shop.tiers.map(tier => ({ ...tier, category: 1, reserveFrequency: 0, votingUnits: 0n, splitPercent: 0, encodedIpfsUri: `0x${'0'.repeat(64)}`, resolvedUri: '', flags: { cantBuyWithCredits: tier.cantBuyWithCredits } })),
+    },
+  }
+}
+
 function query(key: string) {
   if (key in m.queries) return m.queries[key]
   switch (key) {
@@ -748,7 +760,7 @@ describe('a checkout whose items change at the same total', () => {
       id, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
       cantBuyWithCredits: false, name: `Hat ${id}`, description: null, image: null,
     })
-    m.queries.payShop = { data: { tiersComplete: true, hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(1), tier(2)] } }
+    m.queries.nativeInventory = inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(1), tier(2)] })
     m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
     m.prepareUserPay = vi.fn(async (_client: unknown, args: { tiers?: { tierIdsToMint: bigint[] } }) =>
       args.tiers?.tierIdsToMint[0] === 2n ? { ...PREPARED, metadata: OTHER_METADATA } : PREPARED) as never
@@ -783,8 +795,8 @@ describe('a checkout whose items change at the same total', () => {
     m.realCart = true
     const tier = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, unlimited: false,
       cantBuyWithCredits: false, name: 'Hat', description: null, image: null }
-    const shopAt = (idTarget: Address) => ({ data: { tiersComplete: true, hook: USDC, idTarget, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] } })
-    m.queries.payShop = shopAt(USDC)
+    const shopAt = (idTarget: Address) => inventoryOf({ hook: USDC, idTarget, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] })
+    m.queries.nativeInventory = shopAt(USDC)
     m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
     m.prepareUserPay = vi.fn(async (_client: unknown, args: { tiers?: { metadataIdTarget: Address } }) =>
       args.tiers?.metadataIdTarget === TERMINAL_2 ? { ...PREPARED, metadata: OTHER_METADATA } : PREPARED) as never
@@ -803,13 +815,52 @@ describe('a checkout whose items change at the same total', () => {
     await render()
     await act(async () => cart.setQuantity(1, 1))
     await waitUntil(() => button('Pay', false)?.disabled === false)
-    m.queries.payShop = shopAt(TERMINAL_2)
+    m.queries.nativeInventory = shopAt(TERMINAL_2)
     await render()
     const targets = () => vi.mocked(m.prepareUserPay).mock.calls
       .map(call => ((call as unknown[])[1] as { tiers?: { metadataIdTarget: Address } }).tiers?.metadataIdTarget)
     await waitUntil(() => targets().includes(TERMINAL_2) && button('Pay', false)?.disabled === false)
     const request = await confirmAndSend()
     expect(request.args[6]).toBe(OTHER_METADATA)
+  })
+})
+
+describe('a checkout whose shop read fails', () => {
+  const tier = { id: 1, price: 10n ** 15n, discountPercent: 0, remaining: 5, initial: 10, cantBuyWithCredits: false }
+  const cartPanel = async () => {
+    m.realCart = true
+    const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
+    function AddOne() {
+      const { setQuantity } = useShopCart()
+      return <button type="button" onClick={() => setQuantity(1, 1)}>Add one</button>
+    }
+    await act(async () => root.render(
+      <ShopCartProvider>
+        <AddOne />
+        <PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />
+      </ShopCartProvider>,
+    ))
+    await act(async () => button('Add one').click())
+  }
+
+  it('says so with a retry, where it read Amount due 0 units', async () => {
+    const refetch = vi.fn()
+    m.queries.nativeInventory = { data: undefined, isSuccess: false, isError: true, refetch }
+    await cartPanel()
+    expect(host.textContent).not.toContain('0 units')
+    expect(host.textContent).not.toContain('Amount due')
+    expect(host.textContent).toContain("Couldn't read this project's shop.")
+    await act(async () => button('Try again').click())
+    expect(refetch).toHaveBeenCalled()
+  })
+
+  it('prices the cart from the one read the Shop tab shares', async () => {
+    m.queries.nativeInventory = inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier] })
+    m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
+    await cartPanel()
+    expect(host.textContent).toContain('Amount due')
+    expect(host.textContent).toContain('0.001 ETH')
+    expect(host.textContent).not.toContain('units')
   })
 })
 
@@ -820,10 +871,8 @@ describe('a checkout whose items are all gone', () => {
       id: 1, price: 10n ** 15n, discountPercent: 0, remaining, initial: 10, unlimited: false,
       cantBuyWithCredits: false, name: 'Hat', description: null, image: null,
     })
-    const shopWith = (remaining: number) => ({
-      data: { tiersComplete: true, hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(remaining)] },
-    })
-    m.queries.payShop = shopWith(5)
+    const shopWith = (remaining: number) => inventoryOf({ hook: USDC, idTarget: USDC, pricingCurrency: 61166, pricingDecimals: 18, tiers: [tier(remaining)] })
+    m.queries.nativeInventory = shopWith(5)
     m.queries.payShopRoutes = { data: { [`${NATIVE.toLowerCase()}:false:${TERMINAL.toLowerCase()}`]: { supported: true, pricePerUnit: 10n ** 18n } }, isLoading: false }
     const { ShopCartProvider, useShopCart } = await vi.importActual<typeof import('@/components/project/ShopCartProvider')>('@/components/project/ShopCartProvider')
     let cart!: ReturnType<typeof useShopCart>
@@ -844,9 +893,9 @@ describe('a checkout whose items are all gone', () => {
     await waitUntil(() => !!withTiers())
     expect(withTiers()).toMatchObject({ tiers: { metadataIdTarget: USDC, tierIdsToMint: [1n, 1n] } })
     // Every hat sold elsewhere: the cart is pruned, the choice kept. Then the shop stops resolving.
-    m.queries.payShop = shopWith(0)
+    m.queries.nativeInventory = shopWith(0)
     await act(async () => root.render(panel()))
-    m.queries.payShop = { data: null }
+    m.queries.nativeInventory = inventoryOf(null)
     m.queries.payShopRoutes = { data: undefined, isLoading: false }
     await act(async () => root.render(panel()))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
@@ -1002,7 +1051,6 @@ describe('native market payment guard', () => {
 
   it('allows ordinary payment after verified identity even when cosmetic full-shop reads fail', async () => {
     m.queries.nativeInventory = { data: null, isSuccess: false, isError: true }
-    m.queries.payShop = { data: null, isError: true }
     m.queries.payNftProtocol = { data: { protocol: 'jb721' }, isSuccess: true }
     await act(async () => { root.render(<PayPanel chainId={1} projectId={42} projectName="Project" isRevnet={false} chains={[[1, 42]]} />) })
     expect(host.querySelector('input[aria-label="Amount"]')).not.toBeNull()
