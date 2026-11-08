@@ -134,15 +134,16 @@ export type StoreItem = {
 }
 
 /**
- * The Uniswap V4 LP split hook ("Fund market"), from the SDK's generated
- * deployment table — the same address on every chain that has one, but NOT every
- * chain has one, which is the whole reason the lookup below exists: a reserved
- * split whose `hook` has no code makes split processing revert, so the option has
- * to be withheld per chain. Optimism Sepolia (11155420) is absent from the table
- * because deploy-all has no `JBUniswapV4LPSplitHook.json` there.
+ * The standard Uniswap V4 LP split hook instance ("Fund market"), from the SDK's
+ * generated deployment table: an initialized clone (10% of LP fees to project 1).
+ * `JBUniswapV4LPSplitHook` is the uninitialized implementation, which anyone can
+ * initialize, so a split must never name it. The same address on every chain that
+ * has one, but NOT every chain has one, which is the whole reason the lookup below
+ * exists: a reserved split whose `hook` has no code makes split processing revert,
+ * so the option has to be withheld per chain. Optimism Sepolia (11155420) has none.
  */
 const LP_SPLIT_HOOK_ADDRESSES = jbV6ContractAddress[
-  JBUniswapV4LPSplitHookContracts.JBUniswapV4LPSplitHook
+  JBUniswapV4LPSplitHookContracts.JBP6FeeLPSplitHook
 ] as Partial<Record<JBChainId, Address>>
 
 export const LP_SPLIT_HOOK = LP_SPLIT_HOOK_ADDRESSES[1] as Address
@@ -153,11 +154,14 @@ export const LP_SPLIT_HOOK = LP_SPLIT_HOOK_ADDRESSES[1] as Address
  * instead of an opaque custom hook, but it must never encode one into a new split.
  */
 export const LEGACY_LP_SPLIT_HOOKS: readonly Address[] = [
-  // generation 2 — `JBUniswapV4LPSplitHook_deprecated2`
+  // `JBP6FeeLPSplitHook` instances, newest first: 1.5.0 on the retired V4 hook, then 1.x
+  '0xaadf5369dd199794074b3f701ad2fe9bdbaf733d',
+  '0xe9493bc776699714a89aa982cf828d843f040d2a',
+  // Implementations earlier releases encoded, newest first
+  '0xfcdbabd7b8de07c6e4ca7d79790e235848edc251',
   '0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0',
-  // generation 1 — `JBUniswapV4LPSplitHook_deprecated`
   '0x2f23b09975eb9305670b01e94c11e702792f25a3',
-] as Address[]
+].filter(hook => hook !== LP_SPLIT_HOOK.toLowerCase()) as Address[]
 
 /** The market-split hook to encode on `chainId`, or null when it has no deployment. */
 export function lpSplitHookOn(chainId: number): Address | null {
