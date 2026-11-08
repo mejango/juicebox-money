@@ -5,6 +5,7 @@
 // no code reverts split processing).
 import { describe, expect, it } from 'vitest'
 import { zeroAddress, type Address } from 'viem'
+import { jbV6ContractAddress } from '@bananapus/nana-sdk-core'
 import {
   LEGACY_LP_SPLIT_HOOKS,
   LP_SPLIT_HOOK,
@@ -16,9 +17,9 @@ import {
 import { splitToDraft } from '@/components/project/EditSplitsFlow'
 import type { RawSplit } from '@/lib/splits-types'
 
-/** deploy-all-v6 `deployments/<chain>/JBUniswapV4LPSplitHook.json`. */
+/** deploy-all-v6 `deployments/<chain>/JBP6FeeLPSplitHook.json`. */
 const DEPLOYED_CHAINS = [1, 10, 8453, 42161, 11155111, 84532, 421614]
-/** deploy-all-v6 has no JBUniswapV4LPSplitHook.json under optimism_sepolia. */
+/** deploy-all-v6 has no JBP6FeeLPSplitHook.json under optimism_sepolia. */
 const OP_SEPOLIA = 11155420
 
 function hookSplit(hook: Address): RawSplit {
@@ -34,9 +35,13 @@ function hookSplit(hook: Address): RawSplit {
 
 describe('LP split hook generations', () => {
   it('pins the currently deployed hook, not a superseded one', () => {
-    expect(LP_SPLIT_HOOK).toBe('0xfcdbabd7b8de07c6e4ca7d79790e235848edc251')
+    // The initialized standard instance, never the implementation (anyone can initialize it).
+    expect(LP_SPLIT_HOOK).toBe(jbV6ContractAddress.JBP6FeeLPSplitHook[8453])
+    expect(LP_SPLIT_HOOK).not.toBe(
+      jbV6ContractAddress.JBUniswapV4LPSplitHook[8453],
+    )
     expect(LEGACY_LP_SPLIT_HOOKS).toContain(
-      '0xaf2d8a027955871cd2f3c4d2f32338e574e69bc0',
+      '0xfcdbabd7b8de07c6e4ca7d79790e235848edc251',
     )
     expect(LEGACY_LP_SPLIT_HOOKS).not.toContain(LP_SPLIT_HOOK)
   })
