@@ -259,7 +259,18 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   }
   const empty = holdings.data?.complete === true && holdings.data.totalOwned === 0n
   const cash = plan && 'reclaimAmount' in plan.result ? plan.result : null
-  const status = writeStarted && !tx.hash && tx.phase !== 'submitted' && !tx.busy && proof !== 'verified' ? 'Wallet submission outcome is unknown. Verify its outcome before submitting another action.' : sent.current && actorChanged && proof !== 'verified' ? 'Account or project changed. The in-flight action is retained for recovery; confirm its outcome before submitting another action.' : proof === 'reverted' ? 'The reviewed transaction reverted onchain.' : proof === 'verified' ? 'NFT effects verified onchain.' : proof === 'checking' ? 'Verifying NFT effects…' : tx.notice ?? (tx.phase === 'pending' ? 'Transaction submitted. Awaiting confirmation.' : tx.phase === 'success' ? 'Receipt received. NFT verification is pending.' : undefined)
+  // The first matching line wins: an unknown or orphaned submission, then the proof, then the wallet's own phase.
+  const status = (() => {
+    if (proof !== 'verified' && writeStarted && !tx.hash && tx.phase !== 'submitted' && !tx.busy) return 'Wallet submission outcome is unknown. Verify its outcome before submitting another action.'
+    if (proof !== 'verified' && sent.current && actorChanged) return 'Account or project changed. The in-flight action is retained for recovery; confirm its outcome before submitting another action.'
+    if (proof === 'reverted') return 'The reviewed transaction reverted onchain.'
+    if (proof === 'verified') return 'NFT effects verified onchain.'
+    if (proof === 'checking') return 'Verifying NFT effects…'
+    if (tx.notice != null) return tx.notice
+    if (tx.phase === 'pending') return 'Transaction submitted. Awaiting confirmation.'
+    if (tx.phase === 'success') return 'Receipt received. NFT verification is pending.'
+    return undefined
+  })()
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['cash-out', 'transfer']} active={!!plan}><div className="card mt-5 space-y-4 p-5">
     <span className="field-label">Your Defifa NFTs</span>
     {!address ? <><p className="text-sm">Sign in to see and manage your NFTs.</p><button type="button" onClick={openSignIn} className="btn-primary px-4 py-2">Connect wallet</button></> : <>

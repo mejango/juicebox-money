@@ -291,6 +291,28 @@ describe('Safe batch tray', () => {
     expect(window.localStorage.getItem(safeBatchStorageKey(1, 2))).toBeNull()
   })
 
+  it('keeps the proposed steps on screen when the wait after a Safe proposal fails', async () => {
+    mocks.submit.mockImplementationOnce(async ({ onProposed }: { onProposed: (hash: string) => Promise<void> | void }) => {
+      await onProposed(`0x${'ab'.repeat(32)}`)
+      throw new Error('The Safe transaction reverted.')
+    })
+    seed()
+    render()
+    await settle()
+    click(button('Review and propose on Ethereum'))
+    await settle()
+    click(byAria('Move step 1 down'))
+    await settle()
+    click(button('Propose batch to Safe'))
+    await settle()
+
+    const dialog = document.querySelector('dialog')
+    expect(dialog?.querySelector('[role="alert"]')?.textContent).toContain('The Safe transaction reverted.')
+    expect(dialog?.textContent).toContain('Set buyback hook')
+    expect(dialog?.textContent).toContain('Set buyback pool')
+    expect(window.localStorage.getItem(safeBatchStorageKey(1, 2))).toBeNull()
+  })
+
   it('marks the transaction that failed in a direct batch and keeps the ones before it done', async () => {
     mocks.resolveRoute.mockResolvedValue({ kind: 'eoa', authorityKind: 'eoa' })
     mocks.submit.mockImplementationOnce(async ({ onStep }: { onStep: (index: number) => void }) => {

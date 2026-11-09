@@ -47,7 +47,7 @@ describe('shared forwarder nonce ownership', () => {
     const gated = new Promise<void>(resolve => { release = resolve })
     const first = withForwarderAuthorizationLock({ account: ALICE, chainIds: [10, 1, 10], owner: 'relayr:action-a',
       pendingSessions: () => pending, requestsDead, execute: async assertAvailable => { assertAvailable(); await gated } })
-    expect(names).toEqual([`jb-forwarder-authorization:${ALICE}:1`, `jb-forwarder-authorization:${ALICE}:10`])
+    await vi.waitFor(() => expect(names).toEqual([`jb-forwarder-authorization:${ALICE}:1`, `jb-forwarder-authorization:${ALICE}:10`]))
     await expect(run('relayr:action-b', [1])).rejects.toThrow('Another action is authorizing')
     await expect(run('relayr:other-wallet', [1], BOB)).resolves.toBe('signed')
     release(); await first
@@ -142,7 +142,8 @@ describe('shared forwarder nonce ownership', () => {
     pending = [{ scope: 'other', session: session() }]
     await expect(withForwarderAuthorizationLock({ account: ALICE, chainIds: [1], owner: 'relayr:original', pendingSessions: () => pending,
       requestsDead, execute: async () => 'checked original receipt' })).resolves.toBe('checked original receipt')
+    // Without Web Locks the SDK's lock still coordinates: the run reaches the same conflict check.
     vi.stubGlobal('navigator', {})
-    await expect(run()).rejects.toThrow('Web Locks support')
+    await expect(run()).rejects.toThrow('Another published action')
   })
 })

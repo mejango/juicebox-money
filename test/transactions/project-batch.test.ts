@@ -161,6 +161,10 @@ describe('durable project batches', () => {
     }), expect.anything())
     expect(mocks.rawRelayr).not.toHaveBeenCalled()
   })
+  it('runs in a browser without Web Locks instead of refusing (R119)', async () => {
+    vi.stubGlobal('navigator', {})
+    expect((await run([call()])).status).toBe('complete')
+  })
   it('finishes a recovered journal whose calls were already marked complete', async () => {
     const batch = await run([call()])
     const key = `jb-project-batch:v1:journal:${batch.id}`
@@ -956,9 +960,7 @@ describe('durable project batches', () => {
     expect(mocks.authority.mock.calls[0][0].plan).toBeUndefined()
   })
 
-  it('fails before wallet review when browser locking or durable storage is unavailable', async () => {
-    vi.stubGlobal('navigator', {})
-    await expect(run([call()])).rejects.toThrow('Web Locks')
+  it('fails before wallet review when durable storage is unavailable', async () => {
     vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: unknown, run?: (lock: object) => unknown) => (run ?? (options as (lock: object) => unknown))({}) } })
     window.localStorage.setItem = () => { throw new Error('quota') }
     await expect(run([call()])).rejects.toThrow('recovery')

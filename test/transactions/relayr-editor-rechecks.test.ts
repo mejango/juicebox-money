@@ -79,14 +79,18 @@ vi.mock('@bananapus/nana-sdk-core/v6', async importOriginal => ({
 import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'
 import { clearRelayrPendingSession, listRelayrPendingScopes, loadRelayrPendingSession, relayrCallsScope, saveRelayrPendingSession } from '@/lib/relayr'
-import { assembleReservedDestination, reviewedSplitCalls, type SplitReview, type SplitSnapshot } from '@/components/project/EditSplitsFlow'
-import { buildQueueDestinationConfig, reviewedQueueCalls } from '@/components/project/QueueRulesetFlow'
-import { metadataReviewCalls, type MetadataReview } from '@/components/project/AuthorityEditsCard'
+import { assembleReservedDestination, readSplitJournal, reviewedSplitCalls, saveSplitJournal, type SplitReview, type SplitSnapshot } from '@/components/project/EditSplitsFlow'
+import { buildQueueDestinationConfig, readQueueJournal, reviewedQueueCalls, saveQueueJournal } from '@/components/project/QueueRulesetFlow'
+import { metadataReviewCalls, readMetadataReview, type MetadataReview } from '@/components/project/AuthorityEditsCard'
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 import { NATIVE_TOKEN } from '@bananapus/nana-sdk-core'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
+
+/** How earlier versions stored a multichain review: its JSON, each bigint as { bigint: "…" }. */
+const earlierJournalText = (journal: unknown) =>
+  JSON.stringify(journal, (_key, value) => typeof value === 'bigint' ? { bigint: value.toString() } : value)
 
 const ALICE = mocks.account as Address
 const OTHER = '0x3333333333333333333333333333333333333333' as Address
@@ -235,6 +239,17 @@ describe('the split editor\'s recheck', () => {
 
   const splitReads = () => CHAINS.flatMap(chainId => (mocks.clients.get(chainId) as ReturnType<typeof chainClient>)
     .readContract.mock.calls.filter(([request]) => request.functionName === 'splitsOf'))
+
+  it('reads a split review an earlier version saved under each destination, and saves it in the same format', () => {
+    const saved = review()
+    const journal = { scope: relayrCallsScope(reviewedSplitCalls(saved)), review: saved }
+    const text = earlierJournalText(journal)
+    const keys = [`jbm:edit-splits:1:101:${RESERVED_TOKEN_SPLIT_GROUP_ID}`, `jbm:edit-splits:8453:303:${RESERVED_TOKEN_SPLIT_GROUP_ID}`]
+    for (const key of keys) storage.set(key, text)
+    for (const key of keys) expect(readSplitJournal(key)).toEqual(journal)
+    saveSplitJournal(journal)
+    for (const key of keys) expect(storage.get(key)).toBe(text)
+  })
 
   it('offers Discard with the changed line once every request expired unused and Base\'s recipients changed', async () => {
     const calls = reviewedSplitCalls(review())
@@ -392,6 +407,17 @@ describe('the ruleset-queue editor\'s recheck', () => {
     mocks.contexts.mockImplementation(async (_client, args) => source(args.chainId).access.map(item => item.ctx))
   })
 
+  it('reads a queue review an earlier version saved under each destination, and saves it in the same format', () => {
+    const saved = review()
+    const journal = { scope: relayrCallsScope(reviewedQueueCalls(saved, 'current')), review: saved, action: 'current' as const }
+    const text = earlierJournalText(journal)
+    const keys = ['jbm:queue-rulesets:1:101', 'jbm:queue-rulesets:8453:303']
+    for (const key of keys) storage.set(key, text)
+    for (const key of keys) expect(readQueueJournal(key)).toEqual(journal)
+    saveQueueJournal(journal)
+    for (const key of keys) expect(storage.get(key)).toBe(text)
+  })
+
   it('offers Discard with the changed line once every request expired unused and Base\'s queue changed', async () => {
     const calls = reviewedQueueCalls(review(), 'current')
     const scope = saveUnpaidSession(calls)
@@ -433,6 +459,14 @@ describe('the metadata editor\'s recheck', () => {
       controllerOf: () => v6Address('JBController', chainId),
       uriOf: () => uris[chainId],
     })
+  })
+
+  it('reads a metadata review an earlier version saved, from whichever destination opens, and ignores one naming another project', () => {
+    const saved = review()
+    expect(readMetadataReview([{ chainId: 8453, projectId: 303 }])).toEqual(saved)
+    expect(readMetadataReview([{ chainId: 1, projectId: 101 }])).toEqual(saved)
+    storage.set('jb-metadata-review-v1:10:5', JSON.stringify(saved))
+    expect(readMetadataReview([{ chainId: 10, projectId: 5 }])).toBeNull()
   })
 
   it('offers Discard with the changed line once every request expired unused and Base\'s profile changed', async () => {

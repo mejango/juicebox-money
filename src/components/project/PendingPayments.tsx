@@ -41,7 +41,9 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
   const hydrated = useSyncExternalStore(subscribeHydration, clientHydrated, serverHydrated)
   const scope = projectBatchScope(PENDING_PAYMENT_ACTION, chainId, projectId)
   const [open, setOpen] = useState(false)
-  const [busy, setBusy] = useState(false)
+  // What the dialog is doing: `quoting` can still be cancelled for free, `paying` is past the fee quote.
+  const [activity, setActivity] = useState<'idle' | 'checking' | 'quoting' | 'paying'>('idle')
+  const busy = activity !== 'idle'
   const [complete, setComplete] = useState(false)
   const [calls, setCalls] = useState<ProjectBatchCall[] | null>(null)
   const [account, setAccount] = useState<Address | null>(null)
@@ -56,8 +58,6 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
   const [status, setStatus] = useState<string | null>(null)
   const [outcomes, setOutcomes] = useState<Record<string, string>>({})
   const [attempts, setAttempts] = useState<Record<string, RawAttempt>>({})
-  // Cancelling is free until the fee quote is saved; after that the payment is next.
-  const [cancellable, setCancellable] = useState(false)
   const cancelQuote = useRef<AbortController | null>(null)
   useEffect(() => {
     try { setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed])) }
@@ -130,13 +130,13 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
 
   const recheckSaved = async () => {
     if (!recovery || busy) return
-    setBusy(true); setError(null)
+    setActivity('checking'); setError(null)
     try {
       const released = await recheckProjectBatch(recovery.scope, recovery.id)
       setSaved(loadPendingPaymentBatch([[chainId, projectId], ...listed]))
       setStatus(released ? 'The old quote expired without funding. Review all available payments in a new batch.' : 'The saved batch still needs recovery. Resume it to check its original attempts.')
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Could not check saved batch.') }
-    finally { setBusy(false) }
+    finally { setActivity('idle') }
   }
 
   const begin = (payments: ReviewedPayment[]) => {
@@ -163,13 +163,13 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
       setSavedSelection(batch); setCalls(batch.calls); setSaved(batch)
       setNeedsReview(false); recovered = true
     }
-    setBusy(true); setError(null); discard.capture(null); setCancellable(true)
+    setActivity('quoting'); setError(null); discard.capture(null)
     const cancel = new AbortController()
     cancelQuote.current = cancel
     try {
       const result = await runProjectBatch({ scope: savedSelection?.scope ?? scope, action: savedSelection?.action ?? PENDING_PAYMENT_ACTION, account: address, calls, expectedBatchId: savedSelection?.id, replaceDraft,
         title: 'Retry payments', reverify: reverifyPendingPayment, acceptRevertedTransactions: true, signal: AbortSignal.any([flowSignal(), cancel.signal]),
-        onBeforePayment: () => setCancellable(false),
+        onBeforePayment: () => { if (cancelQuote.current === cancel) setActivity('paying') },
         onAttempts: states => {
           setAttempts(states)
           const results = Object.values(states)
@@ -209,7 +209,8 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
     } finally {
       // Replacement consumes the old draft identity. Reopen to bind any new recovery journal.
       if (replaceDraft) { if (!recovered) setNeedsReview(true); setReplaceDraft(undefined) }
-      setBusy(false); setCancellable(false); cancelQuote.current = null
+      // A cancelled run winding down leaves a newer run's activity alone.
+      if (cancelQuote.current === cancel) { setActivity('idle'); cancelQuote.current = null }
       await queryClient.invalidateQueries({ queryKey: ['pendingPayments'] })
     }
   }
@@ -269,7 +270,7 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
       })}
       stepsIntro="Pay network fees only. Each payment has its own result."
       activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error}
-      onCancel={busy && cancellable ? () => { cancelQuote.current?.abort(); setBusy(false); setCancellable(false); setStatus('Cancelled. Nothing was paid.') } : undefined}
+      onCancel={activity === 'quoting' ? () => { cancelQuote.current?.abort(); setActivity('idle'); setStatus('Cancelled. Nothing was paid.') } : undefined}
       onClose={() => { if (!busy) { setOpen(false); discard.reset() } }}
       start={!needsReview && calls?.length ? () => void submit() : undefined}
       next={!complete && !busy ? { label: savedSelection ? 'Resume saved batch' : 'Retry', onClick: () => void submit(), disabled: needsReview || !calls?.length || discard.active } : null}>

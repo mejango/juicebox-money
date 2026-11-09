@@ -26,6 +26,18 @@ import {
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { chainName } from '@/lib/urn'
 
+/**
+ * One submit of the batch: `signing` until the Safe proposal (or the direct
+ * sends) exists, `proposed` while its execution is awaited, then `done` or
+ * `failed`. A failure after the proposal keeps the proposed steps: the queue
+ * holds them now.
+ */
+type SafeBatchRun =
+  | { status: 'idle' }
+  | { status: 'signing'; steps: BatchStep[]; step: number; line: string | null }
+  | { status: 'proposed' | 'done'; steps: BatchStep[]; step: number; line: string | null; hash: Hex | null }
+  | { status: 'failed'; steps: BatchStep[]; step: number; line: string | null; hash: Hex | null; error: string }
+
 function routeDescription(route: SafeBatchRoute, count: number, chainId: JBChainId): string {
   if (route.kind === 'safe-app') return 'One MultiSend proposal from the Safe app'
   if (route.kind === 'safe-owner') {
@@ -107,14 +119,16 @@ export function SafeBatchDialog({
     candidate => candidate.chainId === chainId,
   )
   const liveSteps = batch?.stepsOn(chainId) ?? []
-  const [frozen, setFrozen] = useState<BatchStep[] | null>(null)
-  const steps = frozen ?? liveSteps
-  const [busy, setBusy] = useState(false)
-  const [complete, setComplete] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [activeIndex, setActiveIndex] = useState(-1)
-  const [proposalHash, setProposalHash] = useState<Hex | null>(null)
+  const [run, setRun] = useState<SafeBatchRun>({ status: 'idle' })
+  const proposalHash = 'hash' in run ? run.hash : null
+  const steps = run.status === 'idle' || (run.status === 'failed' && !proposalHash) ? liveSteps : run.steps
+  const busy = run.status === 'signing' || run.status === 'proposed'
+  const complete = run.status === 'proposed' || run.status === 'done' || (run.status === 'failed' && !!proposalHash)
+  const status = run.status === 'idle' ? null : run.line
+  const error = run.status === 'failed' ? run.error : null
+  const activeIndex = run.status === 'idle' ? -1 : run.step
+  const progress = (change: { step?: number; line?: string | null }) =>
+    setRun(current => current.status === 'signing' || current.status === 'proposed' ? { ...current, ...change } : current)
   const { address: connected } = useWallet()
   // Closing the dialog ends its wait for the Safe to execute the batch; the
   // proposal stays queued, and Pending multisig transactions shows it.
@@ -184,55 +198,50 @@ export function SafeBatchDialog({
   const submit = async () => {
     if (!batch || !route || !authority || busy || complete) return
     if (route.kind === 'unavailable' || !order.ok || !count) return
-    setBusy(true)
-    setError(null)
-    setFrozen(steps)
+    setRun(current => ({ status: 'signing', steps, step: activeIndex, line: current.status === 'idle' ? null : current.line }))
     try {
       const outcome = await submitSafeBatch({
         chainId,
         authority,
         steps,
         route,
-        onProgress: setStatus,
-        onStep: setActiveIndex,
+        onProgress: line => progress({ line }),
+        onStep: step => progress({ step }),
         signal: flowSignal(),
         onProposed: hash => {
           // The queue card does not poll; show the new proposal there now.
           void queryClient.invalidateQueries({ queryKey: ['safeQueues'] })
-          setProposalHash(hash)
           batch.clear(chainId)
-          setStatus(`Proposed to Safe as one batch of ${count} call${count === 1 ? '' : 's'}.`)
-          setComplete(true)
+          const line = `Proposed to Safe as one batch of ${count} call${count === 1 ? '' : 's'}.`
+          setRun(current => current.status === 'idle'
+            ? current
+            : current.status === 'signing' ? { ...current, status: 'proposed', hash, line } : { ...current, hash, line })
         },
       })
+      let line: string | null = null
+      let step: number | undefined
       if (outcome.kind === 'eoa') {
         batch.clear(chainId)
-        setActiveIndex(count)
-        setStatus(`Sent ${count} transaction${count === 1 ? '' : 's'}.`)
-        setComplete(true)
+        step = count
+        line = `Sent ${count} transaction${count === 1 ? '' : 's'}.`
       } else if (outcome.kind === 'safe-app') {
-        setStatus(
-          `Proposed to Safe as one batch of ${count} calls and executed (tx ${truncateAddress(outcome.executionHash)}).`,
-        )
-        setComplete(true)
+        line = `Proposed to Safe as one batch of ${count} calls and executed (tx ${truncateAddress(outcome.executionHash)}).`
       } else if (outcome.result.status !== 'queued') {
         const result = outcome.result
-        setStatus(
-          result.status === 'executed'
-            ? `Batch of ${count} calls executed (tx ${truncateAddress(result.transactionHash ?? '')}).`
-            : result.status === 'waiting'
-              ? `Batch of ${count} calls approved onchain; it executes once the Safe has enough approvals.`
-              : `Batch of ${count} calls submitted; awaiting confirmation.`,
-        )
-        setComplete(true)
+        line = result.status === 'executed'
+          ? `Batch of ${count} calls executed (tx ${truncateAddress(result.transactionHash ?? '')}).`
+          : result.status === 'waiting'
+            ? `Batch of ${count} calls approved onchain; it executes once the Safe has enough approvals.`
+            : `Batch of ${count} calls submitted; awaiting confirmation.`
       }
+      setRun(current => current.status === 'signing' || current.status === 'proposed'
+        ? { status: 'done', steps: current.steps, step: step ?? current.step, line: line ?? current.line, hash: 'hash' in current ? current.hash : null }
+        : current)
     } catch (submitError) {
-      setError(
-        submitError instanceof Error ? submitError.message : 'Could not submit the batch.',
-      )
-      if (!proposalHash) setFrozen(null)
-    } finally {
-      setBusy(false)
+      const message = submitError instanceof Error ? submitError.message : 'Could not submit the batch.'
+      setRun(current => current.status === 'signing' || current.status === 'proposed'
+        ? { ...current, status: 'failed', hash: 'hash' in current ? current.hash : null, error: message }
+        : current)
     }
   }
 

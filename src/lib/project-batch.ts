@@ -457,9 +457,6 @@ export async function runProjectBatch({
   onAttempts?: (attempts: Record<string, RawAttempt>) => void
 }): Promise<ProjectBatch> {
   assertNoViewAs()
-  if (typeof navigator === 'undefined' || !navigator.locks) {
-    throw new Error('This browser cannot lock project transaction recovery across tabs. Use a browser with Web Locks support.')
-  }
   const startChainId = getAccount(wagmiConfig).chainId
   const previous = loadProjectBatch(scope)
   const proposedCalls = calls ?? previous?.calls
