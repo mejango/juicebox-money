@@ -1,6 +1,6 @@
 'use client'
 
-import { withTabLocks } from '@/lib/tab-locks'
+import { requireWebLocks, withTabLocks } from '@/lib/tab-locks'
 import {
   JBCoreContracts,
   erc2771ForwarderAbi,
@@ -214,6 +214,7 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
   if (activeLaunches.has(session.salt)) throw new Error('This launch is already running.')
   activeLaunches.add(session.salt)
   try {
+    requireWebLocks('This browser cannot coordinate launch recovery across tabs. Use a browser with Web Locks support.')
     await withTabLocks(['jbm-launch'], 'This launch is already running in another tab.', () =>
       withForwarderAuthorizationLock({ account, chainIds: session.chains, owner: `launch:${session.salt}`,
         pendingSessions: readRelayrPendingSessionsForAuthorization,

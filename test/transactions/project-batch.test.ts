@@ -956,6 +956,13 @@ describe('durable project batches', () => {
     expect(mocks.authority.mock.calls[0][0].plan).toBeUndefined()
   })
 
+  it('fails before wallet review when browser locking is unavailable', async () => {
+    vi.stubGlobal('navigator', {})
+    await expect(run([call()])).rejects.toThrow('Web Locks')
+    expect(mocks.authority).not.toHaveBeenCalled()
+    expect(mocks.review).not.toHaveBeenCalled()
+  })
+
   it('fails before wallet review when durable storage is unavailable', async () => {
     vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: unknown, run?: (lock: object) => unknown) => (run ?? (options as (lock: object) => unknown))({}) } })
     window.localStorage.setItem = () => { throw new Error('quota') }

@@ -16,6 +16,7 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { withRelayrScopeLock } from '@/lib/relayr'
+import { requireWebLocks } from '@/lib/tab-locks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import { isRawRelayrPhase, runRawRelayrLifecycle, type RawRelayrPhase } from '@/lib/raw-relayr-lifecycle'
 
@@ -438,6 +439,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
   const startChainId = getAccount(wagmiConfig).chainId
   const walletGuards = review.calls.map(call => captureWalletContext(wagmiConfig, { account: review.account, chainId: call.chainId }))
   return locked(aliases(review), async () => {
+    requireWebLocks('This browser cannot coordinate payer deployments across tabs. Use a browser with Web Locks support.')
     const original = readJournal(review.id)
     if (original?.archived) throw new Error('This payer attempt was already completed. Open a new review to create more addresses.')
     const active = loadPayerDeployment(review.scope)

@@ -24,6 +24,7 @@ import {
   hasRelayrPendingEvidence, loadRelayrPendingSession, relayrForwardGas, relayrTargetSupportsForwarder,
   runRelayrCalls, withRelayrScopeLock,
 } from '@/lib/relayr'
+import { requireWebLocks } from '@/lib/tab-locks'
 import { isDefiniteWalletRejection, writeIntentKey, type ReviewedPlan, type SavedAttempt, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { recoverSaved, safeHoldNamespace, safeProposalKey, strictRetirable } from '@/lib/write-holds'
 import { loadReviewEngine } from '@/lib/preload-review'
@@ -457,6 +458,7 @@ export async function runProjectBatch({
   onAttempts?: (attempts: Record<string, RawAttempt>) => void
 }): Promise<ProjectBatch> {
   assertNoViewAs()
+  requireWebLocks('This browser cannot lock project transaction recovery across tabs. Use a browser with Web Locks support.')
   const startChainId = getAccount(wagmiConfig).chainId
   const previous = loadProjectBatch(scope)
   const proposedCalls = calls ?? previous?.calls
