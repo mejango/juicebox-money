@@ -10,7 +10,7 @@ import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { withRelayrScopeLock } from '@/lib/relayr'
 import { relayrBundleRequest, relayrDestinationHash, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
-import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, RawQuoteNotObtainedError, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
+import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, isRawRelayrPhase, RawQuoteNotObtainedError, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
 
 /** One routing attempt's progress, in the reviewed order. */
 export type RawAttempt = 'waiting' | 'checking' | 'confirmed' | 'reverted'
@@ -25,7 +25,7 @@ const MAX_BYTES = 2_000_000
 function snapshot(value: RawRelayrSession): RawRelayrSession {
   const saved = JSON.parse(JSON.stringify(value)) as RawRelayrSession
   if (saved.version !== 1 || !saved.scope || !isAddress(saved.account) || !Array.isArray(saved.calls) || !saved.calls.length ||
-      !Array.isArray(saved.records) || !['reviewed', 'publishing', 'quoted', 'payment-sending', 'payment-reverted', 'executing', 'complete'].includes(saved.phase) ||
+      !Array.isArray(saved.records) || !isRawRelayrPhase(saved.phase) ||
       !relayrSupportsChains([...new Set(saved.calls.map(call => call.chainId))]) ||
       (saved.payments !== undefined && !relayrSentPaymentsSnapshot(saved.payments))) throw new Error('The saved routing bundle is malformed. Keep it pending.')
   for (const call of saved.calls) {

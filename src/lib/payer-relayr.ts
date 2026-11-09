@@ -17,7 +17,7 @@ import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/saf
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { withRelayrScopeLock } from '@/lib/relayr'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
-import { runRawRelayrLifecycle } from '@/lib/raw-relayr-lifecycle'
+import { isRawRelayrPhase, runRawRelayrLifecycle, type RawRelayrPhase } from '@/lib/raw-relayr-lifecycle'
 
 const PREFIX = 'jb-payer-deploy-v1:'
 const MAX_JOURNAL_BYTES = 100_000
@@ -67,7 +67,7 @@ export type PayerDeploymentSession = {
   calls: PayerDeploymentCall[]
   outcomes: PayerDeploymentOutcome[]
   /** `payment-reverted`: the latest payment canonically reverted; only the SDK's retry rule lets the quote be paid again. */
-  phase: 'reviewed' | 'publishing' | 'quoted' | 'payment-sending' | 'payment-reverted' | 'executing' | 'complete'
+  phase: RawRelayrPhase
   createdAt: number
   quote?: RelayrQuote
   paymentHash?: Hex
@@ -165,7 +165,7 @@ function snapshot(session: PayerDeploymentSession): PayerDeploymentSession {
       !Array.isArray(value.calls) || value.calls.length < 1 || value.calls.length > 8 ||
       new Set(value.calls.map(call => call.chainId)).size !== value.calls.length ||
       !['direct', 'safe', 'relayr'].includes(value.transport) ||
-      !['reviewed', 'publishing', 'quoted', 'payment-sending', 'payment-reverted', 'executing', 'complete'].includes(value.phase) ||
+      !isRawRelayrPhase(value.phase) ||
       !Array.isArray(value.outcomes) || value.outcomes.length !== value.calls.length ||
       !Array.isArray(value.records)) throw new Error('The saved payer deployment is malformed. Keep it pending.')
   value.calls.forEach(assertCall)
