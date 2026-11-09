@@ -6,7 +6,6 @@ import {
   createContext,
   isValidElement,
   useContext,
-  useEffect,
   useState,
   type ReactNode,
 } from 'react'
@@ -16,7 +15,7 @@ import { useShop721, useShop721Media } from '@/hooks/useShop721'
 import Image from 'next/image'
 import quietIllustration from '@/assets/illustrations/quiet.png'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
-import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { useLiveFeed } from '@/hooks/useLiveFeed'
 import {
   getProjectActivity,
   getProjectActivityByProject,
@@ -186,24 +185,6 @@ function ActivityTypeFilter({
         ))}
       </div>
     </details>
-  )
-}
-
-/**
- * Merge a fetched page into the feed, deduped by id and re-sorted newest-first.
- *
- * Incoming rows are NOT simply prepended: the same merge serves both the poll (newer
- * rows, which belong at the top) and "load more" (an older page, which belongs at the
- * bottom). Sorting on the server's own ordering key is the only thing that keeps both
- * correct, with the id as a stable tiebreak for same-timestamp rows.
- */
-export function mergeActivityEvents<T extends BsActivityEvent>(
-  current: T[],
-  incoming: T[],
-): T[] {
-  const incomingIds = new Set(incoming.map(event => event.id))
-  return [...incoming, ...current.filter(event => !incomingIds.has(event.id))].sort(
-    (a, b) => b.timestamp - a.timestamp || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
   )
 }
 
@@ -1201,98 +1182,25 @@ export function ActivityList({
   /** Successful server read time (epoch ms), including a verified empty page. */
   initialEventsUpdatedAt?: number
 }) {
-  const [liveEvents, setLiveEvents] = useState(events)
-  const [liveError, setLiveError] = useState(error)
-  const [liveTotal, setLiveTotal] = useState(total ?? events.length)
-  const [loadingMore, setLoadingMore] = useState(false)
-  // Older pages load while the list is shown; leaving it stops the one under way.
-  const listSignal = useUnmountSignal()
-  const [loadMoreError, setLoadMoreError] = useState<string | null>(null)
+  const feed = useLiveFeed({
+    initial: events,
+    initialTotal: total ?? events.length,
+    updatedAt: error ? undefined : initialEventsUpdatedAt,
+    pollMs: PROJECT_ACTIVITY_FRESHNESS_MS,
+    pollKey: `${chainId}:${projectId}:${suckerGroupId ?? ''}:${error}`,
+    read: async (offset, signal) => {
+      const page = await (suckerGroupId
+        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, offset, { signal })
+        : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE_SIZE, offset, { signal }))
+      return { items: page.items, total: page.totalCount }
+    },
+    failure: 'Could not load more activity. Try again.',
+  })
+  const liveEvents = feed.items
+  const liveTotal = feed.total
+  const liveError = error && !feed.refreshed
   const [selectedCategories, setSelectedCategories] =
     useState<Set<ActivityCategory> | null>(null)
-
-  useEffect(() => {
-    setLiveEvents(events)
-    setLiveError(error)
-    setLiveTotal(total ?? events.length)
-  }, [error, events, total])
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return
-    let stopped = false
-    let refreshing = false
-    let updatedAt = error ? undefined : initialEventsUpdatedAt
-    let timer: number | undefined
-    // The poll's reads stop with it.
-    const polling = new AbortController()
-    const { signal } = polling
-
-    const schedule = (delay: number) => {
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => void refresh(), delay)
-    }
-
-    const refresh = async () => {
-      if (stopped || refreshing || document.visibilityState === 'hidden') return
-      const age = updatedAt === undefined ? Infinity : Date.now() - updatedAt
-      if (age >= 0 && age < PROJECT_ACTIVITY_FRESHNESS_MS) {
-        schedule(PROJECT_ACTIVITY_FRESHNESS_MS - age)
-        return
-      }
-      refreshing = true
-      try {
-        const incoming = await (suckerGroupId
-          ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, 0, { signal })
-          : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE_SIZE, 0, { signal }))
-        if (stopped) return
-        updatedAt = Date.now()
-        // Poll the newest page only; merging keeps whatever "Load more" has already pulled in.
-        setLiveEvents(current => mergeActivityEvents(current, incoming.items))
-        setLiveTotal(incoming.totalCount)
-        setLiveError(false)
-      } catch {
-        // Keep the last known-good feed; the next poll retries.
-      } finally {
-        refreshing = false
-        if (!stopped) schedule(PROJECT_ACTIVITY_FRESHNESS_MS)
-      }
-    }
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void refresh()
-    }
-    void refresh()
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      stopped = true
-      polling.abort()
-      window.clearTimeout(timer)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [chainId, projectId, suckerGroupId, error, initialEventsUpdatedAt])
-
-  const loadMore = async () => {
-    setLoadingMore(true)
-    setLoadMoreError(null)
-    try {
-      const signal = listSignal()
-      const page = await (suckerGroupId
-        ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, liveEvents.length, { signal })
-        : getProjectActivityByProject(
-            chainId,
-            projectId,
-            ACTIVITY_PAGE_SIZE,
-            liveEvents.length,
-            { signal },
-          ))
-      setLiveEvents(current => mergeActivityEvents(current, page.items))
-      setLiveTotal(page.totalCount)
-    } catch {
-      setLoadMoreError('Could not load more activity. Try again.')
-    } finally {
-      setLoadingMore(false)
-    }
-  }
 
   const projectEvents = projectFeedEvents(liveEvents)
   const categories: ActivityCategory[] = []
@@ -1376,15 +1284,15 @@ export function ActivityList({
       {liveEvents.length < liveTotal ? (
         <div className="mt-3 flex flex-col items-start gap-2">
           <button
-            onClick={() => void loadMore()}
-            disabled={loadingMore}
+            onClick={() => void feed.loadMore()}
+            disabled={feed.loading}
             title={`${liveEvents.length} of ${liveTotal} loaded`}
             className="min-h-[32px] text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
           >
-            {loadingMore ? 'Loading…' : 'more'}
+            {feed.loading ? 'Loading…' : 'more'}
           </button>
-          {loadMoreError ? (
-            <p className="text-xs text-crush-600">{loadMoreError}</p>
+          {feed.error ? (
+            <p className="text-xs text-crush-600">{feed.error}</p>
           ) : null}
         </div>
       ) : null}

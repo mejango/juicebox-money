@@ -21,6 +21,7 @@ import {
   type ParaAddFundsRequest,
   type ParaRequest,
 } from './ParaAuthContext'
+import { ParaSessionBridge } from './ParaSessionBridge'
 import { ProjectRouteProvider } from './ProjectRouteContext'
 import { lazyParaConnector } from './lazy-para-connector'
 import { openOnRampWindow } from './on-ramp-window'
@@ -173,6 +174,7 @@ export function Providers({ children }: PropsWithChildren) {
         reconnectOnMount={!IS_DETERMINISTIC_BROWSER}
       >
         <ParaAuthContext.Provider value={paraAuth}>
+          {IS_DETERMINISTIC_BROWSER ? null : <ParaSessionBridge />}
           <ProjectRouteProvider>
             <TransactionReviewProvider>{children}</TransactionReviewProvider>
           </ProjectRouteProvider>

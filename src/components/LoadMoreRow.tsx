@@ -2,10 +2,13 @@
 export function LoadMoreRow({
   label,
   loading,
+  error,
   onLoadMore,
 }: {
   label: string
   loading: boolean
+  /** Why the last page failed; the button stays as the retry. */
+  error?: string | null
   onLoadMore: () => void
 }) {
   return (
@@ -21,6 +24,7 @@ export function LoadMoreRow({
       >
         {label}
       </button>
+      {error ? <p className="-mt-3 pb-3 text-center text-xs text-crush-600">{error}</p> : null}
     </li>
   )
 }

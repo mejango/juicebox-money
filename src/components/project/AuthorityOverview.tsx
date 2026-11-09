@@ -24,14 +24,13 @@ import { AddressLink } from "@/components/ui/AddressLink";
 import { ChainPicker } from "@/components/ui/ChainPicker";
 import { TxProgress } from "@/components/ui/TxProgress";
 import { ErrorNote } from "@/components/ui/TxError";
-import { useRelayrDiscard } from "@/components/RelayrDiscard";
+import { useAuthorityRun } from "@/hooks/useAuthorityRun";
 import { useUnmountSignal } from "@/hooks/useUnmountSignal";
 import { replaceTabHash } from "@/components/project/Tabs";
 import { invalidateProjectRoute } from "@/providers/ProjectRouteContext";
 import {
   clientFor,
   readAuthorityOf,
-  runAuthorityCalls,
   safeOutcomeMessage,
   toggleInSet,
   type AuthorityCall,
@@ -588,22 +587,12 @@ export function TransferAuthorityFlow({
   onDone: () => void;
 }) {
   const batch = useSafeBatch();
-  // Leaving ends a Safe app proposal's wait for its execution.
-  const flowSignal = useUnmountSignal();
   const [open, setOpen] = useState(false);
   const [destination, setDestination] = useState("");
   const [ack, setAck] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<{
-    to: Address;
-    calls: AuthorityCall[];
-  } | null>(null);
-  const [step, setStep] = useState(-1);
-  const [done, setDone] = useState(false);
-  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
-  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
+  const transfer = useAuthorityRun<{ to: Address; calls: AuthorityCall[] }>();
+  const { plan, busy, done } = transfer;
 
   const title = isRevnet ? "Transfer revnet operator" : "Transfer project ownership";
 
@@ -615,8 +604,7 @@ export function TransferAuthorityFlow({
     }
     if (!ack) return;
     setError(null);
-    setStatus(null);
-    setPlan({
+    transfer.review({
       to,
       calls: rows.map((row) => {
         if (isRevnet) {
@@ -666,56 +654,19 @@ export function TransferAuthorityFlow({
     }
   };
 
-  const submit = async () => {
-    if (!plan || busy) return;
-    setBusy(true);
-    setError(null);
-    discard.capture(null);
-    setStep(0);
-    try {
-      const result = await runAuthorityCalls({
-        calls: plan.calls,
-        signal: flowSignal(),
-        onProgress: (progress) => {
-          setStatus(progress.message);
-          // Progress names the chain it is on (JB_CHAINS name); that names the step.
-          const index = plan.calls.findIndex((call) =>
-            progress.message.includes(chainName(call.chainId)),
-          );
-          if (index >= 0) setStep(index);
-        },
-      });
-      // Invalidate the browsing lease only; the existing outcome still distinguishes
-      // an executed transfer from a proposal awaiting Safe execution.
-      invalidateProjectRoute();
-      setStatus(
-        safeOutcomeMessage(
-          result,
-          `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
-        ),
-      );
-      setDone(true);
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Could not transfer.",
-      );
-      discard.capture(submitError);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const submit = () => transfer.run({
+    outcome: (result) => safeOutcomeMessage(
+      result,
+      `${isRevnet ? "Revnet operator" : "Project ownership"} transferred on ${rows.length} chain${rows.length === 1 ? "" : "s"}.`,
+    ),
+    failure: "Could not transfer.",
+    // Invalidate the browsing lease only; the existing outcome still distinguishes
+    // an executed transfer from a proposal awaiting Safe execution.
+    onSuccess: () => invalidateProjectRoute(),
+  });
 
   const closeReview = () => {
-    if (busy) return;
-    const finished = done;
-    setPlan(null);
-    setStep(-1);
-    setDone(false);
-    setError(null);
-    discard.reset();
-    if (finished) onDone();
+    if (transfer.close()) onDone();
   };
 
   const relinquish = isRevnet && plan?.to === zeroAddress;
@@ -746,16 +697,11 @@ export function TransferAuthorityFlow({
         key: String(row.chainId),
         title: `${isRevnet ? "Set operator" : "Transfer ownership"} on ${row.name}`,
       }))}
-      activeIndex={step}
-      status={status}
-      error={discard.active ? null : error}
-      busy={busy}
-      complete={done}
+      {...transfer.progress(() => void submit())}
       start={() => void submit()}
-      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
-      {discard.element}
+      {transfer.discard.element}
     </TxProgress>
   ) : null;
 
@@ -839,7 +785,6 @@ export function TransferAuthorityFlow({
           </button>
         ) : null}
       </div>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error && !plan ? <ErrorNote message={error} /> : null}
       {dialog}
     </div>
@@ -1115,8 +1060,6 @@ export function PermissionEditor({
   onDone: () => void;
 }) {
   const [operatorInput, setOperatorInput] = useState(grant?.operator ?? "");
-  // Leaving ends a Safe app proposal's wait for its execution.
-  const flowSignal = useUnmountSignal();
   // The granted set is PER CHAIN. Seeding from the cross-chain union and writing it back to every chain
   // silently widens the grant wherever it was narrower, so a non-uniform operator starts scoped to one
   // chain, seeded from what that chain actually holds.
@@ -1146,19 +1089,14 @@ export function PermissionEditor({
   };
   const [ack, setAck] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<{
+  const permissionsRun = useAuthorityRun<{
     operator: Address;
     chosen: AuthorityDeployment[];
     permissions: string[];
     calls: AuthorityCall[];
-  } | null>(null);
-  const [step, setStep] = useState(-1);
-  const [done, setDone] = useState(false);
-  // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
-  const discard = useRelayrDiscard(() => setError(null), () => { setPlan(null); setStep(-1); });
+  }>();
+  const { plan, busy, done } = permissionsRun;
 
   /** Re-read each chain's current bitmap and freeze the exact calls. */
   const review = async () => {
@@ -1174,7 +1112,6 @@ export function PermissionEditor({
     }
     setChecking(true);
     setError(null);
-    setStatus(null);
     try {
       const calls: AuthorityCall[] = [];
       for (const deployment of chosen) {
@@ -1212,7 +1149,7 @@ export function PermissionEditor({
           }),
         );
       }
-      setPlan({
+      permissionsRun.review({
         operator,
         chosen,
         permissions: V6_PERMISSIONS.filter((permission) =>
@@ -1231,53 +1168,16 @@ export function PermissionEditor({
     }
   };
 
-  const submit = async () => {
-    if (!plan || busy) return;
-    setBusy(true);
-    setError(null);
-    discard.capture(null);
-    setStep(0);
-    try {
-      const result = await runAuthorityCalls({
-        calls: plan.calls,
-        signal: flowSignal(),
-        onProgress: (progress) => {
-          setStatus(progress.message);
-          // Progress names the chain it is on (JB_CHAINS name); that names the step.
-          const index = plan.calls.findIndex((call) =>
-            progress.message.includes(chainName(call.chainId)),
-          );
-          if (index >= 0) setStep(index);
-        },
-      });
-      setStatus(
-        safeOutcomeMessage(
-          result,
-          `Permissions updated on ${plan.chosen.length} chain${plan.chosen.length === 1 ? "" : "s"}.`,
-        ),
-      );
-      setDone(true);
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : "Could not update permissions.",
-      );
-      discard.capture(submitError);
-    } finally {
-      setBusy(false);
-    }
-  };
+  const submit = () => permissionsRun.run({
+    outcome: (result, reviewed) => safeOutcomeMessage(
+      result,
+      `Permissions updated on ${reviewed.chosen.length} chain${reviewed.chosen.length === 1 ? "" : "s"}.`,
+    ),
+    failure: "Could not update permissions.",
+  });
 
   const closeReview = () => {
-    if (busy) return;
-    const finished = done;
-    setPlan(null);
-    setStep(-1);
-    setDone(false);
-    setError(null);
-    discard.reset();
-    if (finished) onDone();
+    if (permissionsRun.close()) onDone();
   };
 
   const dialog = plan || checking ? (
@@ -1316,16 +1216,12 @@ export function PermissionEditor({
         key: String(row.chainId),
         title: `${grant ? "Set permissions" : "Add operator"} on ${chainName(row.chainId)}`,
       }))}
-      activeIndex={step}
-      status={!plan ? "Reading the current permissions…" : status}
-      error={discard.active ? null : error}
-      busy={checking || busy}
-      complete={done}
+      {...permissionsRun.progress(() => void submit())}
+      {...(!plan ? { status: "Reading the current permissions…", busy: true } : {})}
       start={() => void submit()}
-      next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
       onClose={closeReview}
     >
-      {discard.element}
+      {permissionsRun.discard.element}
     </TxProgress>
   ) : null;
 
@@ -1448,7 +1344,6 @@ export function PermissionEditor({
       >
         {grant ? "Update permissions" : "Add operator"}
       </button>
-      {status ? <p className="mt-2 text-xs text-smoke-700">{status}</p> : null}
       {error && !plan ? <ErrorNote message={error} /> : null}
       {dialog}
     </div>

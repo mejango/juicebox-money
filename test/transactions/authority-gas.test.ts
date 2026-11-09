@@ -94,7 +94,7 @@ import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/saf
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { listedHeld } from '../support/held-chain'
 import { modelNode } from '../support/chain-node'
-import { runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
+import { runAuthorityCalls, type AuthorityCall, type AuthorityProgress } from '@/lib/authority'
 import { loadReviewEngine } from '@/lib/preload-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
@@ -367,6 +367,24 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(result.safeResults).toEqual([safeResult])
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledOnce()
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+  })
+
+  it('names the call being sent by its index, never while only checking', async () => {
+    mocks.readAuthorityIdentity.mockImplementation(async (_client, authority) => authority === SAFE
+      ? { kind: 'safe', threshold: 2, owners: [ALICE] }
+      : { kind: 'eoa' })
+    mocks.runSafeCalls.mockImplementationOnce(async ({ onProgress }) => {
+      onProgress?.('Signing 1/1 Safe proposal…', 0)
+      return [{ chainId: 8453, mode: 'service', status: 'queued', nonce: 0, safeTxHash: HASH }]
+    })
+    const progress: AuthorityProgress[] = []
+    await runAuthorityCalls({ signal: flow, onProgress: update => progress.push(update), calls: [
+      { chainId: 8453, authority: SAFE, target: TARGET, data: '0x5678' },
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+    ] })
+    expect(progress.filter(update => update.kind === 'checking').every(update => update.index === undefined)).toBe(true)
+    expect(progress.filter(update => update.kind !== 'checking').map(update => [update.kind, update.index]))
+      .toEqual([['safe', 0], ['direct', 1]])
   })
 
   it('recovers a submitted bundle before callbacks inspect already changed project state', async () => {
@@ -1370,7 +1388,7 @@ describe('authority final wallet context', () => {
     } finally {
       spy.mockRestore()
     }
-    expect(onProgress).toHaveBeenCalledWith({ kind: 'direct', message: engine.HELD_CONFIRMING_LINE })
+    expect(onProgress).toHaveBeenCalledWith({ kind: 'direct', message: engine.HELD_CONFIRMING_LINE, index: 0 })
     expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234'])
     expect(mocks.runSafeCalls).toHaveBeenCalledOnce()
   })

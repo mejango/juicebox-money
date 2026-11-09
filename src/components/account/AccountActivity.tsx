@@ -1,14 +1,12 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useEffect, useState } from 'react'
-import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { useLiveFeed } from '@/hooks/useLiveFeed'
 import { ActorLink } from '@/components/ActorLink'
 import {
   combinedActivityParts,
   feedAmountToken,
   groupSameTxEvents,
-  mergeActivityEvents,
 } from '@/components/ActivityList'
 import {
   ActivityAmountLine,
@@ -40,68 +38,20 @@ export function AccountActivity({
   initialEvents: BsAccountActivityEvent[]
   totalCount: number
 }) {
-  const [events, setEvents] = useState(initialEvents)
-  // Older pages load while the list is shown; leaving it stops the one under way.
-  const listSignal = useUnmountSignal()
-  const [total, setTotal] = useState(totalCount)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (typeof window === 'undefined' || typeof document === 'undefined') return
-    let stopped = false
-    // The poll's reads stop with it.
-    const polling = new AbortController()
-
-    const refresh = async () => {
-      if (document.visibilityState === 'hidden') return
-      try {
-        const page = await getAccountActivity(address, {
-          limit: ACCOUNT_ACTIVITY_PAGE,
-          offset: 0,
-          signal: polling.signal,
-        })
-        if (stopped) return
-        setEvents(current => mergeActivityEvents(current, page.items))
-        setTotal(page.totalCount)
-      } catch {
-        // Keep the last known-good page; the next poll retries.
-      }
-    }
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void refresh()
-    }
-    const timer = window.setInterval(() => void refresh(), ACTIVITY_POLL_MS)
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => {
-      stopped = true
-      polling.abort()
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', onVisibilityChange)
-    }
-  }, [address])
-
-  const loadMore = async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const page = await getAccountActivity(address, {
-        limit: ACCOUNT_ACTIVITY_PAGE,
-        offset: events.length,
-        signal: listSignal(),
-      })
-      setEvents(previous => {
-        const seen = new Set(previous.map(event => event.id))
-        return [...previous, ...page.items.filter(event => !seen.has(event.id))]
-      })
-      setTotal(page.totalCount)
-    } catch {
-      setError('Could not load more activity. Try again.')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const feed = useLiveFeed({
+    initial: initialEvents,
+    initialTotal: totalCount,
+    updatedAt: 'mount',
+    pollMs: ACTIVITY_POLL_MS,
+    pollKey: address,
+    read: async (offset, signal) => {
+      const page = await getAccountActivity(address, { limit: ACCOUNT_ACTIVITY_PAGE, offset, signal })
+      return { items: page.items, total: page.totalCount }
+    },
+    failure: 'Could not load more activity. Try again.',
+  })
+  const events = feed.items
+  const total = feed.total
 
   if (events.length === 0) {
     return (
@@ -121,15 +71,15 @@ export function AccountActivity({
       {events.length < total ? (
         <div className="mt-4 flex flex-col items-center gap-2">
           <button
-            onClick={loadMore}
-            disabled={loading}
+            onClick={() => void feed.loadMore()}
+            disabled={feed.loading}
             className="btn-secondary min-h-[40px] px-5 text-sm"
           >
-            {loading
+            {feed.loading
               ? 'Loading…'
               : `Load more (${events.length} of ${total})`}
           </button>
-          {error ? <p className="text-xs text-crush-600">{error}</p> : null}
+          {feed.error ? <p className="text-xs text-crush-600">{feed.error}</p> : null}
         </div>
       ) : null}
     </div>

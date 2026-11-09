@@ -50,7 +50,8 @@ import {
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
 import { loadRelayrPendingSession, relayrCallsScope, withRelayrScopeLock } from '@/lib/relayr'
-import { RelayrDiscard, useRelayrDiscard } from '@/components/RelayrDiscard'
+import { RelayrDiscard } from '@/components/RelayrDiscard'
+import { useAuthorityRun } from '@/hooks/useAuthorityRun'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -1162,26 +1163,19 @@ export function TokenEditor({
   )
   const [name, setName] = useState(commonName)
   const [symbol, setSymbol] = useState(commonSymbol)
-  const [review, setReview] = useState<AuthorityCall[] | null>(null)
-  const [done, setDone] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // The token calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
-  const discard = useRelayrDiscard(() => setError(null), () => setReview(null))
-  // Leaving the editor ends a Safe app proposal's wait for its execution.
-  const flowSignal = useUnmountSignal()
+  const tokenRun = useAuthorityRun<{ calls: AuthorityCall[] }>()
+  const review = tokenRun.plan?.calls ?? null
+  const { busy, done } = tokenRun
 
   const invalidate = () => {
-    setReview(null)
-    setDone(false)
+    tokenRun.close()
     setError(null)
-    discard.reset()
   }
 
   const buildReview = () => {
     setError(null)
-    setStatus(null)
     const chosen = rows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one chain.')
@@ -1197,8 +1191,8 @@ export function TokenEditor({
     }
     try {
       const salt = tokenDeploySalt(rows, name, symbol)
-      setReview(
-        chosen.map(row => {
+      tokenRun.review({
+        calls: chosen.map(row => {
           if (!row.authority || !row.controller) {
             throw new Error(`${row.name}: owner/operator or controller is unknown.`)
           }
@@ -1222,7 +1216,7 @@ export function TokenEditor({
             salt,
           })
         }),
-      )
+      })
     } catch (reviewError) {
       setError(
         reviewError instanceof Error
@@ -1232,38 +1226,14 @@ export function TokenEditor({
     }
   }
 
-  const submit = async () => {
-    if (!review || busy) return
-    setBusy(true)
-    setError(null)
-    discard.capture(null)
-    try {
-      const result = await runAuthorityCalls({
-        calls: review,
-        onProgress: progress => setStatus(progress.message),
-        signal: flowSignal(),
-      })
-      setStatus(
-        outcomeMessage(
-          result,
-          `Token metadata updated on ${review.length} chain${
-            review.length === 1 ? '' : 's'
-          }.`,
-        ),
-      )
-      setDone(true)
-      onDone()
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Could not update token metadata.',
-      )
-      discard.capture(submitError)
-    } finally {
-      setBusy(false)
-    }
-  }
+  const submit = () => void tokenRun.run({
+    outcome: (result, reviewed) => outcomeMessage(
+      result,
+      `Token metadata updated on ${reviewed.calls.length} chain${reviewed.calls.length === 1 ? '' : 's'}.`,
+    ),
+    failure: 'Could not update token metadata.',
+    onSuccess: () => onDone(),
+  })
 
   return (
     <div className="mt-4 rounded-xl border border-smoke-200 p-4">
@@ -1327,9 +1297,6 @@ export function TokenEditor({
       >
         Save token details
       </button>
-      {status && !review ? (
-        <p className="mt-2 text-xs text-smoke-700">{status}</p>
-      ) : null}
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
@@ -1364,16 +1331,11 @@ export function TokenEditor({
                 : 'Rename the token'
             } on ${chainName(call.chainId)}`,
           }))}
-          activeIndex={busy ? 0 : -1}
-          status={status}
-          error={discard.active ? null : error}
-          busy={busy}
-          complete={done}
-          start={() => void submit()}
-          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
+          {...tokenRun.progress(submit)}
+          start={submit}
           onClose={invalidate}
         >
-          {discard.element}
+          {tokenRun.discard.element}
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
             {review.some(call => call.functionName === 'deployERC20For')

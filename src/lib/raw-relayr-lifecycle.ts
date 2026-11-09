@@ -7,9 +7,19 @@ import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { RelayrPaymentSubmittedError, RelayrQuoteTimeoutError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
 import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
+/** A raw Relayr session's phases, in order; `payment-reverted` follows `payment-sending` when its payment canonically reverted. */
+const RAW_RELAYR_PHASES = ['reviewed', 'publishing', 'quoted', 'payment-sending', 'payment-reverted', 'executing', 'complete'] as const
+
+export type RawRelayrPhase = typeof RAW_RELAYR_PHASES[number]
+
+/** A saved phase this code reads. */
+export function isRawRelayrPhase(value: unknown): value is RawRelayrPhase {
+  return (RAW_RELAYR_PHASES as readonly unknown[]).includes(value)
+}
+
 export type RawRelayrState = {
   account: Address
-  phase: 'reviewed' | 'publishing' | 'quoted' | 'payment-sending' | 'payment-reverted' | 'executing' | 'complete'
+  phase: RawRelayrPhase
   quote?: RelayrQuote
   payments?: RelayrSentPayment[]
   paymentHash?: Hex
