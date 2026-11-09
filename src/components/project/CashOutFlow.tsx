@@ -32,7 +32,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { liveStep, reachedLastStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { liveStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
@@ -109,7 +109,6 @@ export function CashOutPanel({
   /** Each pool-sale run call's dialog step. */
   const [runShown, setRunShown] = useState<number[] | null>(null)
   /** The run sent its cash-out: a settled approval alone sold nothing. */
-  const [finalSent, setFinalSent] = useState(false)
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
@@ -399,6 +398,7 @@ export function CashOutPanel({
     route.expectedReturn <= 0n
 
   const busy = tx.busy
+  const finalSent = tx.lastStepSent
   const success = tx.phase === 'success' && finalSent
   /** A Safe executed an approval it was proposed: the sale is reviewed next. */
   const approvalOnly = (tx.phase === 'success' && !finalSent) || tx.settledStep != null
@@ -548,7 +548,6 @@ export function CashOutPanel({
   const cashOut = async () => {
     if (!plan || !address || busy) return
     setErrorMsg(null)
-    setFinalSent(false)
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
     const cashOutKey = cashOutIntent({ chainId, project: projectId, holder: reviewedAccount, beneficiary: reviewedAccount })
@@ -643,7 +642,7 @@ export function CashOutPanel({
         setUsedDirectSell(true)
         setRunStep(shown(0))
         setRunShown(calls.map((_, step) => shown(step)))
-        const ended = await tx.run({
+        await tx.run({
           account: reviewedAccount,
           calls,
           scope: runScope,
@@ -656,27 +655,21 @@ export function CashOutPanel({
               symbol: receiveSymbol,
             }),
           }),
-          onSubmitted: (_call, step) => {
-            setRunStep(shown(step))
-            if (step === calls.length - 1) setFinalSent(true)
-          },
+          onSubmitted: (_call, step) => setRunStep(shown(step)),
         })
-        if (reachedLastStep(ended, calls.length)) setFinalSent(true)
         return
       }
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
       setRunShown(null)
-      const ended = await tx.run({
+      await tx.run({
         account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
         calls: [reviewedCall(plan.request, { intent: cashOutKey, legacy: cashOutLegacy })],
         context: contextRows(reviewRows(plan)),
-        onSubmitted: () => setFinalSent(true),
         description: plan.reviewNotice,
       })
-      if (reachedLastStep(ended, 1)) setFinalSent(true)
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }

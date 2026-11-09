@@ -15,7 +15,7 @@ import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { loadReviewEngine, preloadReviewDialog } from '@/lib/preload-review'
 
 import { revertedReceipt } from '@/lib/reviewed-call'
-export { hashOf, liveStep, reachedLastStep, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
+export { hashOf, liveStep, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
 import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
@@ -180,6 +180,8 @@ export function useReviewedAction(chainId?: number) {
     error,
     /** The step of the run core is on (reviewing, simulating, signing or awaiting), counted in the run's calls. */
     step: runner.step,
+    /** The wallet returned a hash for the run's last step, in this run or the saved sequence it resumed; `reset` clears it. */
+    lastStepSent: runner.lastSubmittedStep !== null && runner.lastSubmittedStep === runner.total - 1,
     /** An ended run's earlier step that later mined successfully, by its index. */
     settledStep: runner.settled && !runner.settled.finished ? runner.settled.step : null,
     /** The value the failed run threw, for a flow's own decoder. */

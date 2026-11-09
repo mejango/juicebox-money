@@ -103,7 +103,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => false,
 }))
 
-import { liveStep, reachedLastStep, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, useReviewedAction } from '@/hooks/useReviewedAction'
 import { writeHolds } from '@/lib/write-holds'
 
 type Action = ReturnType<typeof useReviewedAction>
@@ -226,6 +226,7 @@ describe('useReviewedAction', () => {
     await act(async () => { await vi.waitFor(() => expect(ended).not.toBe('pending'), { timeout: 15_000, interval: 100 }) })
     expect(ended).toMatchObject({ status: 'done', hashes: [expect.any(String)] })
     expect(ref.current!.phase).toBe('success')
+    expect(ref.current!.lastStepSent).toBe(true)
     await act(async () => renderer.unmount())
   }, 20_000)
 
@@ -273,15 +274,6 @@ describe('useReviewedAction', () => {
 })
 
 describe('a run step as a flow shows it', () => {
-  it('counts a done run, and a run ended on its last step with a Safe, as its last step reached', () => {
-    const hash = `0x${'01'.repeat(32)}` as Hex
-    // A resumed run reports no onSubmitted for the step that went through while away: only the result says so.
-    expect(reachedLastStep({ status: 'done', hashes: [hash], receipts: [] }, 2)).toBe(true)
-    expect(reachedLastStep({ status: 'proposed', step: 1, safeTxHash: hash }, 2)).toBe(true)
-    expect(reachedLastStep({ status: 'proposed', step: 0, safeTxHash: hash }, 2)).toBe(false)
-    expect(reachedLastStep(null, 2)).toBe(false)
-  })
-
   it("follows core's step while the run is in flight, and the flow's own step otherwise", () => {
     expect(liveStep({ busy: true, step: 1 }, [1, 2], 0)).toBe(2)
     expect(liveStep({ busy: false, step: 1 }, [1, 2], 0)).toBe(0)

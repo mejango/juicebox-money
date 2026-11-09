@@ -29,7 +29,7 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { recoveringRead } from '@/lib/read-recovery'
@@ -119,7 +119,6 @@ export function GetLoanFlow({
   /** The dialog step the run is on: the permission (when it needs one), then the borrow. */
   const [loanStep, setLoanStep] = useState(-1)
   /** The run sent its borrow: a settled permission alone opens no loan. */
-  const [borrowSent, setBorrowSent] = useState(false)
   /** Each run call's dialog step. */
   const [runShown, setRunShown] = useState<number[] | null>(null)
 
@@ -228,7 +227,6 @@ export function GetLoanFlow({
     if (!publicClient || !ctx) return
     setFlowError(null)
     setQuoting(true)
-    setBorrowSent(false)
     try {
       const has = await hasPermissions(publicClient, {
         chainId,
@@ -280,17 +278,13 @@ export function GetLoanFlow({
       setLoanStep(shown(0))
       setRunShown(calls.map((_, step) => shown(step)))
       setQuoting(false)
-      const ended = await borrowTx.run({
+      await borrowTx.run({
         account: r.account,
         calls,
         scope: runScope,
         ...planShown(saved, { context: contextRows(loanRows(r)) }),
-        onSubmitted: (_call, step) => {
-          setLoanStep(shown(step))
-          if (shown(step) === borrowIndex) setBorrowSent(true)
-        },
+        onSubmitted: (_call, step) => setLoanStep(shown(step)),
       })
-      if (reachedLastStep(ended, calls.length)) setBorrowSent(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)
@@ -350,6 +344,7 @@ export function GetLoanFlow({
     beginBorrow(review)
   }
 
+  const borrowSent = borrowTx.lastStepSent
   const opened = borrowTx.phase === 'success' && borrowSent
   /** A Safe executed the permission it was proposed: the borrow is reviewed next. */
   const permissionOnly = (borrowTx.phase === 'success' && !borrowSent) || borrowTx.settledStep != null

@@ -21,7 +21,7 @@ import { knownTokenSymbol, tokenSymbol } from '@/lib/token-symbol'
 import { useEffect, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
 import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
@@ -367,7 +367,6 @@ function RepayFlow({
   const { isViewAs } = useViewedAccount()
   const tx = useReviewedAction(chainId)
   /** The repayment reached the wallet: only then does a settled run mean the loan is repaid, not just approved. */
-  const [repaySent, setRepaySent] = useState(false)
   const [runStep, setRunStep] = useState(0)
   /** Each run call's dialog step. */
   const [runShown, setRunShown] = useState<number[] | null>(null)
@@ -379,6 +378,7 @@ function RepayFlow({
   const loans = revLoansAddress(chainId)
 
   const busy = tx.busy
+  const repaySent = tx.lastStepSent
   const repaid = tx.phase === 'success' && repaySent
   /** A Safe executed the approval alone: the repayment is next. */
   const approvalOnly = (tx.phase === 'success' && !repaySent) || tx.settledStep != null
@@ -527,20 +527,15 @@ function RepayFlow({
     // The dialog's steps: a held sequence resumes as saved, and a continued one is the repayment alone.
     const total = plan.approve ? 2 : 1
     const shown = (step: number) => Math.max(0, total - calls.length + step)
-    setRepaySent(false)
     setRunStep(shown(0))
     setRunShown(calls.map((_, step) => shown(step)))
-    const ended = await tx.run({
+    await tx.run({
       account: plan.account,
       scope: runScope,
       calls,
       ...planShown(saved, { context: contextRows(repayRows(plan)) }),
-      onSubmitted: (_call, step) => {
-        setRunStep(shown(step))
-        if (shown(step) === total - 1) setRepaySent(true)
-      },
+      onSubmitted: (_call, step) => setRunStep(shown(step)),
     })
-    if (reachedLastStep(ended, calls.length)) setRepaySent(true)
   }
 
   const closeDialog = () => {
