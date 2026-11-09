@@ -321,6 +321,13 @@ const STEP_TILES = [
   "bg-melon-400 text-ink",
 ];
 
+/** The wizard's named steps for a flavor; a step's index is its position here. */
+function wizardStepsOf(flavor: CreateDraft["flavor"]): string[] {
+  return flavor === "simple"
+    ? ["Flavor", "Look & Feel", "Shop", "Launch"]
+    : ["Flavor", "Look & Feel", flavor === "revnet" ? "Stages" : "Rules", "Shop", "Launch"];
+}
+
 function StepBadge({ n }: { n: number }) {
   return (
     <span
@@ -745,17 +752,9 @@ export function CreateForm() {
 
   const nameOk = name.trim().length > 0;
   const isSimpleProject = flavor === "simple";
-  const wizardSteps = isSimpleProject
-    ? ["Flavor", "Look & Feel", "Shop", "Launch"]
-    : [
-        "Flavor",
-        "Look & Feel",
-        flavor === "revnet" ? "Stages" : "Rules",
-        "Shop",
-        "Launch",
-      ];
-  const storeStep = isSimpleProject ? 2 : 3;
-  const launchStep = isSimpleProject ? 3 : 4;
+  const wizardSteps = wizardStepsOf(flavor);
+  const storeStep = wizardSteps.indexOf("Shop");
+  const launchStep = wizardSteps.indexOf("Launch");
   const rulesFlavor = flavor === "revnet" ? "revnet" : "project";
   const anyCashOuts = !isSimpleProject && stages.some((s) => s.cashOuts);
   const accountingOk = customOn
@@ -2398,7 +2397,7 @@ export function CreateForm() {
     setSelected(session.chains);
     statusesRef.current = session.statuses;
     setStatuses(session.statuses);
-    setStep(draftFlavor === null || draftFlavor === "simple" ? 3 : 4);
+    setStep(wizardStepsOf(draftFlavor ?? "simple").indexOf("Launch"));
     if (remainingLaunchChains(session).length === 0) {
       void withLaunchLock(() => completeLaunchSession(session.salt));
       restoredSessionRef.current = null;
