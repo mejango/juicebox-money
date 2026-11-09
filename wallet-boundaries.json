@@ -10,7 +10,7 @@
     },
     {
       "file": "src/lib/tab-locks.ts",
-      "line": 17,
+      "line": 16,
       "api": "request",
       "boundary": "The SDK's browserLocks().request over each key a flow names (split, queue and metadata journals, forwarder authorization, Relayr scope, launch): cross-tab coordination, never a wallet RPC.",
       "test": "test/lib/tab-locks.test.ts"

@@ -1,6 +1,6 @@
 'use client'
 
-import { requireWebLocks, withTabLocks } from '@/lib/tab-locks'
+import { withTabLocks } from '@/lib/tab-locks'
 import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { relayrForwardRequest, relayrSignedRequests, type RelayrEntry, type RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import { isAddressEqual, type Address } from 'viem'
@@ -41,7 +41,6 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
   requestsDead: (requests: readonly RelayrSignedRequest[]) => Promise<boolean>
   execute: (assertAvailable: (destinations?: number[]) => void) => Promise<T>
 }): Promise<T> {
-  requireWebLocks('This browser cannot coordinate forwarder authorizations across tabs. Use a browser with Web Locks support.')
   const chains = [...new Set(chainIds)].sort((a, b) => a - b)
   /** What would reserve `wanted`, each keyed by the exact requests it published. */
   const reservations = (wanted: Set<number>): Reservation[] => {

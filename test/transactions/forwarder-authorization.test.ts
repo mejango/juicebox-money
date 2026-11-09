@@ -142,8 +142,8 @@ describe('shared forwarder nonce ownership', () => {
     pending = [{ scope: 'other', session: session() }]
     await expect(withForwarderAuthorizationLock({ account: ALICE, chainIds: [1], owner: 'relayr:original', pendingSessions: () => pending,
       requestsDead, execute: async () => 'checked original receipt' })).resolves.toBe('checked original receipt')
-    // Recovery refuses without Web Locks: the SDK's lease fallback can admit a second tab mid-run.
+    // Without Web Locks the SDK's lock still coordinates: the run reaches the same conflict check.
     vi.stubGlobal('navigator', {})
-    await expect(run()).rejects.toThrow('Web Locks support')
+    await expect(run()).rejects.toThrow('Another published action')
   })
 })

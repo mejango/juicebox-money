@@ -1,7 +1,6 @@
 "use client";
 
 import { destinationJournal } from "@/lib/destination-journal";
-import { requireWebLocks } from "@/lib/tab-locks";
 import {
   JBCoreContracts,
   JBRouterTerminalContracts,
@@ -742,10 +741,8 @@ function pendingQueueScope(key: string): QueueRecoveryJournal | null {
 export const saveQueueJournal = queueJournals.save;
 
 /** Overlapping chain selections share a lock before publishing recovery aliases. */
-async function withQueueDestinationLocks<T>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> {
-  if (destinations.length > 1) requireWebLocks("Use a browser with Web Locks support to queue rules on multiple chains.");
-  return queueJournals.lock(destinations, "A ruleset update for this project is already running in another tab.", run);
-}
+const withQueueDestinationLocks = <T,>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> =>
+  queueJournals.lock(destinations, "A ruleset update for this project is already running in another tab.", run);
 
 const clearQueueJournal = queueJournals.clear;
 

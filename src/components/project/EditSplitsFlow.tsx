@@ -1,7 +1,6 @@
 'use client'
 
 import { destinationJournal } from '@/lib/destination-journal'
-import { requireWebLocks } from '@/lib/tab-locks'
 import {
   JBCoreContracts,
   RevnetCoreContracts,
@@ -391,10 +390,8 @@ function pendingSplitJournal(key: string): SplitJournal | null {
 export const saveSplitJournal = splitJournals.save
 const clearSplitJournal = splitJournals.clear
 
-async function withSplitLocks<T>(destinations: SplitReview['destinations'], run: () => Promise<T>): Promise<T> {
-  if (destinations.length > 1) requireWebLocks('Use a browser with Web Locks support to edit splits on multiple chains.')
-  return splitJournals.lock(destinations, 'These split recipients are being edited in another tab.', run)
-}
+const withSplitLocks = <T,>(destinations: SplitReview['destinations'], run: () => Promise<T>): Promise<T> =>
+  splitJournals.lock(destinations, 'These split recipients are being edited in another tab.', run)
 
 /**
  * Send a reviewed split update under its destinations' locks. A multichain

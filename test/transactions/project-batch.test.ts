@@ -161,6 +161,10 @@ describe('durable project batches', () => {
     }), expect.anything())
     expect(mocks.rawRelayr).not.toHaveBeenCalled()
   })
+  it('runs in a browser without Web Locks instead of refusing (R119)', async () => {
+    vi.stubGlobal('navigator', {})
+    expect((await run([call()])).status).toBe('complete')
+  })
   it('finishes a recovered journal whose calls were already marked complete', async () => {
     const batch = await run([call()])
     const key = `jb-project-batch:v1:journal:${batch.id}`
@@ -954,13 +958,6 @@ describe('durable project batches', () => {
     mocks.review.mockImplementationOnce(async () => { mocks.safe = true; return PLAN })
     await run([call()])
     expect(mocks.authority.mock.calls[0][0].plan).toBeUndefined()
-  })
-
-  it('fails before wallet review when browser locking is unavailable', async () => {
-    vi.stubGlobal('navigator', {})
-    await expect(run([call()])).rejects.toThrow('Web Locks')
-    expect(mocks.authority).not.toHaveBeenCalled()
-    expect(mocks.review).not.toHaveBeenCalled()
   })
 
   it('fails before wallet review when durable storage is unavailable', async () => {
