@@ -83,7 +83,8 @@ const budgets = {
   // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
   // node-forge 1.4.3 (Para SDK security patch, lazy wallet chunk): measured 2682.8 KiB, rounded up only.
   // Buyback 2.0.0 rollout presets and LP move: measured 2686.6 KiB, rounded up only.
-  allScripts: 2700 * KIB,
+  // SDK 6.1.0 published (run vocabulary, held writes, tab locks): measured 2701.2 KiB, rounded up only.
+  allScripts: 2702 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
