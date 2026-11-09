@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -91,7 +92,10 @@ type Lease = Pick<LockManager, 'request'>
  */
 async function tabContext(tab: string): Promise<Lease> {
   delete (globalThis as Record<symbol, unknown>)[Symbol.for('nana-sdk:write-lock-queues')]
-  const url = pathToFileURL(join(process.cwd(), 'node_modules/@bananapus/nana-sdk-core/dist/esm/review/locks.js')).href
+  // The SDK's own module for browserLocks(): review/locks.js from 6.1, review/writeRecovery.js before it.
+  const review = join(process.cwd(), 'node_modules/@bananapus/nana-sdk-core/dist/esm/review')
+  const file = ['locks.js', 'writeRecovery.js'].map(name => join(review, name)).find(existsSync)!
+  const url = pathToFileURL(file).href
   const { browserLocks } = await import(/* @vite-ignore */ `${url}?tab=${tab}`) as { browserLocks: () => Lease }
   return browserLocks()
 }
