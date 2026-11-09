@@ -22,8 +22,8 @@ import {
   activityCategory,
   activityParts,
   isProjectFeedActivity,
-  mergeActivityEvents,
 } from '@/components/ActivityList'
+import { mergeActivityEvents } from '@/hooks/useLiveFeed'
 import { ActivityAmountLine, ActivityMeta } from '@/components/ActivityMeta'
 import {
   suckerGroupAccountingToken,

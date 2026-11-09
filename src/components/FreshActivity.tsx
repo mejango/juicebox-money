@@ -1,7 +1,7 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useCallback, useEffect, useState } from 'react'
+import { useLiveFeed } from '@/hooks/useLiveFeed'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { timeAgo } from '@/lib/format'
@@ -27,67 +27,21 @@ export function FreshActivity({
   initialEvents: BsFreshActivityEvent[]
   initialHasMore: boolean
 }) {
-  const [events, setEvents] = useState(initialEvents)
-  const [hasMore, setHasMore] = useState(initialHasMore)
-  const [loading, setLoading] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let stopped = false
-    const tick = async () => {
-      if (document.visibilityState === 'hidden') return
-      try {
-        const res = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=0`)
-        if (!res.ok) return
-        const json = (await res.json()) as {
-          events?: BsFreshActivityEvent[]
-        }
-        if (!stopped && json.events?.length) {
-          setEvents(current => [
-            ...json.events!,
-            ...current.filter(
-              event => !json.events!.some(fresh => fresh.id === event.id),
-            ),
-          ])
-        }
-      } catch {
-        // Transient — the next tick retries.
-      }
-    }
-    const t = setInterval(tick, POLL_MS)
-    return () => {
-      stopped = true
-      clearInterval(t)
-    }
-  }, [])
-
-  const loadMore = useCallback(async () => {
-    if (loading || !hasMore) return
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const response = await fetch(
-        `/api/activity?limit=${PAGE_SIZE}&offset=${events.length}`,
-      )
+  const feed = useLiveFeed({
+    initial: initialEvents,
+    initialMore: initialHasMore,
+    updatedAt: 'mount',
+    pollMs: POLL_MS,
+    pollKey: 'fresh',
+    read: async (offset, signal) => {
+      const response = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=${offset}`, { signal })
       if (!response.ok) throw new Error('Activity unavailable')
-      const page = (await response.json()) as {
-        events?: BsFreshActivityEvent[]
-        hasMore?: boolean
-      }
-      const next = page.events ?? []
-      setEvents(current => [
-        ...current,
-        ...next.filter(
-          event => !current.some(existing => existing.id === event.id),
-        ),
-      ])
-      setHasMore(Boolean(page.hasMore))
-    } catch {
-      setLoadError('Could not load more activity. Try again.')
-    } finally {
-      setLoading(false)
-    }
-  }, [events.length, hasMore, loading])
+      const page = (await response.json()) as { events?: BsFreshActivityEvent[]; hasMore?: boolean }
+      return { items: page.events ?? [], more: Boolean(page.hasMore) }
+    },
+    failure: 'Could not load more activity. Try again.',
+  })
+  const events = feed.items
 
   return (
     <ul className="min-h-[420px] divide-y divide-smoke-100">
@@ -100,8 +54,8 @@ export function FreshActivity({
           {groupSameTxEvents(events).map((group, index) => (
             <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
-          {(hasMore || loading) && (
-            <LoadMoreRow label="More activity" loading={loading} error={loadError} onLoadMore={loadMore} />
+          {(feed.more || feed.loading) && (
+            <LoadMoreRow label="More activity" loading={feed.loading} error={feed.error} onLoadMore={feed.loadMore} />
           )}
         </>
       )}
