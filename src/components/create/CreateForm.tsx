@@ -2117,6 +2117,18 @@ export function CreateForm() {
     if (pinned) void runChains(pinned);
   };
 
+  /** Drop the pinned run and reopen the form, as before any launch. */
+  const resetLaunch = () => {
+    restoredSessionRef.current = null;
+    pinnedRef.current = null;
+    statusesRef.current = {};
+    setStatuses({});
+    setLaunchError(null);
+    setRelayrProgress(null);
+    setPhase("form");
+    setConfirmOpen(false);
+  };
+
   /**
    * The SDK retired a chain's saved launch: the user's exit or check. The journal records it
    * (domain data: no hash out on that chain) and the launch runs again with the same salt, so a
@@ -2129,14 +2141,7 @@ export function CreateForm() {
     if (!shown) return;
     if (by === "unreadable") {
       abandonLaunchSession(undefined, { retired: true });
-      restoredSessionRef.current = null;
-      pinnedRef.current = null;
-      statusesRef.current = {};
-      setStatuses({});
-      setLaunchError(null);
-      setRelayrProgress(null);
-      setPhase("form");
-      setConfirmOpen(false);
+      resetLaunch();
       return;
     }
     const pinned = resumablePinned();
@@ -2197,14 +2202,7 @@ export function CreateForm() {
       if (!abandonLaunchSession(session?.salt)) {
         throw new Error("Could not cancel this deployment. Restore browser storage and try again.");
       }
-      restoredSessionRef.current = null;
-      pinnedRef.current = null;
-      statusesRef.current = {};
-      setStatuses({});
-      setLaunchError(null);
-      setRelayrProgress(null);
-      setPhase("form");
-      setConfirmOpen(false);
+      resetLaunch();
     };
     try {
       await withLaunchLock(abandon, "Another tab is processing this launch. Return to that tab to continue.");
