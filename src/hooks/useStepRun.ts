@@ -120,21 +120,21 @@ export function useStepRun<Step>({
   useEffect(() => {
     const current = run.current
     if (running || current.running) return
-    const failedOnSubmitted = tx.phase === 'unconfirmed' || (tx.phase === 'error' && !!revertedReceipt(tx.failure))
+    const failedOnSubmitted = tx.phase === 'held' || (tx.stopped && !!revertedReceipt(tx.failure))
     if (current.waiting === null && current.submitted !== null && failedOnSubmitted) {
       setIndex(current.submitted)
-      if (tx.phase === 'unconfirmed') current.waiting = current.submitted
+      if (tx.phase === 'held') current.waiting = current.submitted
       return
     }
     if (current.waiting === null) return
-    if (tx.phase === 'error') {
+    if (tx.stopped) {
       // The proposal ended without running: the run stays stopped on its step.
       current.waiting = null
       setProposed(false)
       return
     }
     // An earlier step that settles after its run ended (a Safe's execution, a late receipt) settles it too.
-    if ((tx.phase !== 'success' && tx.settledStep == null) || !tx.hash) return
+    if ((tx.phase !== 'done' && tx.settledStep == null) || !tx.hash) return
     const at = current.waiting
     current.waiting = null
     setProposed(false)
@@ -144,7 +144,7 @@ export function useStepRun<Step>({
     }
     // The step after a settled proposal is reviewed again: the run stops at it.
     setIndex(at + 1)
-  }, [running, tx.phase, tx.settledStep, tx.hash, tx.failure, finish])
+  }, [running, tx.phase, tx.stopped, tx.settledStep, tx.hash, tx.failure, finish])
 
   /** Start a new run at the first step, or continue a held one as it was saved. */
   const start = useCallback(
@@ -219,14 +219,14 @@ export function useStepRun<Step>({
     /** The run ended on a step proposed to a Safe: the confirm ends on Done. */
     proposed,
     /** The run is suspended on a step whose receipt could not be read: the confirm ends on Done and nothing is resent. */
-    unconfirmed: !running && tx.phase === 'unconfirmed',
+    unconfirmed: !running && tx.phase === 'held',
     /** The run through these exact steps stopped before its last step confirmed, so `resume` continues it. */
     stoppedOn: (steps: readonly Step[] | undefined): boolean =>
       !running &&
       !!steps &&
       steps === runSteps &&
       index < steps.length &&
-      (index > 0 || tx.phase === 'error'),
+      (index > 0 || tx.stopped),
     /** `running`, read at once (for a click that lands before the next render). */
     isRunning: () => run.current.running,
     start,

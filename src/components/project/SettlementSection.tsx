@@ -781,7 +781,7 @@ function MovementGroup({
         </div>
       ) : null}
 
-      {tx.phase === 'success' ? (
+      {tx.phase === 'done' ? (
         <p className="mt-2 text-xs text-smoke-900">
           Sent to {chainName(group.destChainId)}.
           {txUrl ? (
@@ -812,9 +812,9 @@ function MovementGroup({
         onClose={() => {
           setOpen(false)
           setFlowError(null)
-          if (tx.phase === 'submitted') tx.dismiss()
+          if (tx.phase === 'proposed') tx.dismiss()
         }}
-        title={tx.phase === 'success' ? 'Moves sent' : 'Confirm send'}
+        title={tx.phase === 'done' ? 'Moves sent' : 'Confirm send'}
         rows={rows}
         steps={[
           {
@@ -830,7 +830,7 @@ function MovementGroup({
         status={
           tx.notice ? (
             tx.notice
-          ) : tx.phase === 'pending' && txUrl ? (
+          ) : tx.phase === 'receipt' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a
@@ -846,7 +846,7 @@ function MovementGroup({
         }
         error={flowError ?? tx.error}
         start={() => void execute()}
-        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void execute() } : null}
+        next={tx.stopped ? { label: 'Retry', onClick: () => void execute() } : null}
       />
     </div>
   )
@@ -941,7 +941,7 @@ function ClaimButton({
               idle: `Claim on ${chainName(m.destChainId)}`,
             })}
       </button>
-      {tx.phase === 'success' ? (
+      {tx.phase === 'done' ? (
         <span className="mt-1 text-right text-[11px] text-smoke-900">
           Claimed.
           {txUrl ? (
@@ -970,9 +970,9 @@ function ClaimButton({
         onClose={() => {
           setOpen(false)
           setFlowError(null)
-          if (tx.phase === 'submitted') tx.dismiss()
+          if (tx.phase === 'proposed') tx.dismiss()
         }}
-        title={tx.phase === 'success' ? 'Claimed' : 'Confirm claim'}
+        title={tx.phase === 'done' ? 'Claimed' : 'Confirm claim'}
         rows={rows}
         steps={[
           {
@@ -988,7 +988,7 @@ function ClaimButton({
         status={
           tx.notice ? (
             tx.notice
-          ) : tx.phase === 'pending' && txUrl ? (
+          ) : tx.phase === 'receipt' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a
@@ -1004,7 +1004,7 @@ function ClaimButton({
         }
         error={flowError ?? tx.error}
         start={() => void claim()}
-        next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void claim() } : null}
+        next={tx.stopped ? { label: 'Retry', onClick: () => void claim() } : null}
       />
     </span>
   )

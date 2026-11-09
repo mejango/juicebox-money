@@ -301,7 +301,7 @@ export function RedeemShopItemsModal({
   })
 
   useEffect(() => {
-    if (tx.phase !== 'success') return
+    if (tx.phase !== 'done') return
     queryClient.invalidateQueries({ queryKey: ['shop-owned-items'] })
     queryClient.invalidateQueries({ queryKey: ['shop-redeemable-items'] })
     invalidatePreparationQueries(queryClient, ['shop-item-cash-out-quote'])
@@ -539,7 +539,7 @@ export function RedeemShopItemsModal({
         )}
       </div>
 
-      {tx.phase === 'success' ? (
+      {tx.phase === 'done' ? (
         <div className="mt-4 rounded-xl border border-melon-200 bg-melon-50 p-4 text-sm text-melon-700">
           Items redeemed successfully.
           {txUrl ? (
@@ -565,19 +565,19 @@ export function RedeemShopItemsModal({
 
       <button
         type="button"
-        onClick={tx.phase === 'success' ? onClose : prepare}
+        onClick={tx.phase === 'done' ? onClose : prepare}
         disabled={
-          tx.phase !== 'success' &&
+          tx.phase !== 'done' &&
           (busy || selectedTokenIds.length === 0 || !quote || quote.net <= 0n)
         }
         className="btn-primary mt-5 min-h-[48px] w-full text-sm"
       >
-        {tx.phase === 'success'
+        {tx.phase === 'done'
           ? 'Done'
           : `Redeem ${selectedTokenIds.length || ''} item${selectedTokenIds.length === 1 ? '' : 's'}`}
       </button>
 
-      {quote && quote.net > 0n && tx.phase !== 'success' ? (
+      {quote && quote.net > 0n && tx.phase !== 'done' ? (
         <p className="mt-3 text-center text-xs text-smoke-700">
           You&apos;ll receive at least{' '}
           {formatTokenAmount(slippageFloor(quote.net), quote.decimals)}{' '}
@@ -589,7 +589,7 @@ export function RedeemShopItemsModal({
         <TxProgress
           open
           preparing={!plan}
-          title={tx.phase === 'success' ? 'Items redeemed' : 'Confirm redemption'}
+          title={tx.phase === 'done' ? 'Items redeemed' : 'Confirm redemption'}
           rows={
             plan
               ? [
@@ -612,7 +612,7 @@ export function RedeemShopItemsModal({
               title: `Redeem ${selectedTokenIds.length} item${selectedTokenIds.length === 1 ? '' : 's'}`,
             },
           ]}
-          activeIndex={tx.busy || tx.phase === 'error' ? 0 : -1}
+          activeIndex={tx.busy || tx.stopped ? 0 : -1}
           busy={busy}
           complete={tx.settled}
           status={!plan ? 'Getting a fresh redemption quote…' : (tx.notice ?? tx.safeNonceGuidance)}
@@ -620,10 +620,10 @@ export function RedeemShopItemsModal({
           onClose={() => {
             setPlan(null)
             setPrepareError(null)
-            if (tx.phase !== 'success') tx.dismiss()
+            if (tx.phase !== 'done') tx.dismiss()
           }}
           start={() => void redeem()}
-          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void redeem() } : null}
+          next={tx.stopped ? { label: 'Retry', onClick: () => void redeem() } : null}
         />
       ) : null}
     </ModalShell>

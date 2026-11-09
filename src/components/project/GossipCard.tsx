@@ -766,9 +766,9 @@ function GossipRow({
   // Mark in-flight the moment the tx enters the mempool; clear on failure;
   // re-mark and refetch once it lands.
   useEffect(() => {
-    if (tx.phase === 'pending' || tx.phase === 'unconfirmed' || tx.phase === 'submitted') onSyncSent(key)
-    else if (tx.phase === 'error') onSyncCleared(key)
-    else if (tx.phase === 'success') {
+    if (tx.phase === 'receipt' || tx.phase === 'held' || tx.phase === 'proposed') onSyncSent(key)
+    else if (tx.stopped) onSyncCleared(key)
+    else if (tx.phase === 'done') {
       onSyncSent(key)
       onSynced()
     }
@@ -852,7 +852,7 @@ function GossipRow({
       ? 'Double-checking…'
       : tx.phase === 'signing'
         ? 'Confirm…'
-        : tx.phase === 'pending'
+        : tx.phase === 'receipt'
           ? 'Syncing…'
           : null
   const syncLabel = phaseLabel ?? (pending ? 'Sent' : 'Sync')
@@ -919,9 +919,9 @@ function GossipRow({
           onClose={() => {
             setOpen(false)
             setFlowError(null)
-            if (tx.phase === 'submitted') tx.dismiss()
+            if (tx.phase === 'proposed') tx.dismiss()
           }}
-          title={tx.phase === 'success' ? 'Sync sent' : 'Confirm sync'}
+          title={tx.phase === 'done' ? 'Sync sent' : 'Confirm sync'}
           rows={rows}
           steps={[
             {
@@ -936,7 +936,7 @@ function GossipRow({
           status={
             tx.notice ? (
               tx.notice
-            ) : tx.phase === 'pending' && txUrl ? (
+            ) : tx.phase === 'receipt' && txUrl ? (
               <>
                 Waiting for confirmation —{' '}
                 <a
@@ -952,7 +952,7 @@ function GossipRow({
           }
           error={flowError ?? tx.error}
           start={() => void sync()}
-          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => void sync() } : null}
+          next={tx.stopped ? { label: 'Retry', onClick: () => void sync() } : null}
         />
       </td>
       <td className="whitespace-nowrap py-1.5 text-right tabular-nums">

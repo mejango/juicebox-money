@@ -856,7 +856,7 @@ function AddLiquidityForm({
       ? 'Checking…'
       : tx.phase === 'signing'
         ? 'Confirm in your wallet…'
-        : tx.phase === 'pending'
+        : tx.phase === 'receipt'
           ? 'Sending…'
           : undefined
 
@@ -921,10 +921,10 @@ function AddLiquidityForm({
                 detail: run.running && index === run.index ? runningDetail : undefined,
               })),
               run.index,
-              stopped && tx.phase === 'error',
+              stopped && tx.stopped,
             ),
               run.index,
-              tx.phase === 'unconfirmed',
+              tx.phase === 'held',
             )}
             activeIndex={run.running || stopped ? run.index : -1}
             stepsIntro={

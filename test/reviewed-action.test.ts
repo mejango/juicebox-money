@@ -202,7 +202,7 @@ describe('useReviewedAction', () => {
     await act(async () => { pending = ref.current!.run({ account: ALICE, calls: [call], assertWriteState: () => { if (expired) throw new ReviewLineError('The reviewed quote expired. Review again.') } }); await waiting })
     await act(async () => { if (drift === 'account') activeAccount = '0x2222222222222222222222222222222222222222'; else expired = true; release(); await pending })
     expect(ref.current!.error).toBe(drift === 'account' ? 'The connected account changed. Review again.' : 'The reviewed quote expired. Review again.')
-    expect(ref.current!.phase).toBe('error')
+    expect(ref.current!.phase).toBe('failed')
     expect(walletSends).toEqual([])
     expect(writeHolds.open({ chainId: 10, account: ALICE, safe: false, namespace: intent, call }).peek().status).toBe('clear')
     await act(async () => renderer.unmount())
@@ -219,13 +219,13 @@ describe('useReviewedAction', () => {
     const call = { chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n, intent: `lag-${crypto.randomUUID()}` }
     let ended: unknown = 'pending'
     await act(async () => { void ref.current!.run({ account: ALICE, calls: [call] }).then(value => { ended = value }) })
-    await vi.waitFor(() => expect(ref.current!.phase).toBe('pending'))
+    await vi.waitFor(() => expect(ref.current!.phase).toBe('receipt'))
     expect(ended).toBe('pending')
     client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
     // The hold's next look, a few seconds on, verifies it.
     await act(async () => { await vi.waitFor(() => expect(ended).not.toBe('pending'), { timeout: 15_000, interval: 100 }) })
     expect(ended).toMatchObject({ status: 'done', hashes: [expect.any(String)] })
-    expect(ref.current!.phase).toBe('success')
+    expect(ref.current!.phase).toBe('done')
     expect(ref.current!.lastStepSent).toBe(true)
     await act(async () => renderer.unmount())
   }, 20_000)

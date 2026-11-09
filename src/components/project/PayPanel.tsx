@@ -293,7 +293,7 @@ export function PayPanel({
   const [approvalBlock, setApprovalBlock] = useState<bigint | undefined>(undefined);
   /** The payment step reached the wallet: only then does a settled run mean the payment confirmed, not just its approval. */
   const [paymentSubmitted, setPaymentSubmitted] = useState(false);
-  const paid = tx.phase === "success" && paymentSubmitted;
+  const paid = tx.phase === "done" && paymentSubmitted;
 
   const [mode, setMode] = useState<"pay" | "addbalance">("pay");
   const [amount, setAmount] = useState("");
@@ -1099,7 +1099,7 @@ export function PayPanel({
   // awaiting its signers, executed with its receipt still missing, or unproven.
   const sequenceSafeNotice = sequenceSafeStage ? sequenceSafeTx.notice : null;
   // A stage the write hold holds (its follower couldn't prove it) shows the hold's line and exit.
-  const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "unconfirmed" ? sequenceSafeTx.error : null;
+  const sequenceSafeHeld = sequenceSafeStage && sequenceSafeTx.phase === "held" ? sequenceSafeTx.error : null;
   const endedTx = paymentRunEnded ? tx : null;
   const endedPayment = paymentRunEnded ? tx.failure : null;
   const endedPay = mode === "pay" ? endedPayment : null;
@@ -1111,11 +1111,11 @@ export function PayPanel({
   const suggestedRetryBps = endedPay && sequenceSummary ? payRetrySlippageBps(payFailure, sequenceSummary.slippageBps) : null;
   const retryBps = retrySlippageBps ?? (suggestedRetryBps === null ? null : Number(suggestedRetryBps));
   const endedLine = !endedTx ? null
-    : endedTx.phase === "unconfirmed" ? endedTx.error
+    : endedTx.phase === "held" ? endedTx.error
       : minedRevert ? (mode === "pay" ? "The payment reverted." : "Payment reverted onchain.")
       : payFailure?.message ?? endedTx.error;
   // A payment the hold still has in flight is never sent again from here.
-  const sequencePending = paymentRunEnded && tx.phase === "unconfirmed" ? tx.hash : null;
+  const sequencePending = paymentRunEnded && tx.phase === "held" ? tx.hash : null;
   const panelTxError = sequenceSafeHeld ? null : tx.error;
   // A stage another flow dismissed shows nothing any more.
   const sequenceSafeLost = !!sequenceSafeStage && sequenceSafeTx.phase === "idle";
@@ -1129,13 +1129,13 @@ export function PayPanel({
 
   useEffect(() => {
     if (!sequenceSafeStage) return;
-    if (sequenceSafePhase === "error") {
+    if (sequenceSafeTx.stopped) {
       setSequenceSafeStage(null);
       setSequenceError(typeof sequenceSafeError === "string" ? sequenceSafeError : "The Safe action could not be completed.");
       return;
     }
     // An approval a Safe ran after its run ended settles as the run's earlier step.
-    if (sequenceSafePhase !== "success" && sequenceSafeTx.settledStep == null) return;
+    if (sequenceSafePhase !== "done" && sequenceSafeTx.settledStep == null) return;
     setSequenceCompletedKinds(current =>
       current.includes(sequenceSafeStage)
         ? current
@@ -1168,6 +1168,7 @@ export function PayPanel({
     refetchAllowance,
     sequenceSafeError,
     sequenceSafePhase,
+    sequenceSafeTx.stopped,
     sequenceSafeTx.settledStep,
     sequenceSafeStage,
     sequenceActions,
@@ -1176,8 +1177,8 @@ export function PayPanel({
   const busy =
     tx.phase === "simulating" ||
     tx.phase === "signing" ||
-    tx.phase === "pending" ||
-    tx.phase === "unconfirmed" ||
+    tx.phase === "receipt" ||
+    tx.phase === "held" ||
     sequenceStarted ||
     !!sequenceSafeStage;
 
@@ -1186,7 +1187,7 @@ export function PayPanel({
     const activePhase = tx.phase;
     if (activePhase === "simulating") setSequenceStatus("Checking the reviewed wallet action…");
     else if (activePhase === "signing") setSequenceStatus("Confirm this action in your wallet.");
-    else if (activePhase === "pending") setSequenceStatus("Submitted. Confirming onchain…");
+    else if (activePhase === "receipt") setSequenceStatus("Submitted. Confirming onchain…");
   }, [sequenceOpen, tx.phase]);
 
   const preparePaymentSequence = (): PaymentSequenceAction[] => {

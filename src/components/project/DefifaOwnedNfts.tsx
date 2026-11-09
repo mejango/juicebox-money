@@ -78,13 +78,13 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const actorContext = useRef({ identity, generation: 0 })
   if (actorContext.current.identity !== identity) actorContext.current = { identity, generation: actorContext.current.generation + 1 }
   const actorChanged = !!plan && (plan.chainId !== chainId || plan.projectId !== projectId || plan.result.inventory.hook.toLowerCase() !== shop.hook.toLowerCase() || plan.account.toLowerCase() !== address?.toLowerCase())
-  const held = (writeStarted && proof !== 'verified') || tx.busy || tx.phase === 'submitted' || (!!tx.hash && tx.phase !== 'error') || proof === 'checking'
+  const held = (writeStarted && proof !== 'verified') || tx.busy || tx.phase === 'proposed' || (!!tx.hash && !tx.stopped) || proof === 'checking'
   const busy = preparing || held
   useEffect(() => {
     setSelected(new Set())
     setManual('')
     setContinuation(undefined)
-    if (!sent.current && !tx.hash && tx.phase !== 'pending' && tx.phase !== 'unconfirmed' && tx.phase !== 'submitted' && !sending.current) {
+    if (!sent.current && !tx.hash && tx.phase !== 'receipt' && tx.phase !== 'held' && tx.phase !== 'proposed' && !sending.current) {
       setPlan(null)
       setPreparing(false)
       setError(null)
@@ -148,7 +148,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
     }
   }
   useEffect(() => {
-    if ((tx.phase === 'success' || tx.phase === 'error') && tx.receipt && plan && proof === 'idle') void verifyReceipt()
+    if ((tx.phase === 'done' || tx.stopped) && tx.receipt && plan && proof === 'idle') void verifyReceipt()
     // Verification is bound to the frozen plan and exact receipt; retries are explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase, tx.receipt, plan, proposalHash, proof])
@@ -242,7 +242,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const close = () => {
     if (tx.busy || proof === 'checking') return
     // Dismiss the local review only after the SDK confirms its unresolved intent remains recoverable.
-    if (proof !== 'verified' && proof !== 'reverted' && (tx.hash || tx.phase === 'submitted' || sent.current)) {
+    if (proof !== 'verified' && proof !== 'reverted' && (tx.hash || tx.phase === 'proposed' || sent.current)) {
       try {
         if (!plan || !recovery.current) throw new ReviewLineError('The original action is not yet saved for recovery.')
         const retained = readDefifaWriteRecovery({ chainId: plan.chainId, projectId: plan.projectId, account: plan.account, action: plan.kind })
@@ -261,14 +261,14 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const cash = plan && 'reclaimAmount' in plan.result ? plan.result : null
   // The first matching line wins: an unknown or orphaned submission, then the proof, then the wallet's own phase.
   const status = (() => {
-    if (proof !== 'verified' && writeStarted && !tx.hash && tx.phase !== 'submitted' && !tx.busy) return 'Wallet submission outcome is unknown. Verify its outcome before submitting another action.'
+    if (proof !== 'verified' && writeStarted && !tx.hash && tx.phase !== 'proposed' && !tx.busy) return 'Wallet submission outcome is unknown. Verify its outcome before submitting another action.'
     if (proof !== 'verified' && sent.current && actorChanged) return 'Account or project changed. The in-flight action is retained for recovery; confirm its outcome before submitting another action.'
     if (proof === 'reverted') return 'The reviewed transaction reverted onchain.'
     if (proof === 'verified') return 'NFT effects verified onchain.'
     if (proof === 'checking') return 'Verifying NFT effects…'
     if (tx.notice != null) return tx.notice
-    if (tx.phase === 'pending') return 'Transaction submitted. Awaiting confirmation.'
-    if (tx.phase === 'success') return 'Receipt received. NFT verification is pending.'
+    if (tx.phase === 'receipt') return 'Transaction submitted. Awaiting confirmation.'
+    if (tx.phase === 'done') return 'Receipt received. NFT verification is pending.'
     return undefined
   })()
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['cash-out', 'transfer']} active={!!plan}><div className="card mt-5 space-y-4 p-5">
@@ -301,7 +301,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       ...(cash ? [{ label: 'Reclaimed', value: `${formatTokenAmount(cash.reclaimAmount, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Minimum', value: `${formatTokenAmount(plan.minimum, cash.inventory.pricing.decimals)} ${plan.symbol}` },
         { label: 'Protocol rewards', value: `${formatTokenAmount(cash.protocolRewards.defifaAmount, cash.protocolRewards.defifaDecimals)} at ${cash.protocolRewards.defifaToken}, ${formatTokenAmount(cash.protocolRewards.baseProtocolAmount, cash.protocolRewards.baseProtocolDecimals)} at ${cash.protocolRewards.baseProtocolToken}` }] : []),
-    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'success' ? 1 : 0} onClose={close} busy={tx.busy || proof === 'checking'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}
+    ]} steps={[{ title: 'Review and submit' }, { title: 'Verify NFT effects' }]} activeIndex={tx.phase === 'done' ? 1 : 0} onClose={close} busy={tx.busy || proof === 'checking'} complete={proof === 'verified' || proof === 'reverted'} status={status} error={error ?? tx.error}
     start={held || proof !== 'idle' ? undefined : () => void confirm()}
     next={!held && proof === 'idle' ? { label: error ?? tx.error ? 'Try again' : 'Review again', onClick: () => void confirm() } : null}><WriteRecoveryInTabNote /></TxProgress> : null}
   </div></DefifaRecovery>

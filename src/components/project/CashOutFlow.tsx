@@ -348,7 +348,7 @@ export function CashOutPanel({
       Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800)
 
   useEffect(() => {
-    if (tx.phase === 'success') {
+    if (tx.phase === 'done') {
       void refetchTokenAllowance()
       void refetchPermit2Allowance()
     }
@@ -399,9 +399,9 @@ export function CashOutPanel({
 
   const busy = tx.busy
   const finalSent = tx.lastStepSent
-  const success = tx.phase === 'success' && finalSent
+  const success = tx.phase === 'done' && finalSent
   /** A Safe executed an approval it was proposed: the sale is reviewed next. */
-  const approvalOnly = (tx.phase === 'success' && !finalSent) || tx.settledStep != null
+  const approvalOnly = (tx.phase === 'done' && !finalSent) || tx.settledStep != null
 
   useEffect(() => {
     if (success) refetchBalance()
@@ -707,12 +707,12 @@ export function CashOutPanel({
       steps={cashOutSteps}
       activeIndex={cashOutActiveIndex}
       busy={busy}
-      complete={success || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
+      complete={success || tx.phase === 'proposed' || tx.phase === 'held'}
       status={
         approvalOnly ? 'Approval confirmed. Continue to the sale.'
         : tx.notice ? (
           tx.notice
-        ) : tx.phase === 'pending' && txUrl ? (
+        ) : tx.phase === 'receipt' && txUrl ? (
           <>
             Waiting for confirmation —{' '}
             <a

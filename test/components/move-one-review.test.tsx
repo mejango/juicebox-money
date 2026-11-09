@@ -67,14 +67,14 @@ vi.mock('@/hooks/useReviewedAction', async () => {
     txPhaseLabel: () => '',
     useReviewedAction: () => {
       const [phase, setPhase] = useState('idle')
-      m.settle = () => setPhase('success')
+      m.settle = () => setPhase('done')
       return {
-        phase, busy: false, step: 0, error: null, notice: null, failure: null, hash: phase === 'success' ? HASH : null,
+        phase, busy: false, step: 0, error: null, notice: null, failure: null, hash: phase === 'done' ? HASH : null, stopped: phase === 'failed',
         reset: () => setPhase('idle'), dismiss: () => setPhase('idle'),
         run: async (action: ReviewedRun) => {
           m.runs.push(action)
           const end = m.ends.length ? m.ends.shift()! : { status: 'done' as const, hashes: [HASH], receipts: [] }
-          setPhase(end?.status === 'done' ? 'success' : end?.status === 'proposed' ? 'submitted' : 'error')
+          setPhase(end?.status === 'done' ? 'done' : end?.status === 'proposed' ? 'proposed' : 'failed')
           return end
         },
       }

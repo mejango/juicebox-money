@@ -4,7 +4,7 @@ import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import type { ReviewedRun } from '@/hooks/useReviewedAction'
 import { vi } from 'vitest'
 
-type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'pending' | 'unconfirmed' | 'submitted' | 'success' | 'error'
+type Phase = 'idle' | 'review' | 'simulating' | 'signing' | 'receipt' | 'held' | 'proposed' | 'done' | 'failed'
 type EngineState = {
   phase: Phase
   hash: Hex | null
@@ -49,7 +49,7 @@ function fakeReviewedAction() {
     (_request: unknown, _options?: unknown) =>
       new Promise<Hex | null>(resolve => {
         waiting.push(hash => {
-          if (hash) set({ phase: 'pending', hash, receipt: null, error: null })
+          if (hash) set({ phase: 'receipt', hash, receipt: null, error: null })
           resolve(hash)
         })
       }),
@@ -89,12 +89,13 @@ function fakeReviewedAction() {
         busy:
           snapshot.phase === 'simulating' ||
           snapshot.phase === 'signing' ||
-          snapshot.phase === 'pending',
-        settled: snapshot.phase === 'success' || snapshot.phase === 'submitted' || snapshot.phase === 'unconfirmed',
+          snapshot.phase === 'receipt',
+        settled: snapshot.phase === 'done' || snapshot.phase === 'proposed' || snapshot.phase === 'held',
+        stopped: snapshot.phase === 'failed',
         isSafe: false,
         safeProposalHash: null,
         safeNonceGuidance: null,
-        confirmationUncertain: snapshot.phase === 'unconfirmed',
+        confirmationUncertain: snapshot.phase === 'held',
         failure: null,
         run,
         reset,
@@ -108,21 +109,21 @@ function fakeReviewedAction() {
       next(hash)
     },
     confirm(hash: Hex, blockNumber: bigint) {
-      set({ phase: 'success', hash, receipt: { blockNumber, transactionHash: hash }, notice: null })
+      set({ phase: 'done', hash, receipt: { blockNumber, transactionHash: hash }, notice: null })
       settle('confirmed')
     },
     /** The send went to a Safe, which has not settled it: its confirm can end, showing `notice`. */
     propose(notice: string) {
-      set({ phase: 'submitted', notice })
+      set({ phase: 'proposed', notice })
       settle('proposed')
     },
     /** The receipt watch gave up on the sent step: it may still land, and the engine keeps it locked. */
     unconfirm(error: string) {
-      set({ phase: 'unconfirmed', error })
+      set({ phase: 'held', error })
       settle('stopped')
     },
     fail(error: string) {
-      set({ phase: 'error', error })
+      set({ phase: 'failed', error })
       settle('stopped')
     },
     restart() {

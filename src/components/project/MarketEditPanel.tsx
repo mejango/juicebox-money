@@ -462,10 +462,10 @@ export function MarketEditPanel({
         withFailedStep(
         (reviewed?.steps ?? []).map((step, index) => ({ key: `${step.kind}:${index}`, title: step.label })),
         run.index,
-        stopped && tx.phase === 'error',
+        stopped && tx.stopped,
       ),
         run.index,
-        tx.phase === 'unconfirmed',
+        tx.phase === 'held',
       )}
       activeIndex={run.running || stopped ? run.index : -1}
       stepsIntro={

@@ -205,7 +205,7 @@ describe('shop redemption preparation query', () => {
     await mount()
     await click('Redeem 1 item')
     await click('Confirm & redeem')
-    mocks.phase = 'success'
+    mocks.phase = 'done'
     await act(async () => { renderer!.update(modal()) })
     await settle()
     expect(quoteQuery().state.isInvalidated).toBe(true)

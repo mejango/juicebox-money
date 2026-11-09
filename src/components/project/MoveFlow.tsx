@@ -385,7 +385,7 @@ function MoveFlow({
   // Advance one step each time a send lands, exactly once per step.
   useEffect(() => {
     // An earlier step a Safe ran after its run ended settles it too.
-    if (tx.phase !== 'success' && tx.settledStep == null) return
+    if (tx.phase !== 'done' && tx.settledStep == null) return
     if (advancedFor.current === `${step}:${round}`) return
     advancedFor.current = `${step}:${round}`
     if (step === 3) setSentHash(tx.hash)
@@ -763,7 +763,7 @@ function MoveFlow({
         preparing={preparing}
         onClose={() => {
           setOpen(false)
-          if (tx.phase === 'submitted') tx.dismiss()
+          if (tx.phase === 'proposed') tx.dismiss()
         }}
         title={step === 4 ? 'Move sent' : 'Confirm move'}
         rows={rows}
@@ -774,13 +774,13 @@ function MoveFlow({
         startKey={`${step}:${round}`}
         next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
-        complete={step === 4 || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
+        complete={step === 4 || tx.phase === 'proposed' || tx.phase === 'held'}
         status={
           preparing ? (
             'Checking the route and your balances…'
           ) : tx.notice ? (
             tx.notice
-          ) : tx.phase === 'pending' && txUrl ? (
+          ) : tx.phase === 'receipt' && txUrl ? (
             <>
               Waiting for confirmation —{' '}
               <a

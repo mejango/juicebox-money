@@ -3,7 +3,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Address, TransactionReceipt } from 'viem'
-import { HELD_CONFIRMING_LINE, ReviewLineError, type ReviewedAction, type ReviewedResult } from '@bananapus/nana-sdk-core/review'
+import { ReviewLineError, type ReviewedAction, type ReviewedResult, type ReviewedRunStatus } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -25,19 +25,6 @@ export const REVIEW_CLOSED_LINE = 'Nothing was sent. Review it again when you ar
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 
-export type TxPhase =
-  | 'idle'
-  | 'review'
-  | 'simulating'
-  | 'signing'
-  | 'pending'
-  /** Held with the hold's own line: its exit, a wallet still pending, or a success that went through while away. */
-  | 'unconfirmed'
-  /** With a Safe, awaiting its signers: the hold's line says where it is. */
-  | 'submitted'
-  | 'success'
-  | 'error'
-
 /**
  * The shared in-flight button copy: the fixed simulating/signing strings every
  * flow uses, the caller's `pending` progress text, and its `idle` label
@@ -45,12 +32,12 @@ export type TxPhase =
  * signing string for flows with more specific wallet copy.
  */
 export function txPhaseLabel(
-  phase: TxPhase,
+  phase: ReviewedRunStatus,
   labels: { idle: string; pending: string; confirm?: string },
 ): string {
   if (phase === 'simulating') return 'Double-checking the transaction…'
   if (phase === 'signing') return labels.confirm ?? 'Confirm in your wallet…'
-  if (phase === 'pending') return labels.pending
+  if (phase === 'receipt') return labels.pending
   return labels.idle
 }
 
@@ -83,8 +70,6 @@ export function useReviewedAction(chainId?: number) {
   const unmounted = useUnmountSignal()
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
-  /** The last run ended with nothing sent because the user closed its review or wallet prompt. */
-  const [cancelled, setCancelled] = useState(false)
   const inFlight = useRef(false)
   /** Ends the wait on a sent step the hold is following, once its confirm closes; core keeps following it. */
   const stopWaiting = useRef<(() => void) | null>(null)
@@ -94,7 +79,6 @@ export function useReviewedAction(chainId?: number) {
     if (inFlight.current || unmounted().aborted) return null
     inFlight.current = true
     setResult(null)
-    setCancelled(false)
     setSentOn(action.calls[0]?.chainId)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
@@ -113,8 +97,6 @@ export function useReviewedAction(chainId?: number) {
         : ran
       const done = ended?.status === 'failed' ? null : ended
       setResult(done)
-      // Only a run that sent nothing was closed; a followed send closed early stays held.
-      setCancelled(ran === null && !unmounted().aborted)
       return done
     } finally {
       inFlight.current = false
@@ -123,25 +105,17 @@ export function useReviewedAction(chainId?: number) {
   }
 
   const { held } = runner
-  const phase: TxPhase =
-    runner.phase === 'done' ? 'success'
-      // A proposal the hold could no longer prove is held with its exit.
-      : runner.phase === 'proposed' ? (held?.phase === 'held' ? 'unconfirmed' : 'submitted')
-        // A send whose hold shows more than confirming (still in the wallet, say) is held with its line and exit.
-        : runner.phase === 'receipt' ? (held && held.line !== HELD_CONFIRMING_LINE ? 'unconfirmed' : 'pending')
-          : runner.phase !== 'idle' ? runner.phase
-            : held ? 'unconfirmed'
-              : runner.error || cancelled ? 'error'
-                : 'idle'
+  // Core's one status: `held` shows the hold's line and exit, `proposed` awaits a Safe's signers.
+  const phase = runner.status
   const shownChainId = sentOn ?? chainId ?? 0
   const action = runner.exitAction ?? runner.sendAgainAction
-  const error: string | ReactElement | null = phase === 'unconfirmed' && held
+  const error: string | ReactElement | null = phase === 'held' && held
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
-    : runner.error ?? (phase === 'error' && cancelled ? REVIEW_CLOSED_LINE : null)
+    : runner.error ?? (phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
 
   // A Safe proposal its hold settled ends on the execution's hash and receipt.
   const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
-  const confirmed = phase === 'success' && hash ? `${shownChainId}:${hash}` : null
+  const confirmed = phase === 'done' && hash ? `${shownChainId}:${hash}` : null
   const invalidated = useRef<string | null>(null)
   useEffect(() => {
     if (!confirmed || invalidated.current === confirmed) return
@@ -157,7 +131,6 @@ export function useReviewedAction(chainId?: number) {
     }
     if (inFlight.current) return false
     setResult(null)
-    setCancelled(false)
     runner.reset()
     return true
   }
@@ -165,17 +138,19 @@ export function useReviewedAction(chainId?: number) {
   const receipt: TransactionReceipt | null = result?.status === 'done'
     ? result.receipts.at(-1) ?? null
     : runner.receipt ?? revertedReceipt(runner.failure)
-  const safeProposalHash = phase === 'submitted' ? runner.safeTxHash : null
+  const safeProposalHash = phase === 'proposed' ? runner.safeTxHash : null
 
   return {
     run,
     phase,
     /** True while the run is in flight: in review, simulating, signing or awaiting its receipt. */
-    busy: phase === 'review' || phase === 'simulating' || phase === 'signing' || phase === 'pending',
+    busy: runner.busy,
     /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
-    settled: phase === 'success' || phase === 'submitted' || phase === 'unconfirmed',
-    /** The one line a `submitted` confirm shows: the hold's. */
-    notice: phase === 'submitted' ? held?.line ?? null : null,
+    settled: phase === 'done' || phase === 'proposed' || phase === 'held',
+    /** The run ended short of done: it failed, or was cancelled with nothing sent. */
+    stopped: phase === 'failed' || phase === 'cancelled',
+    /** The one line a `proposed` confirm shows: the hold's. */
+    notice: phase === 'proposed' ? held?.line ?? null : null,
     isSafe,
     error,
     /** The step of the run core is on (reviewing, simulating, signing or awaiting), counted in the run's calls. */
@@ -191,7 +166,7 @@ export function useReviewedAction(chainId?: number) {
     safeNonceGuidance: safeProposalHash ? SAFE_NONCE_GUIDANCE : null,
     receipt,
     /** The transaction has a hash, but its result could not be confirmed here. */
-    confirmationUncertain: phase === 'unconfirmed',
+    confirmationUncertain: phase === 'held',
     reset,
     /** Close the current confirmation. The hold keeps the write; dismissing is never evidence that it can be sent again. */
     dismiss: reset,

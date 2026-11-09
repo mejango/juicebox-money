@@ -898,7 +898,7 @@ describe('cash-out write flow', () => {
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
     // The cash-out it sent confirms.
-    mocks.txPhase = 'success'
+    mocks.txPhase = 'done'
     mocks.txHash = `0x${'1'.repeat(64)}`
     await act(async () => {
       renderer.update(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
