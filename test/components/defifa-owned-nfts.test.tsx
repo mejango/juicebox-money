@@ -56,11 +56,12 @@ vi.mock('@/components/project/DefifaRecovery', () => ({ DefifaRecovery: ({ child
 vi.mock('@/components/ui/TxProgress', async original => {
   const actual = await original<typeof import('@/components/ui/TxProgress')>()
   return { ...actual, TxProgress: ({ title, start, startKey, next, status, error, children, rows, complete, onClose, busy }: ComponentProps<typeof actual.TxProgress>) => {
-    actual.useStartOnce(true, !!complete, start, startKey)
+    useStartOnce(true, false, start, startKey, !!complete)
     return createElement('section', null, title, status, error, children, ...(rows ?? []).map(row => createElement('p', { key: String(row.label) }, row.label, row.value)), createElement('button', { onClick: onClose, disabled: busy }, 'Close'), complete ? createElement('button', { onClick: onClose }, 'Done') : next ? createElement('button', { onClick: next.onClick, disabled: busy || next.disabled }, next.label) : null)
   } }
 })
 import { wallet } from '../support/fake-wallet'
+import { useStartOnce } from '@bananapus/nana-sdk-core/review/react'
 import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
 import type { Address } from 'viem'
 import { DefifaOwnedNfts } from '@/components/project/DefifaOwnedNfts'
