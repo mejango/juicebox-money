@@ -40,7 +40,8 @@ const routes = [
   // read recovery, RPC lanes, shop checkout and shared create review rows from the UX review.
   // 346 -> 347, /create 402 -> 407, /[urn] 528 -> 533, /account 420 -> 425: SDK 6 recognizes every
   // buyback, router and gateway generation projects still use.
-  { route: '/', path: '/', kib: 347, text: 'Fund your' },
+  // 347 -> 348: the dashboard home layout restored (matches revnet), measured 347.0 on CI.
+  { route: '/', path: '/', kib: 348, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
   { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment.' },

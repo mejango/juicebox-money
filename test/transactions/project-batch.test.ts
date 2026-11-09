@@ -161,6 +161,10 @@ describe('durable project batches', () => {
     }), expect.anything())
     expect(mocks.rawRelayr).not.toHaveBeenCalled()
   })
+  it('runs in a browser without Web Locks instead of refusing (R119)', async () => {
+    vi.stubGlobal('navigator', {})
+    expect((await run([call()])).status).toBe('complete')
+  })
   it('finishes a recovered journal whose calls were already marked complete', async () => {
     const batch = await run([call()])
     const key = `jb-project-batch:v1:journal:${batch.id}`

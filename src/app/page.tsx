@@ -194,10 +194,10 @@ function HomepageDiscovery() {
   return (
     <section
       id="trending"
-      className="mx-auto max-w-7xl px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
+      className="mx-auto max-w-[1800px] px-4 pb-0 pt-3 sm:px-6 sm:pt-12"
     >
       <HomepageDiscoveryLayout
-        hero={<Hero />}
+        hero={<HeroColumn />}
         summary={
           <Suspense fallback={<ReservesSkeleton />}>
             <ReservesPanel />
@@ -207,7 +207,9 @@ function HomepageDiscovery() {
           <DashboardColumn
             title="Latest"
             headingClassName="hidden sm:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
           >
+            {/* Ghost rows must outrun the card, which fills the column on wide screens. */}
             <Suspense fallback={<ActivityRows rows={14} />}>
               <ActivityPanel />
             </Suspense>
@@ -216,7 +218,7 @@ function HomepageDiscovery() {
         trending={
           <DashboardColumn
             title="Trending"
-            headingClassName="hidden"
+            headingClassName="hidden xl:flex"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TrendingPanel />
@@ -226,7 +228,8 @@ function HomepageDiscovery() {
         top={
           <DashboardColumn
             title="Top"
-            headingClassName="hidden"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <TopPanel />
@@ -236,7 +239,8 @@ function HomepageDiscovery() {
         newProjects={
           <DashboardColumn
             title="New"
-            headingClassName="hidden"
+            headingClassName="hidden xl:flex"
+            panelClassName="xl:h-auto xl:min-h-0 xl:flex-1"
           >
             <Suspense fallback={<ProjectRowsSkeleton rows={8} />}>
               <NewPanel />
@@ -323,14 +327,16 @@ function DashboardColumn({
   title,
   children,
   headingClassName,
+  panelClassName = '',
 }: {
   title: string
   children: ReactNode
   headingClassName: string
+  panelClassName?: string
 }) {
   return (
     <section
-      className="flex min-w-0 flex-col"
+      className="flex min-w-0 flex-col xl:h-full"
       aria-labelledby={`home-${title.replaceAll(' ', '-').toLowerCase()}`}
     >
       <h2
@@ -339,7 +345,12 @@ function DashboardColumn({
       >
         {title}
       </h2>
-      <div className="card min-h-[420px]">{children}</div>
+      <div
+        data-scroll-container
+        className={`card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] ${panelClassName}`}
+      >
+        {children}
+      </div>
     </section>
   )
 }
@@ -456,41 +467,41 @@ function EmptyProjects() {
   )
 }
 
-function Hero() {
+function HeroColumn() {
   return (
-    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6">
+    <section className="flex min-h-[460px] flex-col overflow-hidden px-6 pb-6 pt-1 text-center sm:pt-6 xl:h-[calc(100svh-9rem)] xl:min-h-0 xl:justify-center xl:p-3">
       {/* Phones keep the illustration close under the header; wider screens
           let it drop toward the headline. */}
-      <div className="mb-3 translate-y-2 sm:translate-y-8">
+      <div className="mb-3 translate-y-2 sm:translate-y-8 xl:flex xl:min-h-0 xl:items-end xl:justify-center">
         <Image
           src={juiceboxHero}
           alt=""
           priority
-          sizes="330px"
-          className="mx-auto mb-2 h-auto w-full max-w-[330px]"
+          sizes="(min-width: 1280px) 360px, 280px"
+          className="mx-auto mb-2 h-auto w-full max-w-[330px] xl:mb-0 xl:max-h-[390px] xl:max-w-[390px] xl:object-contain"
         />
       </div>
       <div className="mx-auto w-full shrink-0 [container-type:inline-size]">
         {/* Nowrap segments set the only allowed break points, so a narrow
             column reads "Fund your / thing." — never one word per line. */}
-        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)]">
+        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
           <span className="whitespace-nowrap">Fund your</span>{' '}
           <span className="whitespace-nowrap">
             thing<span className="text-split-500">.</span>
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700">
+        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
           {JUICEBOX_ONE_LINER}
         </p>
         {/* /create is the heaviest route (~70 KiB); fetch it on click, not on view. */}
         <Link
           href="/create"
           prefetch={false}
-          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm"
+          className="btn-primary mt-7 inline-flex min-h-[48px] items-center px-7 text-sm xl:mt-4"
         >
           Start a project
         </Link>
-        <AuditPromptLink className="mt-8 text-sm text-smoke-600" />
+        <AuditPromptLink className="mt-8 text-sm text-smoke-600 xl:mt-6" />
       </div>
     </section>
   )

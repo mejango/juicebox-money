@@ -83,10 +83,14 @@ export function HomepageDiscoveryLayout({
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
-    <div className="grid items-start gap-5 sm:grid-cols-2 md:gap-x-8">
-      <div className="min-w-0 sm:col-span-2 md:col-span-1">{hero}</div>
+    <div className="grid items-start gap-5 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.5fr)] xl:items-stretch">
+      <div className="order-1 min-w-0 sm:col-span-2 sm:row-start-1 md:col-span-1 md:col-start-3 md:row-span-2 md:row-start-1 xl:col-start-4">
+        {hero}
+      </div>
 
-      <div className="min-w-0 sm:col-span-2 md:col-span-1 md:self-center">{summary}</div>
+      <div className="order-2 min-w-0 sm:col-span-2 sm:row-start-2 md:col-start-1 md:row-start-1 xl:col-span-2">
+        {summary}
+      </div>
 
       <FeedTabs
         feeds={FEEDS}
@@ -94,28 +98,56 @@ export function HomepageDiscoveryLayout({
         onChange={setActiveFeed}
         idPrefix="home-all"
         label="Project feeds"
-        className="flex sm:hidden"
+        className="order-3 flex sm:hidden"
       />
 
-      <div className="min-w-0">
+      <div
+        id="home-activity-panel"
+        role="tabpanel"
+        aria-labelledby="home-all-activity-tab"
+        className={`${
+          activeFeed === 'activity' ? 'block' : 'hidden'
+        } order-5 min-w-0 sm:col-start-2 sm:row-start-3 sm:block md:row-start-2 xl:relative xl:col-start-3 xl:row-span-2 xl:row-start-1`}
+      >
+        {/* Absolute at xl so the feed fills both rows without its own content
+            sizing them; the Top stack and hero set the height. */}
+        <div className='xl:absolute xl:inset-0'>{activity}</div>
+      </div>
+
+      <div className="order-4 min-w-0 sm:col-start-1 sm:row-start-3 md:row-start-2 xl:contents">
         <FeedTabs
           feeds={RANKING_FEEDS}
           active={rankingFeed}
           onChange={feed => setRankingFeed(feed as RankingFeed)}
           idPrefix="home-ranking"
           label="Project rankings"
-          className="mb-4 hidden sm:flex"
+          className="mb-4 hidden sm:flex xl:hidden"
         />
 
-        <div
-          id="home-top-panel"
-          role="tabpanel"
-          aria-labelledby="home-all-top-tab home-ranking-top-tab"
-          className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
-            rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
-          } min-w-0`}
-        >
-          {top}
+        {/* Wide screens stack Top over New in one column, Top taking the
+            larger share; the column keeps the height a lone Top panel had. */}
+        <div className="contents xl:col-start-1 xl:row-start-2 xl:flex xl:h-[calc(100svh-8.25rem)] xl:flex-col xl:gap-5">
+          <div
+            id="home-top-panel"
+            role="tabpanel"
+            aria-labelledby="home-all-top-tab home-ranking-top-tab"
+            className={`${activeFeed === 'top' ? 'block' : 'hidden'} ${
+              rankingFeed === 'top' ? 'sm:block' : 'sm:hidden'
+            } min-w-0 xl:flex xl:min-h-0 xl:flex-[3] xl:flex-col`}
+          >
+            {top}
+          </div>
+
+          <div
+            id="home-new-panel"
+            role="tabpanel"
+            aria-labelledby="home-all-new-tab home-ranking-new-tab"
+            className={`${activeFeed === 'new' ? 'block' : 'hidden'} ${
+              rankingFeed === 'new' ? 'sm:block' : 'sm:hidden'
+            } min-w-0 xl:flex xl:min-h-0 xl:flex-[2] xl:flex-col`}
+          >
+            {newProjects}
+          </div>
         </div>
 
         <div
@@ -124,30 +156,10 @@ export function HomepageDiscoveryLayout({
           aria-labelledby="home-all-trending-tab home-ranking-trending-tab"
           className={`${activeFeed === 'trending' ? 'block' : 'hidden'} ${
             rankingFeed === 'trending' ? 'sm:block' : 'sm:hidden'
-          } min-w-0`}
+          } min-w-0 xl:col-start-2 xl:row-start-2 xl:block`}
         >
           {trending}
         </div>
-
-        <div
-          id="home-new-panel"
-          role="tabpanel"
-          aria-labelledby="home-all-new-tab home-ranking-new-tab"
-          className={`${activeFeed === 'new' ? 'block' : 'hidden'} ${
-            rankingFeed === 'new' ? 'sm:block' : 'sm:hidden'
-          } min-w-0`}
-        >
-          {newProjects}
-        </div>
-      </div>
-
-      <div
-        id="home-activity-panel"
-        role="tabpanel"
-        aria-labelledby="home-all-activity-tab"
-        className={`${activeFeed === 'activity' ? 'block' : 'hidden'} min-w-0 sm:block`}
-      >
-        {activity}
       </div>
     </div>
   )
