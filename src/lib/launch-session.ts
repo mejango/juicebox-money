@@ -19,6 +19,7 @@ import { withTabLocks } from '@/lib/tab-locks'
 import type { LaunchPlan } from '@/lib/launch'
 import type { Address, Hex } from 'viem'
 import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
+import { isRelayrLaunchPhase } from '@bananapus/nana-sdk-core/review/machines'
 import { DRAFT_KEY } from '@/lib/draft'
 import { validateLaunchMultisigs } from '@/lib/launch-multisig'
 
@@ -182,7 +183,7 @@ export function loadLaunchSession({ strict = false }: { strict?: boolean } = {})
       if (typeof journal !== 'object' || !Array.isArray(journal.signed) ||
           (journal.superseded !== undefined && !Array.isArray(journal.superseded)) ||
           !Array.isArray(journal.records) || typeof journal.account !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(journal.account) ||
-          !['signing', 'quoting', 'quoted', 'payment-signing', 'submitted', 'executing', 'payment-reverted'].includes(journal.phase) ||
+          !isRelayrLaunchPhase(journal.phase) ||
           (journal.phase !== 'signing' && journal.published !== true) ||
           (journal.published !== undefined && journal.published !== true) ||
           (journal.abandonable !== undefined && journal.abandonable !== true) ||
