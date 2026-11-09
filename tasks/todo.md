@@ -1,3 +1,22 @@
+# Explicit state machines, wave 3: adopt the SDK owners (2026-11-09)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF3.md. Branch state-machines-3-2026-11-09 stacked on state-machines-2-2026-11-09 (#172). Built against the packed SDK tarballs; no package.json or lockfile change (one bump commit follows the publish).
+
+- [x] review/locks, TRANSACTION_GAS_CAP, useMobileWallet, useStartOnce (complete as blocked), useFeeBuybackReview, createReviewQueue.
+- [x] jbm-9: launch journal on RelayrLaunchJournal, advanceRelayrLaunch, resignedRelayrLaunch and the phase groups.
+- [x] jbm-5 (part): lastSubmittedStep replaces the cash-out, borrow and repay last-step flags and reachedLastStep.
+- [ ] jbm-14: blocked on an SDK gap (held confirming with a non-confirming line maps to receipt); patch kept at scratchpad/sm/jbm-14-runner-status.patch.
+- [ ] jbm-12, jbm-5 useStepRun moves, jbm-6/34 PayPanel, jbm-23 MoveFlow: not done in this wave (reasons in the PR).
+- [x] Gate against the tarball, one step at a time.
+
+## Plan refinement
+- **Objective:** Move jbm onto the SDK's shared machines and delete the local copies, with no behavior change beyond sdk.md's settled differences; draft PR only.
+- **System fit:** Outcome (one behavior per action across clients) -> capability (SDK PR #293 exports) -> evidence (tarball build, tests) -> prepared action (one commit per owner) -> authority (draft PR, never merged) -> verified result (gate against the tarball) -> learning (SDK gaps reported, not worked around).
+- **Reuse and simplicity:** Each adoption deletes the local copy; app-side state (session, locks, dialog loading) stays here as sdk.md lists.
+- **Evidence and unknowns:** A gap found (jbm-14) is reported with its exact export, not patched locally.
+- **Verification:** Existing suites adapted to SDK vocabulary; new tests: queue account binding, lastStepSent on a confirmed run, fee notice states.
+- **Resource budget:** Same CoW worktree, tarballs installed with --no-save, webpack cache moved aside before the build.
+
 # Explicit state machines, wave 2 (2026-11-09)
 
 Same brief. Branch state-machines-2-2026-11-09 stacked on state-machines-2026-11-09; PR base is that branch.
