@@ -5,8 +5,11 @@ Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45
 - [x] review/locks, TRANSACTION_GAS_CAP, useMobileWallet, useStartOnce (complete as blocked), useFeeBuybackReview, createReviewQueue.
 - [x] jbm-9: launch journal on RelayrLaunchJournal, advanceRelayrLaunch, resignedRelayrLaunch and the phase groups.
 - [x] jbm-5 (part): lastSubmittedStep replaces the cash-out, borrow and repay last-step flags and reachedLastStep.
-- [ ] jbm-14: blocked on an SDK gap (held confirming with a non-confirming line maps to receipt); patch kept at scratchpad/sm/jbm-14-runner-status.patch.
-- [ ] jbm-12, jbm-5 useStepRun moves, jbm-6/34 PayPanel, jbm-23 MoveFlow: not done in this wave (reasons in the PR).
+- [x] jbm-14: reviewed runs show core's status vocabulary (re-packed SDK maps a non-confirming held line to held).
+- [x] jbm-12: SafeQueueCard reads the Safe Relayr controller's view (getState/subscribe, session).
+- [x] jbm-5 FIX + UNION: cash-out, borrow, repay and pay run on useStepRun; a refused step after a confirmed one now shows that step (two failing tests first).
+- [x] jbm-23: MoveFlow named steps; approval and prepare on useStepRun.
+- [x] jbm-6/34: PayPanel sequence state is one reducer (prepared, closed, reset, patch), submitWhenFresh included.
 - [x] Gate against the tarball, one step at a time.
 
 ## Plan refinement
@@ -16,6 +19,10 @@ Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45
 - **Evidence and unknowns:** A gap found (jbm-14) is reported with its exact export, not patched locally.
 - **Verification:** Existing suites adapted to SDK vocabulary; new tests: queue account binding, lastStepSent on a confirmed run, fee notice states.
 - **Resource budget:** Same CoW worktree, tarballs installed with --no-save, webpack cache moved aside before the build.
+
+## Review
+- Budget ceilings are not raised here; the final sizes are in the PR body for the coordinator.
+- useStepRun gained `steps` and returns the run's result with its call-to-step mapping (PayPanel needs the result for the Safe stage and the approval block).
 
 # Explicit state machines, wave 2 (2026-11-09)
 
