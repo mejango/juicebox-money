@@ -20,7 +20,6 @@ import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { PerChainAddressListField } from '@/components/ui/PerChainAddressListField'
 import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { ErrorNote } from '@/components/ui/TxError'
-import { useRelayrDiscard } from '@/components/RelayrDiscard'
 import {
   POWERS,
   initialFieldValue,
@@ -33,11 +32,10 @@ import { useWallet } from '@/hooks/useWallet'
 import {
   clientFor,
   readAuthorityOf,
-  runAuthorityCalls,
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
-import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { useAuthorityRun } from '@/hooks/useAuthorityRun'
 import { resolvedAddress } from '@/lib/ens'
 import { truncateAddress } from '@/lib/format'
 import { buildStep, powerStepValues, type BatchStep } from '@/lib/safe-batch'
@@ -254,8 +252,6 @@ export function PowerActionForm({
 }) {
   const { address } = useWallet()
   const batch = useSafeBatch()
-  // Leaving the form ends a Safe app proposal's wait for its execution.
-  const flowSignal = useUnmountSignal()
   const enabledRows = useMemo(
     () => rows.filter(row => flagState(row, power.flag) && !row.error),
     [power.flag, rows],
@@ -300,19 +296,16 @@ export function PowerActionForm({
         ]),
     ),
   )
-  const [review, setReview] = useState<{
+  const [ack, setAck] = useState(false)
+  const [ackExtreme, setAckExtreme] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  // The powers have no recheck of their own: after Discard their calls go out only after a fresh review (ruling R114 (f)).
+  const powerRun = useAuthorityRun<{
     calls: AuthorityCall[]
     rows: TxConfirmRow[]
     steps: BatchStep[]
-  } | null>(null)
-  const [done, setDone] = useState(false)
-  const [ack, setAck] = useState(false)
-  const [ackExtreme, setAckExtreme] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  // The powers have no recheck of their own: after Discard their calls go out only after a fresh review (ruling R114 (f)).
-  const discard = useRelayrDiscard(() => setError(null), () => { setReview(null); setAck(false); setAckExtreme(false) })
+  }>({ onReviewDropped: () => { setAck(false); setAckExtreme(false) } })
+  const { plan: review, busy, done, dismiss } = powerRun
 
   useEffect(() => {
     if (!address) return
@@ -335,10 +328,10 @@ export function PowerActionForm({
   }, [address, enabledRows, power.fields])
 
   useEffect(() => {
-    setReview(null)
+    dismiss()
     setAck(false)
     setAckExtreme(false)
-  }, [selected, scalars, bools, addresses, decimalsByChain])
+  }, [dismiss, selected, scalars, bools, addresses, decimalsByChain])
 
   const resolveSharedValues = (): ResolvedValues => {
     const values: ResolvedValues = {}
@@ -371,7 +364,6 @@ export function PowerActionForm({
   /** The exact calls the submit would send, or null after reporting why not. */
   const buildPlan = () => {
     setError(null)
-    setStatus(null)
     const chosen = enabledRows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
       setError('Choose at least one enabled chain.')
@@ -496,7 +488,7 @@ export function PowerActionForm({
 
   const buildReview = () => {
     const plan = buildPlan()
-    if (plan) setReview(plan)
+    if (plan) powerRun.review(plan)
   }
 
   const addToBatch = () => {
@@ -507,37 +499,16 @@ export function PowerActionForm({
   }
 
   const acknowledged = ack && (!power.extreme || ackExtreme)
-  const submit = async () => {
-    if (!review || !acknowledged || busy) return
-    setBusy(true)
-    setError(null)
-    discard.capture(null)
-    try {
-      const result = await runAuthorityCalls({
-        calls: review.calls,
-        onProgress: progress => setStatus(progress.message),
-        signal: flowSignal(),
-      })
-      setStatus(
-        safeOutcomeMessage(
-          result,
-          `${power.label} completed on ${review.calls.length} chain${
-            review.calls.length === 1 ? '' : 's'
-          }.`,
-        ),
-      )
-      setDone(true)
-      onDone()
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Could not complete this owner action.',
-      )
-      discard.capture(submitError)
-    } finally {
-      setBusy(false)
-    }
+  const submit = () => {
+    if (!acknowledged) return
+    void powerRun.run({
+      outcome: (result, reviewed) => safeOutcomeMessage(
+        result,
+        `${power.label} completed on ${reviewed.calls.length} chain${reviewed.calls.length === 1 ? '' : 's'}.`,
+      ),
+      failure: 'Could not complete this owner action.',
+      onSuccess: () => onDone(),
+    })
   }
 
   return (
@@ -695,9 +666,6 @@ export function PowerActionForm({
           </button>
         ) : null}
       </div>
-      {status && !review ? (
-        <p className="mt-2 text-xs text-smoke-700">{status}</p>
-      ) : null}
       {error && !review ? <ErrorNote message={error} /> : null}
 
       {review ? (
@@ -711,27 +679,20 @@ export function PowerActionForm({
             key: String(call.chainId),
             title: `${power.actionLabel} on ${chainName(call.chainId)}`,
           }))}
-          activeIndex={busy ? 0 : -1}
-          status={status}
-          error={discard.active ? null : error}
-          busy={busy}
-          complete={done}
+          {...powerRun.progress(submit, { retryable: acknowledged })}
           // The review opens once every acknowledgement is checked: checking them is the go-ahead.
-          start={acknowledged ? () => void submit() : undefined}
-          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: !acknowledged || discard.active } : null}
+          start={acknowledged ? submit : undefined}
           onClose={() => {
             if (done) {
               onCancel()
               return
             }
-            setReview(null)
+            powerRun.close()
             setAck(false)
             setAckExtreme(false)
-            setError(null)
-            discard.reset()
           }}
         >
-          {discard.element}
+          {powerRun.discard.element}
           <label className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
             <input
               type="checkbox"

@@ -39,7 +39,8 @@ describe('the signal of a flow a component starts', () => {
 /**
  * Every function that can wait for a Safe to execute a proposal takes the
  * flow's signal (TypeScript requires it). Each component that starts such a
- * flow ends it when it unmounts: it reads its signal from useUnmountSignal.
+ * flow, or each hook that runs one for a component (useAuthorityRun), ends it
+ * when it unmounts: it reads its signal from useUnmountSignal.
  */
 const SAFE_WAITING = [
   'waitForSafeExecutionHash',
@@ -63,13 +64,13 @@ function sources(dir: string): string[] {
 
 describe('components that wait for a Safe', () => {
   it('end the wait when they unmount', () => {
-    const waiting = sources('src/components').flatMap(path => {
+    const waiting = [...sources('src/components'), ...sources('src/hooks')].flatMap(path => {
       const text = readFileSync(path, 'utf8')
       const calls = SAFE_WAITING.filter(name => new RegExp(`\\b${name}\\(`).test(text) &&
         !new RegExp(`export (async )?function ${name}\\(`).test(text))
       return calls.length ? [{ path, text }] : []
     })
-    expect(waiting.length).toBeGreaterThanOrEqual(17)
+    expect(waiting.length).toBeGreaterThanOrEqual(16)
     expect(waiting.filter(({ text }) => !/useUnmountSignal\(\)/.test(text)).map(({ path }) => path)).toEqual([])
   })
 })

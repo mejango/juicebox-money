@@ -24,12 +24,10 @@ import { ModalShell } from '@/components/ui/ModalShell'
 import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { PerChainAddressField } from '@/components/ui/PerChainAddressField'
 import { ErrorNote } from '@/components/ui/TxError'
-import { useRelayrDiscard } from '@/components/RelayrDiscard'
-import { useUnmountSignal } from '@/hooks/useUnmountSignal'
+import { useAuthorityRun } from '@/hooks/useAuthorityRun'
 import {
   clientFor,
   readAuthorityOf,
-  runAuthorityCalls,
   safeOutcomeMessage,
   type AuthorityCall,
 } from '@/lib/authority'
@@ -530,8 +528,6 @@ export function BuybackActionForm({
 }) {
   const action = ACTIONS[kind]
   const batch = useSafeBatch()
-  // Leaving the form ends a Safe app proposal's wait for its execution.
-  const flowSignal = useUnmountSignal()
   const available = useMemo(
     () => rows.filter(row => isKindAvailable(kind, row)),
     [kind, rows],
@@ -563,25 +559,18 @@ export function BuybackActionForm({
   const [twapWindow, setTwapWindow] = useState(String(livePool?.twap ?? 1800))
   const [sqrtPriceX96, setSqrtPriceX96] = useState('')
   const [ack, setAck] = useState(false)
-  const [review, setReview] = useState<Review | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [status, setStatus] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   // These calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
-  const discard = useRelayrDiscard(() => setError(null), () => { setReview(null); setAck(false) })
-  const [done, setDone] = useState(false)
+  const actionRun = useAuthorityRun<Review>({ onReviewDropped: () => setAck(false) })
+  const { plan: review, busy, dismiss } = actionRun
 
   useEffect(() => {
-    setReview(null)
+    dismiss()
     setAck(false)
-  }, [selected, addresses, fee, tickSpacing, twapWindow, sqrtPriceX96])
+  }, [dismiss, selected, addresses, fee, tickSpacing, twapWindow, sqrtPriceX96])
 
   const closeReview = () => {
-    if (busy) return
-    setReview(null)
-    setError(null)
-    discard.reset()
-    if (done) onDone()
+    if (actionRun.close()) onDone()
   }
 
   /** The exact calls the submit would send, or null after reporting why not. */
@@ -827,9 +816,7 @@ export function BuybackActionForm({
   const buildReview = () => {
     const plan = buildPlan()
     if (!plan) return
-    setStatus(null)
-    setDone(false)
-    setReview(plan)
+    actionRun.review(plan)
   }
 
   const addToBatch = () => {
@@ -839,36 +826,15 @@ export function BuybackActionForm({
     onDone()
   }
 
-  const submit = async () => {
-    if (!review || !ack || busy) return
-    setBusy(true)
-    setError(null)
-    discard.capture(null)
-    try {
-      const result = await runAuthorityCalls({
-        calls: review.calls,
-        onProgress: progress => setStatus(progress.message),
-        signal: flowSignal(),
-      })
-      setStatus(
-        safeOutcomeMessage(
-          result,
-          `${action.title} completed on ${review.calls.length} chain${
-            review.calls.length === 1 ? '' : 's'
-          }.`,
-        ),
-      )
-      setDone(true)
-    } catch (submitError) {
-      setError(
-        submitError instanceof Error
-          ? submitError.message
-          : 'Could not complete this action.',
-      )
-      discard.capture(submitError)
-    } finally {
-      setBusy(false)
-    }
+  const submit = () => {
+    if (!ack) return
+    void actionRun.run({
+      outcome: (result, reviewed) => safeOutcomeMessage(
+        result,
+        `${action.title} completed on ${reviewed.calls.length} chain${reviewed.calls.length === 1 ? '' : 's'}.`,
+      ),
+      failure: 'Could not complete this action.',
+    })
   }
 
   return (
@@ -988,22 +954,17 @@ export function BuybackActionForm({
       {review ? (
         <TxProgress
           open
-          title={done ? `${action.title} complete` : `Confirm ${action.title.toLowerCase()}`}
+          title={actionRun.done ? `${action.title} complete` : `Confirm ${action.title.toLowerCase()}`}
           rows={review.rows}
           steps={review.calls.map(call => ({
             key: String(call.chainId),
             title: `${action.title} on ${chainName(call.chainId)}`,
           }))}
-          activeIndex={busy ? 0 : -1}
-          status={status}
-          error={discard.active ? null : error}
-          busy={busy}
-          complete={done}
-          start={() => void submit()}
-          next={error ? { label: 'Retry', onClick: () => void submit(), disabled: discard.active } : null}
+          {...actionRun.progress(submit)}
+          start={submit}
           onClose={closeReview}
         >
-          {discard.element}
+          {actionRun.discard.element}
         </TxProgress>
       ) : null}
     </div>

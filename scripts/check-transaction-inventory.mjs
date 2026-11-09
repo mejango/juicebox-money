@@ -59,8 +59,11 @@ for (const path of sourceFiles(sourceRoot)) {
     extname(path) === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
   )
   const reviewedActionVariables = new Set()
+  // A useAuthorityRun's `run` is that component's runAuthorityCalls site.
+  const authorityRunVariables = new Set()
   const monitoredNames = new Set([
     'useReviewedAction',
+    'useAuthorityRun',
     'runAuthorityCalls',
     'sendReviewedWrite',
   ])
@@ -97,6 +100,15 @@ for (const path of sourceFiles(sourceRoot)) {
       actual.reviewedActions[file] ??= { hooks: 0, sends: 0 }
       actual.reviewedActions[file].hooks += 1
     }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      canonicalCalledName(node.initializer.expression) === 'useAuthorityRun'
+    ) {
+      authorityRunVariables.add(node.name.text)
+    }
     ts.forEachChild(node, collectBindings)
   }
   collectBindings(source)
@@ -115,6 +127,14 @@ for (const path of sourceFiles(sourceRoot)) {
     if (ts.isCallExpression(node)) {
       const name = canonicalCalledName(node.expression)
       if (name === 'runAuthorityCalls') {
+        increment(actual.authorityCalls, file)
+      }
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'run' &&
+        ts.isIdentifier(node.expression.expression) &&
+        authorityRunVariables.has(node.expression.expression.text)
+      ) {
         increment(actual.authorityCalls, file)
       }
       if (name === 'sendReviewedWrite') {

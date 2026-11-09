@@ -299,6 +299,18 @@
         "Queue rulesets across selected mainnets"
       ]
     },
+    "src/hooks/useAuthorityRun.ts": {
+      "calls": 1,
+      "actions": [
+        "Add or revoke permissions",
+        "Transfer project ownership",
+        "Change owner/operator powers",
+        "Register accounting tokens across chains",
+        "Configure buyback/router",
+        "Deploy project ERC-20",
+        "Rename project ERC-20"
+      ]
+    },
     "src/lib/project-batch.ts": {
       "calls": 1,
       "actions": [
