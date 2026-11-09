@@ -108,6 +108,8 @@ export type AuthorityCall = {
 export type AuthorityProgress = {
   kind: 'checking' | 'direct' | 'relayr' | 'safe'
   message: string
+  /** The call in `calls` this progress sends, when it is about one; never while checking. */
+  index?: number
 }
 
 export type AuthorityResult = {
@@ -697,12 +699,14 @@ export async function runAuthorityCalls({
         onProgress?.({
           kind: 'safe',
           message: 'This proposal is waiting in your Safe. Finish it there first.',
+          index: calls.indexOf(call),
         })
         continue
       }
       onProgress?.({
         kind: 'safe',
         message: 'Continue in Safe, then execute the proposal…',
+        index: calls.indexOf(call),
       })
       // Core reviews (or spends the parent plan) and proposes the exact call
       // under the same hold the tracking below reads.
@@ -794,7 +798,7 @@ export async function runAuthorityCalls({
             reverifyAuthority: call.reverifyAuthority,
             onSafePrepared: call.onSafePrepared,
           })),
-          onProgress: message => onProgress?.({ kind: 'safe', message }),
+          onProgress: (message, index) => onProgress?.({ kind: 'safe', message, index: calls.indexOf(group[index]) }),
           signal,
         })),
       )
@@ -831,6 +835,7 @@ export async function runAuthorityCalls({
           onProgress?.({
             kind: 'direct',
             message: `Confirming ${step + 1}/${group.length} directly on ${chainName(call.chainId)}…`,
+            index: calls.indexOf(call),
           })
           current = call
           await call.reverifyAuthority?.()
@@ -841,7 +846,7 @@ export async function runAuthorityCalls({
         onUnsent: (_sent, step) => group[step].onBeforeSubmissionAborted?.(),
         onSubmitted: (_sent, step, hash) => group[step].onSubmitted?.(hash, 'direct'),
         // A step still confirming is followed in the run, which then goes on to the next call.
-        follow: { onConfirming: () => onProgress?.({ kind: 'direct', message: HELD_CONFIRMING_LINE }) },
+        follow: { onConfirming: step => onProgress?.({ kind: 'direct', message: HELD_CONFIRMING_LINE, index: calls.indexOf(group[step]) }) },
       }, reviewedSendDeps)
       if (result.status !== 'done') throw new Error('Connected wallet changed. Review this project action again.')
       directResults.push(...result.hashes)

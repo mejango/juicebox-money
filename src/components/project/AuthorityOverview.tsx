@@ -678,11 +678,7 @@ export function TransferAuthorityFlow({
         signal: flowSignal(),
         onProgress: (progress) => {
           setStatus(progress.message);
-          // Progress names the chain it is on (JB_CHAINS name); that names the step.
-          const index = plan.calls.findIndex((call) =>
-            progress.message.includes(chainName(call.chainId)),
-          );
-          if (index >= 0) setStep(index);
+          if (progress.index !== undefined) setStep(progress.index);
         },
       });
       // Invalidate the browsing lease only; the existing outcome still distinguishes
@@ -1243,11 +1239,7 @@ export function PermissionEditor({
         signal: flowSignal(),
         onProgress: (progress) => {
           setStatus(progress.message);
-          // Progress names the chain it is on (JB_CHAINS name); that names the step.
-          const index = plan.calls.findIndex((call) =>
-            progress.message.includes(chainName(call.chainId)),
-          );
-          if (index >= 0) setStep(index);
+          if (progress.index !== undefined) setStep(progress.index);
         },
       });
       setStatus(

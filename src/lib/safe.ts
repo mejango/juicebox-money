@@ -959,7 +959,8 @@ export async function runSafeCalls({
 }: {
   calls: SafeCall[]
   signer: Address
-  onProgress?: (message: string) => void
+  /** `index` is the call in `calls` the message is about. */
+  onProgress?: (message: string, index: number) => void
   /** The flow's: when it aborts, a Safe app's wait for a proposal's execution ends. */
   signal: AbortSignal
 }): Promise<SafeCallResult[]> {
@@ -981,7 +982,7 @@ export async function runSafeCalls({
     }
 
     if (hasSafeService(call.chainId)) {
-      onProgress?.(`Signing ${index + 1}/${calls.length} Safe proposal…`)
+      onProgress?.(`Signing ${index + 1}/${calls.length} Safe proposal…`, index)
       // The pending list is load-bearing twice over: it dedupes against an
       // existing proposal and it picks a free nonce. Swallowing a failure
       // makes an outage read as an empty queue, so this proposal lands at the
@@ -1019,7 +1020,7 @@ export async function runSafeCalls({
           info.owners,
         ).some(confirmation => isAddressEqual(confirmation.owner, signer))
         if (!alreadyConfirmed) {
-          onProgress?.(`Signing existing Safe proposal ${index + 1}/${calls.length}…`)
+          onProgress?.(`Signing existing Safe proposal ${index + 1}/${calls.length}…`, index)
           await confirmSafeTx(
             call.chainId,
             call.safe,
@@ -1053,7 +1054,7 @@ export async function runSafeCalls({
       continue
     }
 
-    onProgress?.(`Checking onchain Safe approvals ${index + 1}/${calls.length}…`)
+    onProgress?.(`Checking onchain Safe approvals ${index + 1}/${calls.length}…`, index)
     const context = await safeOnChainContext(call.chainId, call.safe)
     const safeKey = `${call.chainId}:${call.safe.toLowerCase()}`
     const nonce = Math.max(context.nonce, provisionalNonce.get(safeKey) ?? 0)
@@ -1075,7 +1076,7 @@ export async function runSafeCalls({
       threshold: context.threshold,
     })
     if (step.kind === 'approve') {
-      onProgress?.(`Approving onchain ${index + 1}/${calls.length}…`)
+      onProgress?.(`Approving onchain ${index + 1}/${calls.length}…`, index)
       const approval = await approveSafeHashOnChain(
         call.chainId,
         call.safe,
@@ -1105,7 +1106,7 @@ export async function runSafeCalls({
       })
       continue
     }
-    onProgress?.(`Executing Safe transaction ${index + 1}/${calls.length}…`)
+    onProgress?.(`Executing Safe transaction ${index + 1}/${calls.length}…`, index)
     const execution = await executeSafeTx(call.chainId, call.safe, {
       ...queued,
       confirmations: step.signers.map(owner => ({ owner })),
