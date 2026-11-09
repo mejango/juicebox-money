@@ -40,8 +40,8 @@ import {
 } from '@/components/project/SettlementSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
-import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
-import { planShown, sequenceCalls } from '@/lib/reviewed-send'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
@@ -359,8 +359,8 @@ function MoveFlow({
   const config = useConfig()
   const tx = useReviewedAction(from)
 
-  // step: 0 review, 1 approve (if needed), 2 prepare, 3 send, 4 done
-  const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0)
+  // The approval (when needed) and the prepare are one step run; the send is reviewed once the move is queued.
+  const [step, setStep] = useState<'review' | 'prepare' | 'send' | 'done'>('review')
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [review, setReview] = useState<ReviewedMove | null>(null)
@@ -369,30 +369,30 @@ function MoveFlow({
   // current step, so the form's button resumes exactly where it stopped.
   const [open, setOpen] = useState(false)
   const [sentHash, setSentHash] = useState<`0x${string}` | null>(null)
-  const advancedFor = useRef<string>('')
-  /** The approve-and-prepare run finished here; otherwise a settled step (a Safe's, a held one) runs the same calls again, which core continues. */
-  const ranDone = useRef(false)
-  /** Bumped to run the approve-and-prepare calls again after one of its steps settled. */
-  const [round, setRound] = useState(0)
-  /** Each approve-and-prepare run call's dialog step. */
-  const [runShown, setRunShown] = useState<number[] | null>(null)
+  /** The approve-and-prepare calls, built when the run starts. */
+  const runCalls = useRef<StepRunAction | null>(null)
+  const prepareSteps = useMemo(() => (needsApproval ? ['approve', 'prepare'] : ['prepare']), [needsApproval])
+  // A step that settles after its run ended (a Safe's, a held one) stops the run at the next step, which starts again.
+  const run = useStepRun<string>({
+    tx,
+    send: tx.run,
+    action: () => runCalls.current,
+    onFinish: () => {
+      run.clear()
+      setStep('send')
+    },
+  })
 
-  const busy = checking || tx.busy
+  const busy = checking || run.running || tx.busy
 
   const txUrl = tx.hash ? etherscanTxUrl(from, tx.hash) : null
   const sentUrl = sentHash ? etherscanTxUrl(from, sentHash) : null
 
-  // Advance one step each time a send lands, exactly once per step.
+  // The send lands, or a Safe runs it after its run ended.
   useEffect(() => {
-    // An earlier step a Safe ran after its run ended settles it too.
-    if (tx.phase !== 'done' && tx.settledStep == null) return
-    if (advancedFor.current === `${step}:${round}`) return
-    advancedFor.current = `${step}:${round}`
-    if (step === 3) setSentHash(tx.hash)
-    if (step === 3) setStep(4)
-    // Only a run that finished here is known to have queued the move: a settled step continues its saved run, which ends it.
-    else if (ranDone.current) setStep(3)
-    else setRound(next => next + 1)
+    if (step !== 'send' || (tx.phase !== 'done' && tx.settledStep == null)) return
+    setSentHash(tx.hash)
+    setStep('done')
     tx.reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase, tx.settledStep, step])
@@ -534,10 +534,9 @@ function MoveFlow({
         intent: bridgeIntent({ chainId: from, sucker, token, account }),
         legacy: legacyMoveKeys({ chainId: from, sucker, token, amount: amountText, beneficiary: account }),
       })
-      setStep(allowance < amount ? 1 : 2)
+      run.clear()
+      setStep('prepare')
       setSentHash(null)
-      advancedFor.current = ''
-      ranDone.current = false
       setOpen(true)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
@@ -573,20 +572,15 @@ function MoveFlow({
     const prepare = reviewedCall({ ...request, abi: request.abi as Abi }, {
       intent: review.intent,
       legacy: review.legacy,
-      ...(approve.length ? { dependsOnPrior: true } : {}),
     })
+    runCalls.current = {
+      account: review.account,
+      calls: [...approve, prepare],
+      scope: `jbm:move:${from}:${review.sucker}:${review.token}`,
+      context: contextRows(rows),
+    }
     try {
-      const { calls, saved, scope } = await sequenceCalls(`jbm:move:${from}:${review.sucker}:${review.token}`, review.account, [...approve, prepare])
-      const offset = needsApproval ? 2 - calls.length : 0
-      setRunShown(calls.map((_, at) => offset + at))
-      const ended = await tx.run({
-        account: review.account,
-        calls,
-        scope,
-        ...planShown(saved, { context: contextRows(rows) }),
-      })
-      // A lone prepare saves no run to continue: once it settles, it is done.
-      if (ended) ranDone.current = ended.status === 'done' || calls.length === 1
+      await run.start(prepareSteps)
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Could not prepare this move.')
     }
@@ -645,8 +639,8 @@ function MoveFlow({
   }
 
   // Before the route is checked the confirm is already up, in its preparing state.
-  const preparing = checking && step === 0
-  const dialogOpen = (open && review !== null && step > 0) || preparing
+  const preparing = checking && step === 'review'
+  const dialogOpen = (open && review !== null && step !== 'review') || preparing
 
   const steps = [
     ...(needsApproval
@@ -699,12 +693,13 @@ function MoveFlow({
       ]
     : []
 
-  const stepRun = step === 1 || step === 2 ? () => void sendPrepare() : () => void sendToRemote()
-  const stepIdle = step === 1 || step === 2 ? 'Retry' : `Send to ${chainName(to)}`
+  const stepRun = step === 'prepare' ? () => void sendPrepare() : () => void sendToRemote()
+  const stepIdle = step === 'prepare' ? 'Retry' : `Send to ${chainName(to)}`
+  const activeIndex = step === 'prepare' ? (run.steps ? run.index : 0) : steps.length - 1
 
   return (
     <div className="rounded-xl border border-smoke-200 p-4">
-      {step === 0 ? (
+      {step === 'review' ? (
         <div className="flex justify-end">
           <button
             onClick={handleReview}
@@ -714,10 +709,10 @@ function MoveFlow({
             Move to {chainName(to)}
           </button>
         </div>
-      ) : step < 4 && !dialogOpen ? (
+      ) : step !== 'done' && !dialogOpen ? (
         <div>
           <p className="mb-2 text-xs text-smoke-700">
-            Move in progress — {steps.length - (needsApproval ? step - 1 : step - 2)} of{' '}
+            Move in progress — {steps.length - activeIndex} of{' '}
             {steps.length} onchain actions left.
           </p>
           <div className="flex justify-end">
@@ -731,7 +726,7 @@ function MoveFlow({
         </div>
       ) : null}
 
-      {step === 4 ? (
+      {step === 'done' ? (
         <div className="callout callout-info text-xs">
           Bridging to {chainName(to)}. Once it lands, claim it from Queued
           movements in the Settlement tab.
@@ -765,16 +760,16 @@ function MoveFlow({
           setOpen(false)
           if (tx.phase === 'proposed') tx.dismiss()
         }}
-        title={step === 4 ? 'Move sent' : 'Confirm move'}
+        title={step === 'done' ? 'Move sent' : 'Confirm move'}
         rows={rows}
         steps={steps}
-        activeIndex={step === 3 ? steps.length - 1 : liveStep(tx, runShown, needsApproval ? step - 1 : step - 2)}
+        activeIndex={activeIndex}
         stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
-        start={step >= 1 && step <= 3 ? stepRun : undefined}
-        startKey={`${step}:${round}`}
-        next={step >= 1 && step <= 3 && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
+        start={step === 'prepare' || step === 'send' ? stepRun : undefined}
+        startKey={`${step}:${run.index}`}
+        next={(step === 'prepare' || step === 'send') && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
-        complete={step === 4 || tx.phase === 'proposed' || tx.phase === 'held'}
+        complete={step === 'done' || tx.phase === 'proposed' || tx.phase === 'held'}
         status={
           preparing ? (
             'Checking the route and your balances…'
