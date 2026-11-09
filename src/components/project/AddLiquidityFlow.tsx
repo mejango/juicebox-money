@@ -825,7 +825,8 @@ function AddLiquidityForm({
     }
     setDone(false)
     setMintHash(null)
-    run.start(plan.steps)
+    // A run that could not be prepared (the review failed to load) says why; Retry starts it again.
+    run.start(plan.steps).catch(e => setBatchError(e instanceof Error ? shortError(e) : 'Could not start the review.'))
   }
 
   const resume = () => {

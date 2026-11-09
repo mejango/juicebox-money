@@ -1,3 +1,18 @@
+# Wave 3 Codex pass 1 fixes (2026-11-09)
+
+- [ ] F1: useStepRun clears its running flags when preparing or sending throws (rejection then retry test).
+- [ ] F2: a held last step closes through dismiss/clear while the hold keeps the write (loan and repay Done test).
+- [ ] F3: a run stopped after an earlier step was sent shows a line and its retry, without replaying that step (pay and loan tests).
+- [ ] Gate: npm run check, budget, browser tests; push; CI.
+
+## Plan refinement
+- **Objective:** Fix the three Codex findings on PR #173 with a failing test first, one commit per fix; push without merging.
+- **System fit:** Codex finding -> failing test -> fix in the shared owner (useStepRun, useReviewedAction) -> gate -> PR CI; the SDK and the other clients are reported, not edited.
+- **Reuse and simplicity:** Fixes live in the two shared hooks every flow routes through; F3 reads SDK 6.1's lastSubmittedStep instead of local step tracking.
+- **Evidence and unknowns:** SDK 6.1 status is idle (not cancelled) once any step was sent, and resets total on failure; verified in dist/esm/review/react/useReviewedRun.js.
+- **Verification:** New tests in test/transactions/step-run.test.ts and test/one-confirmation.test.tsx, then npm run check with budgets and browser tests.
+- **Resource budget:** Targeted vitest per fix, one full gate at the end; rerun a timed-out gate alone before calling it a failure.
+
 # Explicit state machines, wave 3: adopt the SDK owners (2026-11-09)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF3.md. Branch state-machines-3-2026-11-09 stacked on state-machines-2-2026-11-09 (#172). Built against the packed SDK tarballs; no package.json or lockfile change (one bump commit follows the publish).

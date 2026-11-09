@@ -93,6 +93,10 @@ export function useStepRun<Step>({
           if (run.current === current) setIndex(current.submitted)
           return frozen.onSubmitted?.(call, step, hash, sent)
         },
+      }).catch(error => {
+        // A send that threw ends the run as a failed one does.
+        if (run.current === current) halt()
+        throw error
       })
       // The result names the run's calls by the plan's steps (see `shownOf`).
       const ended = result && { ...result, shown }
@@ -160,6 +164,11 @@ export function useStepRun<Step>({
       setRunSteps(steps)
       setRunning(true)
       const { calls, saved, scope, held } = await sequenceCalls(fresh.scope, fresh.account, fresh.calls.map((call, at) => (at ? { ...call, dependsOnPrior: true } : call)))
+        .catch(error => {
+          // A run that could not be prepared ends here: the flow shows why, and the next start runs.
+          if (run.current === current) halt()
+          throw error
+        })
       if (run.current !== current) return
       // A saved run continues as it was reviewed: never under this plan's summary or checks.
       current.action = saved ? { account: fresh.account, scope, calls, description: SAVED_SEQUENCE_LINE } : { ...fresh, calls, scope }
@@ -167,7 +176,7 @@ export function useStepRun<Step>({
       if (held !== undefined) current.submitted = shownOf(current, held)
       return go(current)
     },
-    [action, go],
+    [action, go, halt],
   )
 
   /**

@@ -6,10 +6,15 @@ import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
 import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 
-const saved = vi.hoisted(() => ({ calls: null as unknown[] | null, held: undefined as number | undefined }))
+const saved = vi.hoisted(() => ({ calls: null as unknown[] | null, held: undefined as number | undefined, failure: null as Error | null }))
 vi.mock('@/lib/reviewed-send', () => ({
   SAVED_SEQUENCE_LINE: 'Saved as reviewed.',
-  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls: saved.calls ?? calls, saved: !!saved.calls, scope, ...(saved.held !== undefined ? { held: saved.held } : {}) }),
+  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => {
+    const failure = saved.failure
+    saved.failure = null
+    if (failure) throw failure
+    return { calls: saved.calls ?? calls, saved: !!saved.calls, scope, ...(saved.held !== undefined ? { held: saved.held } : {}) }
+  },
 }))
 
 type Tx = ReviewedActionState
@@ -31,6 +36,7 @@ const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
 beforeEach(() => {
   saved.calls = null
   saved.held = undefined
+  saved.failure = null
 })
 
 /** The engine's state as useReviewedAction reports it, and runs whose ends each test gives. */
@@ -222,6 +228,28 @@ describe('useStepRun', () => {
     expect(t.onFinish).not.toHaveBeenCalled()
     expect(t.ref.current).toMatchObject({ running: false, index: 0 })
     expect(t.ref.current!.stoppedOn(plan)).toBe(false)
+  })
+
+  it('frees the run when preparing it throws, so the next start runs', async () => {
+    saved.failure = new Error('This page could not load the review.')
+    const t = await renderRun()
+    let failed: unknown = null
+    await act(async () => { await t.ref.current!.start(['approve', 'mint']).catch(error => { failed = error }) })
+    expect((failed as Error).message).toBe('This page could not load the review.')
+    expect(t.ref.current).toMatchObject({ running: false })
+    expect(t.ref.current!.isRunning()).toBe(false)
+
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    expect(t.run).toHaveBeenCalledOnce()
+  })
+
+  it('frees the run when its send throws', async () => {
+    const t = await renderRun()
+    t.run.mockImplementationOnce(async () => { throw new Error('send threw') })
+    await act(async () => { await t.ref.current!.start(['mint']).catch(() => {}) })
+    expect(t.ref.current).toMatchObject({ running: false })
+    await act(async () => { void t.ref.current!.start(['mint']) })
+    expect(t.run).toHaveBeenCalledTimes(2)
   })
 
   it('holds the run busy for other work until it ends', async () => {

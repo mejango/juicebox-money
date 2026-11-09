@@ -371,7 +371,8 @@ export function MarketEditPanel({
       void runBatch(reviewed)
       return
     }
-    run.start(reviewed.steps)
+    // A run that could not be prepared (the review failed to load) says why; Retry starts it again.
+    run.start(reviewed.steps).catch(e => setBatchError(e instanceof Error ? shortError(e) : 'Could not start the review.'))
   }
 
   const resume = () => {

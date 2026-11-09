@@ -529,6 +529,7 @@ function RepayFlow({
     }
     // A continued run is the repayment alone: the dialog keeps the approval's step before it.
     await run.start(plan.approve ? ['approve', 'repay'] : ['repay'])
+      .catch(e => setFlowError(e instanceof Error ? e.message : 'Something went wrong.'))
   }
 
   const closeDialog = () => {
