@@ -1,3 +1,29 @@
+# Explicit state machines, wave 1 (2026-11-09)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF.md, discovery jbm.md beside it. Branch state-machines-2026-11-09 from origin/main e35c85c.
+
+- [x] jbm-1 FIX: a failed load-more page keeps the row with a retry line (Fresh activity, Top projects).
+- [x] jbm-3 FIX: AuthorityProgress carries the index of the call it sends; steppers read it, not message text.
+- [x] jbm-16 FIX: one ParaSessionBridge; app-wide sign-out generation drops a stale session check.
+- [x] jbm-4 UNION: useAuthorityRun for six runAuthorityCalls review dialogs.
+- [x] jbm-10 UNION: RawRelayrPhase and isRawRelayrPhase own the raw Relayr phase list.
+- [x] jbm-2 DERIVE: useLiveFeed for the three activity feeds.
+- [ ] jbm-5, 6, 7, 8, 13, 18, 20, 22, 23, 25, 26, 29, 30, 35: not done in this wave (reasons in the PR).
+- [x] Gate: npm run check, suites one at a time.
+
+## Plan refinement
+- **Objective:** Make jbm's implicit flow state explicit where it hides bugs or is copied, fix the confirmed bugs with regression tests, and keep user-visible behavior otherwise; PR only, no merge.
+- **System fit:** Outcome (one behavior per user action across clients) -> capability (SDK review vocabulary, runAuthorityCalls, useReviewedAction) -> evidence (discovery report, code reads, failing tests) -> prepared action (one commit per fix or consolidation) -> authority (PR, never merged here) -> verified result (npm run check) -> learning (cross-client notes and SDK requests in the report). Wallet signing boundaries and transaction calldata are unaffected.
+- **Reuse and simplicity:** Reuse runAuthorityCalls, useRelayrDiscard, useUnmountSignal, mergeActivityEvents and the ActivityList poll; one hook replaces each family of copies; no new SDK-shaped local owners.
+- **Evidence and unknowns:** Each FIX starts from a test failing on origin/main; jbm-16's many-instance claim did not reproduce in tests, its stale sign-out race did.
+- **Verification:** New tests load-more-failure, authority-gas index test, para-session-bridge, authority-run; existing suites stay green; full npm run check.
+- **Resource budget:** One worktree with CoW node_modules; per-item targeted tests, one full gate at the end; replan when a consolidation changes a money path beyond its tests.
+
+## Review
+- Gate: npm run check green step by step (285 files / 3528 unit tests with coverage floors, schema check live, build:browser, budgets, 90/90 browser tests on PLAYWRIGHT_APP_PORT=3217 because :3100 was taken).
+- transaction:check now counts a useAuthorityRun's `run` as its component's runAuthorityCalls site, so per-file attribution survives the consolidation.
+- Did not reproduce: jbm-16's duplicate bridge across useWallet instances. The stale sign-out race did reproduce and is fixed.
+
 # Bendystraw per-token data (2026-10-20)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/7d1fdce3-54c6-4145-93c3-bfa2558645d2/scratchpad/client-round-brief.md. Branch fix/bendystraw-per-token from origin/main 4075902.
