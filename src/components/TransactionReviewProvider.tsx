@@ -5,17 +5,17 @@ import { LoadingText } from '@/components/ui/LoadingText'
 import {
   type ComponentType,
   type PropsWithChildren,
-  useCallback,
   useEffect,
   useLayoutEffect,
-  useRef,
+  useMemo,
   useState,
+  useSyncExternalStore,
 } from 'react'
-import type { Address } from 'viem'
 import { registerReviewHandler, type ReviewModel } from '@bananapus/nana-sdk-core/review'
+import { createReviewQueue } from '@bananapus/nana-sdk-core/review/machines'
 import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
-import { useProjectReviewScope, type ProjectReviewScope } from '@/providers/ProjectRouteContext'
+import { useProjectReviewScope } from '@/providers/ProjectRouteContext'
 import { useProjectRouteBlocked } from '@/providers/ProjectRouteBlockedContext'
 import {
   registerFundingChainSelectionHandler,
@@ -25,8 +25,6 @@ import {
 export type PendingReview = {
   kind: 'review'
   id: number
-  resolve: (approved: boolean) => void
-  scope?: ProjectReviewScope | null
   /** Core's prompt: the model it bound, confirmed only by its own confirmation. */
   model: ReviewModel
 }
@@ -36,134 +34,65 @@ export type PendingFundingChainSelection = {
   id: number
   options: readonly FundingChainOption[]
   initialChainId: number | null
-  resolve: (chainId: number | null) => void
-  scope?: ProjectReviewScope | null
 }
 
 export type PendingDialog = PendingReview | PendingFundingChainSelection
+type Payload = Omit<PendingReview, 'id'> | Omit<PendingFundingChainSelection, 'id'>
+/** True approves a review, a chain ID picks a funding chain, anything else declines. */
+type DialogResult = boolean | number | null
 
 export type TransactionReviewDialogProps = {
   pending: PendingDialog
-  onFinish: (result: boolean | number | null) => void
+  onFinish: (result: DialogResult) => void
   checkingProject?: boolean
-}
-
-function cancelPendingDialog(pending: PendingDialog) {
-  if (pending.kind === 'review') pending.resolve(false)
-  else pending.resolve(null)
 }
 
 /**
  * Global, promise-based modal queue. Every low-level transaction boundary
  * registers with this one provider, so simultaneous multichain flows review
- * sequentially and each approval applies to one immutable call snapshot.
+ * sequentially and each approval applies to one immutable call snapshot. The
+ * SDK queue binds each dialog to the project and account it opened under, and
+ * declines new ones while the project route is blocked.
  */
 export function TransactionReviewProvider({ children }: PropsWithChildren) {
   const scope = useProjectReviewScope()
-  const scopeRef = useRef(scope)
-  scopeRef.current = scope
   const routeBlocked = useProjectRouteBlocked()
-  const routeBlockedRef = useRef(routeBlocked)
-  routeBlockedRef.current = routeBlocked
   const { address } = useAccount()
-  const accountRef = useRef<Address | undefined>(address)
-  accountRef.current = address
-  const nextId = useRef(1)
-  const activeRef = useRef<PendingDialog | null>(null)
-  const queueRef = useRef<PendingDialog[]>([])
-  const [active, setActive] = useState<PendingDialog | null>(null)
-  const [checkingProject, setCheckingProject] = useState<number | null>(null)
+  const [queue] = useState(() => createReviewQueue<Payload, DialogResult>())
+  const state = useSyncExternalStore(queue.subscribe, queue.getState, queue.getState)
+  const active = useMemo<PendingDialog | null>(
+    () => state.active && ({ id: state.active.id, ...state.active.payload } as PendingDialog),
+    [state.active],
+  )
   const [Dialog, setDialog] = useState<ComponentType<TransactionReviewDialogProps> | null>(null)
-
-  const enqueueDialog = useCallback((pending: PendingDialog) => {
-    // A delayed preparation must not become an unscoped approval while its
-    // project is being replaced or could not be verified.
-    if (routeBlockedRef.current) {
-      cancelPendingDialog(pending)
-      return
-    }
-    if (activeRef.current) {
-      queueRef.current.push(pending)
-      return
-    }
-    activeRef.current = pending
-    setActive(pending)
-  }, [])
-
-  const enqueueFundingChainSelection = useCallback(
-    (options: readonly FundingChainOption[], initialChainId: number | null) =>
-      new Promise<number | null>(resolve => {
-        enqueueDialog({
-          kind: 'funding',
-          id: nextId.current++,
-          options: options.map(option => ({ ...option })),
-          initialChainId,
-          resolve,
-          scope: scopeRef.current,
-        })
-      }),
-    [enqueueDialog],
-  )
-
-  useEffect(
-    () =>
-      registerReviewHandler(async prompt => {
-        const approved = await new Promise<boolean>(resolve => {
-          enqueueDialog({ kind: 'review', id: nextId.current++, model: prompt.model, resolve, scope: scopeRef.current })
-        })
-        return approved ? prompt.confirmation : null
-      }),
-    [enqueueDialog],
-  )
-  useEffect(
-    () => registerFundingChainSelectionHandler(enqueueFundingChainSelection),
-    [enqueueFundingChainSelection],
-  )
 
   // Global dialogs live above the project subtree, so identity-keyed project
   // remounting alone cannot cancel an old project's pending approval.
   useLayoutEffect(() => {
-    const current = activeRef.current
-    if (current?.scope && current.scope.identity !== scope?.identity) {
-      cancelPendingDialog(current)
-      activeRef.current = null
-      setActive(null)
-    }
-    queueRef.current = queueRef.current.filter(pending => {
-      if (!pending.scope || pending.scope.identity === scope?.identity) return true
-      cancelPendingDialog(pending)
-      return false
-    })
-  }, [scope?.identity])
+    queue.setContext({ scope, account: address, blocked: routeBlocked })
+  }, [queue, scope, address, routeBlocked])
 
   useEffect(
-    () => () => {
-      if (activeRef.current) cancelPendingDialog(activeRef.current)
-      queueRef.current.forEach(cancelPendingDialog)
-      activeRef.current = null
-      queueRef.current = []
-    },
-    [],
+    () =>
+      registerReviewHandler(async prompt => {
+        const approved = await queue.request({ kind: 'review', model: prompt.model }, { declined: false, approves: result => result === true })
+        return approved === true ? prompt.confirmation : null
+      }),
+    [queue],
   )
+  useEffect(
+    () => registerFundingChainSelectionHandler(async (options, initialChainId) => {
+      const chosen = await queue.request(
+        { kind: 'funding', options: options.map(option => ({ ...option })), initialChainId },
+        { declined: null, approves: result => typeof result === 'number' },
+      )
+      return typeof chosen === 'number' ? chosen : null
+    }),
+    [queue],
+  )
+  useEffect(() => () => queue.cancelAll(), [queue])
 
-  const finish = useCallback(async (id: number, result: boolean | number | null) => {
-    const current = activeRef.current
-    if (!current || current.id !== id) return
-    const approves = current.kind === 'review' ? result === true : typeof result === 'number'
-    if (approves && current.scope) {
-      setCheckingProject(id)
-      const verified = await current.scope.verify().catch(() => false)
-      setCheckingProject(currentId => currentId === id ? null : currentId)
-      // Cancellation or another dialog while the proof was pending wins.
-      if (activeRef.current !== current) return
-      if (!verified || scopeRef.current?.identity !== current.scope.identity) result = null
-    }
-    const next = queueRef.current.shift() ?? null
-    activeRef.current = next
-    setActive(next)
-    if (current.kind === 'review') current.resolve(result === true)
-    else current.resolve(typeof result === 'number' ? result : null)
-  }, [])
+  const finish = (id: number, result: DialogResult) => { void queue.finish(id, result) }
 
   // Keep the global queue ready immediately, but fetch the full decoder and
   // review UI only when a request arrives. Loading never authorizes a call;
@@ -176,11 +105,11 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
         if (!cancelled) setDialog(() => module.TransactionReviewDialog)
       },
       () => {
-        if (!cancelled) finish(active.id, null)
+        if (!cancelled) void queue.finish(active.id, null)
       },
     )
     return () => { cancelled = true }
-  }, [active, Dialog, finish])
+  }, [active, Dialog, queue])
 
   return (
     <>
@@ -190,8 +119,8 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
           <Dialog
             key={active.id}
             pending={active}
-            checkingProject={checkingProject === active.id}
-            onFinish={result => { void finish(active.id, result) }}
+            checkingProject={state.checking}
+            onFinish={result => finish(active.id, result)}
           />
         ) : (
           <ModalDialog
