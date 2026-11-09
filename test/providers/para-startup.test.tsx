@@ -21,6 +21,8 @@ vi.mock('wagmi', () => ({
   createConfig: () => ({}),
   injected: () => ({}),
   WagmiProvider: ({ children }: { children: ReactNode }) => children,
+  useAccount: () => ({ isConnected: false }),
+  useConnect: () => ({ connectAsync: async () => {}, connectors: [] }),
 }))
 vi.mock('@/providers/lazy-para-connector', () => ({ lazyParaConnector: () => ({}) }))
 vi.mock('@/providers/wallet-connectors', () => ({ externalWalletConnectors: () => [] }))

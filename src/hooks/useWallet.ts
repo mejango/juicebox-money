@@ -1,12 +1,11 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
 import type { Address } from 'viem'
 import { useAccount, useConnect, useDisconnect } from 'wagmi'
 import { IS_DETERMINISTIC_BROWSER } from '@/providers/Providers'
 import { offerableWallets } from '@/lib/wallet-list'
-import { markParaSession, useParaAuth } from '@/providers/ParaAuthContext'
-import { logoutParaSession } from '@/providers/para-logout'
+import { useParaAuth } from '@/providers/ParaAuthContext'
+import { logoutParaSession, signOutOnce } from '@/providers/para-logout'
 
 /**
  * Wallet state with wagmi as the single source of truth.
@@ -14,44 +13,14 @@ import { logoutParaSession } from '@/providers/para-logout'
  * - External wallets connect straight through wagmi connectors (see the
  *   `connectors` list — WalletButton renders them as options).
  * - Embedded (email/social) sign-in opens the Para modal; when the Para
- *   session appears, the bridge effect below connects wagmiConfig's `para`
+ *   session appears, ParaSessionBridge connects wagmiConfig's `para`
  *   connector so the embedded wallet behaves like any other connection.
  */
 export function useWallet() {
   const { address, isConnected } = useAccount()
   const { connectAsync, connectors } = useConnect()
   const { disconnectAsync: wagmiDisconnect } = useDisconnect()
-  const { modalOpen, requestSignIn, sessionVersion } = useParaAuth()
-  const bridging = useRef(false)
-  const disconnecting = useRef<Promise<void> | null>(null)
-
-  // Bridge a newly settled Para modal into wagmi. The dynamic import is
-  // deliberately gated by sessionVersion so anonymous visits never initialize
-  // Para's worker or session API.
-  useEffect(() => {
-    if (IS_DETERMINISTIC_BROWSER) return
-    if (sessionVersion === 0) return
-    if (modalOpen || isConnected || bridging.current || disconnecting.current) return
-    bridging.current = true
-    ;(async () => {
-      try {
-        const { getParaClient } = await import('@/providers/para-config')
-        const paraClient = getParaClient()
-        const loggedIn = await paraClient.isFullyLoggedIn()
-        if (!loggedIn || disconnecting.current) return
-        const para = connectors.find(c => c.id === 'para')
-        if (para) {
-          await connectAsync({ connector: para })
-          markParaSession(true)
-        }
-      } catch {
-        // No Para session, or the user's Para env is unreachable — external
-        // wallets still work.
-      } finally {
-        bridging.current = false
-      }
-    })()
-  }, [modalOpen, sessionVersion, isConnected, connectors, connectAsync])
+  const { requestSignIn } = useParaAuth()
 
   return {
     isConnected,
@@ -74,14 +43,8 @@ export function useWallet() {
     openSignIn: () => {
       if (!IS_DETERMINISTIC_BROWSER) requestSignIn()
     },
-    disconnect: () => {
-      if (disconnecting.current) return disconnecting.current
-      const pending = (IS_DETERMINISTIC_BROWSER
-        ? wagmiDisconnect()
-        : logoutParaSession(wagmiDisconnect)
-      ).then(() => undefined)
-      disconnecting.current = pending.finally(() => { disconnecting.current = null })
-      return disconnecting.current
-    },
+    disconnect: () => signOutOnce(() => IS_DETERMINISTIC_BROWSER
+      ? wagmiDisconnect()
+      : logoutParaSession(wagmiDisconnect)),
   }
 }
