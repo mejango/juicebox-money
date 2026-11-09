@@ -1,3 +1,28 @@
+# Explicit state machines, wave 2 (2026-11-09)
+
+Same brief. Branch state-machines-2-2026-11-09 stacked on state-machines-2026-11-09; PR base is that branch.
+
+- [x] jbm-13, jbm-27: one destinationJournal (split, queue, metadata editors) and one withTabLocks rule on SDK 6.0.0 browserLocks(); earlier stored formats read back.
+- [x] jbm-36 FIX + UNION: SafeBatchDialog run is one state; a failed wait after a Safe proposal keeps the proposed steps.
+- [x] jbm-22 FIX + UNION: PendingPayments activity is one state owned by its run; a cancelled quote's cleanup no longer idles the retry.
+- [x] jbm-7: sticky-2 does not reproduce (no background check gates a press); one resetLaunch for retire and abandon.
+- [x] jbm-30: named wizard steps; restore opens Launch by name.
+- [x] jbm-25: Defifa status line as ordered checks.
+- [ ] jbm-8, 18, 20, 26, 35 and the editor/batch useAuthorityRun migrations: skipped with reasons in the PR.
+- [x] Gate: npm run check, suites one at a time.
+
+## Plan refinement
+- **Objective:** Close the non-SDK items of the state-machine discovery without visible behavior change, except the two batch-runner races, each fixed behind a failing test; PR only, no merge.
+- **System fit:** Outcome (one behavior per action across clients) -> capability (SDK browserLocks, runProjectBatch, submitSafeBatch) -> evidence (code reads, failing tests) -> prepared action (one commit per item) -> authority (stacked PR, never merged here) -> verified result (npm run check) -> learning (cross-client notes in the report).
+- **Reuse and simplicity:** The SDK lock replaces nine wrappers; one journal owner replaces three; local unions stay in their component; no new hook where flows do not share a lifecycle.
+- **Evidence and unknowns:** Stored journal text is byte-compatible; tests read fixtures written in the earlier format. Browsers without Web Locks now coordinate through the SDK fallback instead of refusing.
+- **Verification:** tab-locks, read-earlier-format, safe-batch-tray and pending-payments regression tests; full npm run check.
+- **Resource budget:** Same CoW worktree; targeted tests per item, one full gate at the end.
+
+## Review
+- Gate results are in the PR body.
+- Skipped with reasons: jbm-8 (success already has one owner, isLaunchChainSuccess; a new record version is a stored-format change for no visible gain), jbm-18 (Para is being removed), jbm-20 (message is legitimately shown in every phase), jbm-26 (busy and sequenceRunning overlap by design; the double click is not reachable under React 19 discrete events), jbm-35 (project and account searches are independent and coexist), editor and batch-flow useAuthorityRun migrations (their done line outlives the dialog, busy covers preparation, and batch recovery lives in the saved ProjectBatch).
+
 # Explicit state machines, wave 1 (2026-11-09)
 
 Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF.md, discovery jbm.md beside it. Branch state-machines-2026-11-09 from origin/main e35c85c.
