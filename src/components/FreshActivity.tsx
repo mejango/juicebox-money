@@ -30,6 +30,7 @@ export function FreshActivity({
   const [events, setEvents] = useState(initialEvents)
   const [hasMore, setHasMore] = useState(initialHasMore)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     let stopped = false
@@ -63,6 +64,7 @@ export function FreshActivity({
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return
     setLoading(true)
+    setLoadError(null)
     try {
       const response = await fetch(
         `/api/activity?limit=${PAGE_SIZE}&offset=${events.length}`,
@@ -81,7 +83,7 @@ export function FreshActivity({
       ])
       setHasMore(Boolean(page.hasMore))
     } catch {
-      setHasMore(false)
+      setLoadError('Could not load more activity. Try again.')
     } finally {
       setLoading(false)
     }
@@ -99,7 +101,7 @@ export function FreshActivity({
             <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
           {(hasMore || loading) && (
-            <LoadMoreRow label="More activity" loading={loading} onLoadMore={loadMore} />
+            <LoadMoreRow label="More activity" loading={loading} error={loadError} onLoadMore={loadMore} />
           )}
         </>
       )}

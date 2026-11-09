@@ -19,10 +19,12 @@ export function TopProjectRows({
   const [projects, setProjects] = useState(initialProjects)
   const [hasMore, setHasMore] = useState(initialHasMore)
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const loadMore = useCallback(async () => {
     if (loading || !hasMore) return
     setLoading(true)
+    setLoadError(null)
     try {
       const response = await fetch(
         `/api/top-projects?limit=${PAGE_SIZE}&offset=${projects.length}`,
@@ -41,7 +43,7 @@ export function TopProjectRows({
       ])
       setHasMore(Boolean(page.hasMore))
     } catch {
-      setHasMore(false)
+      setLoadError('Could not load more projects. Try again.')
     } finally {
       setLoading(false)
     }
@@ -99,7 +101,7 @@ export function TopProjectRows({
         </li>
       ))}
       {(hasMore || loading) && (
-        <LoadMoreRow label="More projects" loading={loading} onLoadMore={loadMore} />
+        <LoadMoreRow label="More projects" loading={loading} error={loadError} onLoadMore={loadMore} />
       )}
     </ol>
   )
