@@ -18,11 +18,11 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { knownTokenSymbol, tokenSymbol } from '@/lib/token-symbol'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
-import { liveStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
-import { planShown, sequenceCalls } from '@/lib/reviewed-send'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useWallet } from '@/hooks/useWallet'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { contextRows, TxProgress } from '@/components/ui/TxProgress'
@@ -366,10 +366,10 @@ function RepayFlow({
   const { address } = useWallet()
   const { isViewAs } = useViewedAccount()
   const tx = useReviewedAction(chainId)
-  /** The repayment reached the wallet: only then does a settled run mean the loan is repaid, not just approved. */
-  const [runStep, setRunStep] = useState(0)
-  /** Each run call's dialog step. */
-  const [runShown, setRunShown] = useState<number[] | null>(null)
+  /** The run's calls, built when it starts. */
+  const runCalls = useRef<StepRunAction | null>(null)
+  // The approval (when one is needed), then the repayment.
+  const run = useStepRun<string>({ tx, send: tx.run, action: () => runCalls.current, onFinish: () => {} })
 
   const [checking, setChecking] = useState(false)
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -377,7 +377,7 @@ function RepayFlow({
 
   const loans = revLoansAddress(chainId)
 
-  const busy = tx.busy
+  const busy = run.running || tx.busy
   const repaySent = tx.lastStepSent
   const repaid = tx.phase === 'done' && repaySent
   /** A Safe executed the approval alone: the repayment is next. */
@@ -519,33 +519,26 @@ function RepayFlow({
     const repay = reviewedCall(plan.request, {
       intent: plan.intents.repay,
       legacy: plan.legacy.repay,
-      ...(approve ? { dependsOnPrior: true } : approved !== undefined ? { simulationBlockNumber: approved } : {}),
+      ...(approved !== undefined ? { simulationBlockNumber: approved } : {}),
     })
-    const fresh = approve ? [reviewedCall(approve, { intent: plan.intents.approve }), repay] : [repay]
-    const scope = `jbm:repay:${chainId}:${loan.id}`
-    const { calls, saved, scope: runScope } = await sequenceCalls(scope, plan.account, fresh)
-    // The dialog's steps: a held sequence resumes as saved, and a continued one is the repayment alone.
-    const total = plan.approve ? 2 : 1
-    const shown = (step: number) => Math.max(0, total - calls.length + step)
-    setRunStep(shown(0))
-    setRunShown(calls.map((_, step) => shown(step)))
-    await tx.run({
+    runCalls.current = {
       account: plan.account,
-      scope: runScope,
-      calls,
-      ...planShown(saved, { context: contextRows(repayRows(plan)) }),
-      onSubmitted: (_call, step) => setRunStep(shown(step)),
-    })
+      scope: `jbm:repay:${chainId}:${loan.id}`,
+      calls: approve ? [reviewedCall(approve, { intent: plan.intents.approve }), repay] : [repay],
+      context: contextRows(repayRows(plan)),
+    }
+    // A continued run is the repayment alone: the dialog keeps the approval's step before it.
+    await run.start(plan.approve ? ['approve', 'repay'] : ['repay'])
   }
 
   const closeDialog = () => {
     if (busy) return
     setPlan(null)
     setFlowError(null)
-    if (!repaid) tx.dismiss()
+    if (!repaid) run.clear()
   }
 
-  const activeIndex = tx.phase !== 'idle' ? liveStep(tx, runShown, runStep) : -1
+  const activeIndex = run.steps ? run.index : -1
   const error = flowError ?? tx.error
 
   const dialog = plan || checking ? (

@@ -21,7 +21,7 @@ import {
   uniswapV4SwapDirection,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
   formatUnits,
@@ -32,11 +32,11 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { liveStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
-import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import {
   cashOutExecutionErrorMessage,
@@ -104,11 +104,10 @@ export function CashOutPanel({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
   const tx = useReviewedAction(chainId)
-  /** The dialog step the run is on, once it started. */
-  const [runStep, setRunStep] = useState(-1)
-  /** Each pool-sale run call's dialog step. */
-  const [runShown, setRunShown] = useState<number[] | null>(null)
-  /** The run sent its cash-out: a settled approval alone sold nothing. */
+  /** The pool sale's calls, built from a fresh quote when it starts. */
+  const runCalls = useRef<StepRunAction | null>(null)
+  // Each approval the pool sale needs, then the sale.
+  const run = useStepRun<string>({ tx, send: tx.run, action: () => runCalls.current, onFinish: () => {} })
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
@@ -397,7 +396,7 @@ export function CashOutPanel({
     route !== undefined &&
     route.expectedReturn <= 0n
 
-  const busy = tx.busy
+  const busy = run.running || tx.busy
   const finalSent = tx.lastStepSent
   const success = tx.phase === 'done' && finalSent
   /** A Safe executed an approval it was proposed: the sale is reviewed next. */
@@ -434,8 +433,8 @@ export function CashOutPanel({
   ]
   const cashOutActiveIndex = success
     ? cashOutSteps.length
-    : runStep >= 0
-      ? liveStep(tx, runShown, runStep)
+    : run.steps
+      ? run.index
       : needsTokenApproval
       ? requiredApprovals.indexOf('token')
       : needsRouterApproval
@@ -620,7 +619,7 @@ export function CashOutPanel({
             },
             { intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: routerApproval.args[1] as string }) },
           )] : []),
-        ].map((call, index) => index > 0 ? { ...call, dependsOnPrior: true } : call)
+        ]
         const sale = reviewedCall(
           {
             ...request,
@@ -632,37 +631,28 @@ export function CashOutPanel({
             // Its deadline and minimum regenerate on retry: held by what the user chose.
             intent: cashOutKey,
             legacy: cashOutLegacy,
-            ...(approvals.length ? { dependsOnPrior: true } : {}),
           },
         )
-        const scope = `jbm:cash-out:${chainId}:${projectId}`
-        const { calls, saved, scope: runScope } = await sequenceCalls(scope, reviewedAccount, [...approvals, sale])
-        /** A run step's place in the dialog's queue: the sale is always its last step. */
-        const shown = (step: number) => Math.max(0, cashOutSteps.length - calls.length + step)
-        setUsedDirectSell(true)
-        setRunStep(shown(0))
-        setRunShown(calls.map((_, step) => shown(step)))
-        await tx.run({
+        runCalls.current = {
           account: reviewedAccount,
-          calls,
-          scope: runScope,
-          ...planShown(saved, {
-            context: contextRows(reviewRows(plan)),
-            description: minimumDropNotice({
-              displayedMinimum: plan.minimumReturn,
-              freshMinimum: refreshedBest.minimumReturn,
-              decimals: receiveDecimals,
-              symbol: receiveSymbol,
-            }),
+          calls: [...approvals, sale],
+          scope: `jbm:cash-out:${chainId}:${projectId}`,
+          context: contextRows(reviewRows(plan)),
+          description: minimumDropNotice({
+            displayedMinimum: plan.minimumReturn,
+            freshMinimum: refreshedBest.minimumReturn,
+            decimals: receiveDecimals,
+            symbol: receiveSymbol,
           }),
-          onSubmitted: (_call, step) => setRunStep(shown(step)),
-        })
+        }
+        setUsedDirectSell(true)
+        // The sale is always the queue's last step.
+        await run.start(cashOutSteps.map(step => step.key))
         return
       }
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      setRunShown(null)
       await tx.run({
         account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
@@ -676,7 +666,7 @@ export function CashOutPanel({
   }
 
   const reset = () => {
-    tx.reset()
+    run.clear()
     setAmount('')
     setDebouncedAmount('')
     setErrorMsg(null)
@@ -686,9 +676,8 @@ export function CashOutPanel({
   const closeReview = () => {
     setPlan(null)
     setErrorMsg(null)
-    setRunStep(-1)
     if (success) return
-    tx.dismiss()
+    run.clear()
   }
 
   const confirmDialog = plan ? (

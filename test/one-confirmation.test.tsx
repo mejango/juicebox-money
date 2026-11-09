@@ -10,7 +10,7 @@
 
 import { act, createElement, type ReactNode } from 'react'
 import { QueryClient } from '@tanstack/react-query'
-import { zeroAddress, type Address } from 'viem'
+import { UserRejectedRequestError, zeroAddress, type Address } from 'viem'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const displayQueries = new QueryClient()
@@ -308,6 +308,26 @@ describe('one confirmation per action', () => {
     expect(progressConfirms()).toEqual([])
   })
 
+  it('moves the pay dialog onto the payment once the approval confirmed and the payment was refused', async () => {
+    page = await renderWithReviews(createElement(PayPanel, { chainId: 1, projectId: 42, projectName: 'Project', isRevnet: false, chains: [[1, 42]] }))
+    await type(input => input.getAttribute('aria-label') === 'Amount', '1')
+    for (let attempt = 0; attempt < 40 && ![...page.host.querySelectorAll('button')].some(item => item.textContent === 'Pay' && !item.disabled); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 25)) })
+    }
+    const send = wallet.walletClient.sendTransaction.getMockImplementation()!
+    wallet.walletClient.sendTransaction
+      .mockImplementationOnce(send)
+      .mockImplementationOnce(async () => { throw new UserRejectedRequestError(new Error('User rejected the request.')) })
+    await act(async () => button('Pay').click())
+    await confirmEveryReview(() => wallet.walletClient.sendTransaction.mock.results.length >= 2, { each: mine })
+    for (let attempt = 0; attempt < 100 && ![...document.querySelectorAll('[data-tx-confirm] button')].some(item => item.textContent === 'Try again'); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve'])
+    expect(document.querySelector('[aria-current="step"]')?.textContent).not.toContain('Approve')
+  })
+
   it('wallet-action:one-confirmation cash-out: one review for the pool approvals and the sale', async () => {
     page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
     await type(input => String(input.getAttribute('aria-label')).startsWith('Amount of'), '2')
@@ -357,6 +377,23 @@ describe('one confirmation per action', () => {
     const dialogs = await confirmEveryReview(() => wallet.writeContract.mock.calls.length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
     expect(dialogs).toBe(1)
     expect(wallet.writes().map(write => write.functionName)).toEqual(['setPermissionsFor', 'borrowFrom'])
+  })
+
+  it('moves the loan dialog onto the borrow once the permission confirmed and the borrow was refused', async () => {
+    page = await renderWithReviews(createElement(GetLoanFlow, { chainId: 1, projectId: 42, collateralSymbol: 'JBT' }))
+    await type(input => String(input.getAttribute('aria-label')).startsWith('Collateral'), '1')
+    const send = wallet.walletClient.sendTransaction.getMockImplementation()!
+    wallet.walletClient.sendTransaction
+      .mockImplementationOnce(send)
+      .mockImplementationOnce(async () => { throw new UserRejectedRequestError(new Error('User rejected the request.')) })
+    await act(async () => button('Open the loan').click())
+    await confirmEveryReview(() => wallet.walletClient.sendTransaction.mock.results.length >= 2, { each: mine })
+    for (let attempt = 0; attempt < 100 && !document.querySelector('[data-tx-confirm] button:not([disabled])'); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['setPermissionsFor'])
+    expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Open the loan')
   })
 
   it('wallet-action:one-confirmation loan repayment: one review for the approval and the repayment', async () => {

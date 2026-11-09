@@ -94,7 +94,9 @@ export function useStepRun<Step>({
           return frozen.onSubmitted?.(call, step, hash, sent)
         },
       })
-      if (run.current !== current) return
+      // The result names the run's calls by the plan's steps (see `shownOf`).
+      const ended = result && { ...result, shown }
+      if (run.current !== current) return ended
       halt()
       if (result?.status === 'done') {
         finish(current, result.hashes.at(-1)!)
@@ -107,6 +109,7 @@ export function useStepRun<Step>({
         // back onto it when that step is the one that reverted or is held.
         setIndex(current.submitted + 1)
       }
+      return ended
     },
     [tx, send, halt, finish],
   )
@@ -162,7 +165,7 @@ export function useStepRun<Step>({
       current.action = saved ? { account: fresh.account, scope, calls, description: SAVED_SEQUENCE_LINE } : { ...fresh, calls, scope }
       // The saved step in flight is the one its hold settles: the run waits on it as if sent here.
       if (held !== undefined) current.submitted = shownOf(current, held)
-      await go(current)
+      return go(current)
     },
     [action, go],
   )
@@ -214,6 +217,8 @@ export function useStepRun<Step>({
 
   return {
     running,
+    /** The steps the run started with, until `clear`. */
+    steps: runSteps,
     /** The step the run is on, or stopped at. */
     index,
     /** The run ended on a step proposed to a Safe: the confirm ends on Done. */
