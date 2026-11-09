@@ -1,5 +1,6 @@
 'use client'
 
+import { withTabLocks } from '@/lib/tab-locks'
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 
 import { getAccount } from '@wagmi/core'
@@ -121,13 +122,7 @@ export async function withRelayrScopeLock<T>(scope: string, execute: () => Promi
   if (activeRelayrScopes.has(scope)) throw new Error('This Relayr action is already being processed.')
   activeRelayrScopes.add(scope)
   try {
-    if (typeof navigator !== 'undefined' && navigator.locks) {
-      return await navigator.locks.request(`jb-relayr:${scope}`, { ifAvailable: true }, async lock => {
-        if (!lock) throw new Error('This Relayr action is already being processed in another tab.')
-        return execute()
-      })
-    }
-    return await execute()
+    return await withTabLocks([`jb-relayr:${scope}`], 'This Relayr action is already being processed in another tab.', execute)
   } finally { activeRelayrScopes.delete(scope) }
 }
 

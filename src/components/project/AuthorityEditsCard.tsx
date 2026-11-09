@@ -49,9 +49,10 @@ import {
   preservedMetadataKeys,
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
-import { loadRelayrPendingSession, relayrCallsScope, withRelayrScopeLock } from '@/lib/relayr'
+import { loadRelayrPendingSession, relayrCallsScope } from '@/lib/relayr'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useAuthorityRun } from '@/hooks/useAuthorityRun'
+import { destinationJournal } from '@/lib/destination-journal'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { wagmiConfig } from '@/providers/Providers'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
@@ -487,16 +488,8 @@ export type MetadataReview = {
 const metadataReviewKey = (row: { chainId: number; projectId: number }) =>
   `jb-metadata-review-v1:${row.chainId}:${row.projectId}`
 
-async function withMetadataReviewLocks<T>(
-  rows: readonly { chainId: number; projectId: number }[],
-  execute: () => Promise<T>,
-): Promise<T> {
-  const keys = [...new Set(rows.map(metadataReviewKey))].sort()
-  const lock = (index: number): Promise<T> => index === keys.length
-    ? execute()
-    : withRelayrScopeLock(keys[index], () => lock(index + 1))
-  return lock(0)
-}
+const withMetadataReviewLocks = <T,>(rows: readonly { chainId: number; projectId: number }[], execute: () => Promise<T>): Promise<T> =>
+  metadataReviews.lock(rows, 'This metadata update is already open in another tab.', execute)
 
 async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: boolean, account: Address) {
   const client = clientFor(deployment.chainId)
@@ -568,40 +561,37 @@ export function metadataReviewCalls(review: MetadataReview, requireSaved = true)
   }))
 }
 
-function readMetadataReview(rows: readonly { chainId: number; projectId: number }[]): MetadataReview | null {
-  if (typeof window === 'undefined') return null
-  for (const row of rows) {
-    try {
-      const raw = window.localStorage.getItem(metadataReviewKey(row))
-      if (!raw) continue
-      const review = JSON.parse(raw) as MetadataReview
-      if (!isAddress(review.account) || !Array.isArray(review.destinations) || !review.destinations.length ||
+const metadataReviews = destinationJournal<MetadataReview, { chainId: number; projectId: number }>({
+  keyOf: metadataReviewKey,
+  destinationsOf: review => review.destinations,
+  // An invalid local review cannot authorize a transaction.
+  valid: (review, key) => !(!isAddress(review.account) || !Array.isArray(review.destinations) || !review.destinations.length ||
           review.destinations.length > 16 || typeof review.isRevnet !== 'boolean' || !Array.isArray(review.rows) ||
           review.rows.some(item => !item || typeof item.label !== 'string' || typeof item.value !== 'string') ||
-          !review.destinations.some(item => item.chainId === row.chainId && item.projectId === row.projectId) ||
+          !review.destinations.some(item => metadataReviewKey(item) === key) ||
           review.destinations.some(item => !Number.isSafeInteger(item.chainId) || item.chainId < 1 ||
             !Number.isSafeInteger(item.projectId) || item.projectId < 1 || !isAddress(item.owner) || !isAddress(item.authority) ||
             !isAddress(item.controller) || typeof item.uri !== 'string' || typeof item.nextUri !== 'string') ||
-          review.scope !== relayrCallsScope(metadataReviewCalls(review))) continue
-      return review
-    } catch { /* An invalid local review cannot authorize a transaction. */ }
+          review.scope !== relayrCallsScope(metadataReviewCalls(review))),
+  conflicts: (previous, review) => previous.scope !== review.scope || !isAddressEqual(previous.account, review.account)
+    ? 'Finish or close the original metadata review before reviewing another update for this project.'
+    : null,
+  bigints: false,
+  storageLine: 'Allow browser storage before submitting this metadata update.',
+})
+
+export function readMetadataReview(rows: readonly { chainId: number; projectId: number }[]): MetadataReview | null {
+  if (typeof window === 'undefined') return null
+  for (const row of rows) {
+    const review = metadataReviews.read(metadataReviewKey(row))
+    if (review) return review
   }
   return null
 }
 
 function saveMetadataReview(review: MetadataReview): void {
   if (typeof window === 'undefined') return
-  const text = JSON.stringify(review)
-  for (const destination of review.destinations) {
-    const previous = readMetadataReview([destination])
-    if (previous && (previous.scope !== review.scope || !isAddressEqual(previous.account, review.account))) {
-      throw new Error('Finish or close the original metadata review before reviewing another update for this project.')
-    }
-    window.localStorage.setItem(metadataReviewKey(destination), text)
-    if (window.localStorage.getItem(metadataReviewKey(destination)) !== text) {
-      throw new Error('Allow browser storage before submitting this metadata update.')
-    }
-  }
+  metadataReviews.save(review)
 }
 
 async function clearMetadataReview(review: MetadataReview): Promise<void> {
@@ -615,9 +605,7 @@ async function clearMetadataReview(review: MetadataReview): Promise<void> {
 
 function removeMetadataReview(review: MetadataReview): void {
   if (typeof window === 'undefined') return
-  for (const destination of review.destinations) {
-    if (readMetadataReview([destination])?.scope === review.scope) window.localStorage.removeItem(metadataReviewKey(destination))
-  }
+  metadataReviews.clear(review)
 }
 
 /** Stable JSON identity makes equivalent per-chain metadata share a single pin. */

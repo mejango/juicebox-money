@@ -438,7 +438,6 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
   const startChainId = getAccount(wagmiConfig).chainId
   const walletGuards = review.calls.map(call => captureWalletContext(wagmiConfig, { account: review.account, chainId: call.chainId }))
   return locked(aliases(review), async () => {
-    if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('This browser cannot coordinate payer deployments across tabs. Use a browser with Web Locks support.')
     const original = readJournal(review.id)
     if (original?.archived) throw new Error('This payer attempt was already completed. Open a new review to create more addresses.')
     const active = loadPayerDeployment(review.scope)

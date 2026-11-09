@@ -1,5 +1,6 @@
 "use client";
 
+import { destinationJournal } from "@/lib/destination-journal";
 import {
   JBCoreContracts,
   JBRouterTerminalContracts,
@@ -720,52 +721,30 @@ function queueRecoveryKey(chainId: number, projectId: number): string {
 
 type QueueRecoveryJournal = { scope: string; review: Reviewed; action: QueueAction; result?: AuthorityResult };
 
-export function readQueueJournal(key: string): QueueRecoveryJournal | null {
-  try {
-    const raw = window.localStorage.getItem(key);
-    if (!raw) return null;
-    const journal = JSON.parse(raw, (_key, value) => value && typeof value === "object" && Object.keys(value).length === 1 && typeof value.bigint === "string" ? BigInt(value.bigint) : value) as QueueRecoveryJournal;
-    if (!journal.review?.destinations?.length || journal.scope !== relayrCallsScope(reviewedQueueCalls(journal.review, journal.action))) return null;
-    return journal;
-  } catch { return null; }
-}
+const queueJournals = destinationJournal<QueueRecoveryJournal, Pick<QueueDestination, "chainId" | "projectId">>({
+  keyOf: destination => queueRecoveryKey(destination.chainId, destination.projectId),
+  destinationsOf: journal => journal.review.destinations,
+  valid: journal => !!journal.review?.destinations?.length && journal.scope === relayrCallsScope(reviewedQueueCalls(journal.review, journal.action)),
+  conflicts: (existing, journal, destination) => existing.scope !== journal.scope && (existing.result || loadRelayrPendingSession(existing.scope))
+    ? `Resume the pending ruleset update on ${chainName(destination.chainId)} first.`
+    : null,
+  storageLine: "Allow browser storage before queueing rules on multiple chains.",
+});
+
+export const readQueueJournal = queueJournals.read;
 
 function pendingQueueScope(key: string): QueueRecoveryJournal | null {
   const journal = readQueueJournal(key);
   return journal && (journal.result || loadRelayrPendingSession(journal.scope)) ? journal : null;
 }
 
-export function saveQueueJournal(journal: QueueRecoveryJournal): void {
-  const text = JSON.stringify(journal, (_key, value) => typeof value === "bigint" ? { bigint: value.toString() } : value);
-  for (const destination of journal.review.destinations) {
-    const key = queueRecoveryKey(destination.chainId, destination.projectId);
-    const existing = pendingQueueScope(key);
-    if (existing && existing.scope !== journal.scope) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
-    window.localStorage.setItem(key, text);
-    if (window.localStorage.getItem(key) !== text) throw new Error("Allow browser storage before queueing rules on multiple chains.");
-  }
-}
+export const saveQueueJournal = queueJournals.save;
 
 /** Overlapping chain selections share a lock before publishing recovery aliases. */
-async function withQueueDestinationLocks<T>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> {
-  if (typeof navigator === "undefined" || !navigator.locks) {
-    if (destinations.length < 2) return run();
-    throw new Error("Use a browser with Web Locks support to queue rules on multiple chains.");
-  }
-  const keys = destinations.map(destination => queueRecoveryKey(destination.chainId, destination.projectId)).sort();
-  const lock = async (index: number): Promise<T> => index === keys.length ? run() : await navigator.locks.request(keys[index], { ifAvailable: true }, async held => {
-    if (!held) throw new Error("A ruleset update for this project is already running in another tab.");
-    return lock(index + 1);
-  });
-  return lock(0);
-}
+const withQueueDestinationLocks = <T,>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> =>
+  queueJournals.lock(destinations, "A ruleset update for this project is already running in another tab.", run);
 
-function clearQueueJournal(journal: QueueRecoveryJournal): void {
-  for (const destination of journal.review.destinations) {
-    const key = queueRecoveryKey(destination.chainId, destination.projectId);
-    if (readQueueJournal(key)?.scope === journal.scope) window.localStorage.removeItem(key);
-  }
-}
+const clearQueueJournal = queueJournals.clear;
 
 /**
  * Send reviewed rules under their destinations' locks. Rules for several

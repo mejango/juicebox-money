@@ -9,32 +9,11 @@
       "test": "test/components/transaction-review-project-scope.test.tsx"
     },
     {
-      "file": "src/components/project/EditSplitsFlow.tsx",
-      "line": 412,
+      "file": "src/lib/tab-locks.ts",
+      "line": 16,
       "api": "request",
-      "boundary": "navigator.locks.request over each destination's split journal key: cross-tab coordination, never a wallet RPC.",
-      "test": "test/components/edit-splits-multichain.test.tsx"
-    },
-    {
-      "file": "src/components/project/QueueRulesetFlow.tsx",
-      "line": 756,
-      "api": "request",
-      "boundary": "navigator.locks.request over each destination's queue recovery key: cross-tab coordination, never a wallet RPC.",
-      "test": "test/components/queue-ruleset-multichain.test.tsx"
-    },
-    {
-      "file": "src/lib/forwarder-authorization.ts",
-      "line": 91,
-      "api": "request",
-      "boundary": "navigator.locks.request on the per-account forwarder authorization lock: cross-tab coordination, never a wallet RPC.",
-      "test": "test/transactions/forwarder-authorization.test.ts"
-    },
-    {
-      "file": "src/lib/relayr.ts",
-      "line": 125,
-      "api": "request",
-      "boundary": "navigator.locks.request on the Relayr scope lock: cross-tab coordination, never a wallet RPC.",
-      "test": "test/transactions/relayr-orchestration.test.ts"
+      "boundary": "The SDK's browserLocks().request over each key a flow names (split, queue and metadata journals, forwarder authorization, Relayr scope, launch): cross-tab coordination, never a wallet RPC.",
+      "test": "test/lib/tab-locks.test.ts"
     }
   ]
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { destinationJournal } from '@/lib/destination-journal'
 import {
   JBCoreContracts,
   RevnetCoreContracts,
@@ -370,51 +371,27 @@ function splitJournalKey(chainId: number, projectId: number, groupId: bigint): s
   return `jbm:edit-splits:${chainId}:${projectId}:${groupId}`
 }
 
-export function readSplitJournal(key: string): SplitJournal | null {
-  try {
-    const raw = window.localStorage.getItem(key)
-    if (!raw) return null
-    const journal = JSON.parse(raw, (_key, value) => value && typeof value === 'object' && Object.keys(value).length === 1 && typeof value.bigint === 'string' ? BigInt(value.bigint) : value) as SplitJournal
-    if (!journal.review?.destinations?.length || journal.scope !== relayrCallsScope(reviewedSplitCalls(journal.review))) return null
-    return journal
-  } catch { return null }
-}
+const splitJournals = destinationJournal<SplitJournal, SplitReview['destinations'][number]>({
+  keyOf: destination => splitJournalKey(destination.chainId, destination.projectId, destination.groupId),
+  destinationsOf: journal => journal.review.destinations,
+  valid: journal => !!journal.review?.destinations?.length && journal.scope === relayrCallsScope(reviewedSplitCalls(journal.review)),
+  conflicts: (existing, journal, destination) =>
+    existing.scope !== journal.scope && loadRelayrPendingSession(existing.scope) ? `Resume the pending splits on ${chainName(destination.chainId)} first.` : null,
+  storageLine: 'Allow browser storage before editing splits on multiple chains.',
+})
+
+export const readSplitJournal = splitJournals.read
 
 function pendingSplitJournal(key: string): SplitJournal | null {
   const journal = readSplitJournal(key)
   return journal && loadRelayrPendingSession(journal.scope) ? journal : null
 }
 
-export function saveSplitJournal(journal: SplitJournal): void {
-  const encoded = JSON.stringify(journal, (_key, value) => typeof value === 'bigint' ? { bigint: value.toString() } : value)
-  for (const destination of journal.review.destinations) {
-    const key = splitJournalKey(destination.chainId, destination.projectId, destination.groupId)
-    const pending = pendingSplitJournal(key)
-    if (pending && pending.scope !== journal.scope) throw new Error(`Resume the pending splits on ${chainName(destination.chainId)} first.`)
-    window.localStorage.setItem(key, encoded)
-    if (window.localStorage.getItem(key) !== encoded) throw new Error('Allow browser storage before editing splits on multiple chains.')
-  }
-}
+export const saveSplitJournal = splitJournals.save
+const clearSplitJournal = splitJournals.clear
 
-function clearSplitJournal(journal: SplitJournal): void {
-  for (const destination of journal.review.destinations) {
-    const key = splitJournalKey(destination.chainId, destination.projectId, destination.groupId)
-    if (readSplitJournal(key)?.scope === journal.scope) window.localStorage.removeItem(key)
-  }
-}
-
-async function withSplitLocks<T>(destinations: SplitReview['destinations'], run: () => Promise<T>): Promise<T> {
-  if (typeof navigator === 'undefined' || !navigator.locks) {
-    if (destinations.length === 1) return run()
-    throw new Error('Use a browser with Web Locks support to edit splits on multiple chains.')
-  }
-  const keys = destinations.map(destination => splitJournalKey(destination.chainId, destination.projectId, destination.groupId)).sort()
-  const next = async (index: number): Promise<T> => index === keys.length ? run() : await navigator.locks.request(keys[index], { ifAvailable: true }, async lock => {
-    if (!lock) throw new Error('These split recipients are being edited in another tab.')
-    return next(index + 1)
-  })
-  return next(0)
-}
+const withSplitLocks = <T,>(destinations: SplitReview['destinations'], run: () => Promise<T>): Promise<T> =>
+  splitJournals.lock(destinations, 'These split recipients are being edited in another tab.', run)
 
 /**
  * Send a reviewed split update under its destinations' locks. A multichain

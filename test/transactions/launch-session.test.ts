@@ -665,10 +665,10 @@ describe('the cross-tab launch lock', () => {
     expect(fn).not.toHaveBeenCalled()
   })
 
-  it('runs the work at once in a browser without Web Locks', async () => {
+  it('runs the work under the SDK lock in a browser without Web Locks', async () => {
     vi.stubGlobal('navigator', {})
     const fn = vi.fn()
-    void withLaunchLock(fn, 'busy')
+    await withLaunchLock(fn, 'busy')
     expect(fn).toHaveBeenCalledOnce()
   })
 })

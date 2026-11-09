@@ -1,5 +1,6 @@
 'use client'
 
+import { withTabLocks } from '@/lib/tab-locks'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   CREATE_BATCH_ABI,
@@ -59,15 +60,8 @@ function fingerprint(value: unknown): string {
   })
 }
 
-async function withLaunchLock<T>(action: () => Promise<T>): Promise<T> {
-  if (typeof navigator !== 'undefined' && navigator.locks) {
-    return navigator.locks.request('jbm-launch', { ifAvailable: true }, lock => {
-      if (!lock) throw new Error('Another tab is updating this launch. Continue there or close it first.')
-      return action()
-    })
-  }
-  return action()
-}
+const withLaunchLock = <T,>(action: () => Promise<T>): Promise<T> =>
+  withTabLocks(['jbm-launch'], 'Another tab is updating this launch. Continue there or close it first.', action)
 
 
 /** A launch's Safe setup on one chain: held by its launch (salt) and sender. No SDK builder covers it. */

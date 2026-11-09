@@ -123,7 +123,6 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
   onComplete: (receipts: TransactionReceipt[]) => Promise<void>
 }): Promise<void> {
   return withRelayrScopeLock(`raw:${pendingScope}`, async () => {
-    if (typeof navigator === 'undefined' || !navigator.locks) throw new Error('This browser cannot coordinate routing bundles across tabs. Use a browser with Web Locks support.')
     const normalized: SavedCall[] = calls.map(call => {
       if ((call.value ?? 0n) !== 0n) throw new Error('Raw routing bundles cannot transfer native value.')
       return { chainId: call.chainId, target: call.target, data: call.data, value: '0', ...(call.gas !== undefined ? { gas: call.gas.toString() } : {}) }

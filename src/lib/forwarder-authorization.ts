@@ -1,5 +1,6 @@
 'use client'
 
+import { withTabLocks } from '@/lib/tab-locks'
 import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { relayrForwardRequest, relayrSignedRequests, type RelayrEntry, type RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import { isAddressEqual, type Address } from 'viem'
@@ -40,9 +41,6 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
   requestsDead: (requests: readonly RelayrSignedRequest[]) => Promise<boolean>
   execute: (assertAvailable: (destinations?: number[]) => void) => Promise<T>
 }): Promise<T> {
-  if (typeof navigator === 'undefined' || !navigator.locks) {
-    throw new Error('This browser cannot coordinate forwarder authorizations across tabs. Use a browser with Web Locks support.')
-  }
   const chains = [...new Set(chainIds)].sort((a, b) => a - b)
   /** What would reserve `wanted`, each keyed by the exact requests it published. */
   const reservations = (wanted: Set<number>): Reservation[] => {
@@ -79,19 +77,13 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
       throw new Error('Another published action uses this wallet’s forwarder nonce on a selected chain. Complete or recover that original action before signing or paying for another.')
     }
   }
-  const lock = async (index: number): Promise<T> => {
-    if (index === chains.length) {
+  return withTabLocks(chains.map(chain => `jb-forwarder-authorization:${account.toLowerCase()}:${chain}`),
+    'Another action is authorizing or recovering this wallet on a selected chain. Wait for it to finish before continuing.', async () => {
       // A ledger that cannot be read is refused by assertAvailable when a new authorization needs it, not here,
       // so paid recovery still runs.
       let found: Reservation[] = []
       try { found = reservations(new Set(chains)) } catch { /* assertAvailable refuses it. */ }
       for (const { key, requests } of found) if (requests && await requestsDead(requests)) dead.add(key)
       return execute(assertAvailable)
-    }
-    return navigator.locks.request(`jb-forwarder-authorization:${account.toLowerCase()}:${chains[index]}`, { ifAvailable: true }, async held => {
-      if (!held) throw new Error('Another action is authorizing or recovering this wallet on a selected chain. Wait for it to finish before continuing.')
-      return lock(index + 1)
     })
-  }
-  return lock(0)
 }
