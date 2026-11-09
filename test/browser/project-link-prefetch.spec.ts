@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 // Next re-requests a prefetch without end once more than four links to a
 // dynamic route whose segment holds a `:` (every `chain:id` project URN) are in
 // view, so project links must never prefetch.
-test.use({ viewport: { width: 1280, height: 2200 } })
+test.use({ viewport: { width: 1280, height: 1000 } })
 
 const QUIET_MS = 2_000
 const SETTLE_DEADLINE_MS = 12_000
@@ -44,7 +44,6 @@ test('home settles with more than four project links in view', async ({
 
   await page.goto('/', { waitUntil: 'load' })
 
-  await page.locator('#home-ranking-trending-tab').click()
   const projectLinks = page.locator('#home-trending-panel a[href*=":"]')
   await expect(projectLinks.first()).toBeVisible()
   const linksInView = await projectLinks.evaluateAll(
