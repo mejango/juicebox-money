@@ -1,5 +1,5 @@
 import { NATIVE_TOKEN, type JBChainId } from '@bananapus/nana-sdk-core'
-import { simulateStateChangingTransaction } from '@bananapus/nana-sdk-core/review'
+import { simulateStateChangingTransaction, TRANSACTION_GAS_CAP } from '@bananapus/nana-sdk-core/review'
 import { decodeEventLog, encodeAbiParameters, encodeFunctionData, erc20Abi, isAddress, isAddressEqual, keccak256, parseAbi, parseAbiParameters, zeroAddress, zeroHash, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import { bendystraw } from '@/lib/bendystraw'
 import { clientFor } from '@/lib/authority'
@@ -125,8 +125,7 @@ export async function reviewPendingPayment(payment: PendingPayment, client: Publ
   // A later gas-exhaustion retry can forward 15M gas. The standard 10M preflight
   // ceiling is too low. Standard simulation/estimation still has to succeed
   // inside the live block limit and EIP-7825 transaction cap before signing.
-  const gas = 16_777_216n
-  return { payment, failure, readyAt, ready: block.timestamp >= readyAt, gas: gas < block.gasLimit ? gas : block.gasLimit,
+  return { payment, failure, readyAt, ready: block.timestamp >= readyAt, gas: TRANSACTION_GAS_CAP < block.gasLimit ? TRANSACTION_GAS_CAP : block.gasLimit,
     functionName: BigInt(failure.count) >= finalizationCount ? 'finalizePendingCall' : 'processPendingCall', decimals, symbol }
 }
 
