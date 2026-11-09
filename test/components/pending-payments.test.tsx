@@ -219,6 +219,26 @@ describe('pending payment review above activity', () => {
     await act(async () => { release() })
   })
 
+  it('keeps a retry after a cancel busy when the cancelled quote winds down', async () => {
+    mocks.rows = [row()]
+    await render()
+    await act(async () => button('Retry').props.onClick())
+    const releases: Array<() => void> = []
+    mocks.run.mockImplementation(async () => {
+      await new Promise<void>(resolve => { releases.push(resolve) })
+      return { status: 'complete' }
+    })
+    await act(async () => { void proceed() })
+    await act(async () => dialog().onCancel!())
+    await act(async () => { void proceed() })
+    expect(dialog().busy).toBe(true)
+    await act(async () => { releases[0]() })
+    expect(dialog().busy).toBe(true)
+    expect(dialog().onCancel).toBeTypeOf('function')
+    await act(async () => { releases[1]() })
+    expect(dialog().busy).toBe(false)
+  })
+
   it('stops offering cancel once the fee payment is next', async () => {
     mocks.rows = [row()]
     await render()
