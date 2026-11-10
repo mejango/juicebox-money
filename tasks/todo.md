@@ -16,7 +16,7 @@
 
 ## Review
 - npm run check passes: 3,542 unit tests and 90 browser tests. Every budget passes with no raise; all scripts are at 2,701.4 of 2,702 KiB.
-- Copied from revnet, Homerun and Sticky: Sticky already handles all three. revnet's pay card has gaps 1 and 2. A partly-sent run shows no line in revnet, Homerun or Sticky; the SDK could report it as a status of its own.
+- Parity, reported only: Sticky already handles all three. revnet's pay card has gaps 1 and 2. A partly-sent run shows no line in revnet, Homerun or Sticky; the SDK could report it as a status of its own.
 
 # Explicit state machines, wave 3: adopt the SDK owners (2026-11-09)
 
