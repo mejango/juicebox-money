@@ -15,7 +15,7 @@
  * signer, payment chain, exact authorizations, and funding/recovery journal.
  */
 
-import { withTabLocks } from '@/lib/tab-locks'
+import { withTabLocks, type TabLocks } from '@/lib/tab-locks'
 import type { LaunchPlan } from '@/lib/launch'
 import type { Address, Hex } from 'viem'
 import type { LaunchRelayrJournal } from '@/lib/launch-relayr'
@@ -397,10 +397,14 @@ export function abandonLaunchSession(expectedSalt?: `0x${string}`, { retired = f
   }
 }
 
+/** Another tab holds the launch lock. */
+export const LAUNCH_RUNNING_LINE = 'This launch is already running in another tab.'
+
 /**
- * Runs `fn` under the cross-tab "jbm-launch" lock. With `busy`, it doesn't
- * wait for another tab: it throws `busy` and leaves `fn` unrun.
+ * Runs `fn` under the cross-tab "jbm-launch" lock until it ends, handing it the
+ * lock its journal writes check. With `busy`, it doesn't wait for another tab:
+ * it throws `busy` and leaves `fn` unrun.
  */
-export async function withLaunchLock(fn: () => unknown, busy?: string): Promise<void> {
-  await withTabLocks(['jbm-launch'], busy, () => { fn() })
+export function withLaunchLock<T>(fn: (locks: TabLocks) => T | Promise<T>, busy?: string): Promise<T> {
+  return withTabLocks(['jbm-launch'], busy, fn)
 }

@@ -49,6 +49,7 @@ import {
   preservedMetadataKeys,
   type EditedMetadataKey,
 } from '@/lib/project-metadata'
+import { fence, type TabLocks } from '@/lib/tab-locks'
 import { loadRelayrPendingSession, relayrCallsScope } from '@/lib/relayr'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useAuthorityRun } from '@/hooks/useAuthorityRun'
@@ -488,7 +489,7 @@ export type MetadataReview = {
 const metadataReviewKey = (row: { chainId: number; projectId: number }) =>
   `jb-metadata-review-v1:${row.chainId}:${row.projectId}`
 
-const withMetadataReviewLocks = <T,>(rows: readonly { chainId: number; projectId: number }[], execute: () => Promise<T>): Promise<T> =>
+const withMetadataReviewLocks = <T,>(rows: readonly { chainId: number; projectId: number }[], execute: (locks: TabLocks) => Promise<T>): Promise<T> =>
   metadataReviews.lock(rows, 'This metadata update is already open in another tab.', execute)
 
 async function readMetadataBaseline(deployment: AuthorityDeployment, isRevnet: boolean, account: Address) {
@@ -589,9 +590,10 @@ export function readMetadataReview(rows: readonly { chainId: number; projectId: 
   return null
 }
 
-function saveMetadataReview(review: MetadataReview): void {
+/** Saved under its destinations' `locks`, which it checks first. */
+async function saveMetadataReview(review: MetadataReview, locks: TabLocks): Promise<void> {
   if (typeof window === 'undefined') return
-  metadataReviews.save(review)
+  await fence(locks, metadataReviews.save)(review)
 }
 
 async function clearMetadataReview(review: MetadataReview): Promise<void> {
@@ -832,7 +834,7 @@ export function MetadataEditor({
       nextReview.scope = relayrCallsScope(metadataReviewCalls(nextReview))
       // Every destination is rechecked after potentially slow metadata fetches and pins.
       for (const call of metadataReviewCalls(nextReview, false)) await call.reverifyAuthority?.()
-      await withMetadataReviewLocks(nextReview.destinations, async () => saveMetadataReview(nextReview))
+      await withMetadataReviewLocks(nextReview.destinations, locks => saveMetadataReview(nextReview, locks))
       setFrozen(nextReview)
       setReviewed(true)
     } catch (reviewError) {
@@ -859,13 +861,13 @@ export function MetadataEditor({
     setBusy(true)
     setError(null)
     try {
-      await withMetadataReviewLocks(frozen.destinations, async () => {
+      await withMetadataReviewLocks(frozen.destinations, async locks => {
         const account = getAccount(wagmiConfig).address
         if (!account || !isAddressEqual(account, frozen.account)) throw new Error('Connect the wallet that reviewed this metadata update.')
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-        saveMetadataReview(frozen)
+        await saveMetadataReview(frozen, locks)
         const calls = metadataReviewCalls(frozen)
-        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message), signal: flowSignal() })
+        const result = await runAuthorityCalls({ calls, onProgress: progress => setStatus(progress.message), signal: flowSignal(), locks })
         setStatus(outcomeMessage(result, `Project metadata updated on ${calls.length} chain${calls.length === 1 ? '' : 's'}.`))
         removeMetadataReview(frozen)
         setDone(true)

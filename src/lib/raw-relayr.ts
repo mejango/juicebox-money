@@ -9,6 +9,7 @@ import { publicClient } from '@/lib/wallet-core'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isSafeConnection } from '@/lib/safe-connector'
 import { withRelayrScopeLock } from '@/lib/relayr'
+import { fence } from '@/lib/tab-locks'
 import { relayrBundleRequest, relayrDestinationHash, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry } from '@bananapus/nana-sdk-core/review/relayr'
 import { assertRawQuoteBindings, isExpiredUnfundedRawQuote, isRawRelayrPhase, RawQuoteNotObtainedError, runRawRelayrLifecycle, type RawRelayrState } from '@/lib/raw-relayr-lifecycle'
 
@@ -122,7 +123,7 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
   onProgress?: (progress: { message: string }) => void
   onComplete: (receipts: TransactionReceipt[]) => Promise<void>
 }): Promise<void> {
-  return withRelayrScopeLock(`raw:${pendingScope}`, async () => {
+  return withRelayrScopeLock(`raw:${pendingScope}`, async locks => {
     const normalized: SavedCall[] = calls.map(call => {
       if ((call.value ?? 0n) !== 0n) throw new Error('Raw routing bundles cannot transfer native value.')
       return { chainId: call.chainId, target: call.target, data: call.data, value: '0', ...(call.gas !== undefined ? { gas: call.gas.toString() } : {}) }
@@ -171,12 +172,12 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     let pollError: unknown
     if (session.phase !== 'complete') {
       try {
-        pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, planned, assertAccount, releasable: true, signal, onQuoted,
+        pollError = await runRawRelayrLifecycle({ session, entries, preferredPaymentChainId, planned, assertAccount, releasable: true, signal, onQuoted, locks,
           // A funding payment the app can't authenticate gets the SDK's one check; once the user checked it, the
           // bundle goes, and the owner reviews its calls again.
           checked: {
             stillSaved: () => { const now = loadRawRelayrSession(pendingScope); return !!now && now.phase !== 'complete' },
-            retired: () => {
+            retired: async () => {
               forget(pendingScope)
               throw new Error('You checked this payment. Review these payments again to route them.')
             },
@@ -203,7 +204,7 @@ export async function runRawRelayrCalls({ calls, account, pendingScope, preferre
     // Early proofs only feed the display: completion needs every receipt canonical now, read once in parallel.
     const receipts = await Promise.all(session.calls.map((call, index) => verifyDestination(call, destinationHash(index)!)))
     session.phase = 'complete'
-    save(session)
+    await fence(locks, save)(session)
     await onComplete(receipts)
     // The owner has durably recorded outcomes before the recovery journal is released.
     forget(pendingScope)

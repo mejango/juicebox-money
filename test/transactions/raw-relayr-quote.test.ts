@@ -14,7 +14,7 @@ const start = (signal?: AbortSignal) => {
   const session: RawRelayrState = { account, phase: 'reviewed', records: [] }
   const saved: string[] = []
   const run = runRawRelayrLifecycle({ session, entries, signal, releasable: true, assertAccount: () => {}, reverify: async () => {},
-    saveState: next => { saved.push(next.phase) } })
+    saveState: next => { saved.push(next.phase) }, locks: [] })
   return { session, saved, run }
 }
 beforeEach(() => vi.resetAllMocks())
@@ -47,7 +47,7 @@ it('never moves on to payment when the caller cancelled after the quote was save
   const onQuoted = vi.fn()
   const session: RawRelayrState = { account, phase: 'reviewed', records: [] }
   const failure = await runRawRelayrLifecycle({ session, entries: [{ ...entries[0], virtual_nonce: 0 }], signal: cancel.signal, releasable: true, onQuoted,
-    assertAccount: () => {}, reverify: async () => {}, saveState: () => {} }).catch((error: unknown) => error) as Error
+    assertAccount: () => {}, reverify: async () => {}, saveState: () => {}, locks: [] }).catch((error: unknown) => error) as Error
   expect(failure).not.toBeInstanceOf(RawQuoteNotObtainedError)
   expect(failure.message).toContain('Nothing was paid')
   expect(onQuoted).not.toHaveBeenCalled()

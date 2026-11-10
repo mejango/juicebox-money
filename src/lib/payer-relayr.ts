@@ -16,6 +16,7 @@ import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from 
 import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { withRelayrScopeLock } from '@/lib/relayr'
+import { fence, type TabLocks } from '@/lib/tab-locks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSentPaymentsSnapshot, relayrSupportsChains, type RelayrEntry, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 import { isRawRelayrPhase, runRawRelayrLifecycle, type RawRelayrPhase } from '@/lib/raw-relayr-lifecycle'
 
@@ -270,8 +271,9 @@ function save(session: PayerDeploymentSession, beforeWrite = false): PayerDeploy
   return saved
 }
 
-async function locked<T>(keys: string[], run: () => Promise<T>, index = 0): Promise<T> {
-  return index === keys.length ? run() : withRelayrScopeLock(`payer-deployment:${keys[index]}`, () => locked(keys, run, index + 1))
+/** `run` under every key's scope lock, handed all of them. */
+async function locked<T>(keys: string[], run: (locks: TabLocks) => Promise<T>, index = 0, held: TabLocks = []): Promise<T> {
+  return index === keys.length ? run(held) : withRelayrScopeLock(`payer-deployment:${keys[index]}`, locks => locked(keys, run, index + 1, [...held, ...locks]))
 }
 
 export function buildPayerDeploymentReview({ projects, selectedChainIds, account, beneficiary, owner, memo, addToBalance }: {
@@ -437,7 +439,8 @@ const PAYER_SETTLED_CONFIRMING = 'The payer deployment went through. It is still
 export async function runPayerDeployments(review: PayerDeploymentSession, onUpdate: (session: PayerDeploymentSession) => void, signal: AbortSignal): Promise<PayerDeploymentSession> {
   const startChainId = getAccount(wagmiConfig).chainId
   const walletGuards = review.calls.map(call => captureWalletContext(wagmiConfig, { account: review.account, chainId: call.chainId }))
-  return locked(aliases(review), async () => {
+  return locked(aliases(review), async locks => {
+    const fenced = fence(locks, save)
     const original = readJournal(review.id)
     if (original?.archived) throw new Error('This payer attempt was already completed. Open a new review to create more addresses.')
     const active = loadPayerDeployment(review.scope)
@@ -446,8 +449,8 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       onUpdate(snapshot(session))
       throw new Error('A previous payer deployment already exists. Resume its saved settings before starting another attempt.')
     }
-    const persist = (beforeWrite = false) => {
-      session = save(session, beforeWrite)
+    const persist = async (beforeWrite = false) => {
+      session = await fenced(session, beforeWrite)
       onUpdate(snapshot(session))
     }
     assertAccount(session)
@@ -470,7 +473,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         ...(payOn ? { relayrRounds: { [session.id]: { paymentChainId: payOn } } } : {}),
       }, reviewedSendDeps)
       assertAccount(session)
-      persist(true)
+      await persist(true)
     }
     if (session.phase === 'complete') {
       for (let index = 0; index < session.calls.length; index++) {
@@ -484,16 +487,17 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         ...(plan && payOn ? { planned: { plan, round: session.id, chainId: payOn } } : {}),
         checked: {
           stillSaved: () => { const now = readJournal(session.id); return !!now && !now.archived && now.phase !== 'complete' },
-          retired: () => {
+          retired: async () => {
             // The user checked this payment: the attempt is archived unresolved, so a new review may deploy again.
-            session = save({ ...session, archived: true, retired: true }, true)
+            session = await fenced({ ...session, archived: true, retired: true }, true)
             onUpdate(snapshot(session))
             throw new Error('You checked this payment. Open a new review to deploy the payer addresses again.')
           },
         },
         changedCallMessage: 'The original payer quote changed a reviewed deployment.',
         lostQuoteMessage: 'The original payer quote response is unavailable. Keep this attempt pending; requesting another bundle could deploy duplicate addresses.',
-        saveState: (next, beforeWrite) => { session = next; persist(beforeWrite) },
+        saveState: (next, beforeWrite) => { session = next; return persist(beforeWrite) },
+        locks,
         assertAccount: () => assertAccount(session),
         reverify: async () => { for (const call of session.calls) await preflight(call, zeroAddress) },
       })
@@ -505,11 +509,11 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           try {
             const payer = await verifyPayerDeployment(call, original.hash)
             session.outcomes[index] = { ...original, state: 'verified', payer }
-            persist()
+            await persist()
             continue
           } catch (error) {
             session.outcomes[index] = { ...original, state: 'submitted', error: error instanceof Error ? error.message : 'The original payer deployment remains unverified.' }
-            persist()
+            await persist()
           }
         }
         const binding = quote.expectedTransactions[index]
@@ -521,18 +525,18 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         if (!hash || (original.hash && hash.toLowerCase() !== original.hash.toLowerCase()) || !entry || entry.chain !== call.chainId || !isAddressEqual(entry.target, JB_PROJECT_PAYER_DEPLOYER) ||
             entry.data.toLowerCase() !== call.data.toLowerCase() || BigInt(entry.value) !== 0n || (entry.virtual_nonce ?? 0) !== 0) continue
         session.outcomes[index] = { ...session.outcomes[index], state: 'submitted', hash }
-        persist()
+        await persist()
         try {
           const payer = await verifyPayerDeployment(call, hash)
           session.outcomes[index] = { chainId: call.chainId, state: 'verified', hash, payer }
         } catch (error) {
           session.outcomes[index].error = error instanceof Error ? error.message : 'The payer address remains unverified.'
         }
-        persist()
+        await persist()
       }
       if (session.outcomes.every(outcome => outcome.state === 'verified')) {
         session.phase = 'complete'
-        persist()
+        await persist()
         return session
       }
       throw pollError ?? new Error('Some payer deployments remain unresolved. Check the saved bundle; do not deploy replacement addresses.')
@@ -557,15 +561,15 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           outcome = session.outcomes[index] = recovered.authenticated
             ? { ...outcome, state: 'verified', hash: recovered.hash, payer: recovered.value }
             : { ...outcome, state: 'submitted', hash: recovered.hash, settled: true }
-          persist()
+          await persist()
           if (outcome.state === 'verified') continue
         } else if (recovered.status === 'done' && recovered.result === 'failed') {
           outcome = session.outcomes[index] = { chainId: call.chainId, state: 'failed', hash: recovered.hash, failedHashes: outcome.failedHashes }
-          persist()
+          await persist()
         } else {
           // Retired (the user's exit or check, or a definite rejection): nothing is out.
           outcome = session.outcomes[index] = { chainId: call.chainId, state: 'ready', failedHashes: outcome.failedHashes }
-          persist()
+          await persist()
         }
       }
       if (outcome.state === 'failed') {
@@ -584,6 +588,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             account: session.account,
             calls: [{ ...reviewedDeployment(call, session.transport), intent: payerNamespace(session.id, call.chainId) }],
             title: 'Review payer deployment',
+            locks,
             // Its receipt still confirming is followed; the outcome already reads as submitted.
             follow: {},
             ...(viaSafe ? { description: SAFE_NONCE_GUIDANCE, confirmLabel: 'Agree & continue to Safe' } : {}),
@@ -598,19 +603,19 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
               walletGuards[index]()
               assertAccount(session)
             },
-            beforeWallet: () => {
+            beforeWallet: async () => {
               outcome = session.outcomes[index] = { chainId: call.chainId, state: 'sending', failedHashes: beforeSend.failedHashes, fromBlock }
-              persist(true)
+              await persist(true)
             },
-            onUnsent: () => {
+            onUnsent: async () => {
               outcome = session.outcomes[index] = beforeSend
-              persist()
+              await persist()
             },
-            onSubmitted: (_sent, _step, hash) => {
+            onSubmitted: async (_sent, _step, hash) => {
               outcome = session.outcomes[index] = session.transport === 'safe'
                 ? { ...outcome, state: 'submitted', safeProposalHash: hash }
                 : { ...outcome, state: 'submitted', hash }
-              persist()
+              await persist()
             },
           }, reviewedSendDeps)
         } catch (error) {
@@ -625,7 +630,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
             throw !signal.aborted && (error as { name?: unknown } | null)?.name === 'AbortError' ? new Error(SAFE_PAYER_PENDING) : error
           })
         outcome = session.outcomes[index] = { ...outcome, hash }
-        persist()
+        await persist()
       }
       if (!outcome.hash) throw new Error(outcome.settled ? PAYER_SETTLED_CONFIRMING : 'The original payer deployment hash is unavailable.')
       await publicClient(call.chainId).waitForTransactionReceipt({ hash: outcome.hash, timeout: 60_000 })
@@ -639,7 +644,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
         if (session.transport === 'direct' && await requireCanonicalDirectRevert(call, outcome.hash, session.account).then(() => true, () => false)) {
           session.outcomes[index] = { ...outcome, state: 'failed', failedHashes: [...(outcome.failedHashes ?? []), outcome.hash],
             error: 'The original deployment reverted. Review this chain again to retry; no payer was created.' }
-          persist()
+          await persist()
           throw error
         }
         // A saved hash the app can't authenticate: the SDK decides (held, the one check, or its settlement).
@@ -647,18 +652,18 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
           error instanceof Error ? error.message : undefined)
         if (recovered.status === 'done' && recovered.result === 'success' && recovered.authenticated) {
           session.outcomes[index] = { ...outcome, state: 'verified', hash: recovered.hash ?? outcome.hash, payer: recovered.value }
-          persist()
+          await persist()
           continue
         }
         if (recovered.status === 'none') {
           // Retired by the user's check or exit: nothing is held, and the next run reviews it again.
           session.outcomes[index] = { chainId: call.chainId, state: 'ready', failedHashes: outcome.failedHashes }
-          persist()
+          await persist()
         }
         throw error
       }
       session.outcomes[index] = { ...outcome, state: 'verified', payer }
-      persist()
+      await persist()
       // Its proof reaches the hold, which settles it.
       const client = publicClient(call.chainId)
       const verified = await client.getTransactionReceipt({ hash: outcome.hash }).catch(() => null)
@@ -668,7 +673,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
       }
     }
     session.phase = 'complete'
-    persist()
+    await persist()
     return session
   })
 }
@@ -677,7 +682,7 @@ export async function runPayerDeployments(review: PayerDeploymentSession, onUpda
 export async function finishPayerDeployment(scope: string, expectedId: string): Promise<void> {
   const displayed = readJournal(expectedId)
   if (!displayed || !aliases(displayed).includes(scope)) throw new Error('The displayed payer attempt changed. Reopen its saved deployment.')
-  return locked(aliases(displayed), async () => {
+  return locked(aliases(displayed), async locks => {
     const session = readJournal(expectedId)
     const current = loadPayerDeployment(scope)
     if (!session || current?.id !== expectedId || session.phase !== 'complete' ||
@@ -689,6 +694,6 @@ export async function finishPayerDeployment(scope: string, expectedId: string): 
     }
     // Keep a permanent attempt tombstone. New reviews may replace its aliases;
     // a stale tab holding this attempt can never recreate its transaction sends.
-    save({ ...session, archived: true }, true)
+    await fence(locks, save)({ ...session, archived: true }, true)
   })
 }

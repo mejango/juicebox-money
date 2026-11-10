@@ -12,7 +12,7 @@ vi.mock('@wagmi/core', () => ({ getAccount: () => ({ address: mocks.address }) }
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {} }))
 vi.mock('@/lib/viewAs', () => ({ assertNoViewAs: vi.fn() }))
 vi.mock('@/lib/safe-connector', () => ({ isSafeConnection: () => false }))
-vi.mock('@/lib/relayr', () => ({ withRelayrScopeLock: (_key: string, run: () => Promise<void>) => run() }))
+vi.mock('@/lib/relayr', () => ({ withRelayrScopeLock: (_key: string, run: (locks: readonly never[]) => Promise<void>) => run([]) }))
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => ({ getTransaction: mocks.transaction, getTransactionReceipt: mocks.receipt, getBlock: mocks.block }) }))
 vi.mock('@/lib/raw-relayr-lifecycle', async original => ({ ...(await original<typeof import('@/lib/raw-relayr-lifecycle')>()), runRawRelayrLifecycle: mocks.lifecycle }))
 import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls } from '@/lib/raw-relayr'

@@ -51,6 +51,7 @@ import { useViewedAccount } from "@/hooks/useViewedAccount";
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from "@/lib/authority";
 import { FlowError } from "@/lib/errors";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
+import { fence, type TabLocks } from "@/lib/tab-locks";
 import { loadRelayrPendingSession, relayrCallsScope, RELAYR_REQUEST_REFRESH_SECONDS } from "@/lib/relayr";
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
@@ -741,7 +742,7 @@ function pendingQueueScope(key: string): QueueRecoveryJournal | null {
 export const saveQueueJournal = queueJournals.save;
 
 /** Overlapping chain selections share a lock before publishing recovery aliases. */
-const withQueueDestinationLocks = <T,>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: () => Promise<T>): Promise<T> =>
+const withQueueDestinationLocks = <T,>(destinations: readonly Pick<QueueDestination, "chainId" | "projectId">[], run: (locks: TabLocks) => Promise<T>): Promise<T> =>
   queueJournals.lock(destinations, "A ruleset update for this project is already running in another tab.", run);
 
 const clearQueueJournal = queueJournals.clear;
@@ -756,21 +757,22 @@ const clearQueueJournal = queueJournals.clear;
 export async function submitQueueReview(review: Reviewed, action: QueueAction, onProgress: (message: string) => void, signal: AbortSignal): Promise<AuthorityResult> {
   const calls = reviewedQueueCalls(review, action);
   const journal = { scope: relayrCallsScope(calls), review, action };
-  return withQueueDestinationLocks(review.destinations, async () => {
+  return withQueueDestinationLocks(review.destinations, async locks => {
+    const save = fence(locks, saveQueueJournal);
     for (const destination of review.destinations) {
       if (pendingQueueScope(queueRecoveryKey(destination.chainId, destination.projectId))) throw new Error(`Resume the pending ruleset update on ${chainName(destination.chainId)} first.`);
     }
     // Freeze every destination before any signature can be published.
     const staged = review.destinations.some(destination => destination.configs.length > 1);
-    if (calls.length > 1 || staged) saveQueueJournal(journal);
+    if (calls.length > 1 || staged) await save(journal);
     let submitted = false;
     try {
-      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message), signal });
+      const result = await runAuthorityCalls({ calls, onProgress: progress => onProgress(progress.message), signal, locks });
       submitted = true;
       if (staged) {
         // Keep execution hashes while verifying ancestry so a failed read
         // resumes verification instead of exposing another queue submission.
-        saveQueueJournal({ ...journal, result });
+        await save({ ...journal, result });
         await verifyQueuedStageOrder(review, result);
       }
       clearQueueJournal(journal);
@@ -828,13 +830,20 @@ export function QueueRecovery({ journal, onComplete, onDiscard, onError }: { jou
     setBusy(true); setError(null);
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("Connect the wallet that reviewed this ruleset update.");
-      // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-      const result = journal.result ?? await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal() });
-      if (journal.review.destinations.some(destination => destination.configs.length > 1)) {
-        saveQueueJournal({ ...journal, result });
-        await verifyQueuedStageOrder(journal.review, result);
-      }
-      clearQueueJournal(journal);
+      const result = await withQueueDestinationLocks(journal.review.destinations, async locks => {
+        for (const destination of journal.review.destinations) {
+          const alias = readQueueJournal(queueRecoveryKey(destination.chainId, destination.projectId));
+          if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error("The saved ruleset review changed. Reopen its original action.");
+        }
+        // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
+        const result = journal.result ?? await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal(), locks });
+        if (journal.review.destinations.some(destination => destination.configs.length > 1)) {
+          await fence(locks, saveQueueJournal)({ ...journal, result });
+          await verifyQueuedStageOrder(journal.review, result);
+        }
+        clearQueueJournal(journal);
+        return result;
+      });
       onComplete(result);
     } catch (err) { onError?.(); setError(err instanceof Error ? err.message : "Could not resume the ruleset update."); }
     finally { setBusy(false); }

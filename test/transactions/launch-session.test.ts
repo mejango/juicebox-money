@@ -658,6 +658,22 @@ describe('the cross-tab launch lock', () => {
     expect(fn).toHaveBeenCalledTimes(2)
   })
 
+  it('holds the lock until async work ends, so a second launch write waits for it', async () => {
+    vi.stubGlobal('navigator', {})
+    const order: string[] = []
+    let release!: () => void
+    const first = withLaunchLock(async () => {
+      await new Promise<void>(resolve => { release = resolve })
+      order.push('first')
+    })
+    await vi.waitFor(() => expect(release).toBeTypeOf('function'))
+    const second = withLaunchLock(() => { order.push('second') })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    release()
+    await Promise.all([first, second])
+    expect(order).toEqual(['first', 'second'])
+  })
+
   it("throws the busy line and leaves the work unrun while another tab holds it", async () => {
     lockedBy(false)
     const fn = vi.fn()

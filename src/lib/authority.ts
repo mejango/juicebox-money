@@ -55,6 +55,7 @@ import {
   SAFE_SERVICE,
   type SafeCallResult,
 } from '@/lib/safe'
+import type { TabLocks } from '@/lib/tab-locks'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import {
   readMatchingAuthorityIdentities,
@@ -297,6 +298,7 @@ export async function runAuthorityCalls({
   paymentChainId,
   plan,
   signal,
+  locks,
 }: {
   calls: AuthorityCall[]
   /**
@@ -313,6 +315,8 @@ export async function runAuthorityCalls({
    * and Safe signatures are still reviewed.
    */
   plan?: ReviewedPlan
+  /** The caller's journal locks, when it runs under any: a lost one sends nothing. */
+  locks?: TabLocks
 }): Promise<AuthorityResult> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
@@ -720,6 +724,7 @@ export async function runAuthorityCalls({
           intent: safeHoldNamespace(safeProposalKey(call.chainId, call.authority, sentCall)),
         }],
         title: 'Review Safe transaction',
+        ...(locks ? { locks } : {}),
         description: reviewDescription(`This exact call will continue in Safe. ${SAFE_NONCE_GUIDANCE}`),
         confirmLabel: 'Agree & continue to Safe',
         ...(plan ? { plan } : {}),
@@ -818,6 +823,7 @@ export async function runAuthorityCalls({
       }
       const result = await sendReviewed({
         account: group[0].authority,
+        ...(locks ? { locks } : {}),
         calls: group.map(call => ({
           chainId: call.chainId, ...exactOf(call),
           // ponytail: under a parent plan the reviewed calls carry no gas, so

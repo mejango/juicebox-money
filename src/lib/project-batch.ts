@@ -30,6 +30,7 @@ import { loadReviewEngine } from '@/lib/preload-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { assertNoViewAs } from '@/lib/viewAs'
 import { isRawRelayrSessionReleased, loadRawRelayrSession, runRawRelayrCalls, type RawAttempt } from '@/lib/raw-relayr'
+import { fence, type TabLocks } from '@/lib/tab-locks'
 import { RawQuoteNotObtainedError } from '@/lib/raw-relayr-lifecycle'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import { relayrDestinationHash, relayrPaymentChains, relayrRecordChain, relayrSupportsChain } from '@bananapus/nana-sdk-core/review/relayr'
@@ -231,22 +232,22 @@ export function projectBatchRecoveryReason(batch: ProjectBatch): string {
 export async function recheckProjectBatch(scope: string, expectedId: string): Promise<boolean> {
   const original = readBatch(scope)
   if (!original || original.id !== expectedId) throw new Error('This saved batch changed. Reopen pending payments.')
-  return locked(aliases(original), async () => {
+  return locked(aliases(original), async batchLocks => {
     const batch = readBatch(scope)
     if (!batch || batch.id !== expectedId || encode(aliases(batch)) !== encode(aliases(original))) throw new Error('This saved batch changed. Reopen pending payments.')
     if (isProjectBatchDraft(batch)) return true
     if (batch.status !== 'pending' || batch.abandoned || batch.completedIds.length || Object.keys(batch.submissions).length) return false
     const scopes = batch.rounds.map((_round, index) => relayrScopeOf(batch, index))
-    const verify = async (index: number): Promise<boolean> => {
-      if (index < scopes.length) return withRelayrScopeLock(`raw:${scopes[index]}`, () => verify(index + 1))
+    const verify = async (index: number, locks: TabLocks): Promise<boolean> => {
+      if (index < scopes.length) return withRelayrScopeLock(`raw:${scopes[index]}`, raw => verify(index + 1, [...locks, ...raw]))
       for (const pendingScope of scopes) {
         if (hasRelayrPendingEvidence(pendingScope) || !await isRawRelayrSessionReleased(pendingScope)) return false
       }
       batch.abandoned = true
-      persist(batch)
+      await fence(locks, persist)(batch)
       return true
     }
-    return verify(0)
+    return verify(0, batchLocks)
   })
 }
 
@@ -328,9 +329,10 @@ export function projectBatchRounds(calls: ProjectBatchCall[]): string[][] {
   return rounds
 }
 
-async function locked<T>(scopes: string[], run: () => Promise<T>, index = 0): Promise<T> {
-  if (index === scopes.length) return run()
-  return withRelayrScopeLock(`project-batch:${scopes[index]}`, () => locked(scopes, run, index + 1))
+/** `run` under every scope's lock, handed all of them. */
+async function locked<T>(scopes: string[], run: (locks: TabLocks) => Promise<T>, index = 0, held: TabLocks = []): Promise<T> {
+  if (index === scopes.length) return run(held)
+  return withRelayrScopeLock(`project-batch:${scopes[index]}`, locks => locked(scopes, run, index + 1, [...held, ...locks]))
 }
 
 /**
@@ -403,7 +405,7 @@ const SCAN_SETTLED_DEPTH = LOG_WINDOW_BLOCKS
 async function safeExecution(
   call: ProjectBatchCall,
   submission: CallSubmission,
-  recordScan: (scannedTo: bigint) => void,
+  recordScan: (scannedTo: bigint) => Promise<void>,
 ): Promise<Hex | null | 'unfinished'> {
   if (!submission.hash || submission.fromBlock === undefined) return null
   const client = clientFor(call.chainId)
@@ -418,7 +420,7 @@ async function safeExecution(
     const log = logs.find(log => isSafeExecutionLog(log, call.authority, submission.hash!))
     if (log?.transactionHash) return log.transactionHash
     const read = end < settled ? end : settled
-    if (read >= start) recordScan(read)
+    if (read >= start) await recordScan(read)
     start = end + 1n
   }
   return start <= latest ? 'unfinished' : null
@@ -472,7 +474,8 @@ export async function runProjectBatch({
     throw new Error('This saved batch may already be underway. Reopen pending payments to resume it.')
   }
   const scopes = [...new Set([...aliases({ scope, action, calls: proposedCalls }), ...(draft ? aliases(draft) : [])])].sort()
-  return locked(scopes, async () => {
+  return locked(scopes, async locks => {
+    const save = fence(locks, persist)
     const replacing = replaceDraft ? readBatch(replaceDraft.scope) : null
     if (replaceDraft && (replacing?.id !== replaceDraft.id || !isReplaceableProjectBatch(replacing) ||
       encode(aliases(replacing)) !== encode(aliases(draft!)))) {
@@ -499,7 +502,7 @@ export async function runProjectBatch({
       if (!live || !isAddressEqual(live, account)) throw new Error('Connected wallet changed. Switch back to the wallet that reviewed this action.')
     }
     checkAccount()
-    if (replacing) { replacing.abandoned = true; persist(replacing) }
+    if (replacing) { replacing.abandoned = true; await save(replacing) }
     // This run's one review of every call, and whether it showed them as Safe-app proposals.
     let reviewed: { plan: ReviewedPlan; viaSafe: boolean; relayed: Map<number, RelayedRound> } | undefined
     try {
@@ -510,7 +513,7 @@ export async function runProjectBatch({
         submissions: {}, relayrRounds: [],
         relayrChainIds: [...new Set(frozen.map(call => call.chainId).filter(relayrSupportsChain))] }
       // Save the entire intent and every participant before any signature can escape.
-      persist(batch, true)
+      await save(batch, true)
       if (batch.calls.every(call => call.relayr === 'permissionless')) {
         await mapConcurrentChecks(batch.calls, async call => { await reverify?.(call) })
       } else for (const call of batch.calls) await reverify?.(call)
@@ -545,12 +548,12 @@ export async function runProjectBatch({
       reviewed = { plan, viaSafe, relayed }
     }
     const journal = batch
-    const complete = (ids: string[]) => {
+    const complete = async (ids: string[]) => {
       journal.completedIds = [...new Set([...journal.completedIds, ...ids])]
       if (journal.completedIds.length === journal.calls.length) journal.status = 'complete'
-      persist(journal)
+      await save(journal)
     }
-    if (journal.completedIds.length === journal.calls.length) { complete([]); return journal }
+    if (journal.completedIds.length === journal.calls.length) { await complete([]); return journal }
     const report = (message: string, round: number) => onProgress?.({ message,
       completed: journal.completedIds.length, total: journal.calls.length, round: round + 1, rounds: journal.rounds.length })
     // Only an authenticated inner failure releases a saved Safe submission.
@@ -561,7 +564,7 @@ export async function runProjectBatch({
       } catch (error) {
         if (error instanceof SafeSubmissionSettled) {
           delete journal.submissions[call.id]
-          persist(journal)
+          await save(journal)
         }
         throw error
       }
@@ -581,33 +584,34 @@ export async function runProjectBatch({
         const boundIds = journal.relayrCallIds?.[String(round)]
         let rawCalls = boundIds ? pending.filter(call => boundIds.includes(call.id)) : pending
         if (!rawSaved && !boundIds) {
-          for (const call of rawCalls) if (await reconcileUnsubmitted?.(call)) complete([call.id])
+          for (const call of rawCalls) if (await reconcileUnsubmitted?.(call)) await complete([call.id])
           rawCalls = rawCalls.filter(call => !journal.completedIds.includes(call.id))
         }
         if (rawCalls.length) {
           ;(journal.relayrCallIds ??= {})[String(round)] = rawCalls.map(call => call.id)
-          persist(journal)
-          const notePublished = () => {
+          await save(journal)
+          const notePublished = async () => {
             if (!loadRawRelayrSession(relayrScope) || journal.relayrPublished?.includes(round)) return
             ;(journal.relayrPublished ??= []).push(round)
-            persist(journal)
+            await save(journal)
           }
           try {
             await runRawRelayrCalls({ calls: rawCalls, account, pendingScope: relayrScope,
               preferredPaymentChainId: startChainId, signal, onQuoted: onBeforePayment, ...(tag?.raw ? { planned: parent } : {}),
               onAttempts: attempts => onAttempts?.(Object.fromEntries(rawCalls.map((item, index) => [item.id, attempts[index]]))),
               reverify: async () => { checkAccount(); await mapConcurrentChecks(rawCalls, async call => { await reverify?.(call) }); checkAccount() },
-              onProgress: progress => { notePublished(); report(progress.message, round) },
+              // Best effort while it runs: the `finally` below records it for certain.
+              onProgress: progress => { void notePublished().catch(() => undefined); report(progress.message, round) },
               onComplete: async receipts => {
                 if (receipts.length !== rawCalls.length) throw new Error('The original bundle has not identified an exact receipt for every pending payment.')
                 for (let index = 0; index < rawCalls.length; index++) {
                   if (receipts[index].status === 'reverted' && !acceptRevertedTransactions) throw new Error('A relayed project action reverted.')
                   await verifyCompletion?.(rawCalls[index], receipts[index])
                 }
-                complete(rawCalls.map(call => call.id))
+                await complete(rawCalls.map(call => call.id))
               },
             })
-          } finally { notePublished() }
+          } finally { await notePublished() }
         }
         pending = pending.filter(call => !journal.completedIds.includes(call.id))
         if (!pending.length) continue
@@ -624,16 +628,16 @@ export async function runProjectBatch({
       if (relayCalls.length) {
         if (!journal.relayrRounds.includes(round)) journal.relayrRounds.push(round)
         ;(journal.relayrCallIds ??= {})[String(round)] = relayCalls.map(call => call.id)
-        persist(journal)
+        await save(journal)
         report('Preparing cross-chain transactions…', round)
         // Once its signed requests leave this browser, a session that later goes
         // without completing these calls was discarded (see loadProjectBatch).
-        const notePublished = () => {
+        const notePublished = async () => {
           if (!loadRelayrPendingSession(relayrScope) || journal.relayrPublished?.includes(round)) return
           ;(journal.relayrPublished ??= []).push(round)
-          persist(journal)
+          await save(journal)
         }
-        notePublished()
+        await notePublished()
         try {
           await runRelayrCalls({ calls: relayCalls, account, pendingScope: relayrScope, preferredPaymentChainId: startChainId,
             ...(tag && !tag.raw ? { parent } : {}),
@@ -648,11 +652,11 @@ export async function runProjectBatch({
                 if (!hash) throw new Error('The original bundle has not identified an exact receipt for every project action.')
                 await verifyCompletion(call, await clientFor(call.chainId).getTransactionReceipt({ hash }))
               }
-              complete(relayCalls.map(call => call.id))
+              await complete(relayCalls.map(call => call.id))
             },
           })
         } finally {
-          notePublished()
+          await notePublished()
         }
         pending = pending.filter(call => !journal.completedIds.includes(call.id))
       }
@@ -668,7 +672,7 @@ export async function runProjectBatch({
           )
           if (recovered.status === 'done' && recovered.result === 'success' && recovered.authenticated) {
             await verifyCompletion?.(call, recovered.value)
-            complete([call.id])
+            await complete([call.id])
             continue
           }
           if (recovered.status === 'done' && recovered.result === 'success') {
@@ -677,24 +681,24 @@ export async function runProjectBatch({
               // The hold settled the Safe's execution of this exact call (its hash is the execution, not a proposal):
               // the action is done, checked by its own completion rule.
               await verifyCompletion?.(call, await clientFor(call.chainId).getTransactionReceipt({ hash: recovered.hash }))
-              complete([call.id])
+              await complete([call.id])
               continue
             }
             journal.submissions[call.id] = { ...saved, hash: recovered.hash }
-            persist(journal)
+            await save(journal)
           } else {
             // A proven revert, or retired (the user's check or exit): nothing is out, so it is sent again.
             delete journal.submissions[call.id]
-            persist(journal)
+            await save(journal)
           }
           saved = journal.submissions[call.id]
         }
         if (saved) {
           if (!saved.hash) throw new Error('A wallet submission may still be pending. Check the original wallet activity; do not submit this call again.')
           let execution: Hex | null = null
-          const recordScan = (scannedTo: bigint) => {
+          const recordScan = async (scannedTo: bigint) => {
             journal.submissions[call.id] = { ...journal.submissions[call.id], scannedTo }
-            persist(journal)
+            await save(journal)
           }
           if (saved.kind === 'direct') execution = saved.hash
           else if (saved.kind === 'safe') {
@@ -723,7 +727,7 @@ export async function runProjectBatch({
           if (execution) {
             const receipt = await verifySubmitted(call, execution, saved.kind === 'direct' ? undefined : saved.hash)
             await verifyCompletion?.(call, receipt)
-            complete([call.id])
+            await complete([call.id])
             continue
           }
           const proposal = saved.safeTx
@@ -731,13 +735,13 @@ export async function runProjectBatch({
             safeTransactionMatchesCall(proposal, { to: call.target, data: call.data, value: call.value }) &&
             canonicalSafeTxHash(call.chainId, call.authority, proposal).toLowerCase() === saved.hash.toLowerCase() &&
             await reconcileObsoleteSafe(call, { ...proposal, safeTxHash: saved.hash })) {
-            complete([call.id])
+            await complete([call.id])
             continue
           }
           if (saved.kind !== 'safe') return journal
         }
         if (!saved && await reconcileUnsubmitted?.(call)) {
-          complete([call.id])
+          await complete([call.id])
           continue
         }
         await reverify?.(call)
@@ -753,14 +757,14 @@ export async function runProjectBatch({
           onSending: async kind => {
             sending = { kind, fromBlock }
             journal.submissions[call.id] = sending
-            persist(journal)
+            await save(journal)
           },
           onBeforeSubmissionAborted: async () => {
             if (!sending || journal.submissions[call.id] !== sending || sending.hash) return
             delete journal.submissions[call.id]
-            persist(journal)
+            await save(journal)
           },
-          onSubmitted: async (hash, kind) => { journal.submissions[call.id] = { kind, hash, fromBlock }; persist(journal) },
+          onSubmitted: async (hash, kind) => { journal.submissions[call.id] = { kind, hash, fromBlock }; await save(journal) },
           onSafePrepared: async tx => {
             const hash = canonicalSafeTxHash(call.chainId, call.authority, tx)
             if (saved?.hash && hash.toLowerCase() !== saved.hash.toLowerCase()) {
@@ -769,9 +773,9 @@ export async function runProjectBatch({
             // The same proposal again keeps what its submission already holds, its scan included.
             journal.submissions[call.id] = { ...journal.submissions[call.id], kind: 'safe', hash, safeTx: tx,
               fromBlock }
-            persist(journal)
+            await save(journal)
           },
-          }], onProgress: progress => report(progress.message, round),
+          }], locks, onProgress: progress => report(progress.message, round),
           // A resumed batch, or a connection that changed since, reviews each send again.
           ...(reviewed && reviewed.viaSafe === isSafeConnection(wagmiConfig) ? { plan: reviewed.plan } : {}), signal })
         } catch (error) {
@@ -781,7 +785,7 @@ export async function runProjectBatch({
             : null
           if (receipt?.status !== 'reverted') throw error
           await verifyCompletion?.(call, receipt)
-          complete([call.id])
+          await complete([call.id])
           continue
         }
         const submission = journal.submissions[call.id]
@@ -790,7 +794,7 @@ export async function runProjectBatch({
         if (execution) {
           const receipt = await verifySubmitted(call, execution, submission?.kind !== 'direct' ? submission?.hash : undefined)
           await verifyCompletion?.(call, receipt)
-          complete([call.id])
+          await complete([call.id])
         } else {
           report('The saved Safe proposal is awaiting execution. Continue it in the multisig queue, then resume this batch.', round)
           return journal
@@ -801,17 +805,17 @@ export async function runProjectBatch({
     } catch (error) {
       if (batch) {
         // An unsigned quote request that returned nothing reserved nothing: the next review starts clean.
-        if (error instanceof RawQuoteNotObtainedError && !Object.keys(batch.submissions).length) { batch.abandoned = true; persist(batch) }
+        if (error instanceof RawQuoteNotObtainedError && !Object.keys(batch.submissions).length) { batch.abandoned = true; await save(batch) }
         if (isDefiniteWalletRejection(error)) {
           let changed = false
           for (const [id, submission] of Object.entries(batch.submissions)) {
             if (!submission.hash) { delete batch.submissions[id]; changed = true }
           }
-          if (changed) persist(batch)
+          if (changed) await save(batch)
         }
         // A cancelled review or failed preflight exposes no executable request.
         // Published signatures, unknown sends, and completed calls remain recoverable.
-        if (isProjectBatchDraft(batch)) { batch.abandoned = true; persist(batch) }
+        if (isProjectBatchDraft(batch)) { batch.abandoned = true; await save(batch) }
       }
       throw error
     }

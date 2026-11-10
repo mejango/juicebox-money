@@ -42,8 +42,11 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(run).toContain('const viaSafe = isSafeConnection(config);')
     expect(run).toMatch(/calls: \[\{\s*chainId, \.\.\.launchCall,/)
     expect(run).toContain('proposal = viaSafe ? hash : undefined;')
-    expect(run).toMatch(/beforeWallet: \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
-    expect(run).toContain('onUnsent: () => {')
+    expect(run).toMatch(/beforeWallet: async \(\) => \{[\s\S]*?phase: "signing", directSafeCall/)
+    expect(run).toContain('onUnsent: async () => {')
+    // The whole direct run holds the launch lock: every journal write and the wallet check it.
+    expect(run).toContain('withLaunchLock(locks => launchDirectChains(pinned, locks), LAUNCH_RUNNING_LINE)')
+    expect(run).toMatch(/title: `Review launch on \$\{chainName\(chainId\)\}`,\s*locks,/)
   })
 
   it('retains original Safe call/proposal until authenticated inner proof and then verifies the project', () => {
@@ -74,7 +77,7 @@ describe('direct launch submission and recovery boundaries', () => {
     expect(source).toContain('namespace: launchNamespace(launch), call: launchCall,')
     // Core reserves the hold under the launch key before `beforeWallet`, and journals the hash it returns.
     expect(source).toContain('intent: launchNamespace(launch),')
-    expect(source).toMatch(/onSubmitted: \(_call, _step, submitted\) => \{\s*hash = submitted;[\s\S]*?updateStatus\(chainId, \{ phase: "confirming", txHash: submitted/)
+    expect(source).toMatch(/onSubmitted: async \(_call, _step, submitted\) => \{\s*hash = submitted;[\s\S]*?await updateStatus\(chainId, \{ phase: "confirming", txHash: submitted/)
     expect(source).not.toContain('This launch may already have been submitted. Recover the original wallet request before trying again.')
   })
 })

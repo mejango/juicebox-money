@@ -279,6 +279,25 @@ describe('queue recovery after cancellation or partial execution', () => {
   }
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
+  it('resumes only under the destinations\' locks: another tab holding one sends nothing', async () => {
+    const { renderer, completed, failed } = await mountSaved()
+    vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: { ifAvailable?: boolean }, run: (lock: object | null) => Promise<unknown>) => run(options.ifAvailable ? null : {}) } })
+    await act(async () => { await button(renderer, 'Resume ruleset update').props.onClick() })
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    expect(JSON.stringify(renderer.toJSON())).toContain('already running in another tab')
+    expect(failed).toHaveBeenCalledOnce()
+    expect(completed).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+
+  it('hands the destinations\' locks to the resumed send', async () => {
+    const { renderer, completed } = await mountSaved()
+    await act(async () => { await button(renderer, 'Resume ruleset update').props.onClick() })
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].locks).toHaveLength(currentReview.destinations.length)
+    expect(completed).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+  })
+
   it('notifies the query owner after a failed recovery without claiming completion or discarding it', async () => {
     const { renderer, completed, failed } = await mountSaved()
     mocks.runAuthorityCalls.mockRejectedValue(new Error('The next destination is unavailable.'))

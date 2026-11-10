@@ -44,6 +44,7 @@ import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, type AuthorityResult } from '@/lib/authority'
 import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
+import { fence, type TabLocks } from '@/lib/tab-locks'
 import { loadRelayrPendingSession, relayrCallsScope } from '@/lib/relayr'
 import { relayrSupportsChain, relayrSupportsChains } from '@bananapus/nana-sdk-core/review/relayr'
 import { getRevnetOperator } from '@/lib/bendystraw'
@@ -390,7 +391,7 @@ function pendingSplitJournal(key: string): SplitJournal | null {
 export const saveSplitJournal = splitJournals.save
 const clearSplitJournal = splitJournals.clear
 
-const withSplitLocks = <T,>(destinations: SplitReview['destinations'], run: () => Promise<T>): Promise<T> =>
+const withSplitLocks = <T,>(destinations: SplitReview['destinations'], run: (locks: TabLocks) => Promise<T>): Promise<T> =>
   splitJournals.lock(destinations, 'These split recipients are being edited in another tab.', run)
 
 /**
@@ -402,13 +403,13 @@ const withSplitLocks = <T,>(destinations: SplitReview['destinations'], run: () =
  */
 export async function submitSplitReview(plan: SplitReview, onProgress: (message: string) => void, signal: AbortSignal): Promise<AuthorityResult> {
   const journal = { scope: relayrCallsScope(reviewedSplitCalls(plan)), review: plan }
-  return withSplitLocks(plan.destinations, async () => {
+  return withSplitLocks(plan.destinations, async locks => {
     for (const destination of plan.destinations) {
       if (pendingSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))) throw new Error(`Resume the pending split update on ${chainName(destination.chainId)} first.`)
     }
-    if (plan.destinations.length > 1) saveSplitJournal(journal)
+    if (plan.destinations.length > 1) await fence(locks, saveSplitJournal)(journal)
     try {
-      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message), signal })
+      const result = await runAuthorityCalls({ calls: reviewedSplitCalls(plan), onProgress: progress => onProgress(progress.message), signal, locks })
       clearSplitJournal(journal)
       return result
     } catch (error) {
@@ -439,13 +440,13 @@ export function SplitRecovery({ journal, onComplete, onDiscard, onError }: { jou
     setBusy(true); setError(null)
     try {
       if (address.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('Connect the wallet that reviewed this split update.')
-      const result = await withSplitLocks(journal.review.destinations, async () => {
+      const result = await withSplitLocks(journal.review.destinations, async locks => {
         for (const destination of journal.review.destinations) {
           const alias = readSplitJournal(splitJournalKey(destination.chainId, destination.projectId, destination.groupId))
           if (alias?.scope !== journal.scope || alias.review.account.toLowerCase() !== journal.review.account.toLowerCase()) throw new Error('The saved split review changed. Reopen its original action.')
         }
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
-        const result = await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal() })
+        const result = await runAuthorityCalls({ calls: reviewedSplitCalls(journal.review), onProgress: progress => setStatus(progress.message), signal: flowSignal(), locks })
         clearSplitJournal(journal)
         return result
       })

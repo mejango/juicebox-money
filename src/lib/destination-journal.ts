@@ -1,4 +1,4 @@
-import { withTabLocks } from '@/lib/tab-locks'
+import { withTabLocks, type TabLocks } from '@/lib/tab-locks'
 
 /** A saved review that names the destinations (chain and project) it changes. */
 type Saved = { scope: string }
@@ -63,7 +63,8 @@ export function destinationJournal<J extends Saved, D>({
         if (read(key)?.scope === journal.scope) window.localStorage.removeItem(key)
       }
     },
-    lock<T>(destinations: readonly D[], busy: string, work: () => Promise<T>): Promise<T> {
+    /** Runs `work` under every destination's lock, handed them: its saves go through `fence(locks, save)`. */
+    lock<T>(destinations: readonly D[], busy: string, work: (locks: TabLocks) => Promise<T>): Promise<T> {
       return withTabLocks(destinations.map(keyOf), busy, work)
     },
   }
