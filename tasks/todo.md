@@ -1453,11 +1453,13 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 - **Verification:** Failing-first vitest for: stopped line from runner status, dismiss of a held earlier step refreshing reads, withTabLocks handing locks, a lost lock refusing each journal save, the launch lock awaiting an async fn, the QueueRecovery and CreateForm writes under the lock, and the parity UI. Then full `npm run check` with PLAYWRIGHT_APP_PORT on a free port, Node 26.
 - **Resource budget:** One worktree (sm-jbm), sequential edits; one read-only research agent for revnet parity. Replan if the SDK lacks a needed export or the scripts budget rise exceeds a few KiB.
 
-- [ ] Bump core 6.2.0, Node 26, npm 12
-- [ ] Run wrapper consolidation (useReviewedAction, useStepRun, write-holds followDetached)
-- [ ] withTabLocks work(locks) and wrapper forwarding
-- [ ] Fence 6 journal saves; locks to relayrPay, signForwardedRequest, runAuthorityCalls, executeRelayrCalls, runRawRelayrLifecycle
-- [ ] launch-session withLaunchLock awaits fn
-- [ ] QueueRulesetFlow 834/837 and CreateForm 1053 under the lock
-- [ ] Held-write parity with revnet
+- [x] Bump core 6.2.0, Node 26, npm 12
+- [x] Run wrapper consolidation (useReviewedAction, useStepRun, write-holds followDetached)
+- [x] withTabLocks work(locks) and wrapper forwarding
+- [x] Fence 6 journal saves; locks to relayrPay, signForwardedRequest, runAuthorityCalls, executeRelayrCalls, runRawRelayrLifecycle
+- [x] launch-session withLaunchLock awaits fn
+- [x] QueueRulesetFlow 834/837 and CreateForm 1053 under the lock
+- [x] Held-write parity with revnet
 - [ ] Full check, draft PR
+
+Review (2026-11-10): Draft PR https://github.com/mejango/juicebox-money/pull/175, five commits on e67410f9. Core 6.2.0; the SDK owns stop, dismiss and following; every journal save runs through `fence(locks, …)`; locks reach every SDK send and sign entry; withLaunchLock awaits its work and its refusal is shown; the held-writes list shows every phase and takes a lost hash. Behavior tests failed first on the old code. Green: lint, ts, source, protocol, schema, transaction, wallet inventories, test:ci 286 files 3554 tests. Open: build:browser, budget and test:browser stopped on ENOSPC (disk full, scratchpad deletion hook-blocked); rerun once space is freed. Not merged.
