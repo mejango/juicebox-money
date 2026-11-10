@@ -3,7 +3,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Address, TransactionReceipt } from 'viem'
-import { ReviewLineError, type ReviewedAction, type ReviewedResult, type ReviewedRunStatus } from '@bananapus/nana-sdk-core/review'
+import { openStepHold, ReviewLineError, type ReviewedAction, type ReviewedResult, type ReviewedRunStatus, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -16,7 +16,7 @@ import { loadReviewEngine, preloadReviewDialog } from '@/lib/preload-review'
 
 import { revertedReceipt } from '@/lib/reviewed-call'
 export { hashOf, liveStep, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
-import { reviewDescription } from '@/lib/write-holds'
+import { followDetached, reviewDescription, writeHolds } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
 /** A run the user closed at its review or wallet prompt: what happened, and the way on. */
@@ -75,9 +75,9 @@ export function useReviewedAction(chainId?: number) {
   /** The latest run's call count, which core forgets once the run ends. */
   const [total, setTotal] = useState(0)
   const inFlight = useRef(false)
-  /** Ends the wait on a sent step the hold is following, once its confirm closes; core keeps following it. */
-  const stopWaiting = useRef<(() => void) | null>(null)
-  /** `stopWaiting` is set: the run only awaits its last step's hold, which closing the confirm ends. */
+  /** The sent step the run only waits on its hold for: closing its confirm ends the run there. */
+  const awaiting = useRef<{ stop: () => void } | null>(null)
+  /** `awaiting` is set, for rendering. */
   const [following, setFollowing] = useState(false)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
@@ -96,11 +96,20 @@ export function useReviewedAction(chainId?: number) {
       })
       // A sent step whose receipt is still being verified is pending (`phase`), never failed, until
       // its hold ends the run. A failed run shows its line through `error` and its value through `failure`.
-      // The last step's wait can end when its confirm closes; an earlier step's ending goes on to the next step.
+      // Closing its confirm ends this wait with nothing, and the hold keeps the sent step. An earlier
+      // step (an approval) resets core's run, so no later step is reviewed for it; the last step stays
+      // core's held run, whose line and lock the flow keeps showing until it settles.
       const ended = ran?.status === 'receipt'
         ? await Promise.race([ran.ended(), new Promise<null>(resolve => {
-          if (ran.step !== action.calls.length - 1) return
-          stopWaiting.current = () => resolve(null)
+          const call = action.calls[ran.step]!
+          awaiting.current = {
+            stop: ran.step === action.calls.length - 1 ? () => resolve(null) : () => {
+              // Its reads refresh once the step settles, though nothing is left to show it.
+              followDetached(openStepHold(writeHolds, action.account, viaSafe, call), reviewedSendDeps.clientFor(call.chainId) as WriteHoldClient,
+                () => void invalidateProjectDisplayQueries(queryClient, call.chainId))
+              runner.reset()
+            },
+          }
           setFollowing(true)
         })])
         : ran
@@ -109,7 +118,7 @@ export function useReviewedAction(chainId?: number) {
       return done
     } finally {
       inFlight.current = false
-      stopWaiting.current = null
+      awaiting.current = null
       setFollowing(false)
     }
   }
@@ -135,13 +144,14 @@ export function useReviewedAction(chainId?: number) {
     void invalidateProjectDisplayQueries(queryClient, shownChainId)
   }, [confirmed, queryClient, shownChainId])
 
-  /** Whether it closed: never while a run's review or wallet is open; a followed send stays followed and held. */
+  /** Whether it closed: never while a run's review or wallet is open; a followed send stays held, and its reads refresh once it settles. */
   const reset = () => {
-    if (stopWaiting.current) {
-      stopWaiting.current()
+    const held = awaiting.current
+    if (inFlight.current && !held) return false
+    if (held) {
+      held.stop()
       return true
     }
-    if (inFlight.current) return false
     setResult(null)
     runner.reset()
     return true
@@ -157,7 +167,7 @@ export function useReviewedAction(chainId?: number) {
     phase,
     /** True while the run is in flight: in review, simulating, signing or awaiting its receipt. */
     busy: runner.busy,
-    /** The run awaits only its last step's hold: closing the confirm (`dismiss`) ends the wait, and the hold keeps the step. */
+    /** The run only waits on a sent step's hold: closing the confirm (`dismiss`) ends the run there, and the hold keeps the step. */
     following,
     /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
     settled: phase === 'done' || phase === 'proposed' || phase === 'held',

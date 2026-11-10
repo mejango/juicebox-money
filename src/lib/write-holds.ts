@@ -1,6 +1,7 @@
 import {
   createSavedAttemptRecovery,
   createWriteHold,
+  followHeldWrite,
   HELD_RELEASED_ELSEWHERE_LINE,
   type SavedAttempt,
   type SavedAttemptOutcome,
@@ -16,6 +17,19 @@ import { heldCall, type SafeAppCall } from '@/lib/safe-connector'
  * states, the exits and the release rules).
  */
 export const writeHolds = createWriteHold()
+
+/**
+ * Keep following a held write whose flow closed, with the SDK's own follower,
+ * until the hold is clear; then `onSettled` hears an authenticated success.
+ * Returns the stop.
+ */
+export function followDetached(handle: WriteHoldHandle, client: WriteHoldClient, onSettled: () => void): () => void {
+  const stop = new AbortController()
+  void followHeldWrite(handle, client, { signal: stop.signal }).then(end => {
+    if (end?.status === 'clear' && end.settled && 'hash' in end.settled && end.settled.result === 'success') onSettled()
+  }, () => undefined)
+  return () => stop.abort()
+}
 
 /** The app's one saved-attempt recovery over it: launches, Relayr sessions, payers, batches and Safe setup. */
 export const savedAttempts = createSavedAttemptRecovery({ hold: writeHolds })

@@ -9,7 +9,7 @@ import { createElement, createRef, forwardRef, useImperativeHandle } from 'react
 import TestRenderer, { act } from 'react-test-renderer'
 import { decodeFunctionData, numberToHex, type Abi, type Address, type Hex } from 'viem'
 import { buildBorrowTx, buildCashOutTx, buildPayTx } from '@bananapus/nana-sdk-core/v6'
-import { payIntent, registerReviewHandler, ReviewLineError } from '@bananapus/nana-sdk-core/review'
+import { openStepHold, payIntent, registerReviewHandler, ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import baseline from './fixtures/use-safe-tx-calldata.json'
@@ -246,10 +246,55 @@ describe('useReviewedAction', () => {
     await act(async () => { expect(ref.current!.dismiss()).toBe(true) })
     await vi.waitFor(() => expect(ended).toBeNull())
     expect(ref.current!.following).toBe(false)
-    expect(ref.current!.hash).not.toBeNull()
+    // The hold keeps the sent step: it is never sent again from here.
+    expect(openStepHold(writeHolds, ALICE, false, call).peek().status).not.toBe('clear')
     expect(walletSends).toHaveLength(1)
     await act(async () => renderer.unmount())
   }, 20_000)
+
+  it('stops an approval run once its held receipt is dismissed: no later review for it, and a new action can start', async () => {
+    let reviews = 0
+    unregister.push(registerReviewHandler(async prompt => { reviews += 1; return prompt.confirmation }))
+    const tag = crypto.randomUUID()
+    const scope = `dismiss-${tag}`
+    const calls = [
+      { chainId: 10, to: TOKEN, data: '0x095ea7b3' as Hex, value: 0n, intent: `${scope}-approve` },
+      { chainId: 10, to: TERMINAL, data: baseline.pay.data as Hex, value: 10n ** 16n, intent: `${scope}-pay`, dependsOnPrior: true },
+    ]
+    // The approval's receipt can't be read until its in-run follow times out: the hold has it.
+    client.getTransactionReceipt.mockImplementation(async () => { throw new Error('lagging node') })
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    let ended: unknown = 'pending'
+    await act(async () => { void ref.current!.run({ account: ALICE, calls, scope, follow: { timeoutMs: 50 } }).then(value => { ended = value }) })
+    await vi.waitFor(() => expect(ref.current!.following).toBe(true), { timeout: 15_000, interval: 50 })
+    // Two minutes on, the hold's look shows its pending line: the confirm can end on Done.
+    const now = Date.now.bind(Date)
+    const later = vi.spyOn(Date, 'now').mockImplementation(() => now() + 130_000)
+    await vi.waitFor(() => expect(ref.current!.phase).toBe('held'), { timeout: 10_000, interval: 100 })
+    later.mockRestore()
+    expect(ref.current!.busy).toBe(false)
+    expect(walletSends).toHaveLength(1)
+
+    await act(async () => { expect(ref.current!.dismiss()).toBe(true) })
+    await vi.waitFor(() => expect(ended).toBeNull())
+    // The approval confirms: the dismissed run reviews nothing more.
+    client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 6_000)) })
+    expect(reviews).toBe(1)
+    expect(walletSends).toHaveLength(1)
+    expect(ref.current!.phase).not.toBe('review')
+
+    // A new action starts and is sent.
+    let result: Awaited<ReturnType<Action['run']>> = null
+    await act(async () => {
+      result = await ref.current!.run({ account: ALICE, calls: [{ chainId: 10, to: TERMINAL, data: baseline.pay.data as Hex, value: 10n ** 16n + 1n, intent: `${scope}-new` }] })
+    })
+    expect(result).toMatchObject({ status: 'done' })
+    expect(reviews).toBe(2)
+    await act(async () => renderer.unmount())
+  }, 40_000)
 
   // jbm's reset is refused while a run is in flight, so its page closing is the one way a run ends early.
   it('an unmount while the payment loads its wallet sends nothing more: one write', async () => {

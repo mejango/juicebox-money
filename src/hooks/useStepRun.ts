@@ -224,7 +224,7 @@ export function useStepRun<Step>({
     tx.reset()
   }, [tx])
 
-  /** The run only awaits its last step's hold: the flow can close its confirm, which ends the wait and keeps the hold. */
+  /** The run only waits on a sent step's hold: the flow can close its confirm, which ends the run there and keeps the hold. */
   const awaitingHold = tx.following && tx.phase === 'held'
 
   return {
