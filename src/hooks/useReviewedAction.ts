@@ -73,6 +73,8 @@ export function useReviewedAction(chainId?: number) {
   const inFlight = useRef(false)
   /** Ends the wait on a sent step the hold is following, once its confirm closes; core keeps following it. */
   const stopWaiting = useRef<(() => void) | null>(null)
+  /** `stopWaiting` is set: the run only awaits its last step's hold, which closing the confirm ends. */
+  const [following, setFollowing] = useState(false)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
     // A flow whose page closed opens no review.
@@ -92,7 +94,9 @@ export function useReviewedAction(chainId?: number) {
       // The last step's wait can end when its confirm closes; an earlier step's ending goes on to the next step.
       const ended = ran?.status === 'receipt'
         ? await Promise.race([ran.ended(), new Promise<null>(resolve => {
-          if (ran.step === action.calls.length - 1) stopWaiting.current = () => resolve(null)
+          if (ran.step !== action.calls.length - 1) return
+          stopWaiting.current = () => resolve(null)
+          setFollowing(true)
         })])
         : ran
       const done = ended?.status === 'failed' ? null : ended
@@ -101,6 +105,7 @@ export function useReviewedAction(chainId?: number) {
     } finally {
       inFlight.current = false
       stopWaiting.current = null
+      setFollowing(false)
     }
   }
 
@@ -145,6 +150,8 @@ export function useReviewedAction(chainId?: number) {
     phase,
     /** True while the run is in flight: in review, simulating, signing or awaiting its receipt. */
     busy: runner.busy,
+    /** The run awaits only its last step's hold: closing the confirm (`dismiss`) ends the wait, and the hold keeps the step. */
+    following,
     /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
     settled: phase === 'done' || phase === 'proposed' || phase === 'held',
     /** The run ended short of done: it failed, or was cancelled with nothing sent. */

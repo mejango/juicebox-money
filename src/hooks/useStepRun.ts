@@ -224,8 +224,11 @@ export function useStepRun<Step>({
     tx.reset()
   }, [tx])
 
+  /** The run only awaits its last step's hold: the flow can close its confirm, which ends the wait and keeps the hold. */
+  const awaitingHold = tx.following && tx.phase === 'held'
+
   return {
-    running,
+    running: running && !awaitingHold,
     /** The steps the run started with, until `clear`. */
     steps: runSteps,
     /** The step the run is on, or stopped at. */
@@ -233,7 +236,7 @@ export function useStepRun<Step>({
     /** The run ended on a step proposed to a Safe: the confirm ends on Done. */
     proposed,
     /** The run is suspended on a step whose receipt could not be read: the confirm ends on Done and nothing is resent. */
-    unconfirmed: !running && tx.phase === 'held',
+    unconfirmed: (!running || awaitingHold) && tx.phase === 'held',
     /** The run through these exact steps stopped before its last step confirmed, so `resume` continues it. */
     stoppedOn: (steps: readonly Step[] | undefined): boolean =>
       !running &&
@@ -242,7 +245,7 @@ export function useStepRun<Step>({
       index < steps.length &&
       (index > 0 || tx.stopped),
     /** `running`, read at once (for a click that lands before the next render). */
-    isRunning: () => run.current.running,
+    isRunning: () => run.current.running && !awaitingHold,
     start,
     resume,
     hold,

@@ -168,6 +168,24 @@ describe('useStepRun', () => {
     expect(t.run).toHaveBeenCalledOnce()
   })
 
+  it('lets a confirm close while its run only awaits the last step\'s hold, which keeps the write', async () => {
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.submitted(1, H2)
+    // The send still awaits the held last step; closing the confirm is what ends that wait.
+    await t.engine({ phase: 'held', following: true })
+    expect(t.ref.current).toMatchObject({ running: false, unconfirmed: true, index: 1 })
+    expect(t.ref.current!.isRunning()).toBe(false)
+    // The wait is still the run's: nothing else starts or resumes over it.
+    await act(async () => { void t.ref.current!.start(plan) })
+    expect(t.ref.current!.resume(plan)).toBe(false)
+    expect(t.run).toHaveBeenCalledOnce()
+
+    act(() => t.ref.current!.clear())
+    expect(t.reset).toHaveBeenCalled()
+  })
+
   it('stops at the next step once an earlier step confirms after its run ended', async () => {
     const t = await renderRun()
     const plan = ['approve', 'mint']

@@ -230,6 +230,27 @@ describe('useReviewedAction', () => {
     await act(async () => renderer.unmount())
   }, 20_000)
 
+  it('follows a last step whose receipt is unverified until its confirm closes, which keeps the step held', async () => {
+    confirmEveryReview()
+    client.getTransactionReceipt.mockImplementation(async () => { throw new Error('rpc outage') })
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const built = REQUESTS.pay as Built
+    const call = { chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n, intent: `outage-${crypto.randomUUID()}` }
+    let ended: unknown = 'pending'
+    await act(async () => { void ref.current!.run({ account: ALICE, calls: [call], follow: { timeoutMs: 50 } }).then(value => { ended = value }) })
+    await vi.waitFor(() => expect(ref.current!.following).toBe(true), { timeout: 15_000, interval: 50 })
+    expect(ended).toBe('pending')
+
+    await act(async () => { expect(ref.current!.dismiss()).toBe(true) })
+    await vi.waitFor(() => expect(ended).toBeNull())
+    expect(ref.current!.following).toBe(false)
+    expect(ref.current!.hash).not.toBeNull()
+    expect(walletSends).toHaveLength(1)
+    await act(async () => renderer.unmount())
+  }, 20_000)
+
   // jbm's reset is refused while a run is in flight, so its page closing is the one way a run ends early.
   it('an unmount while the payment loads its wallet sends nothing more: one write', async () => {
     confirmEveryReview()
