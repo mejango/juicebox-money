@@ -1,9 +1,10 @@
 # Wave 3 Codex pass 1 fixes (2026-11-09)
 
-- [ ] F1: useStepRun clears its running flags when preparing or sending throws (rejection then retry test).
-- [ ] F2: a held last step closes through dismiss/clear while the hold keeps the write (loan and repay Done test).
-- [ ] F3: a run stopped after an earlier step was sent shows a line and its retry, without replaying that step (pay and loan tests).
-- [ ] Gate: npm run check, budget, browser tests; push; CI.
+- [x] F1: useStepRun clears its running flags when preparing or sending throws (rejection then retry test).
+- [x] F2: a held last step closes through dismiss/clear while the hold keeps the write (loan and repay Done test).
+- [x] F3: a run stopped after an earlier step was sent shows a line and its retry, without replaying that step (pay and loan tests).
+- [x] F3 follow-on: repay and the pool sale read their approvals again on a retry, so a confirmed approval is never sent twice.
+- [x] Gate: npm run check, budget, browser tests; push; CI.
 
 ## Plan refinement
 - **Objective:** Fix the three Codex findings on PR #173 with a failing test first, one commit per fix; push without merging.
@@ -12,6 +13,10 @@
 - **Evidence and unknowns:** SDK 6.1 status is idle (not cancelled) once any step was sent, and resets total on failure; verified in dist/esm/review/react/useReviewedRun.js.
 - **Verification:** New tests in test/transactions/step-run.test.ts and test/one-confirmation.test.tsx, then npm run check with budgets and browser tests.
 - **Resource budget:** Targeted vitest per fix, one full gate at the end; rerun a timed-out gate alone before calling it a failure.
+
+## Review
+- npm run check passes: 3,542 unit tests and 90 browser tests. Every budget passes with no raise; all scripts are at 2,701.4 of 2,702 KiB.
+- Copied from revnet, Homerun and Sticky: Sticky already handles all three. revnet's pay card has gaps 1 and 2. A partly-sent run shows no line in revnet, Homerun or Sticky; the SDK could report it as a status of its own.
 
 # Explicit state machines, wave 3: adopt the SDK owners (2026-11-09)
 
