@@ -24,6 +24,13 @@ export const REVIEW_CLOSED_LINE = 'Nothing was sent. Review it again when you ar
 /** A run the user closed after an earlier step was sent: that step stands, and running again sends the rest. */
 export const REVIEW_STOPPED_LINE = 'The rest was not sent. Review it again when you are ready.'
 
+/** The same calls asked again after their confirm closed while followed, once they confirmed: shown, not sent. */
+export const CLOSED_SEND_CONFIRMED_LINE = 'This already went through after its confirmation closed. Review it again only to send it once more.'
+
+/** One run's calls, compared exactly: a closed run's confirmed calls are never offered again as new ones. */
+const callsKey = (calls: ReviewedRun['calls']) =>
+  JSON.stringify(calls.map(call => [call.chainId, call.to.toLowerCase(), call.data.toLowerCase(), String(call.value ?? 0n)]))
+
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
 
@@ -75,10 +82,24 @@ export function useReviewedAction(chainId?: number) {
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
   const inFlight = useRef(false)
+  /** The calls of the last run started, and of one whose confirm closed while its hold followed it. */
+  const started = useRef<string | null>(null)
+  const closed = useRef<string | null>(null)
+  const [closedLine, setClosedLine] = useState<string | null>(null)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
     // A flow whose page closed opens no review.
     if (inFlight.current || unmounted().aborted) return null
+    const key = callsKey(action.calls)
+    const confirmedClosed = closed.current === key && runner.status === 'done'
+    closed.current = null
+    setClosedLine(null)
+    if (confirmedClosed) {
+      // It confirmed after its confirm closed: the result is shown, and only asking again sends it once more.
+      setClosedLine(CLOSED_SEND_CONFIRMED_LINE)
+      return null
+    }
+    started.current = key
     inFlight.current = true
     setResult(null)
     setSentOn(action.calls[0]?.chainId)
@@ -108,7 +129,7 @@ export function useReviewedAction(chainId?: number) {
   const action = runner.exitAction ?? runner.sendAgainAction
   const error: string | ReactElement | null = phase === 'held' && held
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
-    : runner.error ?? (phase === 'stopped' ? REVIEW_STOPPED_LINE : phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
+    : closedLine ?? runner.error ?? (phase === 'stopped' ? REVIEW_STOPPED_LINE : phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
 
   // A Safe proposal its hold settled ends on the execution's hash and receipt.
   const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
@@ -122,7 +143,10 @@ export function useReviewedAction(chainId?: number) {
 
   /** Whether it closed: never while a run's review or wallet is open; a followed send stays held, and its reads refresh once it settles. */
   const reset = () => {
-    if ((inFlight.current && !runner.following) || !runner.dismiss()) return false
+    const following = runner.following
+    if ((inFlight.current && !following) || !runner.dismiss()) return false
+    // Closed while its hold follows it: once it confirms, the same calls are shown, not sent again.
+    closed.current = following ? started.current : null
     setResult(null)
     return true
   }

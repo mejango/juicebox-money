@@ -103,7 +103,7 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => false,
 }))
 
-import { liveStep, useReviewedAction } from '@/hooks/useReviewedAction'
+import { CLOSED_SEND_CONFIRMED_LINE, liveStep, useReviewedAction } from '@/hooks/useReviewedAction'
 import { writeHolds } from '@/lib/write-holds'
 
 type Action = ReturnType<typeof useReviewedAction>
@@ -252,6 +252,33 @@ describe('useReviewedAction', () => {
     expect(walletSends).toHaveLength(1)
     await act(async () => renderer.unmount())
   }, 20_000)
+
+  it('a last step closed while followed that then confirms is shown, not sent again: dismiss, confirm, reopen, one send', async () => {
+    confirmEveryReview()
+    client.getTransactionReceipt.mockImplementation(async () => { throw new Error('rpc outage') })
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const built = REQUESTS.pay as Built
+    const call = { chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n, intent: `closed-${crypto.randomUUID()}` }
+    await act(async () => { void ref.current!.run({ account: ALICE, calls: [call], follow: { timeoutMs: 50 } }) })
+    await vi.waitFor(() => expect(ref.current!.following).toBe(true), { timeout: 15_000, interval: 50 })
+    await act(async () => { expect(ref.current!.reset()).toBe(true) })
+    // The payment confirms after its confirm closed.
+    client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
+    await vi.waitFor(() => expect(ref.current!.phase).toBe('done'), { timeout: 15_000, interval: 100 })
+    // Reopened with the same payment: it shows that one confirmed and sends nothing.
+    let again: Awaited<ReturnType<Action['run']>> = null
+    await act(async () => { again = await ref.current!.run({ account: ALICE, calls: [call] }) })
+    expect(walletSends).toHaveLength(1)
+    expect(again).toBeNull()
+    expect(ref.current!.error).toBe(CLOSED_SEND_CONFIRMED_LINE)
+    // Asked again, it is a new payment of the user's own choosing.
+    await act(async () => { again = await ref.current!.run({ account: ALICE, calls: [call] }) })
+    expect(again).toMatchObject({ status: 'done' })
+    expect(walletSends).toHaveLength(2)
+    await act(async () => renderer.unmount())
+  }, 40_000)
 
   it('stops an approval run once its held receipt is dismissed: no later review for it, and a new action can start', async () => {
     let reviews = 0
