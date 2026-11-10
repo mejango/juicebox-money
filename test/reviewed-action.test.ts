@@ -245,7 +245,8 @@ describe('useReviewedAction', () => {
 
     await act(async () => { expect(ref.current!.dismiss()).toBe(true) })
     await vi.waitFor(() => expect(ended).toBeNull())
-    expect(ref.current!.following).toBe(false)
+    // Core keeps following and showing a held last step until it settles.
+    expect(ref.current!.following).toBe(true)
     // The hold keeps the sent step: it is never sent again from here.
     expect(openStepHold(writeHolds, ALICE, false, call).peek().status).not.toBe('clear')
     expect(walletSends).toHaveLength(1)
@@ -265,7 +266,9 @@ describe('useReviewedAction', () => {
     client.getTransactionReceipt.mockImplementation(async () => { throw new Error('lagging node') })
     const ref = createRef<Action>()
     let renderer!: TestRenderer.ReactTestRenderer
-    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const queries = new QueryClient()
+    const invalidate = vi.spyOn(queries, 'invalidateQueries')
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: queries }, createElement(Harness, { ref }))) })
     let ended: unknown = 'pending'
     await act(async () => { void ref.current!.run({ account: ALICE, calls, scope, follow: { timeoutMs: 50 } }).then(value => { ended = value }) })
     await vi.waitFor(() => expect(ref.current!.following).toBe(true), { timeout: 15_000, interval: 50 })
@@ -283,6 +286,8 @@ describe('useReviewedAction', () => {
     client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 6_000)) })
     expect(reviews).toBe(1)
+    // Its reads refresh once it settles, though nothing is left to show it.
+    expect(invalidate).toHaveBeenCalled()
     expect(walletSends).toHaveLength(1)
     expect(ref.current!.phase).not.toBe('review')
 

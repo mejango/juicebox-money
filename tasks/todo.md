@@ -1441,3 +1441,23 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 - Codex: two passes, three findings, all fixed with tests.
 - Correction: owners is revnet-only, holders everywhere else.
 
+
+## 2026-11-10 SDK core 6.2.0 adoption (run wrapper #296, lock fencing #295)
+
+## Plan refinement
+
+- **Objective:** jbm on @bananapus/nana-sdk-core 6.2.0 with its local run-wrapper rules deleted (the SDK owns stop, dismiss, following), every jbm journal save fenced by the lock it runs under, `locks` passed to every SDK send and sign entry, the launch-lock promise bug and the unlocked QueueRecovery and CreateForm writes closed, and held-write display at revnet parity (every background state, a hash input for a hold with no hash). Success: full `npm run check` green, failing-first tests for each behavior fix, draft PR, not merged.
+- **System fit:** User action, useReviewedAction over the SDK's useReviewedRun, browserLocks via withTabLocks, journal save, SDK send or sign under `locks`, wallet, hold followed to a verified receipt. The SDK owns run status, dismissal, hold following and lock fencing at wallet boundaries; jbm owns its journals, its sequence preparation and its wording. Contracts and server routes are unaffected.
+- **Reuse and simplicity:** Delete awaiting, following, Promise.race, followDetached, total and stoppedPartway; use runner.dismiss, runner.following, status `stopped` and onDismissedSettled. One fence home: withTabLocks hands `work(locks)`, wrappers forward them, each journal's persist does `await assertLocksHeld(locks)` before writing. Reuse revnet's held-write components and wording, or the SDK's when it has them.
+- **Evidence and unknowns:** Released 6.2.0 dist types and source in node_modules are the authority, not the #296 mapping text. Unknown until read: which states revnet shows and whether its hash input is SDK or local (research in progress).
+- **Verification:** Failing-first vitest for: stopped line from runner status, dismiss of a held earlier step refreshing reads, withTabLocks handing locks, a lost lock refusing each journal save, the launch lock awaiting an async fn, the QueueRecovery and CreateForm writes under the lock, and the parity UI. Then full `npm run check` with PLAYWRIGHT_APP_PORT on a free port, Node 26.
+- **Resource budget:** One worktree (sm-jbm), sequential edits; one read-only research agent for revnet parity. Replan if the SDK lacks a needed export or the scripts budget rise exceeds a few KiB.
+
+- [ ] Bump core 6.2.0, Node 26, npm 12
+- [ ] Run wrapper consolidation (useReviewedAction, useStepRun, write-holds followDetached)
+- [ ] withTabLocks work(locks) and wrapper forwarding
+- [ ] Fence 6 journal saves; locks to relayrPay, signForwardedRequest, runAuthorityCalls, executeRelayrCalls, runRawRelayrLifecycle
+- [ ] launch-session withLaunchLock awaits fn
+- [ ] QueueRulesetFlow 834/837 and CreateForm 1053 under the lock
+- [ ] Held-write parity with revnet
+- [ ] Full check, draft PR
