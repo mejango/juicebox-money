@@ -41,7 +41,9 @@ const routes = [
   // 346 -> 347, /create 402 -> 407, /[urn] 528 -> 533, /account 420 -> 425: SDK 6 recognizes every
   // buyback, router and gateway generation projects still use.
   // 347 -> 348: the dashboard home layout restored (matches revnet), measured 347.0 on CI.
-  { route: '/', path: '/', kib: 348, text: 'Fund your' },
+  // 348 -> 349, /create 407 -> 409, /account 425 -> 427: one reviewed run vocabulary (SDK run status, held writes),
+  // shared tab locks and explicit dialog states; measured 348.3, 408.1 and 426.3.
+  { route: '/', path: '/', kib: 349, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
   { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment.' },
@@ -51,7 +53,7 @@ const routes = [
   // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.
   // 399 -> 398: SDK 4.0.0 Relayr round plan, measured 397.0.
   // Ordered stage preparation and receipt verification: measured 399.4 KiB.
-  { route: '/create', path: '/create', kib: 407, text: 'Start a project' },
+  { route: '/create', path: '/create', kib: 409, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
@@ -62,7 +64,7 @@ const routes = [
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 425, text: 'Holdings' },
+  { route: '/account/[address]', path: `/account/${account}`, kib: 427, text: 'Holdings' },
   // A path a page rejects calls notFound(); pages stream, so it answers 200 with
   // the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -81,7 +83,8 @@ const budgets = {
   // SDK 5.0.0 (in-place follow, Relayr proof retry): measured 2679.1 KiB, rounded up only.
   // node-forge 1.4.3 (Para SDK security patch, lazy wallet chunk): measured 2682.8 KiB, rounded up only.
   // Buyback 2.0.0 rollout presets and LP move: measured 2686.6 KiB, rounded up only.
-  allScripts: 2700 * KIB,
+  // SDK 6.1.0 published (run vocabulary, held writes, tab locks): measured 2701.2 KiB, rounded up only.
+  allScripts: 2702 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

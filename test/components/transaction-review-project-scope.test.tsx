@@ -4,8 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ProjectReviewScope } from '@/providers/ProjectRouteContext'
 import type { TransactionReviewDialogProps } from '@/components/TransactionReviewProvider'
-const mocks = vi.hoisted(() => ({ scope: null as ProjectReviewScope | null, blocked: false }))
-vi.mock('wagmi', () => ({ useAccount: () => ({ address: undefined }) }))
+const mocks = vi.hoisted(() => ({ scope: null as ProjectReviewScope | null, blocked: false, address: undefined as string | undefined }))
+vi.mock('wagmi', () => ({ useAccount: () => ({ address: mocks.address }) }))
 vi.mock('@/providers/ProjectRouteContext', () => ({ useProjectReviewScope: () => mocks.scope }))
 vi.mock('@/providers/ProjectRouteBlockedContext', () => ({ useProjectRouteBlocked: () => mocks.blocked }))
 vi.mock('@/components/TransactionReviewDialog', () => ({ TransactionReviewDialog: ({ pending, onFinish }: TransactionReviewDialogProps) => <div>
@@ -22,6 +22,7 @@ beforeEach(async () => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host)
   mocks.scope = { identity: 'base:7:operator', verify: vi.fn(async () => true) }
   mocks.blocked = false
+  mocks.address = undefined
   await act(async () => root.render(<TransactionReviewProvider>App</TransactionReviewProvider>))
 })
 afterEach(async () => { await act(async () => root.unmount()); host.remove() })
@@ -69,6 +70,18 @@ describe('project identity captured by the global review owner', () => {
     expect(await promise).toMatchObject({ message: 'Review closed. Nothing was sent.' })
     expect(await funding).toBeInstanceOf(Error)
     expect(host.textContent).not.toContain('Approve')
+  })
+  it('declines an open review when the connected account changes, and opens the next one', async () => {
+    mocks.address = `0x${'aa'.repeat(20)}`
+    await act(async () => root.render(<TransactionReviewProvider>App</TransactionReviewProvider>))
+    const first = await request('First')
+    mocks.address = `0x${'bb'.repeat(20)}`
+    await act(async () => root.render(<TransactionReviewProvider>App</TransactionReviewProvider>))
+    expect(await first.promise).toBeInstanceOf(Error)
+    const second = await request('Second')
+    expect(host.textContent).toContain('Second')
+    await click('Approve')
+    expect(await second.promise).toBe(true)
   })
   it('cannot approve a canceled dialog or the next dialog when its late verification resolves', async () => {
     const first = await request('First')

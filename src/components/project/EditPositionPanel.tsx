@@ -439,7 +439,8 @@ export function EditPositionPanel({
       void runBatch(reviewed)
       return
     }
-    run.start(reviewed.steps)
+    // A run that could not be prepared (the review failed to load) says why; Retry starts it again.
+    run.start(reviewed.steps).catch(e => setBatchError(e instanceof Error ? shortError(e) : 'Could not start the review.'))
   }
 
   const resume = () => {
@@ -532,10 +533,10 @@ export function EditPositionPanel({
           title: step.label,
         })),
         run.index,
-        stopped && tx.phase === 'error',
+        stopped && tx.stopped,
       ),
         run.index,
-        tx.phase === 'unconfirmed',
+        tx.phase === 'held',
       )}
       activeIndex={run.running || stopped ? run.index : -1}
       stepsIntro={

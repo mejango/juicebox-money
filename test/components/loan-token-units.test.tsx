@@ -20,13 +20,10 @@ vi.mock('@/hooks/useWallet', () => ({ useWallet: () => ({ address: HOLDER }) }))
 vi.mock('@/hooks/useViewedAccount', () => ({ useViewedAccount: () => ({ address: HOLDER, isViewAs: mocks.isViewAs }) }))
 vi.mock('@/hooks/useReviewedAction', async () => ({
   ...await import('@/lib/reviewed-call'),
-  useReviewedAction: () => ({ busy: false, phase: 'idle', run: mocks.run, dismiss: vi.fn() }),
-  liveStep: () => -1,
-  reachedLastStep: () => false,
+  useReviewedAction: () => ({ busy: false, phase: 'idle', run: mocks.run, reset: vi.fn(), dismiss: vi.fn() }),
 }))
 vi.mock('@/lib/reviewed-send', () => ({
   sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ scope, calls, saved: false }),
-  planShown: (_saved: boolean, context: object) => context,
 }))
 vi.mock('@/components/ui/TxProgress', async original => ({
   ...await original<typeof import('@/components/ui/TxProgress')>(),

@@ -452,7 +452,7 @@ function MovableLpRows({
                   ? 'Checking…'
                   : tx.phase === 'signing'
                     ? 'Confirm in your wallet…'
-                    : tx.phase === 'pending'
+                    : tx.phase === 'receipt'
                       ? 'Sending…'
                       : undefined,
             },
@@ -464,7 +464,7 @@ function MovableLpRows({
           error={tx.error}
           onClose={close}
           start={() => run(pending)}
-          next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); void review(pending.movable) } } : null}
+          next={tx.stopped ? { label: 'Retry', onClick: () => { tx.reset(); void review(pending.movable) } } : null}
         />
       ) : null}
     </div>
@@ -1045,7 +1045,7 @@ function ChainLpRows({
                           ? 'Checking…'
                           : tx.phase === 'signing'
                             ? 'Confirm in your wallet…'
-                            : tx.phase === 'pending'
+                            : tx.phase === 'receipt'
                               ? 'Sending…'
                               : undefined,
                     },
@@ -1057,7 +1057,7 @@ function ChainLpRows({
                   error={tx.error}
                   onClose={closePending}
                   start={() => { if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) }}
-                  next={tx.phase === 'error' ? { label: 'Retry', onClick: () => { tx.reset(); if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) } } : null}
+                  next={tx.stopped ? { label: 'Retry', onClick: () => { tx.reset(); if (pending.kind === 'claim') runClaim(pending); else runRemove(pending) } } : null}
                 />
               )
             })(),

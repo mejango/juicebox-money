@@ -3,14 +3,28 @@
   "sites": [
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 110,
+      "line": 77,
       "api": "registerReviewHandler",
       "boundary": "The app's one review dialog answers core's prompts: core mints the model and the confirmation, and nothing is sent unless the dialog returns it.",
       "test": "test/components/transaction-review-project-scope.test.tsx"
     },
     {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 78,
+      "api": "request",
+      "boundary": "The SDK review queue's request: core's prompt waits for the one review dialog, never a wallet RPC.",
+      "test": "test/components/transaction-review-project-scope.test.tsx"
+    },
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 85,
+      "api": "request",
+      "boundary": "The SDK review queue's request for a funding chain choice, never a wallet RPC.",
+      "test": "test/components/funding-chain-selection.test.tsx"
+    },
+    {
       "file": "src/lib/tab-locks.ts",
-      "line": 16,
+      "line": 14,
       "api": "request",
       "boundary": "The SDK's browserLocks().request over each key a flow names (split, queue and metadata journals, forwarder authorization, Relayr scope, launch): cross-tab coordination, never a wallet RPC.",
       "test": "test/lib/tab-locks.test.ts"

@@ -1,3 +1,49 @@
+# Wave 3 Codex pass 1 fixes (2026-11-09)
+
+- [x] F1: useStepRun clears its running flags when preparing or sending throws (rejection then retry test).
+- [x] F2: a held last step closes through dismiss/clear while the hold keeps the write (loan and repay Done test).
+- [x] F3: a run stopped after an earlier step was sent shows a line and its retry, without replaying that step (pay and loan tests).
+- [x] F3 follow-on: repay and the pool sale read their approvals again on a retry, so a confirmed approval is never sent twice.
+- [x] Gate: npm run check, budget, browser tests; push; CI.
+
+## Plan refinement
+- **Objective:** Fix the three Codex findings on PR #173 with a failing test first, one commit per fix; push without merging.
+- **System fit:** Codex finding -> failing test -> fix in the shared owner (useStepRun, useReviewedAction) -> gate -> PR CI; the SDK and the other clients are reported, not edited.
+- **Reuse and simplicity:** Fixes live in the two shared hooks every flow routes through; F3 reads SDK 6.1's lastSubmittedStep instead of local step tracking.
+- **Evidence and unknowns:** SDK 6.1 status is idle (not cancelled) once any step was sent, and resets total on failure; verified in dist/esm/review/react/useReviewedRun.js.
+- **Verification:** New tests in test/transactions/step-run.test.ts and test/one-confirmation.test.tsx, then npm run check with budgets and browser tests.
+- **Resource budget:** Targeted vitest per fix, one full gate at the end; rerun a timed-out gate alone before calling it a failure.
+
+## Review
+- npm run check passes: 3,542 unit tests and 90 browser tests. Every budget passes with no raise; all scripts are at 2,701.4 of 2,702 KiB.
+- Parity, reported only: Sticky already handles all three. revnet's pay card has gaps 1 and 2. A partly-sent run shows no line in revnet, Homerun or Sticky; the SDK could report it as a status of its own.
+
+# Explicit state machines, wave 3: adopt the SDK owners (2026-11-09)
+
+Brief: /private/tmp/claude-501/-Users-jango-Documents-jb-v6-evm/841613e6-d825-45ae-bbd3-8d81a47b700b/scratchpad/sm/BRIEF3.md. Branch state-machines-3-2026-11-09 stacked on state-machines-2-2026-11-09 (#172). Built against the packed SDK tarballs; no package.json or lockfile change (one bump commit follows the publish).
+
+- [x] review/locks, TRANSACTION_GAS_CAP, useMobileWallet, useStartOnce (complete as blocked), useFeeBuybackReview, createReviewQueue.
+- [x] jbm-9: launch journal on RelayrLaunchJournal, advanceRelayrLaunch, resignedRelayrLaunch and the phase groups.
+- [x] jbm-5 (part): lastSubmittedStep replaces the cash-out, borrow and repay last-step flags and reachedLastStep.
+- [x] jbm-14: reviewed runs show core's status vocabulary (re-packed SDK maps a non-confirming held line to held).
+- [x] jbm-12: SafeQueueCard reads the Safe Relayr controller's view (getState/subscribe, session).
+- [x] jbm-5 FIX + UNION: cash-out, borrow, repay and pay run on useStepRun; a refused step after a confirmed one now shows that step (two failing tests first).
+- [x] jbm-23: MoveFlow named steps; approval and prepare on useStepRun.
+- [x] jbm-6/34: PayPanel sequence state is one reducer (prepared, closed, reset, patch), submitWhenFresh included.
+- [x] Gate against the tarball, one step at a time.
+
+## Plan refinement
+- **Objective:** Move jbm onto the SDK's shared machines and delete the local copies, with no behavior change beyond sdk.md's settled differences; draft PR only.
+- **System fit:** Outcome (one behavior per action across clients) -> capability (SDK PR #293 exports) -> evidence (tarball build, tests) -> prepared action (one commit per owner) -> authority (draft PR, never merged) -> verified result (gate against the tarball) -> learning (SDK gaps reported, not worked around).
+- **Reuse and simplicity:** Each adoption deletes the local copy; app-side state (session, locks, dialog loading) stays here as sdk.md lists.
+- **Evidence and unknowns:** A gap found (jbm-14) is reported with its exact export, not patched locally.
+- **Verification:** Existing suites adapted to SDK vocabulary; new tests: queue account binding, lastStepSent on a confirmed run, fee notice states.
+- **Resource budget:** Same CoW worktree, tarballs installed with --no-save, webpack cache moved aside before the build.
+
+## Review
+- Budget ceilings are not raised here; the final sizes are in the PR body for the coordinator.
+- useStepRun gained `steps` and returns the run's result with its call-to-step mapping (PayPanel needs the result for the Safe stage and the approval block).
+
 # Explicit state machines, wave 2 (2026-11-09)
 
 Same brief. Branch state-machines-2-2026-11-09 stacked on state-machines-2026-11-09; PR base is that branch.

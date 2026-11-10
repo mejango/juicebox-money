@@ -21,7 +21,7 @@ import {
   uniswapV4SwapDirection,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   erc20Abi,
   formatUnits,
@@ -32,11 +32,11 @@ import {
   type PublicClient,
 } from 'viem'
 import { useReadContract, usePublicClient } from 'wagmi'
-import { liveStep, reachedLastStep, reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction, type TxRequest } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
-import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import {
   cashOutExecutionErrorMessage,
@@ -104,12 +104,10 @@ export function CashOutPanel({
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
   const tx = useReviewedAction(chainId)
-  /** The dialog step the run is on, once it started. */
-  const [runStep, setRunStep] = useState(-1)
-  /** Each pool-sale run call's dialog step. */
-  const [runShown, setRunShown] = useState<number[] | null>(null)
-  /** The run sent its cash-out: a settled approval alone sold nothing. */
-  const [finalSent, setFinalSent] = useState(false)
+  /** The pool sale's calls, built from a fresh quote when it starts. */
+  const runCalls = useRef<StepRunAction | null>(null)
+  // Each approval the pool sale needs, then the sale.
+  const run = useStepRun<string>({ tx, send: tx.run, action: () => runCalls.current, onFinish: () => {} })
 
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
@@ -340,16 +338,19 @@ export function CashOutPanel({
         args: [address!, projectToken!.address, swapDeployment!.universalRouter as Address],
       }),
   })
-  const needsTokenApproval =
-    directSellWins && (tokenAllowance ?? 0n) < cashOutCount
-  const needsRouterApproval =
-    directSellWins &&
-    (!permit2Allowance ||
-      permit2Allowance[0] < cashOutCount ||
-      Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800)
+  /** The pool sale's approvals these allowances leave to send: the token's for Permit2, then Permit2's for the router. */
+  const approvalsNeeded = (token: bigint | undefined, permit2: typeof permit2Allowance) => ({
+    token: directSellWins && (token ?? 0n) < cashOutCount,
+    router:
+      directSellWins &&
+      (!permit2 ||
+        permit2[0] < cashOutCount ||
+        Number(permit2[1]) <= Math.floor(Date.now() / 1000) + 1_800),
+  })
+  const { token: needsTokenApproval, router: needsRouterApproval } = approvalsNeeded(tokenAllowance, permit2Allowance)
 
   useEffect(() => {
-    if (tx.phase === 'success') {
+    if (tx.phase === 'done') {
       void refetchTokenAllowance()
       void refetchPermit2Allowance()
     }
@@ -398,10 +399,11 @@ export function CashOutPanel({
     route !== undefined &&
     route.expectedReturn <= 0n
 
-  const busy = tx.busy
-  const success = tx.phase === 'success' && finalSent
+  const busy = run.running || tx.busy
+  const finalSent = tx.lastStepSent
+  const success = tx.phase === 'done' && finalSent
   /** A Safe executed an approval it was proposed: the sale is reviewed next. */
-  const approvalOnly = (tx.phase === 'success' && !finalSent) || tx.settledStep != null
+  const approvalOnly = (tx.phase === 'done' && !finalSent) || tx.settledStep != null
 
   useEffect(() => {
     if (success) refetchBalance()
@@ -434,8 +436,8 @@ export function CashOutPanel({
   ]
   const cashOutActiveIndex = success
     ? cashOutSteps.length
-    : runStep >= 0
-      ? liveStep(tx, runShown, runStep)
+    : run.steps
+      ? run.index
       : needsTokenApproval
       ? requiredApprovals.indexOf('token')
       : needsRouterApproval
@@ -548,7 +550,6 @@ export function CashOutPanel({
   const cashOut = async () => {
     if (!plan || !address || busy) return
     setErrorMsg(null)
-    setFinalSent(false)
     const reviewedAccount = plan.account
     // One cash-out of what the user typed, whatever venue (pool or terminal) serves it.
     const cashOutKey = cashOutIntent({ chainId, project: projectId, holder: reviewedAccount, beneficiary: reviewedAccount })
@@ -596,6 +597,9 @@ export function CashOutPanel({
           recipient: reviewedAccount,
           deadline: swapDeadline(tx.isSafe),
         })
+        // The allowances as the chain shows them now: an approval an earlier attempt confirmed is not asked for again.
+        const [tokenNow, permit2Now] = await Promise.all([refetchTokenAllowance(), refetchPermit2Allowance()])
+        const needed = approvalsNeeded(tokenNow.data ?? tokenAllowance, permit2Now.data ?? permit2Allowance)
         // Each approval the sale needs, then the sale: one review and one run, each step simulated where the one before it landed.
         const routerApproval = buildPermit2ApproveTx({
           chainId,
@@ -604,7 +608,7 @@ export function CashOutPanel({
           expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
         })
         const approvals = [
-          ...(needsTokenApproval ? [reviewedCall(
+          ...(needed.token ? [reviewedCall(
             buildTokenApproval({
               chainId,
               token: projectToken.address,
@@ -613,7 +617,7 @@ export function CashOutPanel({
             }),
             { intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
           )] : []),
-          ...(needsRouterApproval ? [reviewedCall(
+          ...(needed.router ? [reviewedCall(
             {
               ...routerApproval,
               args: routerApproval.args as unknown as readonly unknown[],
@@ -621,7 +625,7 @@ export function CashOutPanel({
             },
             { intent: approvalIntent(cashOutKey, { step: 'router-approval', token: projectToken.address, spender: routerApproval.args[1] as string }) },
           )] : []),
-        ].map((call, index) => index > 0 ? { ...call, dependsOnPrior: true } : call)
+        ]
         const sale = reviewedCall(
           {
             ...request,
@@ -633,57 +637,42 @@ export function CashOutPanel({
             // Its deadline and minimum regenerate on retry: held by what the user chose.
             intent: cashOutKey,
             legacy: cashOutLegacy,
-            ...(approvals.length ? { dependsOnPrior: true } : {}),
           },
         )
-        const scope = `jbm:cash-out:${chainId}:${projectId}`
-        const { calls, saved, scope: runScope } = await sequenceCalls(scope, reviewedAccount, [...approvals, sale])
-        /** A run step's place in the dialog's queue: the sale is always its last step. */
-        const shown = (step: number) => Math.max(0, cashOutSteps.length - calls.length + step)
-        setUsedDirectSell(true)
-        setRunStep(shown(0))
-        setRunShown(calls.map((_, step) => shown(step)))
-        const ended = await tx.run({
+        runCalls.current = {
           account: reviewedAccount,
-          calls,
-          scope: runScope,
-          ...planShown(saved, {
-            context: contextRows(reviewRows(plan)),
-            description: minimumDropNotice({
-              displayedMinimum: plan.minimumReturn,
-              freshMinimum: refreshedBest.minimumReturn,
-              decimals: receiveDecimals,
-              symbol: receiveSymbol,
-            }),
+          calls: [...approvals, sale],
+          scope: `jbm:cash-out:${chainId}:${projectId}`,
+          context: contextRows(reviewRows(plan)),
+          description: minimumDropNotice({
+            displayedMinimum: plan.minimumReturn,
+            freshMinimum: refreshedBest.minimumReturn,
+            decimals: receiveDecimals,
+            symbol: receiveSymbol,
           }),
-          onSubmitted: (_call, step) => {
-            setRunStep(shown(step))
-            if (step === calls.length - 1) setFinalSent(true)
-          },
-        })
-        if (reachedLastStep(ended, calls.length)) setFinalSent(true)
+        }
+        setUsedDirectSell(true)
+        // The sale is always the queue's last step.
+        await run.start(cashOutSteps.map(step => step.key))
         return
       }
       // The terminal route is not a pool sale — clear any flag left by an
       // earlier attempt so the success copy names the route actually taken.
       setUsedDirectSell(false)
-      setRunShown(null)
-      const ended = await tx.run({
+      await tx.run({
         account: reviewedAccount,
         // Its minimum re-quotes on retry: held by what the user chose.
         calls: [reviewedCall(plan.request, { intent: cashOutKey, legacy: cashOutLegacy })],
         context: contextRows(reviewRows(plan)),
-        onSubmitted: () => setFinalSent(true),
         description: plan.reviewNotice,
       })
-      if (reachedLastStep(ended, 1)) setFinalSent(true)
     } catch (e) {
       setErrorMsg(cashOutExecutionErrorMessage(e))
     }
   }
 
   const reset = () => {
-    tx.reset()
+    run.clear()
     setAmount('')
     setDebouncedAmount('')
     setErrorMsg(null)
@@ -693,9 +682,8 @@ export function CashOutPanel({
   const closeReview = () => {
     setPlan(null)
     setErrorMsg(null)
-    setRunStep(-1)
     if (success) return
-    tx.dismiss()
+    run.clear()
   }
 
   const confirmDialog = plan ? (
@@ -714,12 +702,12 @@ export function CashOutPanel({
       steps={cashOutSteps}
       activeIndex={cashOutActiveIndex}
       busy={busy}
-      complete={success || tx.phase === 'submitted' || tx.phase === 'unconfirmed'}
+      complete={success || tx.phase === 'proposed' || tx.phase === 'held'}
       status={
         approvalOnly ? 'Approval confirmed. Continue to the sale.'
         : tx.notice ? (
           tx.notice
-        ) : tx.phase === 'pending' && txUrl ? (
+        ) : tx.phase === 'receipt' && txUrl ? (
           <>
             Waiting for confirmation —{' '}
             <a

@@ -55,7 +55,7 @@ vi.mock('@/hooks/useWallet', () => ({
     connectWith: vi.fn(),
   }),
 }))
-vi.mock('@/hooks/useMobileWallet', () => ({ useMobileWallet: () => null }))
+vi.mock('@bananapus/nana-sdk-core/review/react', async original => ({ ...await original<object>(), useMobileWallet: () => null }))
 
 const { default: ParaAuthSheet } = await import('@/providers/ParaAuthSheet')
 const { SignInShell } = await import('@/providers/SignInShell')

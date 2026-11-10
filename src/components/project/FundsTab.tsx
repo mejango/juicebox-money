@@ -832,7 +832,7 @@ function FundsTxFlow({
 
   // Refresh the card's numbers once the transaction lands.
   useEffect(() => {
-    if (tx.phase === 'success') onDone()
+    if (tx.phase === 'done') onDone()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tx.phase])
 
@@ -987,7 +987,7 @@ function FundsTxFlow({
 
   const closeReview = () => {
     setReview(null)
-    if (tx.phase !== 'success') tx.dismiss()
+    if (tx.phase !== 'done') tx.dismiss()
   }
 
   if (!line) return null
@@ -997,7 +997,7 @@ function FundsTxFlow({
       open
       preparing={!review}
       onClose={closeReview}
-      title={tx.phase === 'success' ? 'Funds withdrawn' : 'Confirm withdrawal'}
+      title={tx.phase === 'done' ? 'Funds withdrawn' : 'Confirm withdrawal'}
       rows={(() => {
         if (!review) return []
         const rows: TxConfirmRow[] = [
@@ -1040,7 +1040,7 @@ function FundsTxFlow({
           'Checking what you can withdraw…'
         ) : tx.notice ? (
           tx.notice
-        ) : tx.phase === 'pending' ? (
+        ) : tx.phase === 'receipt' ? (
           <>
             Waiting for confirmation
             {txUrl ? (
@@ -1061,7 +1061,7 @@ function FundsTxFlow({
       }
       error={tx.error}
       start={handleConfirm}
-      next={tx.phase === 'error' ? { label: 'Retry', onClick: handleConfirm } : null}
+      next={tx.stopped ? { label: 'Retry', onClick: handleConfirm } : null}
     >
       <p className="text-xs text-smoke-700">
         The amount you receive is shown after the 2.5% withdrawal fee.
@@ -1080,7 +1080,7 @@ function FundsTxFlow({
     )
   }
 
-  if (tx.phase === 'success') {
+  if (tx.phase === 'done') {
     return (
       <div className="rounded-xl border border-smoke-200 p-4">
         <p className="text-sm font-medium text-ink">

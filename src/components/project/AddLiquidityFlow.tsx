@@ -825,7 +825,8 @@ function AddLiquidityForm({
     }
     setDone(false)
     setMintHash(null)
-    run.start(plan.steps)
+    // A run that could not be prepared (the review failed to load) says why; Retry starts it again.
+    run.start(plan.steps).catch(e => setBatchError(e instanceof Error ? shortError(e) : 'Could not start the review.'))
   }
 
   const resume = () => {
@@ -856,7 +857,7 @@ function AddLiquidityForm({
       ? 'Checking…'
       : tx.phase === 'signing'
         ? 'Confirm in your wallet…'
-        : tx.phase === 'pending'
+        : tx.phase === 'receipt'
           ? 'Sending…'
           : undefined
 
@@ -921,10 +922,10 @@ function AddLiquidityForm({
                 detail: run.running && index === run.index ? runningDetail : undefined,
               })),
               run.index,
-              stopped && tx.phase === 'error',
+              stopped && tx.stopped,
             ),
               run.index,
-              tx.phase === 'unconfirmed',
+              tx.phase === 'held',
             )}
             activeIndex={run.running || stopped ? run.index : -1}
             stepsIntro={

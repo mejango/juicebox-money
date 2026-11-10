@@ -44,7 +44,7 @@ vi.mock('@/hooks/useWallet', async () => {
 })
 vi.mock('@/hooks/useReviewedAction', async original => {
   const actual = await original<typeof import('@/hooks/useReviewedAction')>()
-  return { ...actual, useReviewedAction: (chainId: number) => m.realEngine ? actual.useReviewedAction(chainId) : ({ phase: m.phase, hash: m.hash, receipt: m.receipt, run: m.send, busy: m.phase === 'pending', notice: null, error: null, reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }
+  return { ...actual, useReviewedAction: (chainId: number) => m.realEngine ? actual.useReviewedAction(chainId) : ({ phase: m.phase, hash: m.hash, receipt: m.receipt, run: m.send, busy: m.phase === 'receipt', stopped: m.phase === 'failed', notice: null, error: null, reset: vi.fn(), dismiss: vi.fn(), isSafe: false }) }
 })
 vi.mock('@/lib/transaction-review', async original => {
   const { wallet } = await import('../support/fake-wallet')
@@ -56,11 +56,12 @@ vi.mock('@/components/project/DefifaRecovery', () => ({ DefifaRecovery: ({ child
 vi.mock('@/components/ui/TxProgress', async original => {
   const actual = await original<typeof import('@/components/ui/TxProgress')>()
   return { ...actual, TxProgress: ({ title, start, startKey, next, status, error, children, rows, complete, onClose, busy }: ComponentProps<typeof actual.TxProgress>) => {
-    actual.useStartOnce(true, !!complete, start, startKey)
+    useStartOnce(true, false, start, startKey, !!complete)
     return createElement('section', null, title, status, error, children, ...(rows ?? []).map(row => createElement('p', { key: String(row.label) }, row.label, row.value)), createElement('button', { onClick: onClose, disabled: busy }, 'Close'), complete ? createElement('button', { onClick: onClose }, 'Done') : next ? createElement('button', { onClick: next.onClick, disabled: busy || next.disabled }, next.label) : null)
   } }
 })
 import { wallet } from '../support/fake-wallet'
+import { useStartOnce } from '@bananapus/nana-sdk-core/review/react'
 import { readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
 import type { Address } from 'viem'
 import { DefifaOwnedNfts } from '@/components/project/DefifaOwnedNfts'
@@ -205,7 +206,7 @@ describe('native owned NFT actions', () => {
   })
   it('holds pending execution instead of offering another send', async () => {
     await manual(); await click('Cash out Defifa NFTs')
-    m.phase = 'pending'; m.hash = `0x${'a'.repeat(64)}`
+    m.phase = 'receipt'; m.hash = `0x${'a'.repeat(64)}`
     await act(async () => renderer.update(element()))
     expect(offered()).toBeUndefined()
     expect(text(renderer.root)).toContain('Awaiting confirmation'); expect(m.send).toHaveBeenCalledTimes(1)
@@ -295,7 +296,7 @@ describe('native owned NFT actions', () => {
   it.each(['unknown', 'proof-error'])('can close a nonbusy %s while retaining the saved original action', async outcome => {
     await manual(); await click('Cash out Defifa NFTs')
     if (outcome === 'proof-error') {
-      m.phase = 'success'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }; m.verify.mockRejectedValueOnce(new Error('Unverified NFT effects'))
+      m.phase = 'done'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }; m.verify.mockRejectedValueOnce(new Error('Unverified NFT effects'))
       await act(async () => renderer.update(element())); await settle()
     }
     const record = m.saved
@@ -305,7 +306,7 @@ describe('native owned NFT actions', () => {
   })
   it('retains the reviewed currency symbol when a pending action survives project changes', async () => {
     await manual(); await click('Cash out Defifa NFTs')
-    m.phase = 'pending'; m.hash = `0x${'a'.repeat(64)}`
+    m.phase = 'receipt'; m.hash = `0x${'a'.repeat(64)}`
     await act(async () => renderer.update(element(2, { ...shop, pricing: { ...shop.pricing, symbol: 'USDC' } })))
     expect(text(renderer.root)).toContain('Reclaimed0 ETH')
     expect(text(renderer.root)).toContain('Minimum0 ETH')
@@ -313,7 +314,7 @@ describe('native owned NFT actions', () => {
   })
   it('permits a new action only after SDK-authenticated canonical reversion, retaining its failed hash', async () => {
     await manual(); await click('Cash out Defifa NFTs')
-    m.phase = 'error'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }
+    m.phase = 'failed'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }
     m.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(`0x${'a'.repeat(64)}`, 1))
     await act(async () => renderer.update(element())); await settle()
     expect(text(renderer.root)).toContain('reviewed transaction reverted onchain')
@@ -327,7 +328,7 @@ describe('native owned NFT actions', () => {
   })
   it.each(['chain', 'hash'])('keeps a typed failure with mismatched %s evidence held', async changed => {
     await manual(); await click('Cash out Defifa NFTs')
-    m.phase = 'error'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }
+    m.phase = 'failed'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }
     m.verify.mockRejectedValueOnce(new DefifaNftTransactionRevertedError(`0x${(changed === 'hash' ? 'b' : 'a').repeat(64)}`, changed === 'chain' ? 10 : 1))
     await act(async () => renderer.update(element())); await settle()
     expect(text(renderer.root)).toContain('NFT effects are not verified')
@@ -338,7 +339,7 @@ describe('native owned NFT actions', () => {
   })
   it('keeps failed receipt proof held and allows only read-only verification retry', async () => {
     await manual(); await click('Cash out Defifa NFTs')
-    m.phase = 'success'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }; m.verify.mockRejectedValueOnce(new Error('Missing native effects'))
+    m.phase = 'done'; m.hash = `0x${'a'.repeat(64)}`; m.receipt = { transactionHash: m.hash }; m.verify.mockRejectedValueOnce(new Error('Missing native effects'))
     await act(async () => renderer.update(element())); await settle()
     expect(text(renderer.root)).toContain('NFT effects are not verified')
     expect(offered()).toBeUndefined()

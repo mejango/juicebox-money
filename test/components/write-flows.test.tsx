@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   directSell: false,
   txPhase: 'idle',
   txBusy: false,
+  txLastStepSent: false,
   txHash: null as string | null,
   txError: null as Error | null,
   buildProjectDraftExport: vi.fn(),
@@ -119,9 +120,9 @@ vi.mock('@tanstack/react-query', () => ({
         // Well above the treasury's 9,750 so the pool wins even after slippage.
         return { data: mocks.directSell ? 30_000n : undefined, isFetching: false }
       case 'cashOutTokenAllowance':
-        return { data: 0n, refetch: vi.fn() }
+        return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
       case 'cashOutPermit2Allowance':
-        return { data: [0n, 0n, 0n], refetch: vi.fn() }
+        return { data: [0n, 0n, 0n], refetch: vi.fn(async () => ({ data: [0n, 0n, 0n] })) }
       default:
         return { data: undefined, isFetching: false, isError: false }
     }
@@ -150,6 +151,7 @@ vi.mock('@/hooks/useReviewedAction', async () => {
         phase: mocks.txPhase,
         busy: mocks.txBusy,
         hash: mocks.txHash,
+        lastStepSent: mocks.txLastStepSent,
         receipt: null,
         error: mocks.txError,
         isSafe: false,
@@ -162,6 +164,7 @@ vi.mock('@/hooks/useReviewedAction', async () => {
             if (!hash) return null
             hashes.push(hash)
             await action.onSubmitted?.(call, step, hash, { safe: false, adopted: false })
+            mocks.txLastStepSent = step === action.calls.length - 1
           }
           return { status: 'done' as const, hashes, receipts: [] }
         },
@@ -270,6 +273,7 @@ beforeEach(() => {
   mocks.balance = 5n * 10n ** 18n
   mocks.directSell = false
   mocks.txPhase = 'idle'
+  mocks.txLastStepSent = false
   mocks.txBusy = false
   mocks.txHash = null
   mocks.txError = null
@@ -894,7 +898,7 @@ describe('cash-out write flow', () => {
     await act(async () => { vi.advanceTimersByTime(400) })
     await act(async () => buttonWith(renderer, 'Cash out 2 JBT').props.onClick())
     // The cash-out it sent confirms.
-    mocks.txPhase = 'success'
+    mocks.txPhase = 'done'
     mocks.txHash = `0x${'1'.repeat(64)}`
     await act(async () => {
       renderer.update(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))

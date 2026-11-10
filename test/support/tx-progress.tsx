@@ -1,7 +1,8 @@
 import type { ComponentProps } from 'react'
-import type { TxProgress, useStartOnce } from '@/components/ui/TxProgress'
+import { useStartOnce } from '@bananapus/nana-sdk-core/review/react'
+import type { TxProgress } from '@/components/ui/TxProgress'
 
-type Module = { TxProgress: typeof TxProgress; useStartOnce: typeof useStartOnce }
+type Module = { TxProgress: typeof TxProgress }
 
 /**
  * The TxProgress module with its modal replaced: the same start, rows, status,
@@ -11,7 +12,7 @@ type Module = { TxProgress: typeof TxProgress; useStartOnce: typeof useStartOnce
  */
 export function testTxProgress<T extends Module>(original: T): T {
   function TestTxProgress({ open = true, preparing = false, start, startKey, next, onClose, complete, busy, error, status, rows, children, title }: Partial<ComponentProps<typeof TxProgress>>) {
-    original.useStartOnce(open, preparing || !!complete, start, startKey)
+    useStartOnce(open, preparing, start, startKey, !!complete)
     if (!open) return null
     return (
       <section data-tx-confirm>

@@ -21,7 +21,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { FormFieldsSkeleton } from '@/components/LoadingSkeletons'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   formatUnits,
   parseUnits,
@@ -29,13 +29,13 @@ import {
   type PublicClient,
 } from 'viem'
 import { usePublicClient, useReadContract } from 'wagmi'
-import { liveStep, reachedLastStep, reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { reviewedCall, useReviewedAction } from '@/hooks/useReviewedAction'
+import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
 import { useWallet } from '@/hooks/useWallet'
 import { recoveringRead } from '@/lib/read-recovery'
 import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
-import { planShown, sequenceCalls } from '@/lib/reviewed-send'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
@@ -116,14 +116,12 @@ export function GetLoanFlow({
   const [review, setReview] = useState<ReviewedBorrow | null>(null)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
-  /** The dialog step the run is on: the permission (when it needs one), then the borrow. */
-  const [loanStep, setLoanStep] = useState(-1)
-  /** The run sent its borrow: a settled permission alone opens no loan. */
-  const [borrowSent, setBorrowSent] = useState(false)
-  /** Each run call's dialog step. */
-  const [runShown, setRunShown] = useState<number[] | null>(null)
+  /** The run's calls, built from a fresh quote when it starts. */
+  const runCalls = useRef<StepRunAction | null>(null)
 
   const borrowTx = useReviewedAction(chainId)
+  // The permission (when it needs one), then the borrow.
+  const run = useStepRun<string>({ tx: borrowTx, send: borrowTx.run, action: () => runCalls.current, onFinish: () => {} })
 
   const ctx =
     ctxs.find(c => c.token === ctxToken) ?? ctxs[0] ?? undefined
@@ -186,7 +184,7 @@ export function GetLoanFlow({
   })
   const borrowableNow = borrowable?.borrowableNow
 
-  const busy = quoting || borrowTx.busy
+  const busy = quoting || run.running || borrowTx.busy
 
   const resetInputs = () => {
     setReview(null)
@@ -228,7 +226,6 @@ export function GetLoanFlow({
     if (!publicClient || !ctx) return
     setFlowError(null)
     setQuoting(true)
-    setBorrowSent(false)
     try {
       const has = await hasPermissions(publicClient, {
         chainId,
@@ -262,7 +259,6 @@ export function GetLoanFlow({
         // Its minimum re-quotes on retry: held as this holder's borrow from the project.
         intent: borrowIntent({ chainId, project: projectId, holder: r.account }),
         legacy: legacyBorrowKeys({ chainId, projectId, token: r.ctxToken, collateral: amount, prepaid: r.prepaid, beneficiary: r.account }),
-        ...(has ? {} : { dependsOnPrior: true }),
       })
       // Grant BURN_TOKENS to REVLoans so it can burn the collateral.
       const permission = reviewedCall(buildSetPermissionsTx({
@@ -272,25 +268,14 @@ export function GetLoanFlow({
         projectId: BigInt(projectId),
         permissionIds: [BURN_TOKENS],
       }))
-      const scope = `jbm:loan:${chainId}:${projectId}`
-      const { calls, saved, scope: runScope } = await sequenceCalls(scope, r.account, has ? [borrow] : [permission, borrow])
-      const borrowIndex = r.needsPermission ? 1 : 0
-      /** A run step's dialog step: the permission first when the run has one. */
-      const shown = (step: number) => calls.length > 1 && step === 0 ? 0 : borrowIndex
-      setLoanStep(shown(0))
-      setRunShown(calls.map((_, step) => shown(step)))
-      setQuoting(false)
-      const ended = await borrowTx.run({
+      runCalls.current = {
         account: r.account,
-        calls,
-        scope: runScope,
-        ...planShown(saved, { context: contextRows(loanRows(r)) }),
-        onSubmitted: (_call, step) => {
-          setLoanStep(shown(step))
-          if (shown(step) === borrowIndex) setBorrowSent(true)
-        },
-      })
-      if (reachedLastStep(ended, calls.length)) setBorrowSent(true)
+        calls: has ? [borrow] : [permission, borrow],
+        scope: `jbm:loan:${chainId}:${projectId}`,
+        context: contextRows(loanRows(r)),
+      }
+      setQuoting(false)
+      await run.start(r.needsPermission ? ['permission', 'borrow'] : ['borrow'])
     } catch (e) {
       setFlowError(e instanceof Error ? e.message : 'Something went wrong.')
       setQuoting(false)
@@ -350,18 +335,18 @@ export function GetLoanFlow({
     beginBorrow(review)
   }
 
-  const opened = borrowTx.phase === 'success' && borrowSent
+  const borrowSent = borrowTx.lastStepSent
+  const opened = borrowTx.phase === 'done' && borrowSent
   /** A Safe executed the permission it was proposed: the borrow is reviewed next. */
-  const permissionOnly = (borrowTx.phase === 'success' && !borrowSent) || borrowTx.settledStep != null
+  const permissionOnly = (borrowTx.phase === 'done' && !borrowSent) || borrowTx.settledStep != null
 
   const closeReview = () => {
     if (busy) return
     setReview(null)
     setFlowError(null)
-    setLoanStep(-1)
-    if (!opened) borrowTx.dismiss()
+    if (!opened) run.clear()
   }
-  const activeIndex = liveStep(borrowTx, runShown, loanStep >= 0 ? loanStep : quoting ? 0 : -1)
+  const activeIndex = run.steps ? run.index : quoting ? 0 : -1
   const reviewError = flowError ?? borrowTx.error
 
   const dialog = review || quoting ? (
@@ -431,7 +416,7 @@ export function GetLoanFlow({
             onClick={() => {
               setAmount('')
               resetInputs()
-              borrowTx.reset()
+              run.clear()
             }}
             className="text-smoke-700 hover:text-ink"
           >

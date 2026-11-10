@@ -225,7 +225,7 @@ export function MintShopItemModal({
         <TxProgress
           open
           preparing={!review}
-          title={tx.phase === 'success' ? 'Items minted' : settled ? 'Mint submitted' : 'Confirm mint'}
+          title={tx.phase === 'done' ? 'Items minted' : settled ? 'Mint submitted' : 'Confirm mint'}
           rows={
             review
               ? [

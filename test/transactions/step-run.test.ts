@@ -6,10 +6,15 @@ import type { ReviewedResult } from '@bananapus/nana-sdk-core/review'
 import type { ReviewedActionState, ReviewedRun } from '@/hooks/useReviewedAction'
 import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 
-const saved = vi.hoisted(() => ({ calls: null as unknown[] | null, held: undefined as number | undefined }))
+const saved = vi.hoisted(() => ({ calls: null as unknown[] | null, held: undefined as number | undefined, failure: null as Error | null }))
 vi.mock('@/lib/reviewed-send', () => ({
   SAVED_SEQUENCE_LINE: 'Saved as reviewed.',
-  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => ({ calls: saved.calls ?? calls, saved: !!saved.calls, scope, ...(saved.held !== undefined ? { held: saved.held } : {}) }),
+  sequenceCalls: async (scope: string, _account: string, calls: unknown[]) => {
+    const failure = saved.failure
+    saved.failure = null
+    if (failure) throw failure
+    return { calls: saved.calls ?? calls, saved: !!saved.calls, scope, ...(saved.held !== undefined ? { held: saved.held } : {}) }
+  },
 }))
 
 type Tx = ReviewedActionState
@@ -31,6 +36,7 @@ const Harness = forwardRef<Run, Props>(function Harness(props, ref) {
 beforeEach(() => {
   saved.calls = null
   saved.held = undefined
+  saved.failure = null
 })
 
 /** The engine's state as useReviewedAction reports it, and runs whose ends each test gives. */
@@ -51,6 +57,7 @@ async function renderRun() {
   })
   const engine = async (next: Partial<Tx>) => {
     tx = { ...tx, ...next } as Tx
+    tx = { ...tx, stopped: tx.phase === 'failed' || tx.phase === 'cancelled' } as Tx
     await act(async () => renderer.update(render()))
   }
   /** The wallet took step `step` of the latest run. */
@@ -83,7 +90,7 @@ describe('useStepRun', () => {
     const plan = ['approve', 'permit', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
     await t.submitted(0, H1)
-    await t.engine({ phase: 'error' })
+    await t.engine({ phase: 'failed' })
     await t.runs[0].end(null)
     expect(t.ref.current).toMatchObject({ running: false, index: 1 })
     expect(t.ref.current!.stoppedOn(plan)).toBe(true)
@@ -99,7 +106,7 @@ describe('useStepRun', () => {
     await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
     await t.submitted(1, H2)
     const failure = Object.assign(new Error('reverted'), { name: 'ReviewedCallRevertedError', receipt: { status: 'reverted' } })
-    await t.engine({ phase: 'error', failure })
+    await t.engine({ phase: 'failed', failure })
     await t.runs[0].end(null)
     expect(t.ref.current!.index).toBe(1)
   })
@@ -108,7 +115,7 @@ describe('useStepRun', () => {
     const t = await renderRun()
     const plan = ['approve', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
-    await t.engine({ phase: 'error' })
+    await t.engine({ phase: 'failed' })
     await t.runs[0].end(null)
     const other = ['approve', 'mint']
     expect(t.ref.current!.stoppedOn(other)).toBe(false)
@@ -120,11 +127,11 @@ describe('useStepRun', () => {
     const t = await renderRun()
     const plan = ['approve', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
-    await t.engine({ phase: 'submitted' })
+    await t.engine({ phase: 'proposed' })
     await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
     expect(t.ref.current).toMatchObject({ running: false, proposed: true, index: 0 })
 
-    await t.engine({ phase: 'success', hash: H1 })
+    await t.engine({ phase: 'done', hash: H1 })
     expect(t.ref.current).toMatchObject({ proposed: false, index: 1 })
     expect(t.onFinish).not.toHaveBeenCalled()
     expect(t.ref.current!.stoppedOn(plan)).toBe(true)
@@ -135,7 +142,7 @@ describe('useStepRun', () => {
     const t = await renderRun()
     await act(async () => { void t.ref.current!.start(['mint']) })
     await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
-    await t.engine({ phase: 'success', hash: H2 })
+    await t.engine({ phase: 'done', hash: H2 })
     expect(t.onFinish).toHaveBeenCalledWith(H2)
   })
 
@@ -144,7 +151,7 @@ describe('useStepRun', () => {
     const plan = ['approve', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
     await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
-    await t.engine({ phase: 'error' })
+    await t.engine({ phase: 'failed' })
     expect(t.ref.current).toMatchObject({ proposed: false, index: 0 })
     expect(t.ref.current!.stoppedOn(plan)).toBe(true)
   })
@@ -153,12 +160,30 @@ describe('useStepRun', () => {
     const t = await renderRun()
     await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
     await t.submitted(1, H2)
-    await t.engine({ phase: 'unconfirmed' })
+    await t.engine({ phase: 'held' })
     await t.runs[0].end(null)
     expect(t.ref.current).toMatchObject({ unconfirmed: true, index: 1 })
-    await t.engine({ phase: 'success', hash: H2 })
+    await t.engine({ phase: 'done', hash: H2 })
     expect(t.onFinish).toHaveBeenCalledWith(H2)
     expect(t.run).toHaveBeenCalledOnce()
+  })
+
+  it('lets a confirm close while its run only awaits the last step\'s hold, which keeps the write', async () => {
+    const t = await renderRun()
+    const plan = ['approve', 'mint']
+    await act(async () => { void t.ref.current!.start(plan) })
+    await t.submitted(1, H2)
+    // The send still awaits the held last step; closing the confirm is what ends that wait.
+    await t.engine({ phase: 'held', following: true })
+    expect(t.ref.current).toMatchObject({ running: false, unconfirmed: true, index: 1 })
+    expect(t.ref.current!.isRunning()).toBe(false)
+    // The wait is still the run's: nothing else starts or resumes over it.
+    await act(async () => { void t.ref.current!.start(plan) })
+    expect(t.ref.current!.resume(plan)).toBe(false)
+    expect(t.run).toHaveBeenCalledOnce()
+
+    act(() => t.ref.current!.clear())
+    expect(t.reset).toHaveBeenCalled()
   })
 
   it('stops at the next step once an earlier step confirms after its run ended', async () => {
@@ -166,7 +191,7 @@ describe('useStepRun', () => {
     const plan = ['approve', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
     await t.submitted(0, H1)
-    await t.engine({ phase: 'unconfirmed' })
+    await t.engine({ phase: 'held' })
     await t.runs[0].end(null)
     // Core ends an earlier step's late settle as idle, with the step it settled.
     await t.engine({ phase: 'idle', settledStep: 0, hash: H1 })
@@ -195,10 +220,10 @@ describe('useStepRun', () => {
     const plan = ['approve', 'mint']
     await act(async () => { void t.ref.current!.start(plan) })
     // Core refuses to resend the held step: the run ends on its hold, with no step taken this time.
-    await t.engine({ phase: 'unconfirmed' })
+    await t.engine({ phase: 'held' })
     await t.runs[0].end(null)
     expect(t.ref.current).toMatchObject({ unconfirmed: true, index: 1 })
-    await t.engine({ phase: 'success', hash: H2 })
+    await t.engine({ phase: 'done', hash: H2 })
     expect(t.onFinish).toHaveBeenCalledWith(H2)
     expect(t.run).toHaveBeenCalledOnce()
   })
@@ -221,6 +246,28 @@ describe('useStepRun', () => {
     expect(t.onFinish).not.toHaveBeenCalled()
     expect(t.ref.current).toMatchObject({ running: false, index: 0 })
     expect(t.ref.current!.stoppedOn(plan)).toBe(false)
+  })
+
+  it('frees the run when preparing it throws, so the next start runs', async () => {
+    saved.failure = new Error('This page could not load the review.')
+    const t = await renderRun()
+    let failed: unknown = null
+    await act(async () => { await t.ref.current!.start(['approve', 'mint']).catch(error => { failed = error }) })
+    expect((failed as Error).message).toBe('This page could not load the review.')
+    expect(t.ref.current).toMatchObject({ running: false })
+    expect(t.ref.current!.isRunning()).toBe(false)
+
+    await act(async () => { void t.ref.current!.start(['approve', 'mint']) })
+    expect(t.run).toHaveBeenCalledOnce()
+  })
+
+  it('frees the run when its send throws', async () => {
+    const t = await renderRun()
+    t.run.mockImplementationOnce(async () => { throw new Error('send threw') })
+    await act(async () => { await t.ref.current!.start(['mint']).catch(() => {}) })
+    expect(t.ref.current).toMatchObject({ running: false })
+    await act(async () => { void t.ref.current!.start(['mint']) })
+    expect(t.run).toHaveBeenCalledTimes(2)
   })
 
   it('holds the run busy for other work until it ends', async () => {

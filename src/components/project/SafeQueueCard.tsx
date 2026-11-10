@@ -5,7 +5,7 @@ import { queuedSafeReviewCall, batchCallLabels, transactionLabel } from '@/lib/s
 export { SELECTOR_LABELS, batchCallLabels, transactionLabel } from '@/lib/safe-queue-review'
 
 import { createProjectSafeRelayr, legacySafeRelayrBindings, safeRelayrSession } from '@/lib/safe-relayr'
-import { canReplaceSafeRelayrQuote, SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession, type SafeRelayrPhase, type SafeRelayrProgress } from '@bananapus/nana-sdk-core/review/safe-relayr'
+import { canReplaceSafeRelayrQuote, SafeRelayrRecoveryError, requireSafeRelayrExecution, verifySafeRelayrLanding, type SafeRelayrExecution, type SafeRelayrResult, type SafeRelayrSession, type SafeRelayrPhase } from '@bananapus/nana-sdk-core/review/safe-relayr'
 import { chainName } from '@/lib/urn'
 import {
   JBCoreContracts,
@@ -17,7 +17,7 @@ import {
 } from "@bananapus/nana-sdk-core";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { getAccount } from "@wagmi/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   decodeFunctionData,
   encodeFunctionData,
@@ -819,7 +819,6 @@ const PHASE_LABELS: Record<SafeRelayrPhase, string> = {
   executing: 'Waiting for the Safe executions to confirm…',
   complete: 'All Safe executions confirmed.',
 };
-type ExecutionProgress = Pick<Extract<SafeRelayrProgress, { type: 'execution' }>, 'status' | 'hash' | 'message'>;
 
 export function SafeQueueCard({
   safe,
@@ -841,9 +840,6 @@ export function SafeQueueCard({
   // Execute all runs in one dialog; each chain row carries its own status.
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchRows, setBatchRows] = useState<BatchDialogRow[]>([]);
-  const [batchStatus, setBatchStatus] = useState<Record<number, string>>({});
-  const [executionProgress, setExecutionProgress] = useState<Record<number, ExecutionProgress>>({});
-  const [phase, setPhase] = useState<SafeRelayrPhase | null>(null);
   const [watchingBundle, setWatchingBundle] = useState(false);
   const [batchDone, setBatchDone] = useState(false);
   const batchRun = useRef<AbortController | null>(null);
@@ -857,9 +853,6 @@ export function SafeQueueCard({
     setBatchReview(null);
     setBatchOpen(false);
     setBatchRows([]);
-    setBatchStatus({});
-    setExecutionProgress({});
-    setPhase(null);
     setWatchingBundle(false);
     setBatchDone(false);
     setNotice(null);
@@ -1026,10 +1019,13 @@ export function SafeQueueCard({
     await Promise.all(queries.map(query => query.refetch()));
   };
 
-  const makeController = (signal?: AbortSignal) => createProjectSafeRelayr({
+  const chainsRef = useRef(chains);
+  chainsRef.current = chains;
+  // One controller per account and Safe: its view is the batch's phase, checks and executions.
+  const relayr = useMemo(() => createProjectSafeRelayr({
     scope: pendingScope,
     onSaved: session => {
-      if (!signal?.aborted && activeAccount.current === address) {
+      if (!batchRun.current?.signal.aborted && activeAccount.current === address) {
         setPendingSession(session);
         if (session?.safeLifecycle && !canReplaceSafeRelayrQuote(session.safeLifecycle)) {
           setRecovery(session.safeLifecycle);
@@ -1040,21 +1036,13 @@ export function SafeQueueCard({
       }
     },
     onProgress: progress => {
-      if (signal?.aborted || activeAccount.current !== address) return;
-      if (progress.type === 'phase') {
-        setPhase(progress.phase);
-        setNotice(PHASE_LABELS[progress.phase]);
-      } else {
-        setExecutionProgress(current => ({
-          ...current,
-          [progress.execution.entry.chain]: { status: progress.status, hash: progress.hash, message: progress.message },
-        }));
-      }
+      if (batchRun.current?.signal.aborted || activeAccount.current !== address) return;
+      if (progress.type === 'phase') setNotice(PHASE_LABELS[progress.phase]);
     },
     revalidate: async execution => {
       let context = execution.context as SafeReviewContext | undefined;
       if (!context?.chain || !context.tx) {
-        const chain = chains.find(item => item.chainId === execution.entry.chain);
+        const chain = chainsRef.current.find(item => item.chainId === execution.entry.chain);
         if (!chain) throw new Error("This saved Safe execution is outside this project's chains.");
         const { pending } = await readSafeQueue(chain.chainId, execution.safe);
         const tx = pending.find(item => canonicalSafeTxHash(chain.chainId, execution.safe, item).toLowerCase() === execution.safeTxHash.toLowerCase());
@@ -1073,10 +1061,27 @@ export function SafeQueueCard({
       await freshCanonicalQueuedTx(context.chain, execution.safe, context.tx);
     },
     afterVerified: assertProjectSafePostconditions,
-  });
+  // The controller's options read the latest chains and run through refs; a new account or Safe gets a new controller.
+  }), [address, pendingScope]);
+  const view = useSyncExternalStore(relayr.subscribe, relayr.getState, relayr.getState);
+  // A phase shows while its call runs; an ended call's phase does not linger.
+  const phase = view.running ? view.phase : null;
+  /** Each execution's status by chain: the view keys them by the session's execution index. */
+  const executionProgress: Record<number, (typeof view.executions)[number]> = Object.fromEntries(
+    Object.entries(view.executions).flatMap(([index, progress]) => {
+      const chainId = view.session?.executions[Number(index)]?.entry.chain;
+      return chainId === undefined ? [] : [[chainId, progress]];
+    }),
+  );
+  /** Each chain's check label: the view keys checks by the call's execution index, the dialog's row order. */
+  const batchStatus: Record<number, string> = Object.fromEntries(
+    Object.entries(view.checks).flatMap(([index, state]) => {
+      const chainId = batchRows[Number(index)]?.chainId;
+      return chainId === undefined ? [] : [[chainId, CHECK_STATUS_LABELS[state]]];
+    }),
+  );
 
-  const markBatchExecuted = (chainIds: readonly number[]) => {
-    setBatchStatus(Object.fromEntries(chainIds.map(chainId => [chainId, "Executed"])));
+  const markBatchExecuted = () => {
     setBatchDone(true);
   };
 
@@ -1093,11 +1098,10 @@ export function SafeQueueCard({
     if (result.state === "complete") {
       setPendingSession(null);
       setRecovery(null);
-      markBatchExecuted(result.session.executions.map(item => item.entry.chain));
+      markBatchExecuted();
       setNotice(`Executed ${result.session.executions.length} Safe transactions.`);
       await refetchQueues();
     } else if (result.state === "ready") {
-      setPhase(null);
       setRecovery(null);
       setBatchReview({ session: result.session, payments: result.payments });
       setPaymentIndex(initialPaymentIndex(result.payments));
@@ -1126,7 +1130,7 @@ export function SafeQueueCard({
   const watchExistingBundle = (
     session: SafeRelayrSession,
     run: AbortController,
-    controller: ReturnType<typeof createProjectSafeRelayr>,
+    controller: typeof relayr,
   ) => {
     setWatchingBundle(true);
     void controller.watch({
@@ -1145,7 +1149,6 @@ export function SafeQueueCard({
       },
     }).catch((watchError: unknown) => {
       if (!run.signal.aborted && batchRun.current === run) {
-        setPhase(null);
         setNotice(null);
         setError(watchError instanceof Error ? watchError.message : "Could not check the existing bundle.");
       }
@@ -1166,7 +1169,7 @@ export function SafeQueueCard({
       // current journal and check its saved identity without authorizing payment.
       const session = safeRelayrSession(pendingScope);
       if (!session) throw new Error("The saved Safe bundle is no longer available on this device. Reopen the Safe queue to review its current status.");
-      const controller = makeController(run.signal);
+      const controller = relayr;
       let result = await controller.check({ account: session.account, sessionId: session.id, signal: run.signal });
       if (run.signal.aborted || batchRun.current !== run || activeAccount.current !== address) return;
       if (result.state === "ready" && !run.signal.aborted) {
@@ -1318,9 +1321,7 @@ export function SafeQueueCard({
       }
 
       setBatchRows(relayrRows.map(batchDialogRow));
-      setBatchStatus({});
-      setExecutionProgress({});
-      setPhase(null);
+      relayr.reset();
       setBatchDone(false);
       setBatchReview(null);
       setRecovery(null);
@@ -1331,16 +1332,12 @@ export function SafeQueueCard({
         safe, safeTxHash: canonicalSafeTxHash(row.chain.chainId, safe, row.tx), nonce: row.tx.nonce,
         context: { chain: row.chain, tx: row.tx } satisfies SafeReviewContext,
       }));
-      const result = await makeController(run.signal).prepare({
+      const result = await relayr.prepare({
         account: address, executions, signal: run.signal,
-        onStatus: (index, status) => {
-          if (!run.signal.aborted) setBatchStatus(current => ({ ...current, [executions[index].entry.chain]: CHECK_STATUS_LABELS[status] }));
-        },
       });
       if (!run.signal.aborted && activeAccount.current === address) await applyResult(result);
     } catch (batchError) {
       if (run.signal.aborted || batchRun.current !== run) return;
-      setPhase(null);
       setNotice(null);
       if (batchError instanceof SafeRelayrRecoveryError) {
         setRecovery(batchError.session);
@@ -1372,12 +1369,9 @@ export function SafeQueueCard({
     setRecoveryResult(null);
     setNotice(null);
     try {
-      const controller = makeController(run.signal);
+      const controller = relayr;
       const result = await controller.fund({
         account: address, sessionId: batchReview.session.id, paymentChainId: payment.chain, signal: run.signal,
-        onStatus: (index, status) => {
-          if (!run.signal.aborted) setBatchStatus(current => ({ ...current, [batchReview.session.executions[index].entry.chain]: CHECK_STATUS_LABELS[status] }));
-        },
       });
       if (!run.signal.aborted && activeAccount.current === address) {
         await applyResult(result);
@@ -1385,7 +1379,6 @@ export function SafeQueueCard({
       }
     } catch (batchError) {
       if (run.signal.aborted) return;
-      setPhase(null);
       setNotice(null);
       if (batchError instanceof SafeRelayrRecoveryError) {
         setRecovery(batchError.session);
@@ -1453,9 +1446,7 @@ export function SafeQueueCard({
     setBatchOpen(false);
     setBatchReview(null);
     setBatchRows([]);
-    setBatchStatus({});
-    setExecutionProgress({});
-    setPhase(null);
+    relayr.reset();
     setWatchingBundle(false);
     setBatchDone(false);
     setNotice(null);

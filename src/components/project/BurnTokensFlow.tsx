@@ -154,7 +154,7 @@ export function BurnTokensFlow({
   function closeReview() {
     setPlan(null)
     setError(null)
-    if (tx.phase !== 'success') tx.dismiss()
+    if (tx.phase !== 'done') tx.dismiss()
   }
 
   return (
@@ -230,7 +230,7 @@ export function BurnTokensFlow({
           open
           preparing={!plan}
           onClose={closeReview}
-          title={tx.phase === 'success' ? 'Tokens burned' : 'Confirm burn'}
+          title={tx.phase === 'done' ? 'Tokens burned' : 'Confirm burn'}
           rows={[
             {
               label: 'Burn',
@@ -253,11 +253,11 @@ export function BurnTokensFlow({
             !plan
               ? 'Reading your balance and the controller…'
               : (tx.notice ??
-                (tx.phase === 'pending' ? 'Waiting for confirmation…' : undefined))
+                (tx.phase === 'receipt' ? 'Waiting for confirmation…' : undefined))
           }
           error={error ?? tx.error}
           start={() => void burn()}
-          next={(tx.phase === 'error' || !!error) && !sending ? { label: 'Retry', onClick: () => void burn() } : null}
+          next={(tx.stopped || !!error) && !sending ? { label: 'Retry', onClick: () => void burn() } : null}
         />
       ) : null}
     </div>

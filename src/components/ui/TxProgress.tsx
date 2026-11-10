@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useId, useRef, type ReactNode } from 'react'
+import { useEffect, useId, type ReactNode } from 'react'
 import type { ReviewContextRow } from '@bananapus/nana-sdk-core/review'
+import { useStartOnce } from '@bananapus/nana-sdk-core/review/react'
 import { createPortal } from 'react-dom'
 import {
   ModalCloseButton,
@@ -33,17 +34,6 @@ export function contextRows(rows: readonly TxConfirmRow[]): ReviewContextRow[] {
     const value = text(row.value)
     return label === null || value === null ? [] : [{ label, value, ...(row.strong ? { strong: true } : {}), ...(row.mono ? { mono: true } : {}) }]
   })
-}
-
-/** Starts the action once per open and step: each step's review is its own confirmation, with no click between. A completed dialog never starts. */
-export function useStartOnce(open: boolean, preparing: boolean, start: (() => void) | undefined, startKey: unknown) {
-  const started = useRef<{ key: unknown } | null>(null)
-  useEffect(() => {
-    if (!open) { started.current = null; return }
-    if (preparing || !start || (started.current && Object.is(started.current.key, startKey))) return
-    started.current = { key: startKey }
-    start()
-  }, [open, preparing, start, startKey])
 }
 
 /**
@@ -106,7 +96,7 @@ export function TxProgress({
   // Hosted, the confirm has no dialog of its own: while busy it keeps the
   // enclosing shell open, or Escape there would drop a send in flight.
   useHoldEnclosingModal(open && busy)
-  useStartOnce(open, preparing || !!complete, start, startKey)
+  useStartOnce(open, preparing, start, startKey, !!complete)
   useEffect(() => {
     if (!host || !open) return
     const hidden = Array.from(host.children).filter(
