@@ -21,6 +21,8 @@ import { wagmiConfig } from '@/providers/Providers'
 
 /** A run the user closed at its review or wallet prompt: what happened, and the way on. */
 export const REVIEW_CLOSED_LINE = 'Nothing was sent. Review it again when you are ready.'
+/** A run the user closed after an earlier step was sent: that step stands, and running again sends the rest. */
+export const REVIEW_STOPPED_LINE = 'The rest was not sent. Review it again when you are ready.'
 
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
@@ -70,6 +72,8 @@ export function useReviewedAction(chainId?: number) {
   const unmounted = useUnmountSignal()
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
+  /** The latest run's call count, which core forgets once the run ends. */
+  const [total, setTotal] = useState(0)
   const inFlight = useRef(false)
   /** Ends the wait on a sent step the hold is following, once its confirm closes; core keeps following it. */
   const stopWaiting = useRef<(() => void) | null>(null)
@@ -82,6 +86,7 @@ export function useReviewedAction(chainId?: number) {
     inFlight.current = true
     setResult(null)
     setSentOn(action.calls[0]?.chainId)
+    setTotal(action.calls.length)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
       const ran = await runner.run({
@@ -110,13 +115,15 @@ export function useReviewedAction(chainId?: number) {
   }
 
   const { held } = runner
+  // Core reads a run closed after an earlier step was sent as idle, with no line: it stopped before its last step.
+  const stoppedPartway = runner.status === 'idle' && runner.lastSubmittedStep !== null && runner.lastSubmittedStep < total - 1
   // Core's one status: `held` shows the hold's line and exit, `proposed` awaits a Safe's signers.
-  const phase = runner.status
+  const phase: ReviewedRunStatus = stoppedPartway ? 'cancelled' : runner.status
   const shownChainId = sentOn ?? chainId ?? 0
   const action = runner.exitAction ?? runner.sendAgainAction
   const error: string | ReactElement | null = phase === 'held' && held
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
-    : runner.error ?? (phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
+    : runner.error ?? (stoppedPartway ? REVIEW_STOPPED_LINE : phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
 
   // A Safe proposal its hold settled ends on the execution's hash and receipt.
   const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
@@ -154,7 +161,7 @@ export function useReviewedAction(chainId?: number) {
     following,
     /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
     settled: phase === 'done' || phase === 'proposed' || phase === 'held',
-    /** The run ended short of done: it failed, or was cancelled with nothing sent. */
+    /** The run ended short of done: it failed, or was closed before its last step was sent. */
     stopped: phase === 'failed' || phase === 'cancelled',
     /** The one line a `proposed` confirm shows: the hold's. */
     notice: phase === 'proposed' ? held?.line ?? null : null,

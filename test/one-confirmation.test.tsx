@@ -25,6 +25,8 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const m = vi.hoisted(() => ({
   borrowable: vi.fn(),
   hasPermissions: vi.fn(),
+  /** The pay entry's allowance the chain shows. */
+  payAllowance: 0n,
 }))
 /** The app's query defaults (Providers), for the real prepareUserPay query. */
 const prepareQueries = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } })
@@ -160,7 +162,7 @@ vi.mock('@tanstack/react-query', async importOriginal => {
           isError: false,
         }
       case 'payAllowance':
-        return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
+        return { data: m.payAllowance, refetch: vi.fn(async () => ({ data: m.payAllowance })) }
       case 'payShopCredits':
         return { data: 0n, isLoading: false }
       case 'projectTokenSymbol':
@@ -236,7 +238,7 @@ import { AddLiquidityFlow } from '@/components/project/AddLiquidityFlow'
 import { PayPanel } from '@/components/project/PayPanel'
 import { LoansSection } from '@/components/project/LoansSection'
 import { ClaimCreditsAcrossChains } from '@/components/project/ProjectTokenBatchFlow'
-import { REVIEW_CLOSED_LINE } from '@/hooks/useReviewedAction'
+import { REVIEW_CLOSED_LINE, REVIEW_STOPPED_LINE } from '@/hooks/useReviewedAction'
 
 let page: Awaited<ReturnType<typeof renderWithReviews>> | null = null
 
@@ -245,6 +247,7 @@ beforeEach(() => {
   wallet.connect(ALICE)
   m.borrowable.mockResolvedValue({ borrowableNow: 10n ** 18n })
   m.hasPermissions.mockResolvedValue(false)
+  m.payAllowance = 0n
   wallet.client.readContract.mockImplementation(async ({ functionName, args }) => {
     if (functionName === 'allowance') return args?.length === 3 ? [0n, 0, 0] : 0n
     if (functionName === 'balanceOf') return 10n ** 30n
@@ -326,6 +329,15 @@ describe('one confirmation per action', () => {
 
     expect(wallet.writes().map(write => write.functionName)).toEqual(['approve'])
     expect(document.querySelector('[aria-current="step"]')?.textContent).not.toContain('Approve')
+    const again = [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Try again')
+    expect(again).toBeDefined()
+    expect(document.querySelector('[data-tx-confirm]')?.textContent).toContain(REVIEW_STOPPED_LINE)
+
+    // Trying again sends the payment alone: the chain now shows the confirmed approval, which is never asked for again.
+    m.payAllowance = 10n ** 30n
+    await act(async () => again!.click())
+    await confirmEveryReview(() => wallet.writes().length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'pay'])
   })
 
   it('wallet-action:one-confirmation cash-out: one review for the pool approvals and the sale', async () => {
@@ -394,6 +406,14 @@ describe('one confirmation per action', () => {
 
     expect(wallet.writes().map(write => write.functionName)).toEqual(['setPermissionsFor'])
     expect(document.querySelector('[aria-current="step"]')?.textContent).toContain('Open the loan')
+    const retry = [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Retry')
+    expect(retry).toBeDefined()
+
+    // Retrying sends the borrow alone: the chain now shows the confirmed permission, which is never asked for again.
+    m.hasPermissions.mockResolvedValue(true)
+    await act(async () => retry!.click())
+    await confirmEveryReview(() => wallet.writes().length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['setPermissionsFor', 'borrowFrom'])
   })
 
   it('wallet-action:one-confirmation loan repayment: one review for the approval and the repayment', async () => {
@@ -407,6 +427,31 @@ describe('one confirmation per action', () => {
     expect(sent).toBe(2)
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }, { functionName: 'repayLoan', account: ALICE }])
     expect(progressConfirms()).toEqual([])
+  })
+
+  it('retries a refused repayment alone once its approval confirmed', async () => {
+    page = await renderWithReviews(createElement(LoansSection, { chainId: 1, projectId: 42 }))
+    for (let attempt = 0; attempt < 40 && ![...page.host.querySelectorAll('button')].some(item => item.textContent === 'Repay'); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    const send = wallet.walletClient.sendTransaction.getMockImplementation()!
+    wallet.walletClient.sendTransaction
+      .mockImplementationOnce(send)
+      .mockImplementationOnce(async () => { throw new UserRejectedRequestError(new Error('User rejected the request.')) })
+    await act(async () => button('Repay').click())
+    await confirmEveryReview(() => wallet.walletClient.sendTransaction.mock.results.length >= 2, { each: mine })
+    let retry: HTMLButtonElement | undefined
+    for (let attempt = 0; attempt < 100 && !(retry = [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Retry')); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    expect(document.querySelector('[data-tx-confirm]')?.textContent).toContain(REVIEW_STOPPED_LINE)
+
+    // The chain now shows the confirmed approval.
+    const read = wallet.client.readContract.getMockImplementation()!
+    wallet.client.readContract.mockImplementation(async request => request.functionName === 'allowance' ? 10n ** 30n : read(request))
+    await act(async () => retry!.click())
+    await confirmEveryReview(() => wallet.writes().length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'repayLoan'])
   })
 
   it('wallet-action:one-confirmation add liquidity: one review for the approvals and the mint', async () => {

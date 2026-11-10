@@ -515,7 +515,12 @@ function RepayFlow({
     setFlowError(null)
     // After an approval a Safe executed alone, the repayment follows on its block.
     const approved = approvalOnly ? tx.receipt?.blockNumber : undefined
-    const approve = plan.approve && approved === undefined ? plan.approve : null
+    // A retry reads the allowance again: an approval an earlier attempt confirmed is never asked for twice.
+    const covered = plan.approve && approved === undefined && run.steps && publicClient
+      ? await publicClient.readContract({ abi: erc20Abi, address: plan.sourceToken, functionName: 'allowance', args: [plan.account, loans] })
+        .then(allowance => allowance >= plan.maxRepay, () => false)
+      : false
+    const approve = plan.approve && approved === undefined && !covered ? plan.approve : null
     const repay = reviewedCall(plan.request, {
       intent: plan.intents.repay,
       legacy: plan.legacy.repay,
