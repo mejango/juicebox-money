@@ -1607,7 +1607,13 @@ export function CreateForm() {
    */
   /** The direct launch, chain by chain, under the launch lock its journal writes and sends check. */
   const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
-    if (await withLaunchLock(locks => launchDirectChains(pinned, locks), LAUNCH_RUNNING_LINE)) await finishLaunch();
+    try {
+      if (await withLaunchLock(locks => launchDirectChains(pinned, locks), LAUNCH_RUNNING_LINE)) await finishLaunch();
+    } catch (error) {
+      // Another tab runs it, or a journal write found the lock lost: this tab stops, its launch saved.
+      setLaunchError(friendlyError(error));
+      setPhase("failed");
+    }
   };
 
   /** True once every chain ran: the launch can finish. */
