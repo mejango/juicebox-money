@@ -61,6 +61,8 @@ export function useStepRun<Step>({
     submitted: null as number | null,
     /** The step the run ended on, proposed or unconfirmed, until it settles. */
     waiting: null as number | null,
+    /** The run stopped after a step the wallet took: the effect below picks the step it stopped on, once. */
+    stopped: false,
   })
 
   const halt = useCallback(() => {
@@ -83,6 +85,7 @@ export function useStepRun<Step>({
       const shown = (step: number) => shownOf(current, step)
       current.running = true
       current.waiting = null
+      current.stopped = false
       setRunning(true)
       setProposed(false)
       tx.reset()
@@ -109,9 +112,10 @@ export function useStepRun<Step>({
         setIndex(current.waiting)
         setProposed(true)
       } else if (current.submitted !== null) {
-        // Stopped after the last step the wallet took: the effect below moves
-        // back onto it when that step is the one that reverted or is held.
-        setIndex(current.submitted + 1)
+        // Stopped after the last step the wallet took: the effect below stays on
+        // it when it is the one that reverted or is held, and otherwise moves past
+        // it. Never both, so the step shown never jumps ahead and back.
+        current.stopped = true
       }
       return ended
     },
@@ -129,8 +133,14 @@ export function useStepRun<Step>({
     if (running || current.running) return
     const failedOnSubmitted = tx.phase === 'held' || (tx.stopped && !!revertedReceipt(tx.failure))
     if (current.waiting === null && current.submitted !== null && failedOnSubmitted) {
+      current.stopped = false
       setIndex(current.submitted)
       if (tx.phase === 'held') current.waiting = current.submitted
+      return
+    }
+    if (current.stopped && current.submitted !== null) {
+      current.stopped = false
+      setIndex(current.submitted + 1)
       return
     }
     if (current.waiting === null) return
@@ -158,7 +168,7 @@ export function useStepRun<Step>({
     async (steps: readonly Step[]) => {
       const fresh = run.current.running || !steps.length ? null : action(steps)
       if (!fresh) return
-      const current: typeof run.current = { steps, action: fresh, running: true, holding: false, submitted: null, waiting: null }
+      const current: typeof run.current = { steps, action: fresh, running: true, holding: false, submitted: null, waiting: null, stopped: false }
       run.current = current
       setIndex(0)
       setRunSteps(steps)
@@ -216,7 +226,7 @@ export function useStepRun<Step>({
    * its plan: a stopped step and its error go with it.
    */
   const clear = useCallback(() => {
-    run.current = { steps: [], action: null, running: false, holding: false, submitted: null, waiting: null }
+    run.current = { steps: [], action: null, running: false, holding: false, submitted: null, waiting: null, stopped: false }
     setIndex(0)
     setRunSteps(null)
     setProposed(false)

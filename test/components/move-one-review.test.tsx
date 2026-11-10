@@ -19,6 +19,8 @@ const m = vi.hoisted(() => ({
   /** How each run ends, in order; a run past the list confirms. */
   ends: [] as (ReviewedResult | null)[],
   allowance: 0n,
+  /** The next run's approval confirms and its prepare is sent, then mines and reverts. */
+  revert: false,
   /** Settles the step a run left with a Safe, as its hold does. */
   settle: () => {},
 }))
@@ -67,12 +69,24 @@ vi.mock('@/hooks/useReviewedAction', async () => {
     txPhaseLabel: () => '',
     useReviewedAction: () => {
       const [phase, setPhase] = useState('idle')
+      const [failure, setFailure] = useState<unknown>(null)
       m.settle = () => setPhase('done')
       return {
-        phase, busy: false, step: 0, error: null, notice: null, failure: null, hash: phase === 'done' ? HASH : null, stopped: phase === 'failed',
-        reset: () => setPhase('idle'), dismiss: () => setPhase('idle'),
+        phase, busy: false, step: 0, error: failure ? 'The transaction reverted.' : null, notice: null, failure, hash: phase === 'done' ? HASH : null, stopped: phase === 'failed',
+        reset: () => { setPhase('idle'); setFailure(null) }, dismiss: () => { setPhase('idle'); setFailure(null) },
         run: async (action: ReviewedRun) => {
           m.runs.push(action)
+          if (m.revert) {
+            m.revert = false
+            // Each step the wallet takes renders while the run is in flight, as a real wallet's do.
+            for (const step of [0, 1]) {
+              await action.onSubmitted?.(action.calls[step], step, HASH, { safe: false, adopted: false })
+              await new Promise(resolve => setTimeout(resolve, 0))
+            }
+            setFailure(Object.assign(new Error('reverted'), { name: 'ReviewedCallRevertedError', receipt: { status: 'reverted' } }))
+            setPhase('failed')
+            return null
+          }
           const end = m.ends.length ? m.ends.shift()! : { status: 'done' as const, hashes: [HASH], receipts: [] }
           setPhase(end?.status === 'done' ? 'done' : end?.status === 'proposed' ? 'proposed' : 'failed')
           return end
@@ -93,6 +107,7 @@ beforeEach(() => {
   m.runs = []
   m.ends = []
   m.allowance = 0n
+  m.revert = false
   host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
@@ -157,5 +172,17 @@ describe('moving tokens', () => {
     for (let attempt = 0; attempt < 20; attempt++) await tick()
     expect(m.runs.map(names)).toEqual([['approve', 'prepare'], ['approve', 'prepare'], ['toRemote']])
     expect(m.runs[1].calls).toEqual(m.runs[0].calls)
+  })
+
+  it('opens no further review once the prepare mines and reverts after its approval, until Retry', async () => {
+    m.revert = true
+    await startMove()
+    expect(m.runs.map(names)).toEqual([['approve', 'prepare']])
+    expect(host.ownerDocument.body.textContent).toContain('The transaction reverted.')
+
+    // Retry is the one way on.
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Retry')!.click())
+    for (let attempt = 0; attempt < 20; attempt++) await tick()
+    expect(m.runs.map(names).slice(0, 2)).toEqual([['approve', 'prepare'], ['approve', 'prepare']])
   })
 })

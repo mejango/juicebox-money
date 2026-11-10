@@ -765,7 +765,8 @@ function MoveFlow({
         steps={steps}
         activeIndex={activeIndex}
         stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
-        start={step === 'prepare' || step === 'send' ? stepRun : undefined}
+        // A stopped step (refused, failed or reverted) waits for Retry: it never starts again by itself.
+        start={(step === 'prepare' || step === 'send') && !tx.stopped ? stepRun : undefined}
         startKey={`${step}:${run.index}`}
         next={(step === 'prepare' || step === 'send') && !busy && (flowError || tx.error) ? { label: stepIdle, onClick: stepRun } : null}
         busy={busy}
