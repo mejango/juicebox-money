@@ -3,13 +3,13 @@ import { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
-import { HELD_RELEASE_LABEL, WRITE_HOLD_IN_TAB_LINE, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
+import { HELD_CONFIRMING_LINE, HELD_RELEASE_LABEL, WRITE_HOLD_IN_TAB_LINE, type HeldWriteView } from '@bananapus/nana-sdk-core/review'
 
 const client = vi.hoisted(() => ({
   getChainId: async () => 10,
   getBlockNumber: async () => 100n,
   getTransactionCount: async () => 3,
-  getTransaction: async () => { throw Object.assign(new Error('not found'), { name: 'TransactionNotFoundError' }) },
+  getTransaction: vi.fn(async (_args: { hash: string }): Promise<unknown> => { throw Object.assign(new Error('not found'), { name: 'TransactionNotFoundError' }) }),
   getTransactionReceipt: async () => null,
   getBlock: async () => ({ number: 100n, hash: `0x${'aa'.repeat(32)}`, timestamp: 1n }),
   request: async () => null,
@@ -46,6 +46,48 @@ describe('writes held outside a flow', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('show every background state, not only held: a write still confirming is listed with its line', async () => {
+    const hold = writeHolds.open({ chainId: 10, account: ACCOUNT, safe: false,
+      call: { to: '0x3333333333333333333333333333333333333333' as Address, data: '0x5678', value: 0n } })
+    await hold.send(client as never, async gate => { await gate.beforeSend(); gate.afterSubmit(`0x${'cd'.repeat(32)}`) })
+    const host = document.createElement('div')
+    const root = createRoot(host)
+    await act(async () => root.render(<HeldWritesList account={ACCOUNT} />))
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(host.querySelector('[data-phase="confirming"]')?.textContent).toContain(HELD_CONFIRMING_LINE)
+    await act(async () => root.unmount())
+    await hold.exit(hold.peek(), { checkedWallet: true }, client as never).catch(() => null)
+  })
+
+  it('take the hash of a held write whose wallet reply was lost, and follow it from there', async () => {
+    const call = { to: '0x4444444444444444444444444444444444444444' as Address, data: '0x9abc' as const, value: 0n }
+    const hold = writeHolds.open({ chainId: 10, account: ACCOUNT, safe: false, call })
+    await hold.send(client as never, async gate => { await gate.beforeSend(); throw new Error('wallet transport disconnected') }).catch(() => null)
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () => root.render(<HeldWritesList account={ACCOUNT} />))
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    const input = host.querySelector<HTMLInputElement>('input[placeholder="0x…"]')!
+    expect(host.textContent).toContain('Transaction hash, if the wallet reply was lost')
+    const check = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Check existing transaction')!
+    const type = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value)
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await type('0x1234')
+    await act(async () => { check().click() })
+    expect(host.textContent).toContain('Enter a complete transaction hash.')
+    const hash = `0x${'ef'.repeat(32)}`
+    client.getTransaction.mockImplementation(async () => ({ hash, from: ACCOUNT, to: call.to, input: call.data, value: 0n, nonce: 3, blockNumber: 101n, chainId: 10 }))
+    await type(hash)
+    await act(async () => { check().click() })
+    for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+    expect(hold.peek()).toMatchObject({ hash })
+    expect(host.textContent).not.toContain('Transaction hash, if the wallet reply was lost')
+    await act(async () => root.unmount())
   })
 
   it("say when this browser can't remember them", async () => {
