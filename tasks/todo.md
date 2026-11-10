@@ -1460,6 +1460,8 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 - [x] launch-session withLaunchLock awaits fn
 - [x] QueueRulesetFlow 834/837 and CreateForm 1053 under the lock
 - [x] Held-write parity with revnet
-- [ ] Full check, draft PR
+- [x] Full check, draft PR
 
 Review (2026-11-10): Draft PR https://github.com/mejango/juicebox-money/pull/175, five commits on e67410f9. Core 6.2.0; the SDK owns stop, dismiss and following; every journal save runs through `fence(locks, …)`; locks reach every SDK send and sign entry; withLaunchLock awaits its work and its refusal is shown; the held-writes list shows every phase and takes a lost hash. Behavior tests failed first on the old code. Green: lint, ts, source, protocol, schema, transaction, wallet inventories, test:ci 286 files 3554 tests. Open: build:browser, budget and test:browser stopped on ENOSPC (disk full, scratchpad deletion hook-blocked); rerun once space is freed. Not merged.
+
+Rerun (2026-11-10, Node 26, npm ci, caches cleared): every `npm run check` step green except schema:check, where testnet.bendystraw.xyz answered 502 after 15 s (railway endpoint 200; the offline registry check passes). test:ci 286 files 3554 tests; budget passes after all scripts 2702 -> 2706 KiB (measured 2705.0 locally and on CI); test:browser 90 passed after making the pay card's "Payment token" locator exact (the loading skeleton's "Loading payment tokens" label matched it as a substring and failed desktop-1280 under load). Lock-lapse outcomes: SDK 6.3.0 will keep them under a fresh lock (coordinator, approved by jango), so no client-local reconcile here; the per-fence list went to the coordinator.
