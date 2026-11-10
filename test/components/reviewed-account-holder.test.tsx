@@ -120,9 +120,9 @@ vi.mock('@tanstack/react-query', async importOriginal => ({
       case 'directCashOutSell':
         return { data: m.directSell ? 30_000n : undefined, isFetching: false }
       case 'cashOutTokenAllowance':
-        return { data: 0n, refetch: vi.fn() }
+        return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
       case 'cashOutPermit2Allowance':
-        return { data: [0n, 0n, 0n], refetch: vi.fn() }
+        return { data: [0n, 0n, 0n], refetch: vi.fn(async () => ({ data: [0n, 0n, 0n] })) }
       case 'accountingContexts':
         return { data: [{ token: NATIVE, decimals: 18, currency: 61166 }], isLoading: false }
       case 'cashOutDelay':

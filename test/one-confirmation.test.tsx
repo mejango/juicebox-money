@@ -27,6 +27,8 @@ const m = vi.hoisted(() => ({
   hasPermissions: vi.fn(),
   /** The pay entry's allowance the chain shows. */
   payAllowance: 0n,
+  /** The chain shows the cash-out approvals. */
+  cashOutApproved: false,
 }))
 /** The app's query defaults (Providers), for the real prepareUserPay query. */
 const prepareQueries = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } })
@@ -191,10 +193,11 @@ vi.mock('@tanstack/react-query', async importOriginal => {
         return { data: 5n * 10n ** 18n }
       case 'directCashOutSell':
         return { data: 30_000n, isFetching: false }
+      // Read as the panel reads them: cached until it refetches.
       case 'cashOutTokenAllowance':
-        return { data: 0n, refetch: vi.fn() }
+        return actual.useQuery({ ...options, retry: false, queryFn: async () => m.cashOutApproved ? 10n ** 30n : 0n }, displayQueries)
       case 'cashOutPermit2Allowance':
-        return { data: [0n, 0n, 0n], refetch: vi.fn() }
+        return actual.useQuery({ ...options, retry: false, queryFn: async () => m.cashOutApproved ? [10n ** 30n, 2 ** 47, 0] : [0n, 0, 0] }, displayQueries)
       case 'accountingContexts':
         return { data: [{ token: NATIVE, decimals: 18, currency: 61166 }, { token: USDC, decimals: 6, currency: 909516616 }], isLoading: false }
       case 'loans':
@@ -248,6 +251,8 @@ beforeEach(() => {
   m.borrowable.mockResolvedValue({ borrowableNow: 10n ** 18n })
   m.hasPermissions.mockResolvedValue(false)
   m.payAllowance = 0n
+  m.cashOutApproved = false
+  displayQueries.removeQueries({ predicate: query => String(query.queryKey[0]).startsWith('cashOut') })
   wallet.client.readContract.mockImplementation(async ({ functionName, args }) => {
     if (functionName === 'allowance') return args?.length === 3 ? [0n, 0, 0] : 0n
     if (functionName === 'balanceOf') return 10n ** 30n
@@ -351,6 +356,33 @@ describe('one confirmation per action', () => {
     // The token's approval for Permit2, Permit2's for the router, then the sale.
     expect(wallet.writes().map(write => write.functionName).slice(0, 2)).toEqual(['approve', 'approve'])
     expect(progressConfirms()).toEqual([])
+  })
+
+  it('retries a refused pool sale alone once its approvals confirmed', async () => {
+    page = await renderWithReviews(createElement(CashOutPanel, { chainId: 1, projectId: 42 }))
+    await type(input => String(input.getAttribute('aria-label')).startsWith('Amount of'), '2')
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 450)) })
+    const send = wallet.walletClient.sendTransaction.getMockImplementation()!
+    wallet.walletClient.sendTransaction
+      .mockImplementationOnce(send)
+      .mockImplementationOnce(send)
+      .mockImplementationOnce(async () => {
+        // The chain shows both approvals once they confirmed.
+        m.cashOutApproved = true
+        throw new UserRejectedRequestError(new Error('User rejected the request.'))
+      })
+    await act(async () => button('Sell 2 JBT on the pool').click())
+    await confirmEveryReview(() => wallet.walletClient.sendTransaction.mock.results.length >= 3, { each: mine })
+    let again: HTMLButtonElement | undefined
+    for (let attempt = 0; attempt < 100 && !(again = [...document.querySelectorAll<HTMLButtonElement>('[data-tx-confirm] button')].find(item => item.textContent === 'Try again')); attempt++) {
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+    }
+    expect(document.querySelector('[data-tx-confirm]')?.textContent).toContain(REVIEW_STOPPED_LINE)
+
+    await act(async () => again!.click())
+    await confirmEveryReview(() => wallet.writes().length >= 3 && !wallet.awaits(sentHash(3)), { each: mine })
+    // The two approvals once, then the sale (a router call the fake wallet does not name).
+    expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'approve', undefined])
   })
 
   it('wallet-action:one-confirmation loan: one review for the permission and the borrow', async () => {

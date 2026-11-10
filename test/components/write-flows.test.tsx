@@ -120,9 +120,9 @@ vi.mock('@tanstack/react-query', () => ({
         // Well above the treasury's 9,750 so the pool wins even after slippage.
         return { data: mocks.directSell ? 30_000n : undefined, isFetching: false }
       case 'cashOutTokenAllowance':
-        return { data: 0n, refetch: vi.fn() }
+        return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
       case 'cashOutPermit2Allowance':
-        return { data: [0n, 0n, 0n], refetch: vi.fn() }
+        return { data: [0n, 0n, 0n], refetch: vi.fn(async () => ({ data: [0n, 0n, 0n] })) }
       default:
         return { data: undefined, isFetching: false, isError: false }
     }

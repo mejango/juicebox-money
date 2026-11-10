@@ -338,13 +338,16 @@ export function CashOutPanel({
         args: [address!, projectToken!.address, swapDeployment!.universalRouter as Address],
       }),
   })
-  const needsTokenApproval =
-    directSellWins && (tokenAllowance ?? 0n) < cashOutCount
-  const needsRouterApproval =
-    directSellWins &&
-    (!permit2Allowance ||
-      permit2Allowance[0] < cashOutCount ||
-      Number(permit2Allowance[1]) <= Math.floor(Date.now() / 1000) + 1_800)
+  /** The pool sale's approvals these allowances leave to send: the token's for Permit2, then Permit2's for the router. */
+  const approvalsNeeded = (token: bigint | undefined, permit2: typeof permit2Allowance) => ({
+    token: directSellWins && (token ?? 0n) < cashOutCount,
+    router:
+      directSellWins &&
+      (!permit2 ||
+        permit2[0] < cashOutCount ||
+        Number(permit2[1]) <= Math.floor(Date.now() / 1000) + 1_800),
+  })
+  const { token: needsTokenApproval, router: needsRouterApproval } = approvalsNeeded(tokenAllowance, permit2Allowance)
 
   useEffect(() => {
     if (tx.phase === 'done') {
@@ -594,6 +597,9 @@ export function CashOutPanel({
           recipient: reviewedAccount,
           deadline: swapDeadline(tx.isSafe),
         })
+        // The allowances as the chain shows them now: an approval an earlier attempt confirmed is not asked for again.
+        const [tokenNow, permit2Now] = await Promise.all([refetchTokenAllowance(), refetchPermit2Allowance()])
+        const needed = approvalsNeeded(tokenNow.data ?? tokenAllowance, permit2Now.data ?? permit2Allowance)
         // Each approval the sale needs, then the sale: one review and one run, each step simulated where the one before it landed.
         const routerApproval = buildPermit2ApproveTx({
           chainId,
@@ -602,7 +608,7 @@ export function CashOutPanel({
           expiration: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
         })
         const approvals = [
-          ...(needsTokenApproval ? [reviewedCall(
+          ...(needed.token ? [reviewedCall(
             buildTokenApproval({
               chainId,
               token: projectToken.address,
@@ -611,7 +617,7 @@ export function CashOutPanel({
             }),
             { intent: approvalIntent(cashOutKey, { step: 'token-approval', token: projectToken.address, spender: swapDeployment.permit2 }) },
           )] : []),
-          ...(needsRouterApproval ? [reviewedCall(
+          ...(needed.router ? [reviewedCall(
             {
               ...routerApproval,
               args: routerApproval.args as unknown as readonly unknown[],
