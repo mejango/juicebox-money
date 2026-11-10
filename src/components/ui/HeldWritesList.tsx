@@ -9,6 +9,11 @@ import { SUPPORTED_CHAINS } from '@/lib/chains'
 import { publicClient } from '@/lib/wallet-core'
 import { writeHolds } from '@/lib/write-holds'
 
+/** A pasted hash read from the chain as another transaction. */
+export const HELD_HASH_MISMATCH_LINE = 'This hash is not that transaction. Check it in your wallet.'
+/** A pasted hash the chain can't show yet (RPC down, or not indexed): nothing proves it wrong. */
+export const HELD_HASH_UNVERIFIED_LINE = "Couldn't verify this hash yet. Try again in a minute."
+
 /** The SDK's held-write notice for each supported chain (HeldWritesNotice loads it). */
 export default function HeldWritesList({ account }: { account: Address }) {
   return (
@@ -53,8 +58,10 @@ function HeldHashInput({ item, account, chainId, client }: { item: HeldWriteItem
     setError(null)
     try {
       const state = await handle.attachHash(client, value)
-      if (state.status === 'held-no-hash') setError('This hash is not that transaction. Check it in your wallet.')
-      else setAttached(true)
+      if (state.status !== 'held-no-hash') return setAttached(true)
+      // The hold refuses both a hash it can't read and another transaction: only a read one is a mismatch.
+      const read = await client.getTransaction({ hash: value }).then(() => true, () => false)
+      setError(read ? HELD_HASH_MISMATCH_LINE : HELD_HASH_UNVERIFIED_LINE)
     } finally { setBusy(false) }
   }
   if (attached) return null

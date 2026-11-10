@@ -17,7 +17,7 @@ const client = vi.hoisted(() => ({
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => client }))
 vi.mock('@/lib/chains', async original => ({ ...(await original<typeof import('@/lib/chains')>()), SUPPORTED_CHAINS: [{ id: 10 }] }))
 
-import HeldWritesList from '@/components/ui/HeldWritesList'
+import HeldWritesList, { HELD_HASH_MISMATCH_LINE, HELD_HASH_UNVERIFIED_LINE } from '@/components/ui/HeldWritesList'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { writeHolds } from '@/lib/write-holds'
 
@@ -81,8 +81,19 @@ describe('writes held outside a flow', () => {
     await act(async () => { check().click() })
     expect(host.textContent).toContain('Enter a complete transaction hash.')
     const hash = `0x${'ef'.repeat(32)}`
-    client.getTransaction.mockImplementation(async () => ({ hash, from: ACCOUNT, to: call.to, input: call.data, value: 0n, nonce: 3, blockNumber: 101n, chainId: 10 }))
+    const settle = async () => { for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) }) }
+    // Not readable yet (RPC down, or not indexed): it can't be verified, which proves no mismatch.
     await type(hash)
+    await act(async () => { check().click() })
+    await settle()
+    expect(host.textContent).toContain(HELD_HASH_UNVERIFIED_LINE)
+    expect(host.textContent).not.toContain(HELD_HASH_MISMATCH_LINE)
+    // Read, and another transaction: that is a mismatch.
+    client.getTransaction.mockImplementation(async () => ({ hash, from: ACCOUNT, to: call.to, input: '0xdead', value: 0n, nonce: 3, blockNumber: 101n, chainId: 10 }))
+    await act(async () => { check().click() })
+    await settle()
+    expect(host.textContent).toContain(HELD_HASH_MISMATCH_LINE)
+    client.getTransaction.mockImplementation(async () => ({ hash, from: ACCOUNT, to: call.to, input: call.data, value: 0n, nonce: 3, blockNumber: 101n, chainId: 10 }))
     await act(async () => { check().click() })
     for (let i = 0; i < 5; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
     expect(hold.peek()).toMatchObject({ hash })
