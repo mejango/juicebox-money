@@ -948,9 +948,9 @@ function PermissionsAcrossChains({
                 {grant.wildcard ? (
                   <span
                     className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700"
-                    title={`Granted on project 0 — the wildcard scope. This applies to EVERY project ${grant.account} owns, not just this one.`}
+                    title={`Granted for every project ${grant.account} owns, not just this one.`}
                   >
-                    All projects
+                    Every project this owner owns
                   </span>
                 ) : null}
                 {grant.isRevnetOperator ? (

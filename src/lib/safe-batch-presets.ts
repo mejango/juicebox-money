@@ -5,6 +5,8 @@ import {
   USDC_ADDRESSES,
   jbBuybackHookAbi,
   jbBuybackHookRegistryAbi,
+  jbControllerAbi,
+  jbSplitsAbi,
   jbV6ContractAddress,
   jbRouterTerminalRegistryAbi,
   type JBChainId,
@@ -18,6 +20,7 @@ import {
 } from 'viem'
 import {
   buildStep,
+  RESERVED_TOKEN_SPLIT_GROUP_ID,
   stepKey,
   type BatchStep,
   type BatchStepKind,
@@ -53,15 +56,13 @@ export const SAFE_BATCH_PRESETS: readonly SafeBatchPreset[] = [
     id: 'buyback-2-0-0-gateway',
     title: 'Move to buyback 2.0.0 + gateway',
     description:
-      "Points the project at the current buyback hook and router gateway, and opens its pool on the new hook at the old pool's price.",
-    steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
+      "Points the project at the current buyback hook and router gateway, and opens its pool on the new hook at the old pool's price. A reserved split still on the old market maker hook moves to the current one.",
+    steps: ['setHookFor', 'setPoolFor', 'setTerminalFor', 'setReservedSplitHook'],
   },
 ]
 
-/** `JBBuybackHook._requireValidTwapWindow`: 5 minutes to 2 days. */
-export const MIN_TWAP_WINDOW = 300n
 /** `JBBuybackHook.MAX_TWAP_WINDOW`, also the deployer's default registration window. */
-export const MAX_TWAP_WINDOW = 172_800n
+const MAX_TWAP_WINDOW = 172_800n
 /**
  * The window every migrated pool is registered with, whatever the old hook held.
  * Must match revnet-money's preset: Safe co-signers on either client only meet on identical calldata.
@@ -83,14 +84,15 @@ const NEW_POOL_NOTE_START = "Starts at the old pool's average price over"
 export function newPoolNote(observed: number): string {
   return `${NEW_POOL_NOTE_START} ${windowLabel(observed)} with no TWAP history; LPs move their own liquidity.`
 }
-/** An initialization note without its window note, for a step whose window was edited. */
-export function newPoolNoteOf(note: string | undefined): string | undefined {
-  const start = note?.indexOf(NEW_POOL_NOTE_START) ?? -1
-  return start < 0 ? undefined : note!.slice(start)
-}
 const NO_POOL_PRICE_NOTE = 'has no price to carry; set it up on the new hook directly.'
 export const NO_POOL_HISTORY_NOTE = "pool: the old pool's price history can't be read; not carried."
 export const NEW_POOL_PRICE_OFF_NOTE = 'pool: the new pool is priced more than 1% off the old one; not registered.'
+
+/**
+ * The LP split hook 1.0.0 clone, at one address on every chain. A reserved split still on it
+ * moves to `JBP6FeeLPSplitHook`. Must match revnet-money's preset.
+ */
+const OLD_LP_SPLIT_HOOK = '0x22988374af49507fec1ee78811fBc47d10D5e639'
 
 export type PresetChainResolution = {
   status: 'unavailable' | 'nothing' | 'ready'
@@ -108,6 +110,49 @@ function registryAddress(
     | Partial<Record<JBChainId, Address>>
     | undefined
   return deployments?.[chainId] ?? null
+}
+
+/**
+ * The current stage's reserved split hook, when the whole split goes to the old market maker
+ * hook and the current one is deployed here. Any other split shape is left alone.
+ */
+async function reservedSplitHookMove(
+  client: PublicClient,
+  chainId: JBChainId,
+  projectId: bigint,
+): Promise<BatchStepValues | null> {
+  const book = jbV6ContractAddress as unknown as Record<string, Partial<Record<JBChainId, Address>> | undefined>
+  const controller = book.JBController?.[chainId]
+  const splitsContract = book.JBSplits?.[chainId]
+  const hook = book.JBP6FeeLPSplitHook?.[chainId]
+  if (!controller || !splitsContract || !hook) return null
+  const [{ id }] = await client.readContract({
+    address: controller,
+    abi: jbControllerAbi,
+    functionName: 'currentRulesetOf',
+    args: [projectId],
+  })
+  const splits = await client.readContract({
+    address: splitsContract,
+    abi: jbSplitsAbi,
+    functionName: 'splitsOf',
+    args: [projectId, BigInt(id), RESERVED_TOKEN_SPLIT_GROUP_ID],
+  })
+  const [split] = splits
+  if (
+    splits.length !== 1 ||
+    !split ||
+    split.percent !== 1_000_000_000 ||
+    split.projectId !== 0n ||
+    split.preferAddToBalance ||
+    Number(split.lockedUntil) !== 0 ||
+    !isAddressEqual(split.beneficiary, zeroAddress) ||
+    !isAddressEqual(split.hook, OLD_LP_SPLIT_HOOK)
+  ) {
+    return null
+  }
+  if (!(await hasCode(client, hook))) return null
+  return { rulesetId: BigInt(id), hook: getAddress(hook) }
 }
 
 /** True when the chain has buyback/router infrastructure a preset can target. */
@@ -371,6 +416,11 @@ export async function resolvePreset(
     )
   }
 
+  if (preset.steps.includes('setReservedSplitHook')) {
+    const values = await reservedSplitHookMove(client, chainId, pid)
+    if (values) steps.push(buildStep({ kind: 'setReservedSplitHook', chainId, projectId, values }))
+  }
+
   if (!steps.length) {
     return {
       status: 'nothing',
@@ -447,6 +497,8 @@ export async function resolveMirrorValues(
     const { values } = carriedPoolValues(pool)
     return { values: { ...values, twapWindow: step.values.twapWindow } }
   }
+  // Its ruleset id is this chain's; the preset reads each chain's own.
+  if (step.kind === 'setReservedSplitHook') return { skip: MIGRATION_MIRROR_LINE }
   if (step.kind === 'initializePoolFor') {
     return { skip: `The initial price is chain-specific. Add it on ${name} directly.` }
   }

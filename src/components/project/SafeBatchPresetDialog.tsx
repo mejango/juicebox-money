@@ -8,18 +8,14 @@ import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { ErrorNote } from '@/components/ui/TxError'
 import { clientFor } from '@/lib/authority'
-import { buildStep, type BatchStep, type BatchStepRef } from '@/lib/safe-batch'
+import type { BatchStep, BatchStepRef } from '@/lib/safe-batch'
 import {
-  MAX_TWAP_WINDOW,
-  MIN_TWAP_WINDOW,
-  newPoolNoteOf,
   resolvePreset,
   SAFE_BATCH_PRESETS,
   type PresetChainResolution,
   type SafeBatchPreset,
 } from '@/lib/safe-batch-presets'
 
-const isPoolStep = (step: BatchStep) => step.kind === 'setPoolFor' || step.kind === 'initializePoolFor'
 import { shortError } from '@/lib/errors'
 import { chainName } from '@/lib/urn'
 
@@ -27,7 +23,7 @@ type ChainPlan = PresetChainResolution & { chainId: JBChainId; projectId: number
 
 /**
  * Presets resolved per chain from live reads: a chain checklist, the steps
- * each chain still needs, and an editable TWAP window per carried pool.
+ * each chain still needs.
  * "Add N steps to batch" queues them; nothing here submits.
  */
 export function SafeBatchPresetDialog({ onClose }: { onClose: () => void }) {
@@ -105,7 +101,6 @@ function PresetPlan({
   })
   const plans = query.data ?? []
   const [deselected, setDeselected] = useState<Set<number>>(() => new Set())
-  const [windows, setWindows] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
   const selectedPlans = plans.filter(
@@ -113,42 +108,7 @@ function PresetPlan({
   )
   const total = selectedPlans.reduce((sum, plan) => sum + plan.steps.length, 0)
 
-  const finalSteps = (): BatchStep[] => {
-    const steps: BatchStep[] = []
-    for (const plan of selectedPlans) {
-      for (const step of plan.steps) {
-        const edited = windows[step.id]
-        if (!isPoolStep(step) || edited === undefined) {
-          steps.push(step)
-          continue
-        }
-        if (!/^\d+$/.test(edited)) {
-          throw new Error(`${chainName(plan.chainId)}: enter the TWAP window in whole seconds.`)
-        }
-        const window = BigInt(edited)
-        if (window < MIN_TWAP_WINDOW || window > MAX_TWAP_WINDOW) {
-          throw new Error(
-            `${chainName(plan.chainId)}: the hook only accepts a TWAP window between ${MIN_TWAP_WINDOW} and ${MAX_TWAP_WINDOW} seconds.`,
-          )
-        }
-        steps.push(
-          buildStep({
-            kind: step.kind,
-            chainId: step.chainId,
-            projectId: step.projectId,
-            values: { ...step.values, twapWindow: window },
-            note:
-              window === step.values.twapWindow
-                ? step.note
-                : step.kind === 'initializePoolFor'
-                  ? newPoolNoteOf(step.note)
-                  : undefined,
-          }),
-        )
-      }
-    }
-    return steps
-  }
+  const finalSteps = () => selectedPlans.flatMap(plan => plan.steps)
 
   const add = () => {
     setError(null)
@@ -216,24 +176,6 @@ function PresetPlan({
                         {step.detail}
                         {step.note ? (
                           <span className="block text-amber-700">{step.note}</span>
-                        ) : null}
-                        {isPoolStep(step) ? (
-                          <label className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="text-smoke-500">TWAP window (seconds)</span>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              aria-label={`TWAP window on ${chainName(plan.chainId)} for ${step.detail}`}
-                              value={windows[step.id] ?? String(step.values.twapWindow)}
-                              onChange={event =>
-                                setWindows(current => ({
-                                  ...current,
-                                  [step.id]: event.target.value.replace(/[^0-9]/g, ''),
-                                }))
-                              }
-                              className="input-well min-h-[32px] w-28 px-2 text-xs tabular-nums"
-                            />
-                          </label>
                         ) : null}
                       </li>
                     ))}

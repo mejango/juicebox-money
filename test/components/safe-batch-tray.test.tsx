@@ -388,8 +388,8 @@ describe('Safe batch tray', () => {
     expect(dialog?.textContent).toContain('Move to buyback 2.0.0 + gateway')
     expect(dialog?.textContent).toContain('Not deployed on Base yet.')
     expect(dialog?.textContent).toContain('30 minutes will be stored')
-    const window_ = dialog?.querySelector<HTMLInputElement>('input[aria-label^="TWAP window on Ethereum"]')
-    expect(window_?.value).toBe('1800')
+    // The preset's 30 minute TWAP window is fixed: nothing in the dialog edits it.
+    expect(dialog?.querySelector('input[aria-label^="TWAP window"]')).toBeNull()
     const checkboxes = [...(dialog?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? [])]
     expect(checkboxes.map(box => [box.checked, box.disabled])).toEqual([
       [true, false],

@@ -1,4 +1,4 @@
-import { zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
+import { getAddress, zeroAddress, type Address, type Hex, type PublicClient } from 'viem'
 import { describe, expect, it, vi } from 'vitest'
 import { uniswapV4PoolId, uniswapV4PoolStateSlot, uniswapV4SqrtPriceX96AtTick } from '@bananapus/nana-sdk-core/v6'
 import { migratedPoolKey, type V4PoolKey } from '@/lib/buyback-pool-migration'
@@ -55,7 +55,10 @@ function chain({
   prices = {},
   coverage = 1_800,
   meanTick = 0,
+  reservedSplits = [],
 }: {
+  /** The current stage's reserved splits. */
+  reservedSplits?: readonly object[]
   code?: Address[]
   hook?: Address
   terminal?: Address
@@ -113,6 +116,8 @@ function chain({
           if (period! > coverage) throw Object.assign(new Error('reverted'), { name: 'ContractFunctionRevertedError' })
           return [[0n, BigInt(meanTick * period!)], [0n, 0n]]
         }
+        if (functionName === 'currentRulesetOf') return [{ id: 1781587898 }, {}]
+        if (functionName === 'splitsOf') return reservedSplits
         throw new Error(`Unexpected read ${functionName}`)
       },
     ),
@@ -136,7 +141,7 @@ describe('buyback 2.0.0 + gateway preset', () => {
     expect(PRESET).toMatchObject({
       id: 'buyback-2-0-0-gateway',
       title: 'Move to buyback 2.0.0 + gateway',
-      steps: ['setHookFor', 'setPoolFor', 'setTerminalFor'],
+      steps: ['setHookFor', 'setPoolFor', 'setTerminalFor', 'setReservedSplitHook'],
     })
     expect(presetInfraAvailable(1)).toBe(true)
     expect(presetInfraAvailable(11155111)).toBe(true)
@@ -162,6 +167,53 @@ describe('buyback 2.0.0 + gateway preset', () => {
     expect(client.getCode).toHaveBeenCalledWith({ address: targets.terminal })
     expect(client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isHookAllowed', args: [targets.hook] }))
     expect(client.readContract).toHaveBeenCalledWith(expect.objectContaining({ functionName: 'isTerminalAllowed', args: [targets.terminal] }))
+  })
+
+  const OLD_LP_SPLIT_HOOK = '0x22988374af49507fec1ee78811fBc47d10D5e639' as Address
+  const NEW_LP_SPLIT_HOOK = getAddress('0xef8993f50363461007bed2f54e98bbef9854148a')
+  const wholeSplitTo = (hook: Address, overrides: object = {}) => ({
+    percent: 1_000_000_000,
+    projectId: 0n,
+    beneficiary: zeroAddress,
+    preferAddToBalance: false,
+    lockedUntil: 0,
+    hook,
+    ...overrides,
+  })
+  const settled = (chainId: number) => {
+    const targets = rolloutTargets(chainId)!
+    return { hook: targets.hook, terminal: targets.terminal, code: [targets.hook, targets.terminal, NEW_LP_SPLIT_HOOK] }
+  }
+
+  it('wallet-action:submit-a-safe-operator-batch moves a reserved split from the old market maker hook to the current one', async () => {
+    const client = chain({ ...settled(84532), reservedSplits: [wholeSplitTo(OLD_LP_SPLIT_HOOK)] })
+    const resolved = await resolvePreset(PRESET, { chainId: 84532, projectId: 4, client })
+    expect(resolved.status).toBe('ready')
+    expect(resolved.steps.map(step => [step.kind, step.label, step.contractName])).toEqual([
+      ['setReservedSplitHook', 'Set reserved split hook', 'JBController'],
+    ])
+    expect(resolved.steps[0].values).toEqual({ rulesetId: 1781587898n, hook: NEW_LP_SPLIT_HOOK })
+    // Pinned in revnet-money's preset test too: co-signers on either client must sign identical calldata.
+    expect(resolved.steps[0].data).toMatchInlineSnapshot(`"0x8a36dffd0000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000006a30dfba000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000003b9aca000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ef8993f50363461007bed2f54e98bbef9854148a"`)
+  })
+
+  it.each([
+    ['is already on the current hook', [wholeSplitTo(NEW_LP_SPLIT_HOOK)]],
+    ['has no reserved split', []],
+    ['shares the split with another recipient', [
+      wholeSplitTo(OLD_LP_SPLIT_HOOK, { percent: 500_000_000 }),
+      wholeSplitTo(zeroAddress, { percent: 500_000_000, beneficiary: OLD_TERMINAL }),
+    ]],
+    ['locked the split', [wholeSplitTo(OLD_LP_SPLIT_HOOK, { lockedUntil: 1 })]],
+  ])('leaves the reserved split alone when the project %s', async (_name, reservedSplits) => {
+    const client = chain({ ...settled(84532), reservedSplits })
+    expect(await resolvePreset(PRESET, { chainId: 84532, projectId: 4, client })).toMatchObject({ status: 'nothing' })
+  })
+
+  it('leaves the reserved split alone where the current hook has no code', async () => {
+    const { hook, terminal } = settled(84532)
+    const client = chain({ hook, terminal, code: [hook, terminal], reservedSplits: [wholeSplitTo(OLD_LP_SPLIT_HOOK)] })
+    expect(await resolvePreset(PRESET, { chainId: 84532, projectId: 4, client })).toMatchObject({ status: 'nothing' })
   })
 
   it('requires both execution records and target bytecode before enabling migration', async () => {

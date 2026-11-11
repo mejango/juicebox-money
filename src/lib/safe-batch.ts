@@ -17,6 +17,7 @@ import {
   encodeFunctionData,
   getAddress,
   isAddress,
+  zeroAddress,
   type Abi,
   type Address,
   type Hex,
@@ -37,6 +38,7 @@ export type BatchStepKind =
   | 'setTwapWindowOf'
   | 'initializePoolFor'
   | 'setOperatorOf'
+  | 'setReservedSplitHook'
   | 'power'
 
 type BatchStepValue =
@@ -89,6 +91,7 @@ type StepKindSpec = {
     | 'JBBuybackHookRegistry'
     | 'JBRouterTerminalRegistry'
     | 'REVOwner'
+    | 'JBController'
     | 'values.hook'
     | 'values.target'
   /** True when the values are chain-specific and must be re-resolved before mirroring. */
@@ -223,6 +226,9 @@ function powerFieldValues(values: BatchStepValues): ResolvedValues {
   }
   return resolved
 }
+
+/** `JBSplitGroupIds.RESERVED_TOKENS`. */
+export const RESERVED_TOKEN_SPLIT_GROUP_ID = 1n
 
 export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
   setHookFor: {
@@ -361,6 +367,43 @@ export const STEP_KINDS: Record<BatchStepKind, StepKindSpec> = {
       requireAddress(values, 'operator'),
     ],
     describe: values => `operator ${truncateAddress(String(values.operator))}`,
+  },
+  // The stage's whole reserved split goes to one hook: the only shape this step writes.
+  setReservedSplitHook: {
+    kind: 'setReservedSplitHook',
+    label: 'Set reserved split hook',
+    contract: 'JBController',
+    perChain: true,
+    parse: values => ({
+      rulesetId: requireUint(values, 'rulesetId'),
+      hook: requireAddress(values, 'hook'),
+    }),
+    target: (_values, chainId) => {
+      const to = addressBook('JBController', chainId)
+      return to
+        ? { to, abi: jbControllerAbi, functionName: 'setSplitGroupsOf', contractName: 'JBController' }
+        : null
+    },
+    buildArgs: (values, projectId) => [
+      projectId,
+      requireUint(values, 'rulesetId'),
+      [
+        {
+          groupId: RESERVED_TOKEN_SPLIT_GROUP_ID,
+          splits: [
+            {
+              percent: 1_000_000_000,
+              projectId: 0n,
+              beneficiary: zeroAddress,
+              preferAddToBalance: false,
+              lockedUntil: 0,
+              hook: requireAddress(values, 'hook'),
+            },
+          ],
+        },
+      ],
+    ],
+    describe: values => `100% to hook ${truncateAddress(String(values.hook))}`,
   },
   power: {
     kind: 'power',

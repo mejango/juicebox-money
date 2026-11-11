@@ -170,6 +170,7 @@ describe('Safe batch steps', () => {
       'setTwapWindowOf',
       'initializePoolFor',
       'setOperatorOf',
+      'setReservedSplitHook',
       'power',
     ])
   })

@@ -213,6 +213,19 @@ export function authorityCallForStep(
         label,
       })
       break
+    case 'setReservedSplitHook':
+      call = buildProjectPowerAuthorityCall({
+        chainId,
+        authority,
+        target: step.to,
+        abi: step.abi,
+        functionName: step.functionName,
+        args: step.args,
+        contractName: step.contractName,
+        gas: 600_000n,
+        label,
+      })
+      break
     case 'power':
       call = buildProjectPowerAuthorityCall({
         chainId,
