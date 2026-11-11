@@ -616,7 +616,7 @@ export function StageRulesEditor({
               {stage.autoIssuances.map((row) => (
                 <div
                   key={row.id}
-                  className="mt-2 rounded-lg border border-smoke-200 bg-smoke-75 p-3"
+                  className="mt-2 rounded-lg border border-smoke-200 bg-white p-3"
                 >
                   <div className="grid gap-3 sm:grid-cols-[10rem_minmax(0,1fr)]">
                     <label>

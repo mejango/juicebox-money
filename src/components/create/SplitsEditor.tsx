@@ -227,7 +227,7 @@ export function SplitsEditor({
       {splits.map(split => (
         <div
           key={split.id}
-          className="mt-2 rounded-lg border border-smoke-200 bg-smoke-75 p-2.5"
+          className="mt-2 rounded-lg border border-smoke-200 bg-white p-2.5"
         >
           <div className="flex items-start gap-2">
             <div className="relative w-20 shrink-0">
@@ -530,7 +530,7 @@ export function SplitsEditor({
                   >
                     {split.perChainOpen
                       ? 'Same on every chain'
-                      : `Set per chain — if this ${split.kind === 'address' ? 'address' : 'project id'} differs by chain`}
+                      : 'Set per chain'}
                   </button>
                   {split.perChainOpen ? (
                     <div className="mt-2 space-y-2">
