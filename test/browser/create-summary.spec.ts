@@ -74,6 +74,8 @@ for (const width of [320, 1280]) {
         label: label.textContent,
         labelHeight: label.getBoundingClientRect().height,
         lineHeight: parseFloat(getComputedStyle(label).lineHeight),
+        labelBottom: label.getBoundingClientRect().bottom,
+        valueTop: value.getBoundingClientRect().top,
         valueX: value.getBoundingClientRect().x,
         valueAlign: getComputedStyle(value).textAlign,
       }
@@ -82,6 +84,8 @@ for (const width of [320, 1280]) {
     for (const column of columns) {
       expect(column.labelHeight, column.label ?? '').toBeLessThanOrEqual(column.lineHeight + 1)
       expect(column.valueX, column.label ?? '').toBeCloseTo(columns[0].valueX, 0)
+      // Each key is a header over its value.
+      expect(column.valueTop, column.label ?? '').toBeGreaterThanOrEqual(column.labelBottom - 1)
       expect(['left', 'start']).toContain(column.valueAlign)
     }
     const fees = rows.locator('details')

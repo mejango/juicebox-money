@@ -46,27 +46,20 @@
     @apply rounded-xl border border-smoke-200 bg-white;
   }
 
+  /* Each key is a small header over its value, at every width. */
   .launch-summary {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr);
-    align-items: start;
-    gap: 0.625rem 1rem;
-  }
-
-  .launch-summary > div {
-    display: contents;
-  }
-
-  .launch-summary > div > dt {
-    white-space: nowrap;
+    gap: 0.875rem;
   }
 
   .launch-summary > div > dd {
     min-width: 0;
+    margin-top: 0.125rem;
     overflow-wrap: anywhere;
   }
 
   .launch-summary dt {
+    font-size: 0.75rem;
     font-weight: 400;
   }
 
@@ -75,7 +68,7 @@
   }
 
   .launch-summary summary {
-    list-style-position: outside;
+    list-style-position: inside;
   }
 
   /* --- Modals: one native <dialog> chrome for every overlay ---
