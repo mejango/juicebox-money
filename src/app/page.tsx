@@ -486,12 +486,10 @@ function HeroColumn() {
       </div>
       <div className="mx-auto w-full shrink-0 [container-type:inline-size]">
         {/* Phones scale the type to hold one line. Wider layouts can put the hero in a
-            narrow column, where the nowrap segments allow "Fund your / thing." only. */}
+            narrow column, where the nowrap segments allow "Fund your / thing" only. */}
         <h1 className="whitespace-nowrap font-agrandir-wide text-[min(10.5cqw,2.25rem)] font-bold leading-[1.05] sm:whitespace-normal sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
           <span className="whitespace-nowrap">Fund your</span>{' '}
-          <span className="whitespace-nowrap">
-            thing<span className="text-split-500">.</span>
-          </span>
+          <span className="whitespace-nowrap">thing</span>
         </h1>
         {/* Phones hold the first clause on one line and the rest on the next. */}
         <p className="mx-auto mt-5 max-w-xl text-[min(4.8cqw,1rem)] leading-relaxed text-smoke-700 sm:text-balance sm:text-base xl:mt-2">
