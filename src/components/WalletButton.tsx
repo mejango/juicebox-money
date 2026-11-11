@@ -135,7 +135,7 @@ export function WalletButton() {
             onMouseEnter={preloadParaHost}
             onFocus={preloadParaHost}
             onTouchStart={preloadParaHost}
-            className="btn-primary min-h-[44px] whitespace-nowrap px-5 text-sm"
+            className="btn-secondary border-bluebs-600 min-h-[44px] whitespace-nowrap px-5 text-sm"
           >
             Sign in
           </button>
