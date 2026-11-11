@@ -888,7 +888,7 @@ export function CreateForm() {
     bridge !== "native" ||
     selected.length < 2 ||
     nativeBridgeViable(selected, accepts, customOn);
-  // A "Fund market" recipient encodes the Uniswap V4 LP split hook, which is not deployed
+  // A "Market maker" recipient encodes the Uniswap V4 LP split hook, which is not deployed
   // on every chain the create flow offers. A reserved split at a codeless address reverts
   // split processing, so the launch is blocked rather than shipped broken on that chain.
   const missingLpHookChains = chainsWithoutLpSplitHook(selected);
@@ -909,7 +909,7 @@ export function CreateForm() {
       )
     );
   // The LP hook only takes reserved tokens (it reverts for payouts and shop sales), so a
-  // Fund market row anywhere else, e.g. from an older draft, blocks the launch.
+  // Market maker row anywhere else, e.g. from an older draft, blocks the launch.
   const isFundMarketRow = (split: DraftSplit) =>
     split.kind === "hook" && split.hookKind === "fundmarket";
   const fundMarketPlacedOk =
@@ -998,8 +998,8 @@ export function CreateForm() {
       : `Set the ${flavor === "revnet" ? "operator" : "owner"} on each chain, or leave empty for your wallet.`, 0],
     [tickerOk, "Ticker: 1–11 letters or numbers.", 1],
     [bridgeOk, "Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.", 0],
-    [lpHookOk, `Fund market is unavailable on ${missingLpHookChains.map(chainName).join(", ")}. Remove its recipients or change chains.`, 0],
-    [fundMarketPlacedOk, "Fund market accepts reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
+    [lpHookOk, `Market maker is unavailable on ${missingLpHookChains.map(chainName).join(", ")}. Remove its recipients or change chains.`, 0],
+    [fundMarketPlacedOk, "Market maker accepts reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
     [stickyOk, stickyBlock ?? "Checking Sticky recipients on every selected chain…", items.some(item => item.splits.some(isStickyRow)) ? storeStep : 2],
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],

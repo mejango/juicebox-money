@@ -21,7 +21,7 @@ import { StickyTokenStatus } from './StickyTokenStatus'
  * Shared split-row editor for reserved tokens, routed payouts, and item
  * sale splits. Each row picks a recipient type first (website/ parity):
  * an address (ENS names resolve), a project (which also needs a token
- * beneficiary), or a split hook: the Fund market, Sticky holders (a Sticky
+ * beneficiary), or a split hook: the Market maker, Sticky holders (a Sticky
  * token plus a holder group), or a custom hook. On multichain launches every row can override its recipient
  * per chain, in case the same address doesn't represent the entity
  * everywhere. Percentages are out of 100 of the bucket being split; any
@@ -52,7 +52,7 @@ export type DraftSplit = {
   perChainAmount: Record<number, string>
   perChainOpen: boolean
   /**
-   * 'hook' kind: the current Fund market LP hook, a superseded generation of it
+   * 'hook' kind: the current Market maker LP hook, a superseded generation of it
    * (recognized read-only — `hookAddress` is re-encoded verbatim so an existing
    * split is never silently migrated), the chain's Sticky distributor, or a
    * custom hook address.
@@ -188,7 +188,7 @@ export function SplitsEditor({
   allocatedLabel?: string
   /** Offer split-hook recipients. */
   allowHook?: boolean
-  /** Offer the Fund market LP hook preset (reserved-token splits). */
+  /** Offer the Market maker LP hook preset (reserved-token splits). */
   allowFundMarket?: boolean
   /** Offer Pay vs Add-to-balance routing on project rows (payouts). */
   showRouting?: boolean
@@ -269,7 +269,7 @@ export function SplitsEditor({
                         perChain: {},
                         perChainBeneficiary: {},
                         // A new hook row starts on the hook this editor offers first;
-                        // the Fund market preset encodes the LP hook whatever else is set.
+                        // the Market maker preset encodes the LP hook whatever else is set.
                         ...(kind === 'hook'
                           ? {
                               hookKind:
@@ -312,12 +312,12 @@ export function SplitsEditor({
                     >
                       {allowFundMarket || split.hookKind === 'fundmarket' ? (
                         <option value="fundmarket" disabled={!fundMarketOk}>
-                          Fund market
+                          Market maker
                         </option>
                       ) : null}
                       {split.hookKind === 'fundmarket-legacy' ? (
                         <option value="fundmarket-legacy">
-                          Fund market (older version)
+                          Market maker (older version)
                         </option>
                       ) : null}
                       {stickyOffered || split.hookKind === 'sticky' ? (
@@ -377,12 +377,12 @@ export function SplitsEditor({
                   <p className="mt-2 rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
                     This recipient points at an older version of the market
                     hook ({truncateAddress(split.hookAddress)}). It is kept as
-                    is; pick &ldquo;Fund market&rdquo; to move it to the current
+                    is; pick &ldquo;Market maker&rdquo; to move it to the current
                     one.
                   </p>
                 ) : split.hookKind === 'fundmarket' && !allowFundMarket ? (
                   <p role="alert" className="mt-2 text-[11px] leading-relaxed text-error-600">
-                    The Fund market only takes reserved tokens. Pick another hook.
+                    The Market maker only takes reserved tokens. Pick another hook.
                   </p>
                 ) : split.hookKind === 'fundmarket' ? (
                   <div className="mt-2">

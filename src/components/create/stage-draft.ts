@@ -410,7 +410,7 @@ function recipientLabel(row: DraftSplit, chainIds: readonly number[]): string {
           ? "Sticky holders"
           : row.hookKind === "custom"
             ? `Hook ${addressLabel(row.hookAddress)}`
-            : "Fund market";
+            : "Market maker";
   return chainIds.some((id) => row.perChain[id]?.trim())
     ? `${base} (varies by chain)`
     : base;

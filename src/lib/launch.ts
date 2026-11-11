@@ -134,7 +134,7 @@ export type StoreItem = {
 }
 
 /**
- * The standard Uniswap V4 LP split hook instance ("Fund market"), from the SDK's
+ * The standard Uniswap V4 LP split hook instance ("Market maker"), from the SDK's
  * generated deployment table: an initialized clone (10% of LP fees to project 1).
  * `JBUniswapV4LPSplitHook` is the uninitialized implementation, which anyone can
  * initialize, so a split must never name it. The same address on every chain that
@@ -194,7 +194,7 @@ export function requireLpSplitHook(chainId: number): Address {
   const hook = lpSplitHookOn(chainId)
   if (!hook) {
     throw new Error(
-      `${chainName(chainId)} has no market split hook deployed — remove the "Fund market" recipient or deselect that chain.`,
+      `${chainName(chainId)} has no market split hook deployed — remove the "Market maker" recipient or deselect that chain.`,
     )
   }
   return hook

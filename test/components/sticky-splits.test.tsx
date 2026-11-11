@@ -242,17 +242,17 @@ describe('Sticky split editor', () => {
     expect(html).toContain('Sticky holders stuck 4 to 52 weeks → 0x5ca1…5ca1')
   })
 
-  it('offers Sticky next to the Fund market on reserved splits that can pay it', () => {
+  it('offers Sticky next to the Market maker on reserved splits that can pay it', () => {
     const html = render({ splits: [hookRow], allowHook: true, allowFundMarket: true, allowSticky: true })
-    expect(hookOptions(html)).toContain('Fund market')
+    expect(hookOptions(html)).toContain('Market maker')
     expect(hookOptions(html)).toContain('<option value="sticky">Sticky</option>')
     expect(hookOptions(html)).toContain('Custom')
   })
 
-  it('offers the Sticky hook on payouts, which have no Fund market', () => {
+  it('offers the Sticky hook on payouts, which have no Market maker', () => {
     const html = render({ splits: [hookRow], allowHook: true, allowSticky: true })
     expect(hookOptions(html)).toContain('<option value="sticky">Sticky</option>')
-    expect(hookOptions(html)).not.toContain('Fund market')
+    expect(hookOptions(html)).not.toContain('Market maker')
   })
 
   it('hides Sticky on reserved splits without an ERC-20, and keeps an existing row with the reason', () => {
@@ -271,9 +271,9 @@ describe('Sticky split editor', () => {
     expect(render({ allowSticky: false, splits: [newDraftSplit()] })).not.toContain('value="sticky"')
   })
 
-  it('flags a Fund market row outside reserved splits', () => {
+  it('flags a Market maker row outside reserved splits', () => {
     const html = render({ allowHook: true, allowSticky: true, splits: [{ ...hookRow, hookKind: 'fundmarket' }] })
-    expect(html).toContain('The Fund market only takes reserved tokens.')
+    expect(html).toContain('The Market maker only takes reserved tokens.')
   })
 })
 

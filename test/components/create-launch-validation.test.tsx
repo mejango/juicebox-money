@@ -311,7 +311,7 @@ describe('multichain launch validation', () => {
     const root = await mountDraft(draft('project', true))
     expect(launchButton(root).props.disabled).toBe(true)
     const requirements = launchSection(root).findByProps({ 'aria-label': 'Launch requirements' })
-    expect(textOf(requirements)).toContain('Fund market is unavailable on Optimism Sepolia')
+    expect(textOf(requirements)).toContain('Market maker is unavailable on Optimism Sepolia')
     expect(textOf(requirements)).toContain('Complete ruleset #1 settings')
     const edit = requirements.findAllByType('button').find(node => textOf(node) === 'Edit Rules')!
     await act(async () => edit.props.onClick())
@@ -327,7 +327,7 @@ describe('multichain launch validation', () => {
     const root = await mountDraft(saved)
     expect(launchButton(root).props.disabled).toBe(true)
     const requirements = launchSection(root).findByProps({ 'aria-label': 'Launch requirements' })
-    expect(textOf(requirements)).toContain('Fund market is unavailable on Optimism Sepolia')
+    expect(textOf(requirements)).toContain('Market maker is unavailable on Optimism Sepolia')
     expect(textOf(requirements)).toContain('Remove it from payout or shop recipients')
   })
 
