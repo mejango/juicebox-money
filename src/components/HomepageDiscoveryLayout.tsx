@@ -6,9 +6,9 @@ type Feed = 'activity' | 'trending' | 'top' | 'new'
 type RankingFeed = Exclude<Feed, 'activity'>
 
 const FEEDS: readonly { id: Feed; label: string }[] = [
+  { id: 'activity', label: 'Latest' },
   { id: 'top', label: 'Top' },
   { id: 'trending', label: 'Trending' },
-  { id: 'activity', label: 'Latest' },
   { id: 'new', label: 'New' },
 ]
 
@@ -79,7 +79,7 @@ export function HomepageDiscoveryLayout({
   top: ReactNode
   newProjects: ReactNode
 }) {
-  const [activeFeed, setActiveFeed] = useState<Feed>('top')
+  const [activeFeed, setActiveFeed] = useState<Feed>('activity')
   const [rankingFeed, setRankingFeed] = useState<RankingFeed>('top')
 
   return (
