@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { decimalOk } from '@/lib/decimal'
 import { resolvedAddress } from '@/lib/ens'
 import { toLocalDateTimeInput, truncateAddress } from '@/lib/format'
@@ -672,6 +673,8 @@ function StickyFields({
   chainIds: readonly number[]
   onChange: (patch: Partial<DraftSplit>) => void
 }) {
+  // No maximum unless asked for: an unchecked box means any length of time.
+  const [maxOn, setMaxOn] = useState(split.stickyMaxWeeks !== '')
   const weeksInput = (
     field: 'stickyMinWeeks' | 'stickyMaxWeeks',
     label: string,
@@ -717,12 +720,33 @@ function StickyFields({
         {split.stickyGroup === 'tenure' ? (
           <>
             {weeksInput('stickyMinWeeks', 'Minimum weeks stuck', '4')}
-            <span>weeks, up to</span>
-            {weeksInput('stickyMaxWeeks', 'Maximum weeks stuck (optional)', 'any')}
             <span>weeks</span>
           </>
         ) : null}
       </div>
+      {split.stickyGroup === 'tenure' ? (
+        <div className="flex min-h-[40px] flex-wrap items-center gap-2 text-xs text-smoke-700">
+          <label className="flex items-center gap-1.5 font-medium">
+            <input
+              type="checkbox"
+              checked={maxOn}
+              onChange={e => {
+                setMaxOn(e.target.checked)
+                if (!e.target.checked) onChange({ stickyMaxWeeks: '' })
+              }}
+              disabled={disabled}
+              className="h-3.5 w-3.5 accent-ink"
+            />
+            Set max time
+          </label>
+          {maxOn ? (
+            <>
+              {weeksInput('stickyMaxWeeks', 'Maximum weeks stuck', '52')}
+              <span>weeks</span>
+            </>
+          ) : null}
+        </div>
+      ) : null}
       {split.stickyGroup === 'all' ? (
         <p className="text-[11px] leading-relaxed text-smoke-500">
           Pays every holder by voting power when each round starts.
