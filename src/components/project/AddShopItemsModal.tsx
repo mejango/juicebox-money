@@ -175,6 +175,7 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
         currencyLabel={activePricing.symbol}
         disabled={busy || !!review}
         categories={categories}
+        existingCategoryIds={existingCategories.map(category => category.id)}
         onAddCategory={name => {
           const id =
             categories.reduce(

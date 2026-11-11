@@ -44,15 +44,17 @@ function mediaEmoji(type: string): string {
   return "📄";
 }
 
-/** An optional setting: its fields stay hidden until the box is checked, and unchecking clears them. */
+/** An optional setting: its fields stay hidden until the row is checked, and unchecking clears them. */
 function Optional({
-  label,
+  title,
+  blurb,
   on,
   onClear,
   disabled,
   children,
 }: {
-  label: string;
+  title: string;
+  blurb: string;
   /** Whether the draft already holds a value for this setting. */
   on: boolean;
   onClear: () => void;
@@ -62,19 +64,16 @@ function Optional({
   const [open, setOpen] = useState(on);
   return (
     <div>
-      <label className="flex min-h-[28px] items-center gap-2 text-sm font-medium text-smoke-700">
-        <input
-          type="checkbox"
-          checked={open}
-          onChange={(e) => {
-            setOpen(e.target.checked);
-            if (!e.target.checked) onClear();
-          }}
-          disabled={disabled}
-          className="h-4 w-4 accent-ink"
-        />
-        {label}
-      </label>
+      <CheckRow
+        checked={open}
+        onToggle={() => {
+          if (open) onClear();
+          setOpen(!open);
+        }}
+        disabled={disabled}
+        title={title}
+        blurb={blurb}
+      />
       {open ? children : null}
     </div>
   );
@@ -86,6 +85,7 @@ export function StoreEditor({
   currencyLabel,
   disabled,
   categories,
+  existingCategoryIds = [],
   onAddCategory,
   chainIds,
   isRevnet = false,
@@ -95,6 +95,8 @@ export function StoreEditor({
   currencyLabel: string;
   disabled: boolean;
   categories: StoreCategory[];
+  /** Categories the shop already had; they stay listed even when no item here uses them. */
+  existingCategoryIds?: readonly number[];
   onAddCategory: (name: string) => number;
   chainIds: number[];
   /** Revnet item transferability is fixed per item at launch. */
@@ -102,6 +104,12 @@ export function StoreEditor({
 }) {
   // The item whose "+ Add category…" field is open, and what has been typed into it.
   const [newCategory, setNewCategory] = useState<{ itemId: string; name: string } | null>(null);
+  // A category typed here and then left unused drops off the list.
+  const listedCategories = categories.filter(
+    (cat) =>
+      existingCategoryIds.includes(cat.id) ||
+      items.some((item) => item.category === cat.id),
+  );
   const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(
       items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
@@ -223,7 +231,8 @@ export function StoreEditor({
                 />
               </div>
               <Optional
-                label="Limited supply"
+                title="Limited supply"
+                blurb="Cap how many can be sold."
                 on={
                   item.supply.trim() !== "" ||
                   Object.values(item.perChainSupply).some((v) => v?.trim())
@@ -353,7 +362,7 @@ export function StoreEditor({
                   className="input-well select-caret mt-2 min-h-[44px] w-56 px-3 pr-8 text-sm disabled:opacity-60"
                 >
                   <option value="0">Default</option>
-                  {categories.map((cat) => (
+                  {listedCategories.map((cat) => (
                     <option key={cat.id} value={String(cat.id)}>
                       {cat.name}
                     </option>
@@ -361,36 +370,36 @@ export function StoreEditor({
                   <option value="new">+ Add category…</option>
                 </select>
                 {newCategory?.itemId === item.id ? (
-                  <form
-                    className="mt-2 flex items-center gap-2"
-                    onSubmit={(e) => {
-                      e.preventDefault();
+                  <input
+                    type="text"
+                    value={newCategory.name}
+                    onChange={(e) =>
+                      setNewCategory({ itemId: item.id, name: e.target.value.slice(0, 40) })
+                    }
+                    // Leaving the field or pressing Enter keeps the name; an empty one adds nothing.
+                    onBlur={() => {
                       const name = newCategory.name.trim();
-                      if (!name) return;
-                      update(item.id, { category: onAddCategory(name) });
+                      if (name) {
+                        // A name already on file is that category, not a second one.
+                        const known = categories.find(
+                          (cat) => cat.name.toLowerCase() === name.toLowerCase(),
+                        );
+                        update(item.id, {
+                          category: known ? known.id : onAddCategory(name),
+                        });
+                      }
                       setNewCategory(null);
                     }}
-                  >
-                    <input
-                      type="text"
-                      value={newCategory.name}
-                      onChange={(e) =>
-                        setNewCategory({ itemId: item.id, name: e.target.value.slice(0, 40) })
-                      }
-                      disabled={disabled}
-                      autoFocus
-                      placeholder="Category name"
-                      aria-label="New category name"
-                      className="input-well min-h-[44px] !w-56 px-3 text-sm disabled:opacity-60"
-                    />
-                    <button
-                      type="submit"
-                      disabled={disabled || !newCategory.name.trim()}
-                      className="btn-secondary min-h-[44px] px-3.5 text-sm disabled:opacity-60"
-                    >
-                      Add
-                    </button>
-                  </form>
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    disabled={disabled}
+                    autoFocus
+                    enterKeyHint="done"
+                    placeholder="Category name"
+                    aria-label="New category name"
+                    className="input-well mt-2 min-h-[44px] !w-56 px-3 text-sm disabled:opacity-60"
+                  />
                 ) : null}
               </div>
 
@@ -418,16 +427,12 @@ export function StoreEditor({
               </div>
 
               <Optional
-                label="Discount"
+                title="Add discount"
+                blurb={`Launch the item at a discount off its price. The ${isRevnet ? "revnet operator" : "project owner"} can end the discount later.`}
                 on={item.discountPct.trim() !== ""}
                 onClear={() => update(item.id, { discountPct: "" })}
                 disabled={disabled}
               >
-                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Launch the item at a discount off its price — the{" "}
-                  {isRevnet ? "revnet operator" : "project owner"} can end the
-                  discount later.
-                </p>
                 <div className="mt-2 flex items-center gap-2.5">
                   <input
                     type="text"
@@ -449,7 +454,8 @@ export function StoreEditor({
               </Optional>
 
               <Optional
-                label="Reserve inventory"
+                title="Reserve inventory"
+                blurb="Reserve some of this item for a specific wallet as others buy it."
                 on={
                   item.reserveN.trim() !== "" ||
                   item.reserveBeneficiary.trim() !== ""
@@ -459,10 +465,6 @@ export function StoreEditor({
                 }
                 disabled={disabled}
               >
-                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Reserve some of this item for a specific wallet as others
-                  buy it.
-                </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2.5">
                   <span className="text-sm text-smoke-700">1 of every</span>
                   <input
