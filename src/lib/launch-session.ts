@@ -238,6 +238,13 @@ export function canAbandonRelayrLaunch(session: LaunchSession): boolean {
     (session.relayr.phase === 'signing' && !session.relayr.published && !session.relayr.retryNonces)
 }
 
+/** When the last published launch request still outstanding stops being executable (epoch seconds); null when none is. */
+export function relayrLaunchExecutableUntil(session: LaunchSession): number | null {
+  const outstanding = [...(session.relayr?.signed ?? []), ...(session.relayr?.superseded ?? [])]
+    .filter(signed => session.statuses[signed.chainId]?.phase !== 'done')
+  return outstanding.length ? Math.max(...outstanding.map(signed => signed.deadline)) : null
+}
+
 function coerceStatus(value: unknown): LaunchChainStatus {
   if (typeof value !== 'object' || value === null) return { phase: 'pending' }
   const status = value as Partial<LaunchChainStatus>
@@ -378,8 +385,13 @@ export function canAbandonDirectLaunch(session: LaunchSession): boolean {
  * deterministically-reverting config would otherwise loop on Retry forever
  * with no exit short of hand-clearing localStorage. `retired`: the SDK retired
  * its saved attempt over storage it can't read, so the journal goes unread.
+ * `anyway`: the user chose to discard a launch that may still execute, having
+ * been told it could leave duplicate projects.
  */
-export function abandonLaunchSession(expectedSalt?: `0x${string}`, { retired = false }: { retired?: boolean } = {}): boolean {
+export function abandonLaunchSession(
+  expectedSalt?: `0x${string}`,
+  { retired = false, anyway = false }: { retired?: boolean; anyway?: boolean } = {},
+): boolean {
   if (typeof window === 'undefined') return false
   try {
     if (retired) {
@@ -388,7 +400,7 @@ export function abandonLaunchSession(expectedSalt?: `0x${string}`, { retired = f
     }
     const session = loadLaunchSession({ strict: true })
     if (expectedSalt && session?.salt !== expectedSalt) return false
-    if (session && session.transport !== 'relayr' && !canAbandonDirectLaunch(session)) return false
+    if (session && !anyway && session.transport !== 'relayr' && !canAbandonDirectLaunch(session)) return false
     window.localStorage.removeItem(LAUNCH_SESSION_KEY)
     return true
   } catch {

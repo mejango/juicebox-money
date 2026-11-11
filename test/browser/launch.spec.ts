@@ -86,6 +86,16 @@ for (const environment of environments) {
       viewport: document.documentElement.clientWidth,
     }))
     expect(width.content).toBeLessThanOrEqual(width.viewport + 1)
+
+    // "Edit anyway" discards the launch only past its duplicate-projects warning.
+    await page.getByText('Edit anyway', { exact: true }).click()
+    const discard = page.getByRole('button', { name: 'Discard this launch and edit', exact: true })
+    await expect(discard).toBeDisabled()
+    expect(await page.evaluate(() => localStorage.getItem('jbm-launch-pending-v1'))).toBe(savedLaunch)
+    await page.getByRole('checkbox', { name: 'I understand this may create duplicate projects.' }).check()
+    await discard.click()
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('jbm-launch-pending-v1'))).toBeNull()
+    await expect(page.getByRole('navigation', { name: 'Create steps' }).getByRole('button', { name: 'Look & Feel' })).toBeEnabled()
   })
 
   for (const transport of [undefined, 'direct'] as const) {

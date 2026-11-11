@@ -47,7 +47,7 @@ import {
   useSafeConnection,
   waitForSafeExecutionHash,
 } from "@/lib/safe-connector";
-import { etherscanTxUrl, formatTokenAmount } from "@/lib/format";
+import { etherscanTxUrl, formatDateTime, formatTokenAmount } from "@/lib/format";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
 import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
@@ -70,6 +70,7 @@ import {
 import {
   abandonLaunchSession,
   canAbandonRelayrLaunch,
+  relayrLaunchExecutableUntil,
   canAbandonDirectLaunch,
   completeLaunchSession,
   loadLaunchSession,
@@ -519,6 +520,8 @@ export function CreateForm() {
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
   const [launchError, setLaunchError] = useState<string | null>(null);
+  /** The duplicate-projects warning under "Edit anyway" was ticked. */
+  const [editAnywayAccepted, setEditAnywayAccepted] = useState(false);
   const [relayrProgress, setRelayrProgress] = useState<string | null>(null);
   /** The chain's launch hold this run's fresh send opened, so its proof reaches it. */
   const launchHoldRef = useRef<WriteHoldHandle | null>(null);
@@ -2203,7 +2206,8 @@ export function CreateForm() {
    * dropped for good: a later launch pins fresh and creates a SEPARATE
    * project, so the affordance's copy warns when chains already succeeded.
    */
-  const abandonLaunch = async () => {
+  /** `anyway`: the user discards a launch that may still execute, past the duplicate-projects warning. */
+  const abandonLaunch = async (anyway = false) => {
     const abandon = () => {
       // Read strictly: an unreadable journal is never abandoned on a stale copy.
       const session = loadLaunchSession({ strict: true }) ?? restoredSessionRef.current;
@@ -2211,15 +2215,16 @@ export function CreateForm() {
           session.salt !== restoredSessionRef.current?.salt) {
         throw new Error("Another tab started a different launch. Return to that tab to continue.");
       }
-      if (session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
+      if (!anyway && session?.transport === "relayr" && !canAbandonRelayrLaunch(session)) {
         throw new Error("This launch still has published authorizations. Check the original bundle before starting another launch.");
       }
-      if (session && session.transport !== "relayr" && !canAbandonDirectLaunch(session)) {
+      if (!anyway && session && session.transport !== "relayr" && !canAbandonDirectLaunch(session)) {
         throw new Error("This launch has a wallet request that may still execute. Recover it before starting another launch.");
       }
-      if (!abandonLaunchSession(session?.salt)) {
+      if (!abandonLaunchSession(session?.salt, { anyway })) {
         throw new Error("Could not cancel this deployment. Restore browser storage and try again.");
       }
+      setEditAnywayAccepted(false);
       resetLaunch();
     };
     try {
@@ -2684,17 +2689,51 @@ export function CreateForm() {
   const activeLaunchSession = loadLaunchSession() ?? restoredSessionRef.current;
   const relayrFundingStarted = activeLaunchSession?.relayr &&
     ["payment-signing", "submitted", "executing"].includes(activeLaunchSession.relayr.phase);
+  const launchExecutableUntil = activeLaunchSession ? relayrLaunchExecutableUntil(activeLaunchSession) : null;
   const mayAbandonLaunch = !activeLaunchSession || (usesRelayr
     ? canAbandonRelayrLaunch(activeLaunchSession)
     : canAbandonDirectLaunch(activeLaunchSession));
   const launchCancellation = (
     <>
       {phase === "failed" && !mayAbandonLaunch ? (
-        <p className="text-sm text-smoke-700">
-          {usesRelayr
-            ? "This launch has published authorizations that may still execute. Check the saved bundle to continue; starting over could create duplicate projects."
-            : "This launch has a wallet request that may still execute. Recover the saved launch to continue; starting over could create duplicate projects."}
-        </p>
+        <div className="space-y-2 text-sm text-smoke-700">
+          <p>
+            {usesRelayr
+              ? `This launch has published authorizations that may still execute${
+                  launchExecutableUntil ? ` until ${formatDateTime(launchExecutableUntil)}` : ""
+                }. Check the saved bundle to continue; starting over could create duplicate projects.`
+              : "This launch has a wallet request that may still execute. Recover the saved launch to continue; starting over could create duplicate projects."}
+          </p>
+          {usesRelayr && launchExecutableUntil ? (
+            <p>After that time, Try again lets you cancel it and edit.</p>
+          ) : null}
+          <details>
+            <summary className="cursor-pointer font-medium underline underline-offset-2">Edit anyway</summary>
+            <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-white px-3 py-2 leading-relaxed">
+              <p>
+                The launch you already signed can still go through. If you edit and launch again, you
+                could end up with two projects. Any relay payment already made is not refunded.
+              </p>
+              <label className="flex items-start gap-2">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={editAnywayAccepted}
+                  onChange={(event) => setEditAnywayAccepted(event.target.checked)}
+                />
+                <span>I understand this may create duplicate projects.</span>
+              </label>
+              <button
+                type="button"
+                disabled={!editAnywayAccepted}
+                onClick={() => void abandonLaunch(true)}
+                className="font-medium text-crush-600 underline underline-offset-2 disabled:text-smoke-400 disabled:no-underline"
+              >
+                Discard this launch and edit
+              </button>
+            </div>
+          </details>
+        </div>
       ) : null}
       {phase === "failed" && mayAbandonLaunch ? (
         <div className="rounded-lg border border-smoke-200 bg-white px-3 py-2 text-sm leading-relaxed text-smoke-700">
@@ -2723,7 +2762,7 @@ export function CreateForm() {
           </p>
           <button
             type="button"
-            onClick={abandonLaunch}
+            onClick={() => void abandonLaunch()}
             className="mt-1 font-medium underline underline-offset-2"
           >
             Cancel deployment
