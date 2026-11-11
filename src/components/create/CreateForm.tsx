@@ -358,6 +358,10 @@ function defaultFlavorRules(flavor: CreateDraft["flavor"]): DraftRules {
   };
 }
 
+/** A step's card. Phones run it edge to edge, its content on the page gutter. */
+const STEP_CARD =
+  "card mt-6 p-6 sm:p-7 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:px-4";
+
 export function CreateForm() {
   const { isConnected, address, openSignIn } = useWallet();
   const config = useConfig();
@@ -2991,7 +2995,7 @@ export function CreateForm() {
       </nav>
 
       {/* 0 — Flavor: what kind of thing is this? */}
-      <section className={step === 0 ? "card mt-6 p-6 sm:p-7" : "hidden"}>
+      <section className={step === 0 ? STEP_CARD : "hidden"}>
         <div className="flex items-center gap-3">
           <StepBadge n={1} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -3393,7 +3397,7 @@ export function CreateForm() {
       </section>
 
       {/* 1 — Identity + treasury + chains */}
-      <section className={step === 1 ? "card mt-6 p-6 sm:p-7" : "hidden"}>
+      <section className={step === 1 ? STEP_CARD : "hidden"}>
         <div className="flex items-center gap-3">
           <StepBadge n={2} />
           <h2 className="font-agrandir text-xl font-medium">
@@ -3692,7 +3696,7 @@ export function CreateForm() {
       {/* 2 — Rules: one card per queued ruleset (stage) */}
       <section
         className={
-          !isSimpleProject && step === 2 ? "card mt-6 p-6 sm:p-7" : "hidden"
+          !isSimpleProject && step === 2 ? STEP_CARD : "hidden"
         }
       >
         <div className="flex items-center gap-3">
@@ -3712,7 +3716,9 @@ export function CreateForm() {
             <div
               key={stage.id}
               id={`stage-${stage.id}`}
-              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0"
+              // A fresh stage's id is random, so the server's and the browser's differ until the draft loads.
+              suppressHydrationWarning
+              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:bg-white"
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
@@ -3759,7 +3765,7 @@ export function CreateForm() {
                 <Chevron open={stage.expanded} />
               </div>
               {!isSimpleProject && step === 2 && stage.expanded ? (
-                <div className="px-4 pb-4">
+                <div className="nested-sections px-4 pb-4 max-sm:pb-0">
                   <StageRulesEditor
                     stage={stage}
                     onChange={(next) => setStage(stage.id, next)}
@@ -3838,7 +3844,7 @@ export function CreateForm() {
                 Preview {tokenLabel === "tokens" ? "token" : tokenLabel}{" "}
                 issuance price over time with the above rules:
               </p>
-              <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4">
+              <div className="mt-3 rounded-xl border border-smoke-200 bg-white p-4 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0">
                 <IssuanceLadder
                   stages={chartStages}
                   symbol={tokenLabel}
@@ -3956,7 +3962,7 @@ export function CreateForm() {
 
       {/* 3 — Store */}
       <section
-        className={step === storeStep ? "card mt-6 p-6 sm:p-7" : "hidden"}
+        className={step === storeStep ? STEP_CARD : "hidden"}
       >
         <div className="flex items-center gap-3">
           <StepBadge n={storeStep + 1} />
@@ -4043,7 +4049,7 @@ export function CreateForm() {
             Shop config {storeConfigOpen ? "▾" : "▸"}
           </button>
           {storeConfigOpen ? (
-            <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4">
+            <div className="mt-3 space-y-4 rounded-xl border border-smoke-200 bg-white p-4 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0">
               <p className="text-xs leading-relaxed text-smoke-700">
                 The collection&apos;s name and symbol can be changed later, by the{" "}
                 {flavor === "revnet" ? "revnet operator" : "project owner"}
@@ -4190,7 +4196,7 @@ export function CreateForm() {
 
       {/* 4 — Launch */}
       <section
-        className={step === launchStep ? "card mt-6 p-6 sm:p-7" : "hidden"}
+        className={step === launchStep ? STEP_CARD : "hidden"}
       >
         <div className="flex items-center gap-3">
           <StepBadge n={launchStep + 1} />
