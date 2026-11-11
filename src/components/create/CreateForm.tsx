@@ -2904,7 +2904,7 @@ export function CreateForm() {
     >
       <div className="relative sm:pr-52">
         <h1 className="font-agrandir-wide text-4xl font-bold leading-tight sm:whitespace-nowrap sm:text-5xl">
-          Start a project<span className="text-split-500">.</span>
+          Start a project
         </h1>
         <p className="mt-3 max-w-xl text-base leading-relaxed text-smoke-700 sm:text-lg">
           Give it a name, answer a few questions, and launch.

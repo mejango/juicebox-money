@@ -420,7 +420,7 @@ export function SplitsEditor({
                         className="w-24"
                       />
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 max-sm:flex-col max-sm:items-stretch max-sm:gap-1">
                       <span className="shrink-0 text-xs text-smoke-700">
                         and recipient (optional):
                       </span>
@@ -460,7 +460,7 @@ export function SplitsEditor({
               ) : null}
 
               {split.kind === 'project' && !split.preferAddToBalance ? (
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 max-sm:flex-col max-sm:items-stretch max-sm:gap-1">
                   <span className="shrink-0 text-xs text-smoke-700">
                     who gets the project&apos;s tokens:
                   </span>

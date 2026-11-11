@@ -192,7 +192,7 @@ function MobileNavigation({ iconOnly, foldLogo }: { iconOnly: boolean; foldLogo:
         className={
           expanded
             ? 'hidden'
-            : 'row-start-1 justify-self-start has-[.logo-folded]:-mr-3'
+            : `row-start-1 justify-self-start has-[.logo-folded]:-mr-3 ${iconOnly ? '-mr-3' : ''}`
         }
       >
         <Logo iconOnly={iconOnly} fold={foldLogo} inlineOnMobile={iconOnly} showGuideLinks={false} />
@@ -253,7 +253,11 @@ export function SiteNavigation() {
   return (
     <>
       <DesktopNavigation iconOnly={iconOnly} isWide={isWide} />
-      <MobileNavigation iconOnly={iconOnly} foldLogo={pathname === '/'} />
+      {/* The create form needs the row's width for search more than it needs the wordmark. */}
+      <MobileNavigation
+        iconOnly={iconOnly || pathname === '/create'}
+        foldLogo={pathname === '/'}
+      />
     </>
   )
 }

@@ -385,7 +385,10 @@ export function StoreEditor({
                       itemReserveOk(item, chainIds) ? "" : "!border-red-400"
                     }`}
                   />
-                  <span className="text-sm text-smoke-700">sold goes to</span>
+                  <span className="text-sm text-smoke-700">sold</span>
+                  {/* Phones break the sentence here, so the address gets a line's width. */}
+                  <span className="-my-1.5 basis-full sm:hidden" />
+                  <span className="text-sm text-smoke-700">goes to</span>
                   <AddressField
                     value={item.reserveBeneficiary}
                     onChange={(reserveBeneficiary) =>
@@ -393,7 +396,7 @@ export function StoreEditor({
                     }
                     disabled={disabled}
                     ariaLabel="Reserve beneficiary"
-                    className="flex-1 max-sm:basis-full"
+                    className="flex-1"
                   />
                 </div>
               </div>
