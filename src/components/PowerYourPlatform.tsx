@@ -86,7 +86,7 @@ export function PowerYourPlatform() {
     <section aria-labelledby="power-your-platform" className="border-t border-smoke-200 bg-bluebs-25/50">
       <div className="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-24">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-16">
-          <div>
+          <div className="max-sm:text-center">
             <h2
               id="power-your-platform"
               className="font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl"
@@ -101,7 +101,7 @@ export function PowerYourPlatform() {
               Use projects with terms their owners can change, revnets with financial schedules
               fixed at launch, or both. The same public contracts can support different products.
             </p>
-            <div className="mt-7 flex flex-wrap gap-3">
+            <div className="mt-7 flex flex-wrap gap-3 max-sm:justify-center">
               <Link href="/build" className="btn-primary min-h-11 px-5 text-sm">
                 Read the build guide
               </Link>
