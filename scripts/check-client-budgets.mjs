@@ -44,6 +44,7 @@ const routes = [
   // 348 -> 349, /create 407 -> 409, /account 425 -> 427: one reviewed run vocabulary (SDK run status, held writes),
   // shared tab locks and explicit dialog states; measured 348.3, 408.1 and 426.3.
   // /[urn] 533 -> 535: SDK 6.3.0 keeps lost-lock outcomes and owns the dismissal rule; measured 534.8.
+  // /[urn] 535 -> 536: the shared header's phone logo takes its wordmark away letter by letter; measured 535.2.
   { route: '/', path: '/', kib: 349, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
@@ -61,7 +62,7 @@ const routes = [
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
   // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 535, text: 'Browser Fixture Project' },
+  { route: '/[urn]', path: '/eth:1', kib: 536, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.

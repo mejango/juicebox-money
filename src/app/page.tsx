@@ -142,7 +142,7 @@ const JUICEBOX_FEATURES = [
   {
     title: 'Control on your terms',
     description:
-      'Manage the project yourself or give others specific permissions.',
+      'Manage the project yourself, give others specific permissions, or make sure the rules stay fixed forever.',
     illustration: operatorIllustration,
     art: 'tall',
     wide: true,
@@ -545,7 +545,7 @@ export default function HomePage() {
               For all projects, from startup{' '}
               <span className="whitespace-nowrap">to scale.</span>
             </h3>
-            <p className="mx-auto mt-4 max-w-3xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
+            <p className="mx-auto mt-4 max-w-xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
               <span className="block">
                 Start simply, add powerful tools when you need them, and keep the
                 important rules visible to everyone along the way.

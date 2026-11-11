@@ -963,7 +963,7 @@ const graphqlFixtures = [
       }
     }`,
     variables: [
-      { limit: 9, offset: 0 },
+      { limit: 17, offset: 0 },
       { limit: 12, offset: 0 },
     ],
     data: {
