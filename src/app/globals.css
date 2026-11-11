@@ -100,6 +100,20 @@
     background-color: rgb(2 6 23 / 0.55);
   }
 
+  /* Phones run every modal's panel edge to edge. The rule lives here, over each caller's own
+     gutter and corner utilities, so no modal can be the odd one out. */
+  @media (width < 40rem) {
+    .modal-dialog {
+      padding-inline: 0 !important;
+    }
+
+    .modal-dialog > * {
+      max-width: none !important;
+      border-inline-width: 0 !important;
+      border-radius: 0 !important;
+    }
+  }
+
   /* Dialogs replace rather than stack: while a newer dialog is open, the one
      below it stays open in the top layer but paints nothing, so there is one
      scrim at a time. ModalDialog sets and clears the attribute. */

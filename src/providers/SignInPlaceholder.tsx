@@ -3,6 +3,12 @@
 import { useEffect, useLayoutEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+/** The dimmed surface behind a sign-in sheet. Phones run the sheet edge to edge. */
+export const SHEET_BACKDROP =
+  'flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6 max-sm:px-0'
+/** The sheet's panel, less its max width. */
+export const SHEET_CARD = 'card w-full p-6 max-sm:rounded-none max-sm:border-x-0 max-sm:px-4'
+
 /** Before paint, so the click is acknowledged in the frame it happened in. */
 const useBeforePaint =
   typeof window === 'undefined' ? useEffect : useLayoutEffect
@@ -37,7 +43,11 @@ export function SignInPlaceholder({
   useBeforePaint(() => {
     if (!host) return
     document.body.append(host)
-    return () => host.remove()
+    return () => {
+      // Removed while open, a dialog keeps `open` but leaves the top layer; close it first.
+      if (host.open) host.close()
+      host.remove()
+    }
   }, [host])
 
   // Opening is passive so this lands above any modal it was launched from,
@@ -49,8 +59,8 @@ export function SignInPlaceholder({
   if (!host) return null
 
   return createPortal(
-    <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
-      <div className="card w-full max-w-sm p-6">
+    <div className={SHEET_BACKDROP}>
+      <div className={`${SHEET_CARD} sm:max-w-sm`}>
         <div className="w-full">
           <h2 className="font-agrandir text-2xl font-medium text-ink">Sign in</h2>
           <input

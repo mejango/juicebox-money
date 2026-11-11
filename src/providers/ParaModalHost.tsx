@@ -27,6 +27,7 @@ import {
 } from './para-config'
 import { OnRampFrame, OnRampHandoff } from './OnRampHandoff'
 import ParaAuthSheet from './ParaAuthSheet'
+import { SHEET_BACKDROP, SHEET_CARD } from './SignInPlaceholder'
 import { SignInShell } from './SignInShell'
 
 /** Layout effects run before paint, which is the whole point here; on the
@@ -217,10 +218,10 @@ function Driver({
   if (handoffUrl) {
     return (
       <div
-        className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6"
+        className={SHEET_BACKDROP}
         {...handoffBackdrop}
       >
-        <div className={`card w-full p-6 ${embedded ? 'max-w-md' : 'max-w-sm'}`}>
+        <div className={`${SHEET_CARD} ${embedded ? 'sm:max-w-md' : 'sm:max-w-sm'}`}>
           {embedded ? (
             <OnRampFrame
               url={handoffUrl}
@@ -246,10 +247,10 @@ function Driver({
   // sheet brings its own dimmed surface and panel.
   return (
     <div
-      className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6"
+      className={SHEET_BACKDROP}
       {...sheetBackdrop}
     >
-      <div className="card w-full max-w-sm p-6">
+      <div className={`${SHEET_CARD} sm:max-w-sm`}>
         <ParaAuthSheet
             onClose={closeSheet}
             entry={entry}
@@ -329,6 +330,9 @@ export default function ParaModalHost({
     document.body.append(host)
     return () => {
       host.removeEventListener('cancel', preventNativeCancel)
+      // A dialog removed while open keeps `open` but leaves the top layer, so re-appending it
+      // would show it under the header and skip `showModal()`. Close it first.
+      if (host.open) host.close()
       host.remove()
     }
   }, [host])
@@ -354,8 +358,8 @@ export default function ParaModalHost({
           equivalent for the embedded wallet. Its theme is therefore only ever
           seen on that screen. */}
       {showShell ? (
-        <div className="flex h-full w-full items-center justify-center overflow-y-auto bg-slate-900/55 p-6">
-          <div className="card w-full max-w-sm p-6">
+        <div className={SHEET_BACKDROP}>
+          <div className={`${SHEET_CARD} sm:max-w-sm`}>
             <SignInShell entry={entry} onEntryChange={onEntryChange} />
           </div>
         </div>
