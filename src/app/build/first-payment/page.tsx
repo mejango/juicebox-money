@@ -53,9 +53,9 @@ export default async function FirstPaymentPage() {
         'The script finds the controller that manages the project’s rules and tokens. It reads the active ruleset from one recorded block of chain history. It checks the network and block again so the result refers to one consistent observation.',
       ],
       blocks: [
-        { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@6.3.1 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
+        { type: 'code', label: 'Set up and read', lang: 'bash', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@6.3.1 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
         { type: 'links', items: [{ href: '/examples/read-project.mjs', label: 'Read or save read-project.mjs' }] },
-        { type: 'code', label: 'Complete read-project.mjs', code: readExample },
+        { type: 'code', label: 'Complete read-project.mjs', lang: 'ts', code: readExample },
         { type: 'table', label: 'What success looks like', rows: [
           ['Identity', 'protocolVersion is 6, chainId is 84532, and projectId is "1".'],
           ['Evidence', 'blockNumber and blockHash identify when the data was read. controller is the managing contract found through JBDirectory.'],
@@ -72,9 +72,9 @@ export default async function FirstPaymentPage() {
         'The simulation does not send a payment. It shows how this request would run against current chain data. The app may find a different way to buy tokens, so review its fresh quote when you pay.',
       ],
       blocks: [
-        { type: 'code', label: 'Download and simulate with your public address', code: 'curl --fail -O https://juicebox.money/examples/preview-payment.mjs\n# Replace this placeholder with your public wallet address.\nJB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs' },
+        { type: 'code', label: 'Download and simulate with your public address', lang: 'bash', code: 'curl --fail -O https://juicebox.money/examples/preview-payment.mjs\n# Replace this placeholder with your public wallet address.\nJB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs' },
         { type: 'links', items: [{ href: '/examples/preview-payment.mjs', label: 'Read or save preview-payment.mjs' }] },
-        { type: 'code', label: 'Complete preview-payment.mjs', code: previewExample },
+        { type: 'code', label: 'Complete preview-payment.mjs', lang: 'ts', code: previewExample },
         { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" in wei, ETH’s smallest unit. Divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the simulation result, and the encoded calldata of the request. Divide token amounts by 10^18 for displayed amounts.' },
         { type: 'info', text: 'Checked on November 11, 2026 with the Juicebox SDK 6.3.1 and viem 2.55.19. The read used Base Sepolia block 57475923, hash 0x0f72af56ae4f5b9610480e3cbe12db9cc439390fb236f3ea5ed1f5eae8eb4fda. The payment was simulated only. Run the examples again to get current results.' },
       ],

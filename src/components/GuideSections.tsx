@@ -1,18 +1,16 @@
 import type { ReactNode } from 'react'
+import { GUIDE_AUDIENCE_LABEL, guideRowId } from '@/lib/guide-markdown'
+import { CopyCodeButton } from './CopyCodeButton'
 import './GuideSections.css'
+
+export { guideRowId }
 
 /**
  * Server-rendered Learn and Build documents with native section navigation.
  * Keep content readable before hydration and when JavaScript is unavailable.
  */
 
-type GuideAudience = 'founders' | 'frontend' | 'contracts'
-
-const AUDIENCE_LABEL: Record<GuideAudience, string> = {
-  founders: 'Project builders',
-  frontend: 'App builders',
-  contracts: 'Contract builders',
-}
+export type GuideAudience = 'founders' | 'frontend' | 'contracts'
 
 type GuideLink = { href: string; label: string }
 
@@ -33,9 +31,9 @@ export function Inline({ text }: { text: string }) {
   return <>{parts}</>
 }
 
-type GuideBlock =
+export type GuideBlock =
   | { type: 'text'; text: string }
-  | { type: 'code'; label: string; code: string }
+  | { type: 'code'; label: string; lang?: 'ts' | 'bash' | 'solidity' | 'graphql' | 'json'; code: string }
   | { type: 'diagram'; label: string; description?: string; lines: readonly string[] }
   | {
       type: 'table'
@@ -67,21 +65,23 @@ export type GuideSection = {
   blocks?: readonly GuideBlock[]
 }
 
-/** The id of a table row that has a `rowIdPrefix`. */
-export function guideRowId(prefix: string, name: string) {
-  return `${prefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
-}
-
-function Block({ block, id }: { block: GuideBlock; id: string }) {
+function Block({ block, sectionId }: { block: GuideBlock; sectionId: string }) {
+  // A labelled block's id comes from its label, so inserting a block never moves a link.
+  const id = 'label' in block ? guideRowId(sectionId, block.label) : sectionId
   switch (block.type) {
     case 'text':
       return <p className="guide-text"><Inline text={block.text} /></p>
     case 'code':
       return (
         <figure className="guide-code">
-          <figcaption id={`${id}-label`} className="guide-code-title">{block.label}</figcaption>
+          <figcaption className="guide-code-title guide-code-head">
+            <span id={`${id}-label`}>{block.label}</span>
+            <CopyCodeButton code={block.code} label={block.label} />
+          </figcaption>
           <div className="guide-scroll" role="region" aria-labelledby={`${id}-label`} tabIndex={0}>
-            <pre className="guide-code-pre"><code>{block.code}</code></pre>
+            <pre className="guide-code-pre">
+              <code className={block.lang ? `language-${block.lang}` : undefined}>{block.code}</code>
+            </pre>
           </div>
         </figure>
       )
@@ -108,8 +108,10 @@ function Block({ block, id }: { block: GuideBlock; id: string }) {
     case 'table':
       return (
         <div className="guide-prop-table">
-          <h3 id={`${id}-label`} className="guide-prop-title">{block.label}</h3>
-          <dl aria-labelledby={`${id}-label`}>
+          <h3 id={id} className="guide-prop-title">
+            <a className="guide-prop-title-link" href={`#${id}`}>{block.label}</a>
+          </h3>
+          <dl aria-labelledby={id}>
             {block.rows.map(([name, desc]) => (
               <div
                 key={name}
@@ -250,7 +252,7 @@ export function GuideSections({
                           key={audience}
                           className="rounded-full border border-bluebs-200 bg-bluebs-25 px-2.5 py-1 font-agrandir text-xs font-medium text-bluebs-700"
                         >
-                          {AUDIENCE_LABEL[audience]}
+                          {GUIDE_AUDIENCE_LABEL[audience]}
                         </span>
                       ))}
                     </p>
@@ -261,7 +263,7 @@ export function GuideSections({
                     </p>
                   ))}
                   {section.blocks?.map((block, i) => (
-                    <Block key={i} block={block} id={`${section.id}-block-${i}`} />
+                    <Block key={i} block={block} sectionId={section.id} />
                   ))}
                   <p className="guide-section-footer">
                     <a href={`#${contentsId}`}>Back to contents<span aria-hidden="true"> ↑</span></a>

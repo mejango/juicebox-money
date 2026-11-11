@@ -2,6 +2,7 @@ import {
   JB_CHAINS,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
+  USD_CURRENCY_ID,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import { erc20Abi, type Address, type PublicClient } from 'viem'
@@ -51,4 +52,18 @@ export async function tokenSymbol(
     .readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })
     .then(s => s as string)
     .catch(() => truncateAddress(token))
+}
+
+/**
+ * The currency a ruleset prices its tokens in, as people read it: ETH, USD,
+ * or the symbol of the accepted token whose currency it names.
+ */
+export function baseCurrencyLabel(
+  currency: number,
+  contexts?: readonly { currency: number; symbol: string }[],
+): string {
+  if (currency === 1) return 'ETH'
+  if (currency === USD_CURRENCY_ID(6)) return 'USD'
+  const match = contexts?.find(ctx => ctx.currency === currency)
+  return match ? match.symbol : `currency ${currency}`
 }

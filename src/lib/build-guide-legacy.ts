@@ -64,11 +64,13 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JBMultiTerminal.sendPayoutsOf (call outline)",
+        "lang": "solidity",
         "code": "sendPayoutsOf(\n  projectId,\n  token,\n  amount,              // up to the payout limit\n  currency,\n  minTokensPaidOut     // minimum amount the recipient must receive\n)\n// Distributes to splits, leftover to project owner\n// Review the final amount each recipient will receive"
       },
       {
         "type": "code",
         "label": "JBController.sendReservedTokensToSplitsOf (call outline)",
+        "lang": "solidity",
         "code": "sendReservedTokensToSplitsOf(projectId)\n// Anyone can call this at any time\n// Mints accumulated reserved tokens and distributes to splits"
       },
       {
@@ -106,6 +108,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JBPermissions.setPermissionsFor (call outline)",
+        "lang": "solidity",
         "code": "setPermissionsFor(\n  account,         // the address granting permission\n  permissionsData  // { operator, projectId, permissionIds[] }\n)\n// projectId = 0 is the wildcard: every project `account` controls on this chain"
       },
       {
@@ -305,6 +308,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JB721TiersHookProjectDeployer.launchProjectFor (call outline)",
+        "lang": "solidity",
         "code": "launchProjectFor(\n  owner,\n  deployTiersHookConfig,    // NFT name, symbol, tiers[]\n  launchProjectConfig,      // standard project config\n  controller,\n  salt                      // CREATE2 salt for a deterministic hook address (0 for none)\n)\n// Creates the project and its shop in one call, even with empty tiers"
       },
       {
@@ -408,9 +412,8 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         ]
       },
       {
-        "type": "code",
-        "label": "IJBPayHook interface (call outline)",
-        "code": "function afterPayRecordedWith(\n  JBAfterPayRecordedContext calldata context\n) external payable;\n\n// context includes:\n//   payer, projectId, rulesetId, amount,\n//   forwardedAmount, weight, newlyIssuedTokenCount,\n//   beneficiary, hookMetadata, payerMetadata"
+        "type": "text",
+        "text": "[MyPayHook.sol](/examples/MyPayHook.sol) is a complete data hook and pay hook to start from. It keeps issuance unchanged, counts each payer’s payments, and accepts calls only from the project’s terminals. It is unaudited example code."
       },
       {
         "type": "info",
@@ -534,6 +537,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JBProjectPayer defaults (call outline)",
+        "lang": "solidity",
         "code": "// Set via initialize() after clone deployment:\ndefaultProjectId       // which project to forward to\ndefaultBeneficiary     // who gets the tokens (0 = msg.sender)\ndefaultMemo            // attached to each payment\ndefaultMetadata        // extra data for hooks\ndefaultAddToBalance    // false = pay(), true = addToBalance()\n\n// Anyone sends ETH to the payer address:\n//   → receive() fires\n//   → looks up DIRECTORY.primaryTerminalOf(projectId, token)\n//   → calls pay() or addToBalanceOf() with defaults"
       },
       {
@@ -591,6 +595,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JBBuybackHook configuration (call outline)",
+        "lang": "solidity",
         "code": "// Set up the buyback hook with a Uniswap V4 pool\nJBBuybackHook.setPoolFor(\n  projectId,\n  fee,              // Uniswap pool fee tier\n  tickSpacing,      // pool tick spacing\n  twapWindow,       // TWAP observation window (seconds)\n  terminalToken     // the terminal token to route\n)\n// The pool key is once-only; the TWAP window stays mutable via setTwapWindowOf\n// Requires SET_BUYBACK_POOL permission"
       },
       {
@@ -647,6 +652,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "A first query",
+        "lang": "bash",
         "code": "curl -s https://bendystraw.up.railway.app/graphql -H 'content-type: application/json' -d '{\"query\":\"{ projects(where:{chainId:8453,version:6}, orderBy:\\\"balanceUsd\\\", orderDirection:\\\"desc\\\", limit:10){ items{ projectId chainId name balance balanceUsd tokenSymbol decimals suckerGroupId } totalCount } }\"}'"
       },
       {

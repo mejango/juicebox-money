@@ -105,6 +105,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'code',
         label: 'Connect the Juicebox MCP in Claude Code',
+        lang: 'bash',
         code: 'claude mcp add --transport http juicebox https://juicebox.center/mcp',
       },
       {
@@ -400,6 +401,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'code',
         label: 'TypeScript imports and address lookup (chainId supplied by your app)',
+        lang: 'ts',
         code: [
           'import {',
           '  buildPayTx, buildQueueRulesetsTx, buildRulesetConfiguration, buildRulesetMetadata,',
@@ -507,6 +509,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'code',
         label: 'Quote, build, and send the payment',
+        lang: 'ts',
         code: [
           'import { buildPayTx, prepareUserPay, resolvePaymentTerminal } from "@bananapus/nana-sdk-core/v6";',
           '',
@@ -566,6 +569,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'code',
         label: 'Prepare a cash out with the hook-aware quote',
+        lang: 'ts',
         code: [
           'const prepared = await prepareHookAwareCashOut(publicClient, {',
           '  chainId, terminal, holder, projectId, cashOutCount, tokenToReclaim,',
@@ -731,6 +735,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'code',
         label: 'Clone, install, and start the reference app',
+        lang: 'bash',
         code: [
           'git clone https://github.com/mejango/juicebox-money.git',
           'cd juicebox-money',
@@ -847,6 +852,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'links',
         items: [
+          { href: '/examples/launch-project.mjs', label: 'Download launch-project.mjs: build and simulate a launch on Base Sepolia without signing' },
           { href: `${CORE}/JBController.sol`, label: 'JBController.sol' },
           { href: `${CORE}/structs/JBRulesetMetadata.sol`, label: 'JBRulesetMetadata.sol' },
           { href: `${CORE}/JBRulesets.sol`, label: 'JBRulesets.sol' },
@@ -867,6 +873,21 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     title: 'Hook mechanics',
     blocks: [
       {
+        type: 'code',
+        label: 'Install the hook interfaces',
+        lang: 'bash',
+        code: 'npm install @bananapus/core-v6',
+      },
+      {
+        type: 'code',
+        label: 'Import by package path',
+        lang: 'solidity',
+        code: [
+          'import {IJBRulesetDataHook} from "@bananapus/core-v6/src/interfaces/IJBRulesetDataHook.sol";',
+          'import {IJBPayHook} from "@bananapus/core-v6/src/interfaces/IJBPayHook.sol";',
+        ].join('\n'),
+      },
+      {
         type: 'points',
         items: [
           { key: 'Installing a data hook', text: 'set metadata.dataHook and useDataHookForPay / useDataHookForCashOut on the ruleset. beforePayRecordedWith returns the weight to use and pay hook specifications; beforeCashOutRecordedWith returns the tax rate, count, supply, surplus, and cash out hook specifications.' },
@@ -881,6 +902,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'links',
         items: [
+          { href: '/examples/MyPayHook.sol', label: 'Download MyPayHook.sol: a data hook and pay hook that builds with Foundry (unaudited example)' },
           { href: `${CORE}/interfaces/IJBRulesetDataHook.sol`, label: 'IJBRulesetDataHook.sol' },
           { href: `${CORE}/libraries/JBMetadataResolver.sol`, label: 'JBMetadataResolver.sol' },
           { href: `${SKILLS}/jb-pay-hook/SKILL.md`, label: 'jb-pay-hook skill' },

@@ -35,9 +35,9 @@ import { Skeleton, SkeletonTable } from "@/components/ui/Skeleton";
 import { EditSplitsFlow } from "@/components/project/EditSplitsFlow";
 import { QueueRulesetFlow } from "@/components/project/QueueRulesetFlow";
 import {
+  basisPoints,
   billionthsToPct,
   cashOutTaxValue,
-  fmtPct,
   formatCountdown,
   formatDate,
   formatDateTime,
@@ -47,6 +47,7 @@ import {
 } from "@/lib/format";
 import type { RawSplit } from "@/lib/splits-types";
 import { useProjectTokenSymbol } from "@/hooks/useProjectTokenSymbol";
+import { baseCurrencyLabel } from "@/lib/token-symbol";
 import { chainName } from "@/lib/urn";
 import { wagmiConfig } from "@/providers/Providers";
 import { ConceptTerm } from "@/components/project/ConceptTerm";
@@ -70,21 +71,6 @@ type Entry = {
   data: JBRulesetWithMetadata;
   tag: "Past" | "Current" | "Upcoming";
 };
-
-/** Ruleset percents are basis points of 10,000: 3800 → "38%". */
-function basisPoints(bp: number): string {
-  return fmtPct(bp / 100);
-}
-
-function baseCurrencyLabel(
-  currency: number,
-  contexts: readonly AccountingContext[] | undefined,
-): string {
-  if (currency === 1) return "ETH";
-  if (currency === USD_CURRENCY_ID(6)) return "USD";
-  const match = contexts?.find((ctx) => ctx.currency === currency);
-  return match ? match.symbol : `currency ${currency}`;
-}
 
 const DEADLINE_LABELS = [
   ["JBDeadline3Hours", "3-hour deadline"],

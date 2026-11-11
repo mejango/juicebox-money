@@ -10,6 +10,7 @@ import {
 import { CashOutCurve } from "./CashOutCurve";
 import {
   SplitsEditor,
+  newDraftSplit,
   splitOk,
   splitsTotal,
 } from "./SplitsEditor";
@@ -784,7 +785,18 @@ export function StageRulesEditor({
             />
             <OptionRow
               checked={stage.payouts === "routed"}
-              onSelect={() => set({ payouts: "routed" })}
+              onSelect={() =>
+                set({
+                  payouts: "routed",
+                  // Start with one recipient to fill in.
+                  ...(stage.payoutSplits.length === 0
+                    ? { payoutSplits: [newDraftSplit()] }
+                    : {}),
+                  ...(multiToken && stage.payoutSplitsUsdc.length === 0
+                    ? { payoutSplitsUsdc: [newDraftSplit()] }
+                    : {}),
+                })
+              }
               disabled={disabled}
               title="Pay chosen recipients"
               blurb="Set who receives payouts. Anyone can send the transaction that pays them."

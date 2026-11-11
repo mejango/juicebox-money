@@ -38,12 +38,15 @@ identifier, description and logo.
 - [Your first test payment](${siteOrigin}/build/first-payment): read Base Sepolia project 1, preview a payment, then try it in the app and check the result.
 - [Read example](${siteOrigin}/examples/read-project.mjs): complete working V6 example with exact package versions.
 - [Simulation example](${siteOrigin}/examples/preview-payment.mjs): prepare, decode, and simulate a test payment using a public address. Never signs or broadcasts.
+- [Launch example](${siteOrigin}/examples/launch-project.mjs): build a project launch and simulate it on Base Sepolia for a public owner address. Never signs or broadcasts.
+- [Hook example](${siteOrigin}/examples/MyPayHook.sol): a data hook and pay hook that builds with Foundry. Unaudited example code.
 - [Create](${siteOrigin}/create): the project launch flow.
 - [Audit](${siteOrigin}/audit): audits, source, and review prompts.
 
 ## For agents
 
 - [Agent skill](${siteOrigin}/skill.md): how to launch, check, pay, cash out, and run projects here.
+- [Learn as Markdown](${siteOrigin}/learn.md) and [Build as Markdown](${siteOrigin}/build.md): the full guides with section anchors.
 - [Juicebox MCP](${JUICEBOX_MCP_URL}): reads, quotes, metadata pinning, and unsigned
   transaction plans. Holds no keys; the user signs.
 - [MCP guide](${JUICEBOX_MCP_GUIDE_URL}): how to connect a client.
@@ -60,12 +63,13 @@ identifier, description and logo.
 
 ## JSON endpoints
 
-Read-only, no key required, cached at the edge. Terms are not in the page HTML or these
-endpoints; use \`jb_get_rulesets\` on the MCP.
+Read-only, no key required, cached at the edge. Terms are not in the page HTML; read
+\`/api/project-terms\`, or use \`jb_get_rulesets\` on the MCP.
 
 - \`GET /api/search?q=<text>\`: projects matching a name, handle or id.
 - \`GET /api/top-projects?limit=<1-32>&offset=<n>\`: projects ranked by balance.
 - \`GET /api/project-name?chainId=<id>&projectId=<id>\`: project name and the group linking its chains (sucker group).
+- \`GET /api/project-terms?chainId=<id>&projectId=<id>\`: what a payment gets under the current rules and any queued ones: tokens per unit paid, reserved percent, cash out tax, data hook. Its \`units\` field states each unit.
 - \`GET /api/project-ready?chainId=<id>&projectId=<id>\`: whether a launched project is indexed yet.
 - \`GET /api/participants?suckerGroupId=<id>\`: token holders across chains.
 - \`GET /api/movements?suckerGroupId=<id>\`: token moves queued between chains. Empty when none are queued, which says nothing about payments.

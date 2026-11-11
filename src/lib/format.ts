@@ -190,6 +190,11 @@ export function fmtPct(pct: number): string {
   return `${pct.toFixed(decimals).replace(/\.?0+$/, '')}%`
 }
 
+/** Ruleset percents are basis points of 10,000: 3800 → "38%". */
+export function basisPoints(bp: number): string {
+  return fmtPct(bp / 100)
+}
+
 /**
  * A cash out tax rate out of JBConstants.MAX_CASH_OUT_TAX_RATE (10,000) as the
  * 0 to 1 value people read: 1000 becomes "0.1", 9999 becomes "0.9999".

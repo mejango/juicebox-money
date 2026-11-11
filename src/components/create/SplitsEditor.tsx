@@ -310,7 +310,7 @@ export function SplitsEditor({
                       }}
                       disabled={disabled}
                       aria-label="Hook type"
-                      className="input-well select-caret min-h-[44px] w-36 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
+                      className="input-well select-caret min-h-[44px] !w-auto shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
                     >
                       {allowFundMarket || split.hookKind === 'fundmarket' ? (
                         <option value="fundmarket" disabled={!fundMarketOk}>
@@ -358,6 +358,12 @@ export function SplitsEditor({
                     ariaLabel="Recipient address"
                   />
                 </div>
+              ) : null}
+
+              {split.kind === 'hook' && allowFundMarket && !fundMarketOk ? (
+                <p className="mt-2 text-xs text-smoke-700">
+                  Market maker isn&rsquo;t on {lpGapChains.map(chainName).join(', ')}.
+                </p>
               ) : null}
 
               {isStickyRow(split) ? (

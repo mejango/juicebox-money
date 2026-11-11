@@ -55,5 +55,5 @@ console.log(JSON.stringify({
   simulatedReturnedTokens: simulation.result,
   data,
   decoded,
-  next: `Review a fresh quote in https://juicebox.money/basesep:${projectId}. This script has not submitted a transaction.`,
+  next: `Review a fresh quote in https://juicebox.money/basesep:${projectId}. To send from your app, pass a fresh simulation's request to a wallet client: https://juicebox.money/build#apps-accept-payments. This script has not submitted a transaction.`,
 }, (_, value) => typeof value === 'bigint' ? value.toString() : value, 2))

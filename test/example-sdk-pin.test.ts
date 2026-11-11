@@ -4,11 +4,12 @@ import { describe, expect, it } from 'vitest'
 const read = (path: string) => readFileSync(path, 'utf8')
 const { dependencies } = JSON.parse(read('package.json')) as { dependencies: Record<string, string> }
 
-describe('first payment tutorial pins', () => {
+describe('example package pins', () => {
   it.each([
     'src/app/build/first-payment/page.tsx',
     'public/examples/read-project.mjs',
     'public/examples/preview-payment.mjs',
+    'public/examples/launch-project.mjs',
     'public/examples/README.md',
   ])('%s installs the SDK and viem versions in package.json', file => {
     const text = read(file)

@@ -15,6 +15,7 @@ const CACHED_ROUTES = [
   'src/app/api/participants/route.ts',
   'src/app/api/auto-issuances/route.ts',
   'src/app/api/activity/route.ts',
+  'src/app/api/project-terms/route.ts',
 ]
 
 /** Account-scoped or poll-driven: must never be shared between visitors. */

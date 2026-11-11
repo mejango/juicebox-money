@@ -5,10 +5,7 @@ import {
   allRulesetsQuery,
   currentRulesetQuery,
 } from '@/lib/project-display-queries'
-import {
-  USD_CURRENCY_ID,
-  type JBChainId,
-} from '@bananapus/nana-sdk-core'
+import { type JBChainId } from '@bananapus/nana-sdk-core'
 import {
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
@@ -16,11 +13,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
+import { baseCurrencyLabel } from '@/lib/token-symbol'
 import { TermsTabSkeleton } from '@/components/LoadingSkeletons'
 import {
+  basisPoints,
   billionthsToPct,
   cashOutTaxValue,
-  fmtPct,
   formatCountdown,
   formatDate,
   formatTokenAmount,
@@ -29,11 +27,6 @@ import { IssuanceLadder } from './IssuanceLadder'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 import Link from 'next/link'
-
-/** Ruleset percents are basis points of 10,000: 3800 → "38%". */
-function basisPoints(bp: number): string {
-  return fmtPct(bp / 100)
-}
 
 function cutCadence(durationSecs: number): string {
   const days = durationSecs / 86400
@@ -99,12 +92,6 @@ export function TermsTab({
   }
 
   const now = Math.floor(Date.now() / 1000)
-  const baseCurrencyLabel = (currency: number): string => {
-    if (currency === 1) return 'ETH'
-    if (currency === USD_CURRENCY_ID(6)) return 'USD'
-    const match = contextSymbols?.find(c => c.currency === currency)
-    return match ? match.symbol : `currency ${currency}`
-  }
 
   // The active stage: the latest one that has started. currentRulesetOf's id
   // matches its stored stage, with weight cuts already applied to the weight.
@@ -115,7 +102,7 @@ export function TermsTab({
   const firstStageStarted = stages[0].ruleset.start <= now
   const current = currentRuleset && currentRuleset.ruleset.id !== 0 ? currentRuleset : null
   const live = current ?? stages[activeIdx]
-  const base = baseCurrencyLabel(live.metadata.baseCurrency)
+  const base = baseCurrencyLabel(live.metadata.baseCurrency, contextSymbols)
 
   const rate = live.ruleset.weight
   const cutPct = live.ruleset.weightCutPercent
