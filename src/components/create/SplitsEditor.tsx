@@ -227,7 +227,8 @@ export function SplitsEditor({
       {splits.map(split => (
         <div
           key={split.id}
-          className="mt-2 rounded-lg border border-smoke-200 bg-white p-2.5"
+          // Phones drop the box so the fields get the full width; a hairline separates recipients.
+          className="mt-2 rounded-lg border border-smoke-200 bg-white p-2.5 max-sm:mt-3 max-sm:rounded-none max-sm:border-0 max-sm:p-0 max-sm:not-first:border-t max-sm:not-first:pt-3"
         >
           <div className="flex items-start gap-2">
             <div className="relative w-20 shrink-0">
