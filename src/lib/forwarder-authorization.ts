@@ -1,6 +1,6 @@
 'use client'
 
-import { withTabLocks } from '@/lib/tab-locks'
+import { withTabLocks, type TabLocks } from '@/lib/tab-locks'
 import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
 import { relayrForwardRequest, relayrSignedRequests, type RelayrEntry, type RelayrSignedRequest } from '@bananapus/nana-sdk-core/review/relayr'
 import { isAddressEqual, type Address } from 'viem'
@@ -39,7 +39,8 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
   pendingSessions: () => Pending[]
   /** Whether every given request is dead by ruling R114's classification, anything unknown counting as live. */
   requestsDead: (requests: readonly RelayrSignedRequest[]) => Promise<boolean>
-  execute: (assertAvailable: (destinations?: number[]) => void) => Promise<T>
+  /** Runs under the authorization locks, which it is handed for its writes and sends to check. */
+  execute: (assertAvailable: (destinations?: number[]) => void, locks: TabLocks) => Promise<T>
 }): Promise<T> {
   const chains = [...new Set(chainIds)].sort((a, b) => a - b)
   /** What would reserve `wanted`, each keyed by the exact requests it published. */
@@ -78,12 +79,12 @@ export async function withForwarderAuthorizationLock<T>({ account, chainIds, own
     }
   }
   return withTabLocks(chains.map(chain => `jb-forwarder-authorization:${account.toLowerCase()}:${chain}`),
-    'Another action is authorizing or recovering this wallet on a selected chain. Wait for it to finish before continuing.', async () => {
+    'Another action is authorizing or recovering this wallet on a selected chain. Wait for it to finish before continuing.', async locks => {
       // A ledger that cannot be read is refused by assertAvailable when a new authorization needs it, not here,
       // so paid recovery still runs.
       let found: Reservation[] = []
       try { found = reservations(new Set(chains)) } catch { /* assertAvailable refuses it. */ }
       for (const { key, requests } of found) if (requests && await requestsDead(requests)) dead.add(key)
-      return execute(assertAvailable)
+      return execute(assertAvailable, locks)
     })
 }

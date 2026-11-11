@@ -37,6 +37,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<ty
 import { assertQueueExecutionWindow, buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, verifyQueuedStageOrder, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { clearSuckerGroups } from '@/lib/sucker-group'
 import { relayrCallsScope } from '@/lib/relayr'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
@@ -279,6 +280,25 @@ describe('queue recovery after cancellation or partial execution', () => {
   }
   const labels = (renderer: ReactTestRenderer) => renderer.root.findAllByType('button').map(button => JSON.stringify(button.props.children))
   const button = (renderer: ReactTestRenderer, label: string) => renderer.root.findAllByType('button').find(item => item.props.children === label)!
+  it('resumes only under the destinations\' locks: another tab holding one sends nothing', async () => {
+    const { renderer, completed, failed } = await mountSaved()
+    vi.stubGlobal('navigator', { locks: { request: async (_name: string, options: { ifAvailable?: boolean }, run: (lock: object | null) => Promise<unknown>) => run(options.ifAvailable ? null : {}) } })
+    await act(async () => { await button(renderer, 'Resume ruleset update').props.onClick() })
+    expect(mocks.runAuthorityCalls).not.toHaveBeenCalled()
+    expect(JSON.stringify(renderer.toJSON())).toContain('already running in another tab')
+    expect(failed).toHaveBeenCalledOnce()
+    expect(completed).not.toHaveBeenCalled()
+    await act(async () => renderer.unmount())
+  })
+
+  it('hands the destinations\' locks to the resumed send', async () => {
+    const { renderer, completed } = await mountSaved()
+    await act(async () => { await button(renderer, 'Resume ruleset update').props.onClick() })
+    expect(mocks.runAuthorityCalls.mock.calls[0][0].locks).toHaveLength(currentReview.destinations.length)
+    expect(completed).toHaveBeenCalledOnce()
+    await act(async () => renderer.unmount())
+  })
+
   it('notifies the query owner after a failed recovery without claiming completion or discarding it', async () => {
     const { renderer, completed, failed } = await mountSaved()
     mocks.runAuthorityCalls.mockRejectedValue(new Error('The next destination is unavailable.'))
@@ -526,6 +546,20 @@ describe('frozen queue stage schedules', () => {
     mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
     await expect(verifyQueuedStageOrder(prepared, { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }))
       .rejects.toThrow(/ruleset order could not be verified/)
+  })
+
+  it('keeps the hashes the wallet returned after its lock lapsed, under a fresh lock, so a resume never sends the queue again', async () => {
+    const prepared = stagedReview()
+    const result = { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    mocks.runAuthorityCalls.mockImplementationOnce(async () => {
+      expect(readQueueJournal('jbm:queue-rulesets:1:101')?.result).toBeUndefined()
+      leases.lapse()
+      return result
+    })
+    await expect(submitQueueReview(prepared, 'current', vi.fn(), flow)).rejects.toMatchObject({ code: 'LOCK_LOST' })
+    await vi.waitFor(() => expect(readQueueJournal('jbm:queue-rulesets:1:101')?.result).toEqual(result))
   })
 
   it('recovers a confirmed ancestry check without resubmitting the saved queue', async () => {

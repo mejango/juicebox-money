@@ -72,6 +72,8 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError } from '@bananapus/nana-sdk-core/review/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { relayrHeldMessage } from '@/lib/relayr'
+import { keepOutcome } from '@bananapus/nana-sdk-core/review/locks'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 import { friendlyError } from '@/lib/errors'
 import { savedAttempts } from '@/lib/write-holds'
@@ -227,13 +229,13 @@ beforeEach(() => {
   m.pay.mockImplementation(async ({ payment, destinationChainIds, reverify, onSending, onSent }) => {
     expect(destinationChainIds).toEqual(entries.map(entry => entry.chain))
     await reverify()
-    onSending()
+    await onSending()
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
     const payments = [sentFor(payment, HASH)]
-    onSent(payments)
+    await onSent(payments)
     return { hash: HASH, payments }
   })
-  m.poll.mockImplementation(async (_uuid, _count, update) => { update(records); return records })
+  m.poll.mockImplementation(async (_uuid, _count, update) => { await update(records); return records })
   saveLaunchSession(session())
 })
 
@@ -268,7 +270,7 @@ describe('saved launch payments', () => {
     m.build.mockImplementation(actual.buildHistoricalLaunchRequest)
     m.recovery.mockImplementation(actual.launchCallForRecovery)
     if (funded) m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); await onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     else m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
     await expect(run(value)).rejects.toThrow(funded ? 'reload after funding submission' : 'Funding selection cancelled')
@@ -298,7 +300,7 @@ describe('saved launch payments', () => {
 
   it('refuses a saved launch whose payment record is malformed before checking anything', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); await onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(run()).rejects.toThrow('reload after funding submission')
     const saved = loadLaunchSession()!
@@ -310,7 +312,7 @@ describe('saved launch payments', () => {
 
   it('refuses a saved launch whose payment names a deadline its calldata does not pay until', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); await onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(run()).rejects.toThrow('reload after funding submission')
     const saved = loadLaunchSession()!
@@ -672,7 +674,7 @@ describe('relayed launch execution and recovery', () => {
 
   it.each([undefined, 11155111])('rejects a started mainnet journal with invalid saved funding chain %s without reopening the picker', async paymentChainId => {
     m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('Wallet response lost')
+      await reverify(); await onSending(); throw new Error('Wallet response lost')
     })
     await expect(run()).rejects.toThrow('Wallet response lost')
     const saved = loadLaunchSession()!
@@ -710,7 +712,7 @@ describe('relayed launch execution and recovery', () => {
   })
 
   it('signs one exact call per chain, pays only on the selected chain, and verifies reversed provider records onchain', async () => {
-    m.poll.mockImplementation(async (_uuid, _count, update) => { update([...records].reverse()); return [...records].reverse() })
+    m.poll.mockImplementation(async (_uuid, _count, update) => { await update([...records].reverse()); return [...records].reverse() })
     await run()
     expect(m.forward).toHaveBeenCalledTimes(2)
     expect(m.forward.mock.calls.every(([call]) => call.gas === 4_000_000n && call.value === 17n)).toBe(true)
@@ -787,7 +789,7 @@ describe('relayed launch execution and recovery', () => {
 
   it('never treats provider-only success or failure as a completed launch or permission to pay again', async () => {
     m.poll.mockImplementation(async (_uuid, _count, update) => {
-      update([{ tx_uuid: 'tx-0', status: { state: 'Confirmed' } }, { tx_uuid: 'tx-1', status: { state: 'Failed' } }])
+      await update([{ tx_uuid: 'tx-0', status: { state: 'Confirmed' } }, { tx_uuid: 'tx-1', status: { state: 'Failed' } }])
       throw new Error('provider claims failed')
     })
     await expect(run()).rejects.toThrow('unfinished')
@@ -799,7 +801,7 @@ describe('relayed launch execution and recovery', () => {
   it('rejects a provider hash pointing to another chain even if that receipt has a launch log', async () => {
     m.poll.mockImplementation(async (_uuid, _count, update) => {
       const swapped = records.map(record => ({ ...record, status: { data: { hash: hashFor(1) } } }))
-      update(swapped); return swapped
+      await update(swapped); return swapped
     })
     await expect(run()).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses[10].phase).toBe('uncertain')
@@ -816,7 +818,7 @@ describe('relayed launch execution and recovery', () => {
     m.poll.mockImplementationOnce(async (_uuid, _count, update) => {
       // Relayr names Ethereum's transaction for Optimism's call.
       const named = records.map((record, index) => index === 1 ? { ...record, status: { state: 'Confirmed', data: { hash: hashFor(1) } } } : record)
-      update(named); return named
+      await update(named); return named
     })
     await expect(run()).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses).toMatchObject({ 1: { phase: 'done' }, 10: { phase: 'uncertain' } })
@@ -860,7 +862,7 @@ describe('relayed launch execution and recovery', () => {
     offeredPaymentChains = [funding, alternative]
     m.funding.mockResolvedValue(funding)
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('wallet disconnected after broadcasting')
+      await reverify(); await onSending(); throw new Error('wallet disconnected after broadcasting')
     })
     await expect(run()).rejects.toThrow('wallet disconnected')
     m.poll.mockImplementation(async () => { throw new Error('offline') })
@@ -873,9 +875,30 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
   })
 
+  it.each([
+    ['the payment hash', true, { phase: 'submitted', payments: [expect.objectContaining({ hash: HASH })] }],
+    ['a definite rejection', false, { phase: 'quoted' }],
+  ] as const)('keeps %s the wallet returned after its lock lapsed, under a fresh lock', async (_name, paid, outcome) => {
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    // relayrPay's engine keeps each outcome its callback refused for a lost lock, as core does.
+    m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent, onUnsent, locks }) => {
+      await reverify(); await onSending()
+      leases.lapse()
+      if (!paid) {
+        await keepOutcome(locks, onUnsent)
+        throw Object.assign(new Error('Rejected'), { code: 4001 })
+      }
+      await keepOutcome(locks, () => onSent([sentFor(payment, HASH)]))
+      return { hash: HASH, payments: [sentFor(payment, HASH)] }
+    })
+    await run().catch(() => {})
+    await vi.waitFor(() => expect(loadLaunchSession()?.relayr).toMatchObject(outcome))
+  })
+
   it('allows retrying a positively rejected funding prompt', async () => {
-    m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+    m.pay.mockImplementationOnce(async ({ reverify, onSending, onUnsent }) => {
+      await reverify(); await onSending(); await onUnsent(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
@@ -976,7 +999,7 @@ describe('relayed launch execution and recovery', () => {
 
   it('retains unknown payment evidence but permits explicit abandonment after both canonical deadlines pass', async () => {
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
@@ -991,7 +1014,7 @@ describe('relayed launch execution and recovery', () => {
 
   it('keeps ambiguous funding blocked if its payment-chain deadline cannot be canonically proven', async () => {
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
@@ -1003,7 +1026,7 @@ describe('relayed launch execution and recovery', () => {
 
   it("gives a payment the wallet may have sent without its hash the SDK's check: only the user's check makes it cancellable, and nothing is paid again", async () => {
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
@@ -1029,7 +1052,7 @@ describe('relayed launch execution and recovery', () => {
       data: encodeFunctionData({ abi: erc2771ForwarderAbi, functionName: 'execute', args: [{ from: account, to: call.target,
         value: call.value, gas: call.gas, deadline: NOW + 3600, data: call.data, signature: `0x${'dd'.repeat(65)}` }] }) }))
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     m.poll.mockImplementation(async () => { throw new Error('provider unavailable') })
@@ -1159,7 +1182,7 @@ describe('relayed launch execution and recovery', () => {
     clients.get(10)!.getTransactionReceipt.mockRejectedValueOnce(new Error('receipt unavailable'))
     await expect(run()).rejects.toThrow('unfinished')
     expect(loadLaunchSession()?.statuses[10].txHash).toBe(hashFor(10))
-    m.poll.mockImplementation(async (_uuid, _count, update) => { update([]); throw new Error('provider lost records') })
+    m.poll.mockImplementation(async (_uuid, _count, update) => { await update([]); throw new Error('provider lost records') })
     await run()
     expect(loadLaunchSession()?.statuses[10].phase).toBe('done')
     expect(m.pay).toHaveBeenCalledTimes(1)
@@ -1172,7 +1195,7 @@ describe('relayed launch execution and recovery', () => {
     expect(uiStatuses[10].txHash).toBe(hashFor(10))
     failed.clear()
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); await onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(runRelayrLaunch({ session: loadLaunchSession()!, account: ACCOUNT,
       onProgress: vi.fn(), onStatus: (chainId, next) => {
@@ -1203,16 +1226,16 @@ describe('paying a reverted launch quote again', () => {
   const reverting = async ({ payment, sent = [], reverify, onSending, onSent }: {
     payment: RelayrPayment; sent?: unknown[]; reverify: () => Promise<void>; onSending: () => void; onSent: (payments: unknown[]) => void
   }) => {
-    await reverify(); onSending()
-    onSent([...sent, sentFor(payment, HASH)])
+    await reverify(); await onSending()
+    await onSent([...sent, sentFor(payment, HASH)])
     throw new RelayrPaymentRevertedError('The Relayr funding transaction reverted onchain.', HASH, payment.chain)
   }
   const paying = async ({ payment, sent = [], reverify, onSending, onSent }: {
     payment: RelayrPayment; sent?: unknown[]; reverify: () => Promise<void>; onSending: () => void; onSent: (payments: unknown[]) => void
   }) => {
-    await reverify(); onSending()
+    await reverify(); await onSending()
     const payments = [...sent, sentFor(payment, SECOND_PAYMENT)]
-    onSent(payments)
+    await onSent(payments)
     return { hash: SECOND_PAYMENT, payments }
   }
 
@@ -1247,7 +1270,7 @@ describe('paying a reverted launch quote again', () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
     m.pay.mockImplementation(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw new Error('no hash returned')
+      await reverify(); await onSending(); throw new Error('no hash returned')
     })
     await expect(run()).rejects.toThrow('no hash returned')
     expect(loadLaunchSession()?.relayr?.phase).toBe('payment-signing')
@@ -1340,8 +1363,8 @@ describe('paying a reverted launch quote again', () => {
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
-    m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
-      await reverify(); onSending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+    m.pay.mockImplementationOnce(async ({ reverify, onSending, onUnsent }) => {
+      await reverify(); await onSending(); await onUnsent(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', paymentChainId: 8453,
@@ -1351,7 +1374,7 @@ describe('paying a reverted launch quote again', () => {
 
   it('finds a payment that reverted while the app was away, and pays again only on the retry rule', async () => {
     m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent }) => {
-      await reverify(); onSending(); onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
+      await reverify(); await onSending(); await onSent([sentFor(payment, HASH)]); throw new Error('reload after funding submission')
     })
     await expect(run()).rejects.toThrow('reload after funding submission')
     expect(loadLaunchSession()?.relayr?.phase).toBe('submitted')

@@ -1,6 +1,6 @@
 'use client'
 
-import { withTabLocks } from '@/lib/tab-locks'
+import { fence, type TabLocks } from '@/lib/tab-locks'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import {
   CREATE_BATCH_ABI,
@@ -19,7 +19,7 @@ import {
 import { wagmiConfig } from '@/providers/Providers'
 import type { LaunchPlan } from '@/lib/launch'
 import { checkLaunchMultisigs, launchMultisigReview, verifyCreatedLaunchMultisigs } from '@/lib/launch-multisig'
-import { loadLaunchSession, saveLaunchSession, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
+import { loadLaunchSession, saveLaunchSession, withLaunchLock, type LaunchChainStatus, type LaunchSession } from '@/lib/launch-session'
 import { reviewedCall, revertedReceipt } from '@/lib/reviewed-call'
 import { sendReviewedWrite } from '@/lib/reviewed-send'
 import {
@@ -41,7 +41,9 @@ type PrepareOptions = {
   plan: LaunchPlan
   account: Address
   onProgress: (message: string) => void
-  onSetup?: (setup: Setup) => void
+  onSetup?: (setup: Setup) => void | Promise<void>
+  /** The launch lock the caller runs this under: every journal write and the send check it. */
+  locks: TabLocks
   /**
    * The page's: when it aborts, the wait for a Safe to execute the setup ends,
    * the setup stays confirming with its proposal, and the launch lock is let
@@ -60,8 +62,6 @@ function fingerprint(value: unknown): string {
   })
 }
 
-const withLaunchLock = <T,>(action: () => Promise<T>): Promise<T> =>
-  withTabLocks(['jbm-launch'], 'Another tab is updating this launch. Continue there or close it first.', action)
 
 
 /** A launch's Safe setup on one chain: held by its launch (salt) and sender. No SDK builder covers it. */
@@ -118,166 +118,166 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
   if (!options.plan.multisigs?.length) return
   const assertWalletContext = captureWalletContext(wagmiConfig, { account: options.account, chainId: options.chainId })
   const safe = isSafeConnection(wagmiConfig)
-  return withLaunchLock(async () => {
-    const { chainId, salt, account, onProgress, onSetup } = options
-    const plan = structuredClone(options.plan)
-    const expectedPlan = fingerprint(plan)
-    let revertedProjectHash: Hex | undefined
-    const read = (checkReverted = false) => {
-      const session = requireSession(chainId, salt)
-      if (!session.account || !isAddressEqual(session.account, account) || fingerprint(session.plans[chainId]) !== expectedPlan) {
-        throw new Error('The saved Safe or launch account changed. Recover the original launch before continuing.')
-      }
-      const status = session.statuses[chainId]
-      const retryReverted = status?.phase === 'failed' && status.txHash &&
-        (checkReverted || status.txHash === revertedProjectHash)
-      if ((status?.txHash && !retryReverted) || status?.safeProposalHash || status?.phase === 'done' || status?.unverifiedSend) {
-        throw new Error('A project launch may already have been submitted. Recover it before creating its Safe.')
-      }
-      return session
+  const { chainId, salt, account, onProgress, onSetup, locks } = options
+  const save = fence(locks, saveLaunchSession)
+  const plan = structuredClone(options.plan)
+  const expectedPlan = fingerprint(plan)
+  let revertedProjectHash: Hex | undefined
+  const read = (checkReverted = false) => {
+    const session = requireSession(chainId, salt)
+    if (!session.account || !isAddressEqual(session.account, account) || fingerprint(session.plans[chainId]) !== expectedPlan) {
+      throw new Error('The saved Safe or launch account changed. Recover the original launch before continuing.')
     }
-    const persist = (setup: Setup) => {
-      const session = read()
-      session.statuses[chainId] = { ...session.statuses[chainId], multisigSetup: setup }
-      if (!saveLaunchSession(session)) {
-        throw new Error('Safe setup progress could not be saved. Restore browser storage before continuing.')
-      }
-      onSetup?.(setup)
+    const status = session.statuses[chainId]
+    const retryReverted = status?.phase === 'failed' && status.txHash &&
+      (checkReverted || status.txHash === revertedProjectHash)
+    if ((status?.txHash && !retryReverted) || status?.safeProposalHash || status?.phase === 'done' || status?.unverifiedSend) {
+      throw new Error('A project launch may already have been submitted. Recover it before creating its Safe.')
     }
-    const client = publicClient(chainId as JBChainId)
-    // Recovery runs first (invariant A): a saved setup submission is recovered by the SDK from
-    // what the journal saved alone, before any read or preparation.
-    let recovered: Hex | undefined
-    const saved = read(true).statuses[chainId]?.multisigSetup
-    if (saved?.phase === 'confirming' && saved.settled && saved.txHash) {
-      // A success saved before: it stays confirming, whatever a read says now (invariant D).
-      recovered = saved.txHash
-    } else if (saved?.phase === 'signing' || saved?.phase === 'confirming') {
-      const attempt = setupAttemptOf(chainId, salt, account, plan, saved)
-      const outcome = await recoverSaved(attempt, client as unknown as WriteHoldClient)
-      if (outcome.status === 'done' && outcome.result === 'success') {
-        if (!outcome.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, 'Safe creation went through. It is still confirming.')
-        recovered = outcome.hash
-        persist({ phase: 'confirming', txHash: recovered, settled: true, ...(saved.safe ? { safe: true as const } : {}) })
-      } else {
-        // A proven revert, or retired (the user's exit or check, a definite rejection): nothing is out.
-        persist({ phase: 'failed' })
-      }
+    return session
+  }
+  const persist = async (setup: Setup) => {
+    const session = read()
+    session.statuses[chainId] = { ...session.statuses[chainId], multisigSetup: setup }
+    if (!(await save(session))) {
+      throw new Error('Safe setup progress could not be saved. Restore browser storage before continuing.')
     }
-    const priorLaunch = read(true).statuses[chainId]
-    if (priorLaunch?.phase === 'failed' && priorLaunch.txHash) {
-      const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: priorLaunch.txHash })
-      if (receipt.status !== 'reverted') {
-        throw new Error('The previous project launch did not revert. Recover it before trying again.')
-      }
-      revertedProjectHash = priorLaunch.txHash
+    await onSetup?.(setup)
+  }
+  const client = publicClient(chainId as JBChainId)
+  // Recovery runs first (invariant A): a saved setup submission is recovered by the SDK from
+  // what the journal saved alone, before any read or preparation.
+  let recovered: Hex | undefined
+  const saved = read(true).statuses[chainId]?.multisigSetup
+  if (saved?.phase === 'confirming' && saved.settled && saved.txHash) {
+    // A success saved before: it stays confirming, whatever a read says now (invariant D).
+    recovered = saved.txHash
+  } else if (saved?.phase === 'signing' || saved?.phase === 'confirming') {
+    const attempt = setupAttemptOf(chainId, salt, account, plan, saved)
+    const outcome = await recoverSaved(attempt, client as unknown as WriteHoldClient)
+    if (outcome.status === 'done' && outcome.result === 'success') {
+      if (!outcome.hash) throw new SavedAttemptShownError(attempt as SavedAttempt<unknown>, 'Safe creation went through. It is still confirming.')
+      recovered = outcome.hash
+      await persist({ phase: 'confirming', txHash: recovered, settled: true, ...(saved.safe ? { safe: true as const } : {}) })
+    } else {
+      // A proven revert, or retired (the user's exit or check, a definite rejection): nothing is out.
+      await persist({ phase: 'failed' })
     }
-    const prior = read().statuses[chainId]?.multisigSetup
-    await checkLaunchMultisigs(client, plan)
+  }
+  const priorLaunch = read(true).statuses[chainId]
+  if (priorLaunch?.phase === 'failed' && priorLaunch.txHash) {
+    const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: priorLaunch.txHash })
+    if (receipt.status !== 'reverted') {
+      throw new Error('The previous project launch did not revert. Recover it before trying again.')
+    }
+    revertedProjectHash = priorLaunch.txHash
+  }
+  const prior = read().statuses[chainId]?.multisigSetup
+  await checkLaunchMultisigs(client, plan)
 
-    let hash = recovered
-    let proposal: Hex | undefined
-    if (!hash) {
-      if (await verifySafeDeployments(client, plan.multisigs!, { allowMissing: true })) {
-        persist({ phase: 'done' })
-        return
-      }
-      if (prior?.phase === 'done') {
-        throw new Error('The previously created Safe could not be verified. Check the original setup transaction before continuing.')
-      }
-      const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
-      // The simulation must create exactly the planned Safes, or show each already deployed.
-      const simulateSetup = async () => {
-        const data = encodeFunctionData(request)
-        const result = await simulateStateChangingTransaction(client, { from: account, to: request.address, data, value: request.value })
-        const calls = decodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', data: result })
-        if (calls.length !== plan.multisigs!.length) throw new Error('Safe setup simulation returned an unexpected result.')
-        for (const [index, call] of calls.entries()) {
-          if (call.success) {
-            if (call.returnData.length !== 66) throw new Error('Safe setup simulation returned an invalid address.')
-            const created = decodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', data: call.returnData })
-            if (!isAddressEqual(created, plan.multisigs![index].address)) throw new Error('Safe setup simulation returned a different Safe address.')
-          } else {
-            await verifySafeDeployments(client, [plan.multisigs![index]])
-          }
+  let hash = recovered
+  let proposal: Hex | undefined
+  if (!hash) {
+    if (await verifySafeDeployments(client, plan.multisigs!, { allowMissing: true })) {
+      await persist({ phase: 'done' })
+      return
+    }
+    if (prior?.phase === 'done') {
+      throw new Error('The previously created Safe could not be verified. Check the original setup transaction before continuing.')
+    }
+    const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
+    // The simulation must create exactly the planned Safes, or show each already deployed.
+    const simulateSetup = async () => {
+      const data = encodeFunctionData(request)
+      const result = await simulateStateChangingTransaction(client, { from: account, to: request.address, data, value: request.value })
+      const calls = decodeFunctionResult({ abi: CREATE_BATCH_ABI, functionName: 'aggregate3Value', data: result })
+      if (calls.length !== plan.multisigs!.length) throw new Error('Safe setup simulation returned an unexpected result.')
+      for (const [index, call] of calls.entries()) {
+        if (call.success) {
+          if (call.returnData.length !== 66) throw new Error('Safe setup simulation returned an invalid address.')
+          const created = decodeFunctionResult({ abi: SAFE_CREATE_ABI, functionName: 'createProxyWithNonce', data: call.returnData })
+          if (!isAddressEqual(created, plan.multisigs![index].address)) throw new Error('Safe setup simulation returned a different Safe address.')
+        } else {
+          await verifySafeDeployments(client, [plan.multisigs![index]])
         }
       }
-      onProgress('Review Safe creation')
-      // Core's write hold holds it from just before the wallet opens until it settles.
-      await sendReviewedWrite({
-        account,
-        calls: [{
-          ...reviewedCall({ ...request, chainId, label: `Create ${plan.flavor === 'revnet' ? 'Operator' : 'Owner'} Safe` }),
-          contractName: 'Multicall3',
-          intent: setupNamespace(chainId, account, salt),
-        }],
-        title: 'Review Safe creation',
-        follow: { onConfirming: () => onProgress('Confirming Safe creation') },
-        description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
-        ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
-        reverify: async () => { read(); await checkLaunchMultisigs(client, plan); await simulateSetup() },
-        assertWriteState: () => {
-          assertWalletContext()
-          if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
-        },
-        beforeWallet: () => {
-          read()
-          persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
-        },
-        onUnsent: () => persist({ phase: 'failed' }),
-        // Journaled as soon as it is out, while core waits for its receipt.
-        onSubmitted: (_call, _step, submitted) => {
-          hash = submitted
-          if (/^0x[0-9a-fA-F]{64}$/u.test(submitted)) {
-            persist({ phase: 'confirming', txHash: submitted, ...(safe ? { safe: true as const, safeProposalHash: submitted } : {}) })
-          }
-        },
-      }).catch((error: unknown) => {
-        // A mined revert is read from its receipt below; anything else stays as the hold left it.
-        if (!(hash && revertedReceipt(error))) throw error
-      })
-      if (!hash) throw new Error('The wallet returned no Safe setup hash. Check your wallet before trying again.')
-      if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
-        throw new Error('The wallet returned no valid Safe setup hash. Check your wallet before trying again.')
-      }
-      proposal = safe ? hash : undefined
     }
-    if (proposal) {
-      onProgress('Waiting for Safe owners to approve creation')
-      hash = await waitForSafeExecutionHash(chainId, proposal, { signal: options.signal })
-      persist({ phase: 'confirming', txHash: hash, safe: true, safeProposalHash: proposal })
+    onProgress('Review Safe creation')
+    // Core's write hold holds it from just before the wallet opens until it settles.
+    await sendReviewedWrite({
+      account,
+      calls: [{
+        ...reviewedCall({ ...request, chainId, label: `Create ${plan.flavor === 'revnet' ? 'Operator' : 'Owner'} Safe` }),
+        contractName: 'Multicall3',
+        intent: setupNamespace(chainId, account, salt),
+      }],
+      title: 'Review Safe creation',
+      locks,
+      follow: { onConfirming: () => onProgress('Confirming Safe creation') },
+      description: [launchMultisigReview(plan), safe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join('\n\n'),
+      ...(safe ? { confirmLabel: 'Agree & continue to Safe' } : {}),
+      reverify: async () => { read(); await checkLaunchMultisigs(client, plan); await simulateSetup() },
+      assertWriteState: () => {
+        assertWalletContext()
+        if (isSafeConnection(wagmiConfig) !== safe) throw new Error('Wallet connection changed. Review Safe creation again.')
+      },
+      beforeWallet: async () => {
+        read()
+        await persist({ phase: 'signing', ...(safe ? { safe: true as const } : {}) })
+      },
+      onUnsent: () => persist({ phase: 'failed' }),
+      // Journaled as soon as it is out, while core waits for its receipt.
+      onSubmitted: async (_call, _step, submitted) => {
+        hash = submitted
+        if (/^0x[0-9a-fA-F]{64}$/u.test(submitted)) {
+          await persist({ phase: 'confirming', txHash: submitted, ...(safe ? { safe: true as const, safeProposalHash: submitted } : {}) })
+        }
+      },
+    }).catch((error: unknown) => {
+      // A mined revert is read from its receipt below; anything else stays as the hold left it.
+      if (!(hash && revertedReceipt(error))) throw error
+    })
+    if (!hash) throw new Error('The wallet returned no Safe setup hash. Check your wallet before trying again.')
+    if (!/^0x[0-9a-fA-F]{64}$/u.test(hash)) {
+      throw new Error('The wallet returned no valid Safe setup hash. Check your wallet before trying again.')
     }
-    onProgress('Confirming Safe creation')
-    const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: hash! })
-    if (proposal) {
-      const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
-      const { status } = await readSafeAppExecution({
-        client, receipt, safe: account, proposalHash: proposal,
-        calls: [{ to: request.address, data: encodeFunctionData(request), value: request.value }],
-        batch: false,
-      })
-      if (status === 'failed') {
-        persist({ phase: 'failed', txHash: hash })
-        throw new Error('Safe creation failed inside the Safe. Review the setup before trying again.')
-      }
-      if (status !== 'success') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
-    } else if (receipt.status !== 'success' && recovered) {
-      // A settled success always wins: a read that disagrees is asked again, never a failure.
-      throw new Error('Safe creation went through. It is still confirming.')
-    } else if (receipt.status !== 'success') {
-      persist({ phase: 'failed', txHash: hash })
-      throw new Error('Safe creation reverted. Review the setup before trying again.')
+    proposal = safe ? hash : undefined
+  }
+  if (proposal) {
+    onProgress('Waiting for Safe owners to approve creation')
+    hash = await waitForSafeExecutionHash(chainId, proposal, { signal: options.signal })
+    await persist({ phase: 'confirming', txHash: hash, safe: true, safeProposalHash: proposal })
+  }
+  onProgress('Confirming Safe creation')
+  const receipt = await waitForTransactionReceipt(wagmiConfig, { chainId: chainId as JBChainId, hash: hash! })
+  if (proposal) {
+    const request = buildSafeDeploymentTx(chainId, plan.multisigs!)
+    const { status } = await readSafeAppExecution({
+      client, receipt, safe: account, proposalHash: proposal,
+      calls: [{ to: request.address, data: encodeFunctionData(request), value: request.value }],
+      batch: false,
+    })
+    if (status === 'failed') {
+      await persist({ phase: 'failed', txHash: hash })
+      throw new Error('Safe creation failed inside the Safe. Review the setup before trying again.')
     }
-    // A settled success whose Safes can't be verified yet stays confirming (verifyCreatedLaunchMultisigs throws, nothing is written).
-    await verifyCreatedLaunchMultisigs(client, plan, receipt.blockNumber)
-    // Its proof reaches the hold, which settles it.
-    const setupCall = buildSafeDeploymentTx(chainId, plan.multisigs!)
-    await requireHeldSettlement(writeHolds.open({
-      chainId, account, safe: !!proposal, namespace: setupNamespace(chainId, account, salt),
-      call: { to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n },
-    }), client as unknown as WriteHoldClient, receipt, proposal ? { calls: [{ to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n }] } : undefined).catch(() => null)
-    persist({ phase: 'done', txHash: hash })
-  })
+    if (status !== 'success') throw new Error(SAFE_PROPOSAL_UNCONFIRMED)
+  } else if (receipt.status !== 'success' && recovered) {
+    // A settled success always wins: a read that disagrees is asked again, never a failure.
+    throw new Error('Safe creation went through. It is still confirming.')
+  } else if (receipt.status !== 'success') {
+    await persist({ phase: 'failed', txHash: hash })
+    throw new Error('Safe creation reverted. Review the setup before trying again.')
+  }
+  // A settled success whose Safes can't be verified yet stays confirming (verifyCreatedLaunchMultisigs throws, nothing is written).
+  await verifyCreatedLaunchMultisigs(client, plan, receipt.blockNumber)
+  // Its proof reaches the hold, which settles it.
+  const setupCall = buildSafeDeploymentTx(chainId, plan.multisigs!)
+  await requireHeldSettlement(writeHolds.open({
+    chainId, account, safe: !!proposal, namespace: setupNamespace(chainId, account, salt),
+    call: { to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n },
+  }), client as unknown as WriteHoldClient, receipt, proposal ? { calls: [{ to: setupCall.address, data: encodeFunctionData(setupCall), value: setupCall.value ?? 0n }] } : undefined).catch(() => null)
+  await persist({ phase: 'done', txHash: hash })
 }
 
 /**
@@ -285,12 +285,12 @@ export async function prepareLaunchMultisigs(options: PrepareOptions): Promise<v
  * journal records that nothing is out, so the launch prepares its setup again.
  */
 export async function retireLaunchMultisigSetup(chainId: number, salt: Hex): Promise<void> {
-  return withLaunchLock(async () => {
+  return withLaunchLock(async locks => {
     const session = requireSession(chainId, salt)
     const status = session.statuses[chainId]
     const setup = status?.multisigSetup
     if (setup?.phase !== 'signing' && setup?.phase !== 'confirming') return
     status.multisigSetup = { phase: 'failed' }
-    if (!saveLaunchSession(session)) throw new Error('Safe recovery could not be saved. Restore browser storage before continuing.')
-  })
+    if (!(await fence(locks, saveLaunchSession)(session))) throw new Error('Safe recovery could not be saved. Restore browser storage before continuing.')
+  }, 'Another tab is updating this launch. Continue there or close it first.')
 }

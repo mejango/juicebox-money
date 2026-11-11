@@ -1441,3 +1441,39 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 - Codex: two passes, three findings, all fixed with tests.
 - Correction: owners is revnet-only, holders everywhere else.
 
+
+## 2026-11-10 SDK core 6.2.0 adoption (run wrapper #296, lock fencing #295)
+
+## Plan refinement
+
+- **Objective:** jbm on @bananapus/nana-sdk-core 6.2.0 with its local run-wrapper rules deleted (the SDK owns stop, dismiss, following), every jbm journal save fenced by the lock it runs under, `locks` passed to every SDK send and sign entry, the launch-lock promise bug and the unlocked QueueRecovery and CreateForm writes closed, and held-write display at revnet parity (every background state, a hash input for a hold with no hash). Success: full `npm run check` green, failing-first tests for each behavior fix, draft PR, not merged.
+- **System fit:** User action, useReviewedAction over the SDK's useReviewedRun, browserLocks via withTabLocks, journal save, SDK send or sign under `locks`, wallet, hold followed to a verified receipt. The SDK owns run status, dismissal, hold following and lock fencing at wallet boundaries; jbm owns its journals, its sequence preparation and its wording. Contracts and server routes are unaffected.
+- **Reuse and simplicity:** Delete awaiting, following, Promise.race, followDetached, total and stoppedPartway; use runner.dismiss, runner.following, status `stopped` and onDismissedSettled. One fence home: withTabLocks hands `work(locks)`, wrappers forward them, each journal's persist does `await assertLocksHeld(locks)` before writing. Reuse revnet's held-write components and wording, or the SDK's when it has them.
+- **Evidence and unknowns:** Released 6.2.0 dist types and source in node_modules are the authority, not the #296 mapping text. Unknown until read: which states revnet shows and whether its hash input is SDK or local (research in progress).
+- **Verification:** Failing-first vitest for: stopped line from runner status, dismiss of a held earlier step refreshing reads, withTabLocks handing locks, a lost lock refusing each journal save, the launch lock awaiting an async fn, the QueueRecovery and CreateForm writes under the lock, and the parity UI. Then full `npm run check` with PLAYWRIGHT_APP_PORT on a free port, Node 26.
+- **Resource budget:** One worktree (sm-jbm), sequential edits; one read-only research agent for revnet parity. Replan if the SDK lacks a needed export or the scripts budget rise exceeds a few KiB.
+
+- [x] Bump core 6.2.0, Node 26, npm 12
+- [x] Run wrapper consolidation (useReviewedAction, useStepRun, write-holds followDetached)
+- [x] withTabLocks work(locks) and wrapper forwarding
+- [x] Fence 6 journal saves; locks to relayrPay, signForwardedRequest, runAuthorityCalls, executeRelayrCalls, runRawRelayrLifecycle
+- [x] launch-session withLaunchLock awaits fn
+- [x] QueueRulesetFlow 834/837 and CreateForm 1053 under the lock
+- [x] Held-write parity with revnet
+- [x] Full check, draft PR
+
+Review (2026-11-10): Draft PR https://github.com/mejango/juicebox-money/pull/175, five commits on e67410f9. Core 6.2.0; the SDK owns stop, dismiss and following; every journal save runs through `fence(locks, …)`; locks reach every SDK send and sign entry; withLaunchLock awaits its work and its refusal is shown; the held-writes list shows every phase and takes a lost hash. Behavior tests failed first on the old code. Green: lint, ts, source, protocol, schema, transaction, wallet inventories, test:ci 286 files 3554 tests. Open: build:browser, budget and test:browser stopped on ENOSPC (disk full, scratchpad deletion hook-blocked); rerun once space is freed. Not merged.
+
+Rerun (2026-11-10, Node 26, npm ci, caches cleared): every `npm run check` step green except schema:check, where testnet.bendystraw.xyz answered 502 after 15 s (railway endpoint 200; the offline registry check passes). test:ci 286 files 3554 tests; budget passes after all scripts 2702 -> 2706 KiB (measured 2705.0 locally and on CI); test:browser 90 passed after making the pay card's "Payment token" locator exact (the loading skeleton's "Loading payment tokens" label matched it as a substring and failed desktop-1280 under load). Lock-lapse outcomes: SDK 6.3.0 will keep them under a fresh lock (coordinator, approved by jango), so no client-local reconcile here; the per-fence list went to the coordinator.
+
+## 2026-11-10 SDK core 6.3.0 adoption
+
+Plan: bump core to 6.3.0 and delete what it now owns. The closed-while-following memory and CLOSED_SEND_CONFIRMED_LINE go to useReviewedRun's dismissal rule. REVIEW_STOPPED_LINE and the held-hash lines come from the SDK, with `attachHash(...).hashCheck` in place of the read-first workaround. Relayr's "nothing sent" restore moves from each catch to relayrPay's `onUnsent` (payRelayrReviewed and sendReviewed); relayrPay passes a lost lock's refusal from `onSent` through, so the SDK keeps it. The sped-up hash and the queue result go through `keepOutcome`. ConfirmationQueuedError from `ended()` shows CONFIRMATION_QUEUED_LINE, and the next run is allowed. Lapse regressions use `lapsingLocksForTests`, then the full `npm run check` and Codex pass 1 with the merge bar.
+
+- [x] Bump core 6.3.0
+- [x] Delete closed memory, local lines, read-first workaround
+- [x] onUnsent for relayr, raw lifecycle and launch; keepOutcome for the sped-up hash and the queue result
+- [x] ConfirmationQueuedError in useReviewedAction
+- [x] Lapse regressions (relayr hash and 4001, launch, payer, queue, queued confirmation); each failed on the old code
+- [x] Full check (every step green, schema online; budgets /[urn] 533 -> 535 and all scripts 2706 -> 2710 for 6.3.0), push
+- [ ] Codex pass 1

@@ -1,6 +1,7 @@
 'use client'
 
-import { withTabLocks } from '@/lib/tab-locks'
+import { fence, withTabLocks, type TabLocks } from '@/lib/tab-locks'
+import { keepOutcome, LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 
 import { getAccount } from '@wagmi/core'
@@ -55,7 +56,6 @@ import {
   relayrDestinationHash,
   relayrForwardRequest,
   relayrForwarderDeadline,
-  relayrPaymentAttemptOutcome,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -118,7 +118,7 @@ const RELAYR_NOT_FOUND_ATTEMPTS = 3
 const activeRelayrScopes = new Set<string>()
 
 /** Serialize payment and recovery for one saved action across tabs as well as components. */
-export async function withRelayrScopeLock<T>(scope: string, execute: () => Promise<T>): Promise<T> {
+export async function withRelayrScopeLock<T>(scope: string, execute: (locks: TabLocks) => Promise<T>): Promise<T> {
   if (activeRelayrScopes.has(scope)) throw new Error('This Relayr action is already being processed.')
   activeRelayrScopes.add(scope)
   try {
@@ -620,8 +620,8 @@ export function saveRelayrPendingSessionDurably(scope: string, session: RelayrPe
   return saved
 }
 
-function persistRelayrPublication(scope: string, session: RelayrPendingSession): RelayrPendingSession {
-  const saved = saveRelayrPendingSessionDurably(scope, session)
+async function persistRelayrPublication(locks: TabLocks, scope: string, session: RelayrPendingSession): Promise<RelayrPendingSession> {
+  const saved = await fence(locks, saveRelayrPendingSessionDurably)(scope, session)
   if (saved.publishedEntries?.length !== saved.expectedCount ||
       (session.publishedNonces && saved.publishedNonces?.length !== saved.expectedCount) ||
       (session.expectedTransactions && saved.expectedTransactions?.length !== saved.expectedCount)) {
@@ -933,10 +933,12 @@ export async function buildForwardedTx(...args: Parameters<typeof signForwardedR
 async function signForwardedRequest(
   call: RelayrCall,
   expectedAccount: Address,
-  expectedNonce?: bigint,
-  context?: { description: string; rows?: readonly ReviewContextRow[] },
+  expectedNonce: bigint | undefined,
+  context: { description: string; rows?: readonly ReviewContextRow[] } | undefined,
   /** The plan that already reviewed this request: it is signed with no prompt of its own. */
-  plan?: ReviewedPlan,
+  plan: ReviewedPlan | undefined,
+  /** The locks the signing runs under: a lost one signs nothing. */
+  locks: TabLocks,
 ): Promise<{ entry: RelayrEntry; nonce: bigint }> {
   const forwarder = jbV6ContractAddress[JBCoreContracts.ERC2771Forwarder][
     call.chainId
@@ -983,6 +985,7 @@ async function signForwardedRequest(
     ].filter(Boolean).join('\n\n'),
     ...(context?.rows ? { context: context.rows } : {}),
     ...(plan ? { plan } : {}),
+    locks,
     reverify: async () => {
       assertWallet()
       assertRelayrScheduleWindow(request.deadline)
@@ -1107,8 +1110,10 @@ export async function relayrPay({
   reverifyBeforeSendOnly = false,
   onSending,
   onSent,
+  onUnsent,
   onConfirming,
   planned,
+  locks,
 }: {
   /** One of the quote's payment options, as Relayr returned it. */
   payment: RelayrPayment
@@ -1128,6 +1133,8 @@ export async function relayrPay({
   onSending?: (details: RelayrPaymentDetails) => void | Promise<void>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void | Promise<void>
+  /** Restore the record `onSending` saved once nothing was sent (a 4001 or a refusal before the wallet), kept for a lost lock. */
+  onUnsent?: () => Promise<void>
   /** The sent payment's receipt is still confirming, with the line to show: it is followed before this resolves. */
   onConfirming?: (line: string) => void
   /**
@@ -1135,6 +1142,8 @@ export async function relayrPay({
    * a first payment within it is sent with no prompt of its own.
    */
   planned?: { plan: ReviewedPlan; round: string; quote: RelayrQuote }
+  /** The locks the payment runs under: a lost one pays nothing. */
+  locks: TabLocks
 }): Promise<{ hash: Hex; payments: RelayrSentPayment[] }> {
   assertNoViewAs()
   // A Safe pays through its own execution, which no proof can read as this payment.
@@ -1177,6 +1186,8 @@ export async function relayrPay({
         account: expectedAccount,
         plan: planned.plan,
         relayrRound: planned.round,
+        locks,
+        ...(onUnsent ? { onUnsent } : {}),
         onSending: async () => {
           readReviewed()
           await reverify?.()
@@ -1189,7 +1200,9 @@ export async function relayrPay({
           payments = [sentRelayrPayment(reviewed, submitted)]
           try {
             await onSent?.(payments)
-          } catch {
+          } catch (error) {
+            // A lost lock's refusal is the SDK's to keep (keepOutcome): the hash is saved once the locks are back.
+            if (error instanceof LockLostError) throw error
             throw new RelayrPaymentSubmittedError(submitted, chainId)
           }
         },
@@ -1234,6 +1247,7 @@ export async function relayrPay({
         ...relayrPaymentReview(reviewed.calldata),
       }],
       title: 'Review execution payment',
+      locks,
       follow: { onConfirming: () => onConfirming?.(HELD_CONFIRMING_LINE) },
       description: [note,
         'This payment covers execution on each selected chain. Review its exact chain, destination, native value, and calldata before opening your wallet.',
@@ -1257,6 +1271,7 @@ export async function relayrPay({
         await onSending?.(details)
         walletOpened = true
       },
+      ...(onUnsent ? { onUnsent: () => onUnsent() } : {}),
       onSubmitted: async (_call, _step, submitted) => {
         hash = submitted
         // Once the wallet returns a hash, a storage, receipt or proof failure is an
@@ -1264,7 +1279,8 @@ export async function relayrPay({
         payments = [...sent, sentRelayrPayment(details, submitted)]
         try {
           await onSent?.(payments)
-        } catch {
+        } catch (error) {
+          if (error instanceof LockLostError) throw error
           throw new RelayrPaymentSubmittedError(submitted, chainId)
         }
       },
@@ -1290,8 +1306,9 @@ export async function relayrPay({
   if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash!, chainId)
   if (mined.toLowerCase() !== hash!.toLowerCase()) {
     payments = [...sent, sentRelayrPayment(details, mined)]
+    const replaced = payments
     try {
-      await onSent?.(payments)
+      await keepOutcome(locks, () => onSent?.(replaced))
     } catch {
       throw new RelayrPaymentSubmittedError(mined, chainId)
     }
@@ -1339,8 +1356,8 @@ async function savedRequestsVerdict(saved: RelayrPendingSession): Promise<Relayr
 }
 
 /** Mark a session for Discard (ruling R114), and the error its action throws until it is discarded. */
-function discardableSession(scope: string, saved: RelayrPendingSession, reason: RelayrDiscardReason, cause?: unknown): RelayrDiscardError {
-  saveRelayrPendingSession(scope, { ...saved, discardable: reason })
+async function discardableSession(locks: TabLocks, scope: string, saved: RelayrPendingSession, reason: RelayrDiscardReason, cause?: unknown): Promise<RelayrDiscardError> {
+  await fence(locks, saveRelayrPendingSession)(scope, { ...saved, discardable: reason })
   return new RelayrDiscardError(scope, reason, cause, saved.paymentUnmatched === true)
 }
 
@@ -1361,6 +1378,7 @@ function discardableSession(scope: string, saved: RelayrPendingSession, reason: 
  * `cause` is why the session's calls were not proven.
  */
 async function savedSessionOutcome(
+  locks: TabLocks,
   scope: string,
   saved: RelayrPendingSession,
   verdict: RelayrRequestsVerdict,
@@ -1370,7 +1388,7 @@ async function savedSessionOutcome(
   const outcome = await relayrSessionOutcome(verdict, { nonces: saved.publishedNonces, recheck })
   switch (outcome.kind) {
     case 'discard':
-      throw discardableSession(scope, saved, outcome.reason, outcome.reason === 'changed' ? outcome.error : cause)
+      throw await discardableSession(locks, scope, saved, outcome.reason, outcome.reason === 'changed' ? outcome.error : cause)
     case 'unchecked':
       throw new Error('Couldn\'t check the project. Try again.', { cause: outcome.error })
     case 'reorg-hold':
@@ -1387,12 +1405,13 @@ async function savedSessionOutcome(
  * classified.
  */
 async function liveSessionVerdict(
+  locks: TabLocks,
   scope: string,
   saved: RelayrPendingSession,
   cause?: unknown,
 ): Promise<Extract<RelayrRequestsVerdict, { live: true }> | null> {
   const verdict = await savedRequestsVerdict(saved)
-  if (verdict?.live === false) await savedSessionOutcome(scope, saved, verdict, undefined, cause)
+  if (verdict?.live === false) await savedSessionOutcome(locks, scope, saved, verdict, undefined, cause)
   return verdict?.live ? verdict : null
 }
 
@@ -1403,15 +1422,15 @@ async function liveSessionVerdict(
  * unused, so a paid bundle whose calls reverted holds too. Once every
  * request is dead, savedSessionOutcome ends it.
  */
-async function holdUnprovenSession(scope: string, saved: RelayrPendingSession, error: unknown): Promise<never> {
-  const live = await liveSessionVerdict(scope, saved, error)
+async function holdUnprovenSession(locks: TabLocks, scope: string, saved: RelayrPendingSession, error: unknown): Promise<never> {
+  const live = await liveSessionVerdict(locks, scope, saved, error)
   throw live ? new Error(relayrHeldMessage(live.until), { cause: error }) : error
 }
 
 export async function relayrPoll(
   uuid: string,
   expectedCount: number,
-  onUpdate?: (records: RelayrTransactionRecord[]) => void,
+  onUpdate?: (records: RelayrTransactionRecord[]) => void | Promise<void>,
   intervalMs = 2_500,
   timeoutMs = 5 * 60_000,
 ): Promise<RelayrTransactionRecord[]> {
@@ -1445,7 +1464,7 @@ export async function relayrPoll(
       const records = read && read !== 'not-found' ? read.records : null
       if (records) {
         lastRecords = records
-        onUpdate?.(records)
+        await onUpdate?.(records)
         if (
           records.length === expectedCount &&
           records.every(record => relayrStateIsSuccess(record.status?.state))
@@ -1464,7 +1483,8 @@ export async function relayrPoll(
         }
       }
     } catch (error) {
-      if (error instanceof RelayrExecutionError) throw error
+      // A lost lock ends the poll: another tab now owns this session.
+      if (error instanceof RelayrExecutionError || error instanceof LockLostError) throw error
     }
     if (Date.now() - started > timeoutMs) {
       throw new RelayrExecutionError(
@@ -1517,6 +1537,7 @@ async function verifySavedRelayrDestinations(
  * every request expired unused, for its action to sign them again.
  */
 async function resumeSavedRelayrSession(
+  locks: TabLocks,
   pendingScope: string,
   saved: RelayrPendingSession,
   onProgress?: (progress: RelayrProgress) => void,
@@ -1527,6 +1548,7 @@ async function resumeSavedRelayrSession(
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
+  const save = fence(locks, saveRelayrPendingSession)
   if (pendingScope.startsWith('safe-queue:') || saved.expectedEntries || saved.expectedSafeExecutions) {
     throw new Error(
       'Resume this paid Safe bundle from the project Owner/Operator queue so its exact onchain executions can be verified.',
@@ -1539,7 +1561,7 @@ async function resumeSavedRelayrSession(
   }
   reportProgress(saved.records)
   if (saved.paymentStatus === 'unpaid') {
-    await liveSessionVerdict(pendingScope, saved)
+    await liveSessionVerdict(locks, pendingScope, saved)
     throw new Error('The original signatures are saved and no payment was attempted. Reopen the original action to continue with those exact authorizations.')
   }
   const expectedTransactions = saved.expectedTransactions
@@ -1551,18 +1573,19 @@ async function resumeSavedRelayrSession(
     // A success confirms the payment; a canonical revert leaves the quote to
     // the retry rule; while the proof is unavailable it stays submitted.
     let confirmed = false
+    let reverted = false
     try {
-      confirmed = await proveSavedRelayrPayment(relayrChainClient, submitted.payments, submitted.account,
-        () => saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'reverted' }))
+      confirmed = await proveSavedRelayrPayment(relayrChainClient, submitted.payments, submitted.account, () => { reverted = true })
     } catch (error) {
+      if (reverted) await save(pendingScope, { ...submitted, paymentStatus: 'reverted' })
       if (!(error instanceof RelayrProofError) || error instanceof RelayrPaymentRevertedError) throw error
       // The saved hash is another transaction, which no later resume can change.
       // While a request can still run, or its state is unknown, the refusal
       // stands; once every one is dead the session can be discarded (ruling R114).
-      await liveSessionVerdict(pendingScope, saveRelayrPendingSession(pendingScope, { ...submitted, paymentUnmatched: true }), error)
+      await liveSessionVerdict(locks, pendingScope, await save(pendingScope, { ...submitted, paymentUnmatched: true }), error)
       throw error
     }
-    if (confirmed) saved = saveRelayrPendingSession(pendingScope, { ...submitted, paymentStatus: 'confirmed' })
+    if (confirmed) saved = await save(pendingScope, { ...submitted, paymentStatus: 'confirmed' })
   }
   let records = saved.records
   let verified = false
@@ -1578,16 +1601,16 @@ async function resumeSavedRelayrSession(
       read = reverted ?? await revertedRelayrQuote(relayrChainClient, { bundleUuid: saved.bundleUuid, payments: saved.payments ?? [],
         options: saved.paymentOptions ?? [], destinationChainIds: saved.chainIds, account: saved.account ?? '' })
     } catch (error) {
-      return holdUnprovenSession(pendingScope, saved, error)
+      return holdUnprovenSession(locks, pendingScope, saved, error)
     }
     if (read.records) {
       records = read.records
-      saved = saveRelayrPendingSession(pendingScope, { ...saved, records, ...(read.state === 'released' ? { released: true } : {}) })
+      saved = await save(pendingScope, { ...saved, records, ...(read.state === 'released' ? { released: true } : {}) })
       reportProgress(records)
     }
     if (read.state !== 'funded') {
       // Relayr reports nothing funded it; its own requests may still have run outside Relayr.
-      await liveSessionVerdict(pendingScope, saved)
+      await liveSessionVerdict(locks, pendingScope, saved)
       throw new Error(read.state === 'released'
         ? 'This Relayr quote expired after its payment reverted, and nothing ran. Review the action again for a new quote.'
         : 'This Relayr payment reverted onchain. Reopen the original action to pay the same quote again.')
@@ -1595,16 +1618,16 @@ async function resumeSavedRelayrSession(
     try {
       await verifySavedRelayrDestinations(saved, records)
     } catch (error) {
-      return holdUnprovenSession(pendingScope, saved, error instanceof RelayrProofError ? error
+      return holdUnprovenSession(locks, pendingScope, saved, error instanceof RelayrProofError ? error
         : new Error('Another payment funded this Relayr quote. Check again once its calls have run; do not pay again.'))
     }
     verified = true
   }
   if (!verified) {
     try {
-      records = await relayrPoll(saved.bundleUuid, saved.expectedCount, next => {
+      records = await relayrPoll(saved.bundleUuid, saved.expectedCount, async next => {
         records = next
-        saveRelayrPendingSession(pendingScope, { ...saved, records: next })
+        await save(pendingScope, { ...saved, records: next })
         reportProgress(next)
       }, 2_500, 15_000)
     } catch (error) {
@@ -1615,7 +1638,7 @@ async function resumeSavedRelayrSession(
     try {
       await verifySavedRelayrDestinations(saved, records)
     } catch (error) {
-      return holdUnprovenSession(pendingScope, { ...saved, records }, error)
+      return holdUnprovenSession(locks, pendingScope, { ...saved, records }, error)
     }
   }
   await onComplete?.(records)
@@ -1658,11 +1681,11 @@ export async function resumeRelayrSession({
   if (scope.startsWith('project-batch:') && !onComplete) {
     throw new Error('Resume this bundle from its original project action so completed calls are recorded before its payment journal is cleared.')
   }
-  return withRelayrScopeLock(scope, async () => {
+  return withRelayrScopeLock(scope, async locks => {
     const saved = loadRelayrPendingSession(scope)
     if (!saved) throw new Error('No pending Relayr bundle is saved for this action.')
     requireSessionAccount(saved, account)
-    return resumeSavedRelayrSession(scope, saved, onProgress, onComplete)
+    return resumeSavedRelayrSession(locks, scope, saved, onProgress, onComplete)
   })
 }
 
@@ -1672,11 +1695,11 @@ export async function resumeRelayrSession({
  */
 export async function runRelayrCalls(options: Parameters<typeof executeRelayrCalls>[0]) {
   const pendingScope = options.pendingScope ?? relayrCallsScope(options.calls)
-  return withRelayrScopeLock(pendingScope, () => withForwarderAuthorizationLock({
+  return withRelayrScopeLock(pendingScope, scopeLocks => withForwarderAuthorizationLock({
     account: options.account, chainIds: options.calls.map(call => call.chainId), owner: `relayr:${pendingScope}`,
     pendingSessions: readRelayrPendingSessionsForAuthorization,
     requestsDead: requests => relayrRequestsDead(relayrChainClient, requests),
-    execute: assertAvailable => executeRelayrCalls({ ...options, pendingScope }, assertAvailable),
+    execute: (assertAvailable, locks) => executeRelayrCalls({ ...options, pendingScope }, assertAvailable, [...scopeLocks, ...locks]),
   }))
 }
 
@@ -1707,13 +1730,14 @@ async function executeRelayrCalls({
    * `round`, with the fee bound on `chainId`: a fresh run asks no review of its own.
    */
   parent?: { plan: ReviewedPlan; round: string; chainId: number }
-}, assertAuthorizationAvailable: () => void): Promise<{
+}, assertAuthorizationAvailable: () => void, locks: TabLocks): Promise<{
   quote: RelayrQuote
   paymentHash: Hex | null
   records: RelayrTransactionRecord[]
 }> {
   assertNoViewAs()
   if (!calls.length) throw new Error('Choose at least one chain.')
+  const save = fence(locks, saveRelayrPendingSession)
 
   let saved = pendingScope ? loadRelayrPendingSession(pendingScope) : null
   /** Ruling R114: the requests a saved session published, each at a canonical finalized block on its chain. */
@@ -1724,7 +1748,7 @@ async function executeRelayrCalls({
     requireSessionAccount(saved, account)
     if (!relayrSessionAwaitsPayment(saved)) {
       try {
-        return await resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete)
+        return await resumeSavedRelayrSession(locks, pendingScope, saved, onProgress, onComplete)
       } catch (error) {
         // Every request it published expired unused, whatever Relayr reports: signed again below.
         if (!(error instanceof RelayrDiscardError && error.reason === 'expired')) throw error
@@ -1745,8 +1769,8 @@ async function executeRelayrCalls({
         // Its release is unproven while its old request can still run: it holds, saying until when.
         throw verdict?.live ? new Error(relayrHeldMessage(verdict.until), { cause: error }) : error
       }
-      if (reverted.state === 'funded') return resumeSavedRelayrSession(pendingScope, saved, onProgress, onComplete, reverted)
-      if (reverted.state === 'released') saved = saveRelayrPendingSession(pendingScope, { ...saved, released: true })
+      if (reverted.state === 'funded') return resumeSavedRelayrSession(locks, pendingScope, saved, onProgress, onComplete, reverted)
+      if (reverted.state === 'released') saved = await save(pendingScope, { ...saved, released: true })
     }
   }
 
@@ -1784,7 +1808,7 @@ async function executeRelayrCalls({
       requests.push(request)
     }
     if (!verdict) throw new Error('The original published Relayr calls changed. Keep the original action pending.')
-    const outcome = await savedSessionOutcome(pendingScope, saved, verdict, async () => { await reverify?.() })
+    const outcome = await savedSessionOutcome(locks, pendingScope, saved, verdict, async () => { await reverify?.() })
     if (outcome.kind === 'hold') throw new Error(relayrHeldMessage(outcome.until))
     if (outcome.kind === 'refresh') {
       // An old request can still run: no new signature and no Discard. Its
@@ -1855,8 +1879,8 @@ async function executeRelayrCalls({
     await reverify?.()
     const again = resigning?.[index]
     const signed = again
-      ? await signForwardedRequest({ ...calls[index], gas: again.gas }, account, BigInt(again.nonce))
-      : await signForwardedRequest(calls[index], account, undefined, undefined, plan)
+      ? await signForwardedRequest({ ...calls[index], gas: again.gas }, account, BigInt(again.nonce), undefined, undefined, locks)
+      : await signForwardedRequest(calls[index], account, undefined, undefined, plan, locks)
     entries.push(signed.entry)
     nonces?.push(signed.nonce.toString())
     await reverify?.()
@@ -1885,7 +1909,7 @@ async function executeRelayrCalls({
     }
     // Posting exposes executable signatures, even when the server's response never arrives.
     assertAuthorizationAvailable()
-    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    if (pendingScope) session = await persistRelayrPublication(locks, pendingScope, session)
     onProgress?.({ phase: 'quoting' })
     quote = await relayrPostBundle(entries)
     // The session keeps every option it authenticated, each of which the
@@ -1895,7 +1919,7 @@ async function executeRelayrCalls({
     const unkept = quoted.length > MAX_RELAYR_SESSION_ENTRIES
     session = { ...session, bundleUuid: quote.bundle_uuid, expectedTransactions: quote.expectedTransactions,
       paymentOptions: unkept ? [] : quoted.map(({ option }) => option) }
-    if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+    if (pendingScope) session = await persistRelayrPublication(locks, pendingScope, session)
     if (unkept) throw new Error('Relayr offered more payment options than this action can keep. Nothing was paid; try again for a new quote.')
     const options = relayrPaymentOptions(quote, destinations)
     if (!options.length) throw new Error('Relayr returned no supported payment option in the destinations’ network family.')
@@ -1938,39 +1962,45 @@ async function executeRelayrCalls({
       note: paidBefore,
       ...(planned && !repaying ? { planned: { plan: planned.plan, round: planned.round, quote } } : {}),
       reverify: verifyBeforePayment,
-      onSending: () => {
+      locks,
+      onSending: async () => {
         const current = pendingScope ? loadRelayrPendingSession(pendingScope) : null
         if (current && (!relayrSessionAwaitsPayment(current) || current.bundleUuid !== quote.bundle_uuid)) {
           throw new Error('Another payment attempt is saved for this action. Check the original bundle before continuing.')
         }
-        if (pendingScope) session = persistRelayrPublication(pendingScope, session)
+        if (pendingScope) session = await persistRelayrPublication(locks, pendingScope, session)
         sending = true
       },
-      onSent: payments => {
+      // Nothing was sent after the marker was saved: the quote is unpaid again, or stays on its retry rule.
+      onUnsent: async () => {
+        if (!sending || !pendingScope) return
+        const paid = !!session.payments?.length
+        await save(pendingScope, { ...session, paymentStatus: paid ? 'reverted' : 'unpaid', paymentHash: paid ? session.payments!.at(-1)!.hash : null })
+      },
+      onSent: async payments => {
         sending = false
         const hash = payments[payments.length - 1].hash
         session = { ...session, payments, paymentHash: hash, paymentStatus: 'submitted' }
-        if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+        if (pendingScope) session = await save(pendingScope, session)
         onProgress?.({ phase: 'payment-submitted', payment, paymentHash: hash, bundleUuid: quote.bundle_uuid })
       },
     }))
   } catch (error) {
-    const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!session.payments?.length })
-    if (pendingScope && outcome) {
-      saveRelayrPendingSession(pendingScope, { ...session, paymentStatus: outcome,
-        paymentHash: outcome === 'reverted' ? session.payments?.at(-1)?.hash ?? null : null })
+    // A payment that reverted onchain; one nothing sent is `onUnsent`'s.
+    if (pendingScope && error instanceof RelayrPaymentRevertedError) {
+      await save(pendingScope, { ...session, paymentStatus: 'reverted', paymentHash: session.payments?.at(-1)?.hash ?? null })
     }
     throw error
   }
   session = { ...session, paymentHash, paymentStatus: 'confirmed' }
-  if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+  if (pendingScope) session = await save(pendingScope, session)
   onProgress?.({ phase: 'payment-confirmed', payment, paymentHash, bundleUuid: quote.bundle_uuid })
   let records: RelayrTransactionRecord[] = []
   try {
-    records = await relayrPoll(quote.bundle_uuid, calls.length, next => {
+    records = await relayrPoll(quote.bundle_uuid, calls.length, async next => {
       records = next
       session = { ...session, records: next }
-      if (pendingScope) session = saveRelayrPendingSession(pendingScope, session)
+      if (pendingScope) session = await save(pendingScope, session)
       const progress = relayrProgress(next, calls.length)
       onProgress?.({ phase: 'executing', done: progress.confirmed, total: progress.total,
         records: next, bundleUuid: quote.bundle_uuid, paymentHash })
@@ -1982,7 +2012,7 @@ async function executeRelayrCalls({
     await verifySavedRelayrDestinations(session, records)
   } catch (error) {
     if (!pendingScope) throw error
-    return holdUnprovenSession(pendingScope, session, error)
+    return holdUnprovenSession(locks, pendingScope, session, error)
   }
   await onComplete?.(records)
   if (pendingScope) clearRelayrPendingSession(pendingScope)

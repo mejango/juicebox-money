@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { withTabLocks } from '@/lib/tab-locks'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
+import { fence, withTabLocks, type TabLocks } from '@/lib/tab-locks'
 
 afterEach(() => { vi.unstubAllGlobals() })
 
@@ -18,6 +19,18 @@ describe('withTabLocks', () => {
     await expect(withTabLocks(['a', 'c'], 'Busy elsewhere.', () => 'third')).resolves.toBe('third')
   })
 
+  it.each([
+    ['Web Locks', () => vi.stubGlobal('navigator', { locks: tabLockManager() })],
+    ['no Web Locks', () => vi.stubGlobal('navigator', {})],
+  ])('with %s, hands work every lock it holds, so its writes can check them', async (_name, setup) => {
+    setup()
+    const names = await withTabLocks(['b', 'a', 'b'], 'Busy elsewhere.', async locks => {
+      for (const lock of locks) await lock.assertHeld()
+      return locks.map(lock => lock.name)
+    })
+    expect(names).toEqual(['a', 'b'])
+  })
+
   it('waits for a held key when it has no busy line', async () => {
     vi.stubGlobal('navigator', {})
     const order: string[] = []
@@ -28,6 +41,18 @@ describe('withTabLocks', () => {
     release()
     await Promise.all([first, second])
     expect(order).toEqual(['first', 'second'])
+  })
+})
+
+describe('fence', () => {
+  const lock = (held: boolean) => ({ name: 'k', mode: 'exclusive', signal: new AbortController().signal,
+    held: async () => held, assertHeld: async () => { if (!held) throw new LockLostError('k') } }) as TabLocks[number]
+
+  it('writes while every lock is held, and writes nothing once one passed to another tab', async () => {
+    const write = vi.fn((value: string) => value.length)
+    await expect(fence([lock(true)], write)('abc')).resolves.toBe(3)
+    await expect(fence([lock(true), lock(false)], write)('abcd')).rejects.toMatchObject({ code: 'LOCK_LOST' })
+    expect(write.mock.calls).toEqual([['abc']])
   })
 })
 

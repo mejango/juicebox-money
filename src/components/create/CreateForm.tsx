@@ -77,9 +77,11 @@ import {
   remainingLaunchChains,
   saveLaunchSession,
   withLaunchLock,
+  LAUNCH_RUNNING_LINE,
   type LaunchChainStatus,
   type LaunchSession,
 } from "@/lib/launch-session";
+import { fence, type TabLocks } from "@/lib/tab-locks";
 import {
   CASH_OUTS_OFF_REVNET,
   DEFAULT_STORE_FLAGS,
@@ -1040,17 +1042,19 @@ export function CreateForm() {
     );
   };
 
-  const updateStatus = (chainId: number, patch: Partial<ChainStatus>) => {
-    // Update the ref synchronously (runChains reads it between renders) and
-    // mirror durable progress into the persisted launch session so a refresh
-    // can resume instead of re-launching every chain.
+  /**
+   * Under the launch lock (`locks`): update the ref synchronously (runChains
+   * reads it between renders) and mirror durable progress into the persisted
+   * launch session so a refresh can resume instead of re-launching every chain.
+   */
+  const updateStatus = async (chainId: number, patch: Partial<ChainStatus>, locks: TabLocks) => {
     const next: ChainStatus = {
       ...(statusesRef.current[chainId] ?? { phase: "pending" }),
       ...patch,
     };
     statusesRef.current = { ...statusesRef.current, [chainId]: next };
     setStatuses(statusesRef.current);
-    const persisted = recordLaunchChainStatus(chainId, {
+    const persisted = await fence(locks, recordLaunchChainStatus)(chainId, {
       phase: next.phase,
       ...(next.txHash ? { txHash: next.txHash } : {}),
       ...(next.safeProposalHash
@@ -1601,7 +1605,19 @@ export function CreateForm() {
    * One wallet transaction per chain, sequentially. Skips chains already
    * done, so a retry resumes exactly where the run stopped.
    */
+  /** The direct launch, chain by chain, under the launch lock its journal writes and sends check. */
   const runDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>) => {
+    try {
+      if (await withLaunchLock(locks => launchDirectChains(pinned, locks), LAUNCH_RUNNING_LINE)) await finishLaunch();
+    } catch (error) {
+      // Another tab runs it, or a journal write found the lock lost: this tab stops, its launch saved.
+      setLaunchError(friendlyError(error));
+      setPhase("failed");
+    }
+  };
+
+  /** True once every chain ran: the launch can finish. */
+  const launchDirectChains = async (pinned: NonNullable<typeof pinnedRef.current>, locks: TabLocks): Promise<boolean | void> => {
     setPhase("launching");
     // This run's own outcome replaces the restored launch's notice.
     setLaunchError(null);
@@ -1635,9 +1651,9 @@ export function CreateForm() {
           // A success saved before: it stays confirming, whatever a read says now (invariant D).
           settledByHold = true;
           proposal = undefined;
-          updateStatus(chainId, { phase: "confirming", error: undefined });
+          await updateStatus(chainId, { phase: "confirming", error: undefined }, locks);
         } else if (launchMayBeOut(priorStatus)) {
-          if (hash) updateStatus(chainId, { phase: "confirming", error: undefined });
+          if (hash) await updateStatus(chainId, { phase: "confirming", error: undefined }, locks);
           // Adopt a saved hash only against exact current or historical bytes from its saved plan.
           // The original transaction supplies its value; recovery never needs a fresh creation-fee read.
           let pinnedCall: { to: Address; data: Hex; value: bigint } | undefined;
@@ -1667,7 +1683,7 @@ export function CreateForm() {
           }
           if (outcome.status === "done" && outcome.result === "failed") {
             provenReverted = true;
-            updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined });
+            await updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined }, locks);
             throw new Error(`Launch failed on ${chainName(chainId)}.`);
           }
           if (outcome.status === "done") {
@@ -1676,14 +1692,14 @@ export function CreateForm() {
             settledByHold = true;
             hash = outcome.hash;
             proposal = undefined;
-            updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: undefined, unverifiedSend: undefined, settled: true });
+            await updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: undefined, unverifiedSend: undefined, settled: true }, locks);
           } else {
             // Retired (the user's exit or check, or a definite rejection): nothing is out. The
             // launch keeps its salt, so a launch that did land makes the retry revert.
             hash = undefined;
             proposal = undefined;
             directSafeCall = undefined;
-            updateStatus(chainId, { phase: "failed", unverifiedSend: undefined, held: undefined, txHash: undefined, safeProposalHash: undefined, directSafeCall: undefined });
+            await updateStatus(chainId, { phase: "failed", unverifiedSend: undefined, held: undefined, txHash: undefined, safeProposalHash: undefined, directSafeCall: undefined }, locks);
           }
         }
         if (!hash) {
@@ -1695,7 +1711,8 @@ export function CreateForm() {
               plan: pinned.plans[chainId],
               account: address!,
               onProgress: setRelayrProgress,
-              onSetup: multisigSetup => updateStatus(chainId, { multisigSetup }),
+              onSetup: multisigSetup => updateStatus(chainId, { multisigSetup }, locks),
+              locks,
               signal,
             }).catch((error: unknown) => {
               // A saved Safe setup the SDK is showing (held, or its check): the launch waits on it.
@@ -1739,6 +1756,7 @@ export function CreateForm() {
               intent: launchNamespace(launch),
             }],
             title: `Review launch on ${chainName(chainId)}`,
+            locks,
             description: [launchScheduleDescription(pinned.plans[chainId]), viaSafe ? SAFE_NONCE_GUIDANCE : null].filter(Boolean).join("\n\n"),
             ...(viaSafe ? { confirmLabel: "Agree & continue to Safe" } : {}),
             assertWriteState: () => {
@@ -1746,7 +1764,7 @@ export function CreateForm() {
               if (isSafeConnection(config) !== viaSafe) throw new Error("Wallet connection changed. Review the launch again.");
             },
             // Under the hold's reservation: another tab resuming this launch is refused before its wallet opens.
-            beforeWallet: () => {
+            beforeWallet: async () => {
               assertLaunchScheduleFresh(pinned.plans[chainId], undefined, chainId);
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
@@ -1759,22 +1777,22 @@ export function CreateForm() {
               if (savedRequest.address.toLowerCase() !== request.address.toLowerCase() || encodeFunctionData(savedRequest as Parameters<typeof encodeFunctionData>[0]).toLowerCase() !== launchCall.data.toLowerCase()) {
                 throw new Error("The saved launch changed. Review the original launch before continuing.");
               }
-              updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined });
+              await updateStatus(chainId, { phase: "signing", directSafeCall, held: true, txHash: undefined, safeProposalHash: undefined }, locks);
               walletInvoked = true;
             },
-            onUnsent: () => {
+            onUnsent: async () => {
               walletInvoked = false;
               const saved = loadLaunchSession({ strict: true });
               const status = saved?.statuses[chainId];
               if (saved?.salt === pinned.salt && status?.unverifiedSend && !status.txHash && !status.safeProposalHash) {
-                updateStatus(chainId, { phase: "failed", unverifiedSend: undefined });
+                await updateStatus(chainId, { phase: "failed", unverifiedSend: undefined }, locks);
               }
             },
             // Journaled as soon as it is out, while core waits for its receipt.
-            onSubmitted: (_call, _step, submitted) => {
+            onSubmitted: async (_call, _step, submitted) => {
               hash = submitted;
               if (/^0x[0-9a-fA-F]{64}$/u.test(submitted)) {
-                updateStatus(chainId, { phase: "confirming", txHash: submitted, safeProposalHash: viaSafe ? submitted : undefined });
+                await updateStatus(chainId, { phase: "confirming", txHash: submitted, safeProposalHash: viaSafe ? submitted : undefined }, locks);
               }
             },
           }).catch((error: unknown) => {
@@ -1794,14 +1812,14 @@ export function CreateForm() {
             throw new Error("The wallet returned no valid launch hash. Recover the original wallet request before trying again.");
           }
           proposal = viaSafe ? hash : undefined;
-          updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: proposal });
+          await updateStatus(chainId, { phase: "confirming", txHash: hash, safeProposalHash: proposal }, locks);
           if (proposal) {
             hash = await waitForSafeExecutionHash(chainId, proposal, { signal });
-            updateStatus(chainId, {
+            await updateStatus(chainId, {
               phase: "confirming",
               txHash: hash,
               safeProposalHash: proposal,
-            });
+            }, locks);
           }
         }
         const receipt = await waitForTransactionReceipt(config, {
@@ -1818,7 +1836,7 @@ export function CreateForm() {
             await requireFinalizedLaunchFailure(client, receipt, hash!);
             provenReverted = true;
             proposal = undefined;
-            updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined });
+            await updateStatus(chainId, { phase: "failed", txHash: undefined, safeProposalHash: undefined }, locks);
             throw new Error(`Launch failed inside the Safe on ${chainName(chainId)}.`);
           }
           if (status !== "success") throw new Error(SAFE_PROPOSAL_UNCONFIRMED);
@@ -1833,11 +1851,11 @@ export function CreateForm() {
             plan: pinned.plans[chainId], salt: pinned.salt,
           });
           provenReverted = true;
-          updateStatus(chainId, {
+          await updateStatus(chainId, {
             phase: "failed",
             txHash: undefined,
             error: `Transaction ${hash} reverted on ${chainName(chainId)}.`,
-          });
+          }, locks);
           throw new Error(`Transaction failed on ${chainName(chainId)}.`);
         }
         if (pinned.plans[chainId].multisigs?.length) {
@@ -1850,18 +1868,18 @@ export function CreateForm() {
           : undefined).catch(() => null);
         const projectId = projectIdFromReceipt(receipt, chainId as JBChainId);
         if (!projectId) {
-          updateStatus(chainId, {
+          await updateStatus(chainId, {
             phase: "uncertain",
             txHash: hash,
             error: settledByHold
               ? LAUNCH_SETTLED_CONFIRMING_LINE
               : `Transaction ${hash} confirmed, but the project ID could not be read. Do not submit it again.`,
-          });
+          }, locks);
           setPhase("failed");
           return;
         }
         assertRulesetReceiptOrder(chainId, projectId, resolveStages(pinned.plans[chainId]).length, receipt);
-        updateStatus(chainId, { phase: "done", projectId, safeProposalHash: undefined });
+        await updateStatus(chainId, { phase: "done", projectId, safeProposalHash: undefined }, locks);
       } catch (e) {
         if (heldShown) {
           // The hold's state, or its check, is shown: the saved submission stays until its exit.
@@ -1896,7 +1914,7 @@ export function CreateForm() {
           priorStatus?.unverifiedSend || priorStatus?.phase === "signing" ||
           (priorStatus?.phase === "uncertain" && !hash);
         try {
-          updateStatus(
+          await updateStatus(
             chainId,
             unknownSend
               ? { phase: "signing", unverifiedSend: true, error: friendlyError(e) }
@@ -1916,6 +1934,7 @@ export function CreateForm() {
                   unverifiedSend: undefined,
                   error: friendlyError(e),
                 },
+            locks,
           );
         } catch (storageError) {
           setLaunchError(friendlyError(storageError));
@@ -1926,7 +1945,7 @@ export function CreateForm() {
         setRelayrProgress(null);
       }
     }
-    await finishLaunch();
+    return true;
   };
 
   const finishLaunch = async () => {
@@ -2095,8 +2114,8 @@ export function CreateForm() {
         // The relayed path reserves its journal under the same browser lock
         // used for submission. Never overwrite another tab's active launch.
         if (transport === "direct") {
-          const save = () => {
-            if (!saveLaunchSession(session)) {
+          const save = async (locks: TabLocks) => {
+            if (!(await fence(locks, saveLaunchSession)(session))) {
               throw new Error("Could not save this launch. Resume any existing launch and allow browser storage before starting another.");
             }
           };
@@ -2160,10 +2179,10 @@ export function CreateForm() {
           setStatuses(session.statuses);
         }
       } else {
-        updateStatus(shown.chainId, {
+        await withLaunchLock(locks => updateStatus(shown.chainId, {
           phase: "failed", unverifiedSend: undefined, held: undefined, txHash: undefined, safeProposalHash: undefined,
           directSafeCall: undefined, error: undefined,
-        });
+        }, locks), LAUNCH_RUNNING_LINE);
       }
       setLaunchError(null);
       retry();
@@ -2227,7 +2246,7 @@ export function CreateForm() {
             `/api/project-ready?chainId=${chainId}&projectId=${s.projectId}`,
           );
           const json = (await res.json()) as { found?: boolean };
-          if (json.found) updateStatus(chainId, { indexed: true });
+          if (json.found) await withLaunchLock(locks => updateStatus(chainId, { indexed: true }, locks), LAUNCH_RUNNING_LINE);
         } catch {
           // Transient — the next tick retries.
         }

@@ -31,7 +31,7 @@ vi.mock('@/lib/relayr', () => ({
   loadRelayrPendingSession: () => mocks.saved,
   relayrChainClient: vi.fn(),
   saveRelayrPendingSessionDurably: mocks.save,
-  withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => run(),
+  withRelayrScopeLock: async (_scope: string, run: (locks: readonly never[]) => Promise<unknown>) => run([]),
 }))
 vi.mock('@bananapus/nana-sdk-core/review/safe-relayr', async importOriginal => ({
   ...(await importOriginal<typeof import('@bananapus/nana-sdk-core/review/safe-relayr')>()),

@@ -3,7 +3,7 @@
 import { createElement, useEffect, useRef, useState, type ReactElement } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { Address, TransactionReceipt } from 'viem'
-import { openStepHold, ReviewLineError, type ReviewedAction, type ReviewedResult, type ReviewedRunStatus, type WriteHoldClient } from '@bananapus/nana-sdk-core/review'
+import { ConfirmationQueuedError, REVIEW_STOPPED_LINE, ReviewLineError, type ReviewedAction, type ReviewedResult, type ReviewedRunStatus } from '@bananapus/nana-sdk-core/review'
 import { useReviewedRun } from '@bananapus/nana-sdk-core/review/react'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
@@ -16,13 +16,12 @@ import { loadReviewEngine, preloadReviewDialog } from '@/lib/preload-review'
 
 import { revertedReceipt } from '@/lib/reviewed-call'
 export { hashOf, liveStep, reviewedCall, revertedReceipt, type TxRequest } from '@/lib/reviewed-call'
-import { followDetached, reviewDescription, writeHolds } from '@/lib/write-holds'
+import { reviewDescription } from '@/lib/write-holds'
 import { wagmiConfig } from '@/providers/Providers'
 
 /** A run the user closed at its review or wallet prompt: what happened, and the way on. */
 export const REVIEW_CLOSED_LINE = 'Nothing was sent. Review it again when you are ready.'
-/** A run the user closed after an earlier step was sent: that step stands, and running again sends the rest. */
-export const REVIEW_STOPPED_LINE = 'The rest was not sent. Review it again when you are ready.'
+export { REVIEW_STOPPED_LINE }
 
 const CENTER_WALLET_REFUSED =
   'This action needs an external wallet. Juicebox wallet payments use their own payment review.'
@@ -67,26 +66,24 @@ export function useReviewedAction(chainId?: number) {
       if (isCenterWallet) throw new ReviewLineError(CENTER_WALLET_REFUSED)
       if (getViewAs()) throw new ReviewLineError(VIEW_AS_WRITE_BLOCKED)
     },
+    // A held step whose confirm closed: its reads refresh once it succeeds, though nothing is left to show it.
+    onDismissedSettled: call => void invalidateProjectDisplayQueries(queryClient, call.chainId),
   })
   useEffect(preloadReviewDialog, [])
   const unmounted = useUnmountSignal()
   const [result, setResult] = useState<ReviewedResult | null>(null)
   const [sentOn, setSentOn] = useState<number | undefined>(undefined)
-  /** The latest run's call count, which core forgets once the run ends. */
-  const [total, setTotal] = useState(0)
   const inFlight = useRef(false)
-  /** The sent step the run only waits on its hold for: closing its confirm ends the run there. */
-  const awaiting = useRef<{ stop: () => void } | null>(null)
-  /** `awaiting` is set, for rendering. */
-  const [following, setFollowing] = useState(false)
+  /** A confirmed step whose notice waits behind this run's own locks: retry later, nothing is sent again. */
+  const [queuedLine, setQueuedLine] = useState<string | null>(null)
 
   const run = async (action: ReviewedRun): Promise<ReviewedResult | null> => {
     // A flow whose page closed opens no review.
     if (inFlight.current || unmounted().aborted) return null
+    setQueuedLine(null)
     inFlight.current = true
     setResult(null)
     setSentOn(action.calls[0]?.chainId)
-    setTotal(action.calls.length)
     const viaSafe = isSafeConnection(wagmiConfig)
     try {
       const ran = await runner.run({
@@ -95,44 +92,26 @@ export function useReviewedAction(chainId?: number) {
         ...(viaSafe && !action.confirmLabel ? { confirmLabel: 'Agree & continue to Safe' } : {}),
       })
       // A sent step whose receipt is still being verified is pending (`phase`), never failed, until
-      // its hold ends the run. A failed run shows its line through `error` and its value through `failure`.
-      // Closing its confirm ends this wait with nothing, and the hold keeps the sent step. An earlier
-      // step (an approval) resets core's run, so no later step is reviewed for it; the last step stays
-      // core's held run, whose line and lock the flow keeps showing until it settles.
-      const ended = ran?.status === 'receipt'
-        ? await Promise.race([ran.ended(), new Promise<null>(resolve => {
-          const call = action.calls[ran.step]!
-          awaiting.current = {
-            stop: ran.step === action.calls.length - 1 ? () => resolve(null) : () => {
-              // Its reads refresh once the step settles, though nothing is left to show it.
-              followDetached(openStepHold(writeHolds, action.account, viaSafe, call), reviewedSendDeps.clientFor(call.chainId) as WriteHoldClient,
-                () => void invalidateProjectDisplayQueries(queryClient, call.chainId))
-              runner.reset()
-            },
-          }
-          setFollowing(true)
-        })])
-        : ran
+      // its hold ends the run. Dismissing its confirm ends this wait with nothing (core's `dismiss`).
+      const ended = ran?.status === 'receipt' ? await ran.ended() : ran
+      if (ended?.status === 'failed' && ended.failure instanceof ConfirmationQueuedError) setQueuedLine(ended.error)
       const done = ended?.status === 'failed' ? null : ended
       setResult(done)
       return done
     } finally {
       inFlight.current = false
-      awaiting.current = null
-      setFollowing(false)
     }
   }
 
   const { held } = runner
-  // Core reads a run closed after an earlier step was sent as idle, with no line: it stopped before its last step.
-  const stoppedPartway = runner.status === 'idle' && runner.lastSubmittedStep !== null && runner.lastSubmittedStep < total - 1
-  // Core's one status: `held` shows the hold's line and exit, `proposed` awaits a Safe's signers.
-  const phase: ReviewedRunStatus = stoppedPartway ? 'cancelled' : runner.status
+  // Core's one status: `held` shows the hold's line and exit, `proposed` awaits a Safe's signers,
+  // `stopped` closed after an earlier step was sent.
+  const phase: ReviewedRunStatus = runner.status
   const shownChainId = sentOn ?? chainId ?? 0
   const action = runner.exitAction ?? runner.sendAgainAction
   const error: string | ReactElement | null = phase === 'held' && held
     ? createElement(WriteHeldNotice, { chainId: shownChainId, view: held, action })
-    : runner.error ?? (stoppedPartway ? REVIEW_STOPPED_LINE : phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
+    : queuedLine ?? runner.error ?? (phase === 'stopped' ? REVIEW_STOPPED_LINE : phase === 'cancelled' ? REVIEW_CLOSED_LINE : null)
 
   // A Safe proposal its hold settled ends on the execution's hash and receipt.
   const hash = result?.status === 'done' ? result.hashes.at(-1) ?? null : runner.receipt?.transactionHash ?? runner.hash
@@ -146,14 +125,10 @@ export function useReviewedAction(chainId?: number) {
 
   /** Whether it closed: never while a run's review or wallet is open; a followed send stays held, and its reads refresh once it settles. */
   const reset = () => {
-    const held = awaiting.current
-    if (inFlight.current && !held) return false
-    if (held) {
-      held.stop()
-      return true
-    }
+    const following = runner.following
+    if ((inFlight.current && !following) || !runner.dismiss()) return false
+    setQueuedLine(null)
     setResult(null)
-    runner.reset()
     return true
   }
   // A finished run's, a settled proposal's, or a step that mined and reverted.
@@ -168,11 +143,11 @@ export function useReviewedAction(chainId?: number) {
     /** True while the run is in flight: in review, simulating, signing or awaiting its receipt. */
     busy: runner.busy,
     /** The run only waits on a sent step's hold: closing the confirm (`dismiss`) ends the run there, and the hold keeps the step. */
-    following,
+    following: runner.following,
     /** The confirm can end on Done: it succeeded, it is with a Safe, or the hold has it. */
     settled: phase === 'done' || phase === 'proposed' || phase === 'held',
     /** The run ended short of done: it failed, or was closed before its last step was sent. */
-    stopped: phase === 'failed' || phase === 'cancelled',
+    stopped: phase === 'failed' || phase === 'cancelled' || phase === 'stopped',
     /** The one line a `proposed` confirm shows: the hold's. */
     notice: phase === 'proposed' ? held?.line ?? null : null,
     isSafe,

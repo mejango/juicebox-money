@@ -2,7 +2,9 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, encodeFunctionResult, type Address, type Hex } from 'viem'
 import { CREATE_BATCH_ABI, SAFE_CREATE_ABI, SAFE_FACTORY, SAFE_SINGLETON, MULTICALL3, buildSafeInitializer, predictSafeAddress, type SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { createSimpleProjectStage, DEFAULT_STORE_FLAGS, type LaunchPlan } from '@/lib/launch'
-import { LAUNCH_SESSION_KEY, loadLaunchSession, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
+import { LAUNCH_SESSION_KEY, loadLaunchSession, saveLaunchSession, withLaunchLock, type LaunchSession } from '@/lib/launch-session'
+import type { TabLocks } from '@/lib/tab-locks'
+import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { prepareLaunchMultisigs, retireLaunchMultisigSetup, setupAttemptOf } from '@/lib/launch-multisig-direct'
 import { savedAttempts } from '@/lib/write-holds'
 import safeFixture from '../fixtures/safe-1.4.1.json'
@@ -126,7 +128,7 @@ function setup() { return loadLaunchSession({ strict: true })!.statuses[CHAIN].m
 function options() {
   return {
     chainId: CHAIN, salt: SALT, plan, account: ACCOUNT, onProgress: vi.fn(), onSetup: vi.fn(),
-    signal: new AbortController().signal,
+    signal: new AbortController().signal, locks: [] as TabLocks,
   }
 }
 function simulation(success = true, address = safe.address) {
@@ -489,7 +491,7 @@ describe('direct launch Safe setup', () => {
       new Promise((_resolve, reject) => {
         signal.addEventListener('abort', () => reject(new DOMException('Safe execution wait aborted', 'AbortError')), { once: true })
       }))
-    const preparing = prepareLaunchMultisigs({ ...options(), signal: page.signal })
+    const preparing = withLaunchLock(locks => prepareLaunchMultisigs({ ...options(), signal: page.signal, locks }))
     await vi.waitFor(() => expect(mocks.safeHash).toHaveBeenCalledOnce())
     expect(held).toBe(true)
 
@@ -557,7 +559,7 @@ describe('direct launch Safe setup', () => {
     const request = vi.fn(async (_name, _options, action) => action(null))
     vi.stubGlobal('navigator', { locks: { request } })
     const args = options()
-    await expect(prepareLaunchMultisigs(args)).rejects.toThrow('Another tab')
+    await expect(withLaunchLock(locks => prepareLaunchMultisigs({ ...args, locks }), 'Another tab is updating this launch.')).rejects.toThrow('Another tab')
     expect(request).toHaveBeenCalledWith('jbm-launch', { ifAvailable: true }, expect.any(Function))
     expect(mocks.write).not.toHaveBeenCalled()
   })
@@ -571,9 +573,17 @@ describe('direct launch Safe setup', () => {
     vi.stubGlobal('navigator', { locks: { request } })
     const args = options()
     mocks.write.mockImplementation(async () => { expect(held).toBe(true); return HASH })
-    await prepareLaunchMultisigs(args)
+    await withLaunchLock(locks => prepareLaunchMultisigs({ ...args, locks }))
     expect(held).toBe(false)
     expect(setup()?.phase).toBe('done')
+  })
+
+  it('writes nothing and opens no wallet once the launch lock passed to another tab', async () => {
+    const before = setup()
+    const lost = { name: 'jbm-launch', mode: 'exclusive', signal: AbortSignal.abort(), held: async () => false, assertHeld: async () => { throw new LockLostError('jbm-launch') } } as TabLocks[number]
+    await expect(prepareLaunchMultisigs({ ...options(), locks: [lost] })).rejects.toMatchObject({ code: 'LOCK_LOST' })
+    expect(setup()).toEqual(before)
+    expect(mocks.write).not.toHaveBeenCalled()
   })
 })
 

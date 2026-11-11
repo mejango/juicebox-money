@@ -40,7 +40,7 @@ vi.mock('@/lib/relayr', () => ({
   loadRelayrPendingSession: (scope: string) => mocks.pending.get(scope) ?? null,
   relayrTargetSupportsForwarder: async () => true,
   runRelayrCalls: mocks.relayr,
-  withRelayrScopeLock: async (_scope: string, run: () => Promise<unknown>) => { mocks.beforeLock(_scope); return run() },
+  withRelayrScopeLock: async (_scope: string, run: (locks: readonly never[]) => Promise<unknown>) => { mocks.beforeLock(_scope); return run([]) },
 }))
 vi.mock('@/lib/raw-relayr', () => ({
   isRawRelayrSessionReleased: mocks.releaseRaw,

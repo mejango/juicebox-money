@@ -646,6 +646,27 @@ describe('a payment whose receipt watch gives up', () => {
   })
 })
 
+describe('a held payment closed while it is followed', () => {
+  it('shows the payment once it confirms, and never offers it again as a new one: one send', async () => {
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => host.textContent?.includes('Confirming your transaction.') ?? false)
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout'] })
+    wallet.giveUp()
+    await act(async () => { await vi.advanceTimersByTimeAsync(200_000) })
+    vi.useRealTimers()
+    await click('Close review')
+    // The payment lands after the confirm closed; the hold's follower sees it as the page regains focus.
+    await act(async () => wallet.confirm(sentHash(1)))
+    await act(async () => { window.dispatchEvent(new Event('focus')) })
+    // The panel shows the payment's result instead of offering it again as a new one.
+    await waitUntil(() => host.textContent?.includes('Payment confirmed') ?? false)
+    expect(host.textContent).toContain('Payment confirmed')
+    expect(button('Pay', false)).toBeUndefined()
+    expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
+  })
+})
+
 describe('an approval whose receipt watch gives up', () => {
   it('counts the approval once it confirms later, and pays without approving again', async () => {
     m.token = 'erc20'

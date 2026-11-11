@@ -198,6 +198,21 @@ const journal = (statuses: Record<number, unknown>, chains = Object.keys(statuse
   }))
 
 describe('a saved launch restored on the create page', () => {
+  it('runs a direct launch under the launch lock: while another tab holds it, this tab says so and sends nothing', async () => {
+    journal({ 1: { phase: 'pending' } })
+    m.review.mockReset().mockResolvedValue(undefined)
+    vi.stubGlobal('navigator', { ...navigator, locks: { request: async (name: string, options: { ifAvailable?: boolean }, run: (lock: object | null) => Promise<unknown>) =>
+      run(name === 'jbm-launch' && options.ifAvailable ? null : { name }) } })
+    try {
+      await mount()
+      await resume()
+      expect(host.textContent).toContain('This launch is already running in another tab.')
+      expect(m.review).not.toHaveBeenCalled()
+      expect(m.writeContract).not.toHaveBeenCalled()
+      expect(loadLaunchSession()?.statuses[1]).toEqual({ phase: 'pending' })
+    } finally { vi.unstubAllGlobals() }
+  })
+
   it("is held, never sent; past the window the hold's exit appears, and only it retires the saved submission, keeping the salt", async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     saveEarlierLaunch()

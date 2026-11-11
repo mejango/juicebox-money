@@ -114,6 +114,7 @@ import {
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { formatDateTime } from '@/lib/format'
 import { coreReviews } from '../support/core-review'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -230,7 +231,7 @@ function installChain(entries: () => readonly RelayrEntry[]) {
 
 /** Pay `option` for BUNDLE_UUID's destinations from Alice. */
 function pay(option: RelayrPayment, destinationChainIds: readonly number[], options: Partial<Parameters<typeof relayrPay>[0]> = {}) {
-  return relayrPay({ payment: option, account: ALICE, bundleUuid: BUNDLE_UUID, destinationChainIds, ...options })
+  return relayrPay({ payment: option, account: ALICE, bundleUuid: BUNDLE_UUID, destinationChainIds, locks: [], ...options })
 }
 
 function deferred() {
@@ -388,7 +389,7 @@ describe('Relayr quote and payment boundaries', () => {
   it.each(WALLET_CHANGES)('refuses a %s change while preparing the forwarded-signature wallet', async change => {
     const entered = deferred(), release = deferred()
     mocks.connectedWallet.mockImplementationOnce(async () => { entered.resolve(); await release.promise; return { wallet: mocks.wallet, account: ALICE } })
-    const result = buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ALICE).catch(error => error)
+    const result = buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234' }, ALICE, undefined, undefined, undefined, []).catch(error => error)
     await entered.promise
     changeWallet(change); release.resolve()
     expect(await result).toBeInstanceOf(Error)
@@ -451,7 +452,7 @@ describe('Relayr quote and payment boundaries', () => {
   })
   it('binds the actual forwarded signature to a shorter prepared schedule deadline', async () => {
     const deadline = Math.floor(Date.now() / 1000) + 3600
-    const entry = await buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234', deadline }, ALICE)
+    const entry = await buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234', deadline }, ALICE, undefined, undefined, undefined, [])
     const request = relayrCore.relayrForwardRequest(entry)
     expect(request?.deadline).toBe(deadline)
     expect(mocks.wallet.signTypedData).toHaveBeenCalledWith(expect.objectContaining({
@@ -461,7 +462,7 @@ describe('Relayr quote and payment boundaries', () => {
 
   it('refuses an expired prepared schedule before invoking the signature wallet', async () => {
     await expect(buildForwardedTx({ chainId: 1, target: TARGET, data: '0x1234',
-      deadline: Math.floor(Date.now() / 1000) + 1 }, ALICE)).rejects.toThrow('schedule expires too soon')
+      deadline: Math.floor(Date.now() / 1000) + 1 }, ALICE, undefined, undefined, undefined, [])).rejects.toThrow('schedule expires too soon')
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
   })
 
@@ -471,7 +472,7 @@ describe('Relayr quote and payment boundaries', () => {
     const rows = [{ label: 'Create owner multisig', value: BOB, mono: true, lines: ['saltNonce 1'] }]
     await buildForwardedTx(call, ALICE, 4n, {
       description: 'Create the owner Safe with 2 of 3 approvals.', rows,
-    })
+    }, undefined, [])
     expect(coreReviews.shown).toHaveLength(1)
     const [review] = coreReviews.shown
     expect(review).toMatchObject({
@@ -1510,6 +1511,24 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(posts[1]).toEqual(posts[0])
+  })
+
+  it.each([
+    ['the payment hash', () => HASH, { paymentStatus: 'submitted', payments: [expect.objectContaining({ hash: HASH })] }],
+    ['a definite rejection', () => { throw Object.assign(new Error('User rejected the payment'), { code: 4001 }) }, { paymentStatus: 'unpaid', paymentHash: null }],
+  ] as const)('keeps %s the wallet returned after its lock lapsed, under a fresh lock', async (_name, wallet, outcome) => {
+    vi.stubGlobal('window', localStorageWindow().window)
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    installSuccessfulBundle()
+    const options = { calls, account: ALICE, pendingScope: `lapsed-payment-${crypto.randomUUID()}` }
+    mocks.wallet.sendTransaction.mockImplementationOnce(async () => {
+      expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'sending' })
+      leases.lapse()
+      return wallet()
+    })
+    await runRelayrCalls(options).catch(() => {})
+    await vi.waitFor(() => expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject(outcome))
   })
 
   it('refuses a scope locked in another tab before signing or paying', async () => {

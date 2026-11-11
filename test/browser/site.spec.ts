@@ -303,8 +303,9 @@ async function exerciseProjectSurfaces(
   }
   // USDC only appears after the ABI-correct accounting-context and ERC-20
   // reads resolve; the unhydrated fallback says ETH.
-  await expect(payCard.getByLabel('Payment token')).toHaveValue('0')
-  await expect(payCard.getByLabel('Payment token')).toContainText('USDC')
+  // Exact: the loading skeleton's "Loading payment tokens" label also matches a substring.
+  await expect(payCard.getByLabel('Payment token', { exact: true })).toHaveValue('0')
+  await expect(payCard.getByLabel('Payment token', { exact: true })).toContainText('USDC')
   await expect(
     payCard.getByText("Couldn't load this project's payment details."),
   ).toHaveCount(0)

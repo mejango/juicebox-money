@@ -103,6 +103,13 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     rounds.set(plan, fees)
     return plan
   }
+  /** As core: a site's outcome callback refused for a lost lock is kept for when its locks are back (keepOutcome). */
+  const kept = (locks: Parameters<Engine['keepOutcome']>[0], write: () => unknown) => core.keepOutcome(locks, write)
+  /** As core: nothing was sent, told only under the site's locks, kept for a lost one. */
+  const unsent = (locks: Parameters<Engine['keepOutcome']>[0], tell?: () => unknown) => kept(locks, async () => {
+    await core.assertLocksHeld(locks)
+    await tell?.()
+  }).catch(lost => { if (lost?.code !== 'LOCK_LOST') throw lost })
   const sendReviewed: Engine['sendReviewed'] = async action => {
     action.guard?.()
     if (action.plan) spend(action.plan, action.account, action.calls)
@@ -116,16 +123,17 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
       await switchChain(call.chainId)
       await action.reverify?.(call, step, undefined)
       let hash: Hex
+      const tellUnsent = () => unsent(action.locks, () => action.onUnsent?.(call, step))
       try {
         await action.beforeWallet?.(call, step)
       } catch (error) {
-        await action.onUnsent?.(call, step)
+        await tellUnsent()
         throw error
       }
       try {
         action.assertWriteState?.()
       } catch (error) {
-        await action.onUnsent?.(call, step)
+        await tellUnsent()
         throw error
       }
       // A Safe app proposes with safeTxGas 0, whatever gas the call names.
@@ -146,10 +154,10 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
           })
           : await send(sending)
       } catch (error) {
-        if (core.isDefiniteWalletRejection(error)) await action.onUnsent?.(call, step)
+        if (core.isDefiniteWalletRejection(error)) await tellUnsent()
         throw error
       }
-      await action.onSubmitted?.(call, step, hash, { safe: safe(), adopted: false })
+      await kept(action.locks, () => action.onSubmitted?.(call, step, hash, { safe: safe(), adopted: false }))
       if (safe()) return { status: 'proposed', step, safeTxHash: hash }
       let mined: import('viem').TransactionReceipt
       try {
@@ -218,15 +226,22 @@ export async function fakeEngine({ send, receipt, sign, safe = () => false, swit
     await action.onSending?.()
     const live = account?.()
     if (account && live?.toLowerCase() !== action.account.toLowerCase()) {
+      await unsent(action.locks, action.onUnsent)
       throw new relayr.RelayrPaymentNotSentError(new Error('Connected account changed.'))
     }
-    const hash = await send(call)
-    await action.onSent?.(hash)
+    let hash: Hex
+    try {
+      hash = await send(call)
+    } catch (error) {
+      if (core.isDefiniteWalletRejection(error)) await unsent(action.locks, action.onUnsent)
+      throw error
+    }
+    await kept(action.locks, () => action.onSent?.(hash))
     if (!proof) return { hash }
     // A wallet that sped the payment up mined it under another hash.
     const receipt = await proof(chainId).waitForTransactionReceipt({ hash })
     const mined = receipt.transactionHash
-    if (mined.toLowerCase() !== hash.toLowerCase()) await action.onSent?.(mined)
+    if (mined.toLowerCase() !== hash.toLowerCase()) await kept(action.locks, () => action.onSent?.(mined))
     if (receipt.status === 'reverted') throw new core.ReviewedCallRevertedError(0, mined, receipt)
     await relayr.verifyRelayrPayment(proof(chainId), { hash: mined, from: action.account, payment: details })
     return { hash: mined }
