@@ -202,30 +202,30 @@ export function DistributionBatchFlow({ kind, chainId, projectId, chains, homeTo
   if (projectState.error) return <TxError error={projectState.error} />
   return <div className="mt-4 space-y-3">
     <button type="button" className="btn-secondary min-h-[40px] px-4 text-sm" disabled={busy} onClick={begin}>{batch?.status === 'pending' ? 'Resume saved distributions' : title}</button>
-    {open && !reviewed ? <div className="space-y-4 rounded-xl border border-smoke-200 p-4">
-      <p className="text-sm text-smoke-700">Choose the destination chains. Eligible independent calls share one payment; Safe and testnet calls continue as separate transactions.</p>
+    {open && !reviewed ? <div className="space-y-4 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
+      <p className="text-sm text-smoke-700">Choose the chains to distribute on.</p>
       {projectState.projects.map(project => {
         const option = options.data?.find(item => item.project.chainId === project.chainId)
         const payout = option?.payout
         const draft = payout ? draftFor(project.chainId, payout) : emptyDraft
         const context = payout?.contexts.find(item => item.token.toLowerCase() === draft.token.toLowerCase())
         const line = context?.limits.find(item => item.currency === Number(draft.currency))
-        return <fieldset key={project.chainId} className="space-y-2 rounded-lg border border-smoke-200 p-3">
+        return <fieldset key={project.chainId} className="space-y-2 border-t border-smoke-200 pt-3">
           <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={selected.has(project.chainId)} disabled={busy || (!!option?.error && !selected.has(project.chainId))} onChange={() => setSelected(previous => { const next = new Set(previous); if (next.has(project.chainId)) next.delete(project.chainId); else next.add(project.chainId); return next })} />{chainName(project.chainId)}, Project #{project.projectId}</label>
           {!option ? <p className="text-xs text-smoke-600">Reading this destination…</p> : option.error ? <p className="text-xs text-red-700">{option.error}</p> : option.reserved ? <p className="text-sm">{formatTokenAmount(option.reserved.pending)} {option.reserved.symbol} pending</p> : null}
           {selected.has(project.chainId) && payout ? <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-xs text-smoke-700">Accounting token<select aria-label={`Accounting token on ${chainName(project.chainId)}`} className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.token} disabled={busy} onChange={event => {
+            <label className="text-xs text-smoke-700">Accounting token<select aria-label={`Accounting token on ${chainName(project.chainId)}`} className="input-well mt-1 block min-h-[40px] w-auto max-w-full px-2" value={draft.token} disabled={busy} onChange={event => {
               const nextContext = payout.contexts.find(item => item.token === event.target.value)
               setDrafts(previous => ({ ...previous, [project.chainId]: { token: event.target.value, currency: String(nextContext?.limits.find(item => item.remaining > 0n)?.currency ?? ''), amount: '' } }))
             }}><option value="">Choose a token</option>{payout.contexts.map(item => <option key={item.token} value={item.token}>{item.symbol}, {item.token.slice(0, 8)}…, {item.decimals} decimals</option>)}</select></label>
-            <label className="text-xs text-smoke-700">Payout currency<select aria-label={`Payout currency on ${chainName(project.chainId)}`} className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.currency} disabled={busy || !context} onChange={event => setDrafts(previous => ({ ...previous, [project.chainId]: { ...draft, currency: event.target.value, amount: '' } }))}><option value="">Choose a currency</option>{context?.limits.filter(item => item.amount > 0n).map(item => <option key={item.currency} value={item.currency}>{payoutCurrency(item.currency, context.currency, context.symbol)}</option>)}</select></label>
+            <label className="text-xs text-smoke-700">Payout currency<select aria-label={`Payout currency on ${chainName(project.chainId)}`} className="input-well mt-1 block min-h-[40px] w-auto max-w-full px-2" value={draft.currency} disabled={busy || !context} onChange={event => setDrafts(previous => ({ ...previous, [project.chainId]: { ...draft, currency: event.target.value, amount: '' } }))}><option value="">Choose a currency</option>{context?.limits.filter(item => item.amount > 0n).map(item => <option key={item.currency} value={item.currency}>{payoutCurrency(item.currency, context.currency, context.symbol)}</option>)}</select></label>
             <label className="text-xs text-smoke-700">Amount<input aria-label={`Payout amount on ${chainName(project.chainId)}`} type="text" inputMode="decimal" className="input-well mt-1 min-h-[40px] w-full px-2" value={draft.amount} disabled={busy || !line} onChange={event => setDrafts(previous => ({ ...previous, [project.chainId]: { ...draft, amount: event.target.value } }))} /></label>
             {context && line ? <p className="self-end text-xs text-smoke-600">Remaining limit: {formatTokenAmount(line.remaining, context.decimals)} {payoutCurrency(line.currency, context.currency, context.symbol)}. Balance: {formatTokenAmount(context.balance, context.decimals)} {context.symbol}.</p> : null}
           </div> : null}
         </fieldset>
       })}
       <TxError error={error} />
-      <div className="flex gap-3"><button className="btn-primary min-h-[40px] px-4 text-sm" disabled={busy || options.isLoading} onClick={() => void handleReview()}>{busy ? 'Reviewing…' : 'Review selected distributions'}</button><button className="text-sm underline" disabled={busy} onClick={() => setOpen(false)}>Cancel</button></div>
+      <div className="flex flex-wrap gap-3"><button className="btn-primary min-h-[40px] px-4 text-sm" disabled={busy || options.isLoading} onClick={() => void handleReview()}>{busy ? 'Reviewing…' : 'Review selected distributions'}</button><button className="btn-secondary min-h-[40px] px-4 text-sm" disabled={busy} onClick={() => setOpen(false)}>Cancel</button></div>
     </div> : null}
     {open && reviewed ? <TxProgress open title={complete ? 'Distributions confirmed' : batch?.status === 'pending' ? 'Resume saved distributions' : 'Confirm distributions'} rows={distributionReviewRows(reviewed, complete ? distributed : {})} steps={[{ title }]} activeIndex={busy ? 0 : -1} busy={busy} complete={complete} status={status} error={discard.active ? null : error} onClose={() => { if (busy) return; setOpen(false); discard.reset(); if (!batch || batch.status === 'complete') { setReview(null); setBatch(null) } }} start={batch?.status === 'pending' ? undefined : () => void submit()} next={!complete && !busy ? { label: batch?.status === 'pending' ? 'Resume saved distributions' : 'Retry', onClick: () => void submit(), disabled: discard.active } : null}>{discard.element}</TxProgress> : null}
   </div>

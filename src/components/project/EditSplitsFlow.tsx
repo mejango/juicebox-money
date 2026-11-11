@@ -456,7 +456,7 @@ export function SplitRecovery({ journal, onComplete, onDiscard, onError }: { jou
   }
   if (session?.discardable) {
     // Resuming stays beside Discard: a paid bundle that ran completes, and the recheck refuses calls that ran.
-    return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4">
+    return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <RelayrDiscard scope={journal.scope} reason={session.discardable} paymentUnmatched={session.paymentUnmatched} onDiscarded={() => { setDiscards(count => count + 1); onDiscard() }} />
       {status ? <p className="text-sm text-smoke-700">{status}</p> : null}
       <TxError error={error} />
@@ -465,7 +465,7 @@ export function SplitRecovery({ journal, onComplete, onDiscard, onError }: { jou
       </button>
     </div>
   }
-  return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4">
+  return <div className="mt-3 space-y-3 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
     <p className="text-sm text-smoke-700">{status ?? (session ? 'A split update is saved. Resume it before editing these recipients again.' : 'A split update is saved.')}</p>
     <TxError error={error} />
     <div className="flex flex-wrap gap-2">
@@ -951,7 +951,7 @@ function EditSplitsModal({
   }
 
   return (
-    <div ref={editor} className="mt-3 scroll-mt-28 rounded-xl border border-smoke-200 p-4">
+    <div ref={editor} className="mt-3 scroll-mt-28 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-medium text-ink">Edit {title}</span>
         <button
@@ -1007,12 +1007,14 @@ function EditSplitsModal({
               const row = destinationsQuery.data?.find(item => item.chainId === id)
               const selected = selectedChains.has(id)
               const eligible = primaryRelayable && relayrSupportsChains(id === chainId ? [chainId] : [chainId, id]) && row?.snapshot?.relayable && addressOnlySplits(row.snapshot.currentSplits, lockSnapshotAt ?? Math.floor(Date.now() / 1000))
+              // A chain that has to be edited on its own is not offered here.
+              if (id !== chainId && row && !row.error && !eligible && !selected) return null
               return <label key={id} className="flex items-start gap-2 text-sm text-smoke-700">
-                <input type="checkbox" className="mt-1" checked={selected} disabled={busy || plan !== null || id === chainId || (!eligible && !selected)} onChange={() => {
+                <input type="checkbox" checked={selected} disabled={busy || plan !== null || id === chainId || (!eligible && !selected)} onChange={() => {
                   setSelectedChains(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
                   setPlan(null); setFlowError(null)
                 }} />
-                <span>{chainName(id)}{id === chainId ? ' (shown here)' : !row ? ' — checking…' : row.error ? ` — ${row.error}` : !eligible ? ' — edit this chain separately' : ''}</span>
+                <span>{chainName(id)}{id === chainId ? ' (shown here)' : !row ? ' — checking…' : row.error ? ` — ${row.error}` : ''}</span>
               </label>
             })}
             <p className="text-xs text-smoke-600">The selected chains share the address recipients below. Choose all mainnets or all testnets; each chain keeps its own locked recipients. Project recipients, hooks, Sticky holders, and Safe accounts are edited separately.</p>

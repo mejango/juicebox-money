@@ -1082,7 +1082,7 @@ function FundsTxFlow({
 
   if (tx.phase === 'done') {
     return (
-      <div className="rounded-xl border border-smoke-200 p-4">
+      <div className="rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
         <p className="text-sm font-medium text-ink">
           Funds sent to your wallet.
         </p>
@@ -1110,7 +1110,7 @@ function FundsTxFlow({
   }
 
   return (
-    <div className="rounded-xl border border-smoke-200 p-4">
+    <div className="rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-sm font-medium text-ink">{label}</span>
         <button
@@ -1156,7 +1156,7 @@ function FundsTxFlow({
             disabled={busy}
             className="btn-secondary ml-3 px-2.5 py-0.5 text-[11px]"
           >
-            MAX
+            Max
           </button>
         </div>
       </label>
@@ -1172,7 +1172,7 @@ function FundsTxFlow({
               setReview(null)
               setFlowError(null)
             }}
-            className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+            className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
           >
             {lines.map(l => (
               <option key={l.currency} value={l.currency}>

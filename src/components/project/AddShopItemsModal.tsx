@@ -155,42 +155,44 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
   return (
     <ModalShell
       title="Add items for sale"
-      subtitle="Stage one or more items, then add them to the collection."
       footer={footer}
       onClose={close}
       busy={busy}
     >
-      <div className="callout callout-info text-xs">
-        {isConnected
-          ? 'Choose destination chains, then review each shop’s items. Eligible chains share one funding transaction; Safe and unsupported chains proceed in separate rounds.'
-          : 'Sign in with the shop owner or an authorized operator to add items.'}
-      </div>
+      {isConnected ? null : (
+        <div className="callout callout-info text-xs">
+          Sign in with the shop owner or an authorized operator to add items.
+        </div>
+      )}
 
-      <StoreEditor
-        items={items}
-        onChange={next => {
-          setItems(next)
-          setMessage(null)
-        }}
-        currencyLabel={activePricing.symbol}
-        disabled={busy || !!review}
-        categories={categories}
-        existingCategoryIds={existingCategories.map(category => category.id)}
-        onAddCategory={name => {
-          const id =
-            categories.reduce(
-              (largest, category) => Math.max(largest, category.id),
-              0,
-            ) + 1
-          setCategories(current => [
-            ...current,
-            { id, name: name.slice(0, 40) },
-          ])
-          return id
-        }}
-        chainIds={selected}
-        isRevnet={isRevnet}
-      />
+      {/* StoreEditor's phone margin cancels a 16px page gutter; the modal body's is 20px. */}
+      <div className="max-sm:[&>div>.rounded-xl]:-mx-5 max-sm:[&>div>.rounded-xl]:px-5">
+        <StoreEditor
+          items={items}
+          onChange={next => {
+            setItems(next)
+            setMessage(null)
+          }}
+          currencyLabel={activePricing.symbol}
+          disabled={busy || !!review}
+          categories={categories}
+          existingCategoryIds={existingCategories.map(category => category.id)}
+          onAddCategory={name => {
+            const id =
+              categories.reduce(
+                (largest, category) => Math.max(largest, category.id),
+                0,
+              ) + 1
+            setCategories(current => [
+              ...current,
+              { id, name: name.slice(0, 40) },
+            ])
+            return id
+          }}
+          chainIds={selected}
+          isRevnet={isRevnet}
+        />
+      </div>
 
       <div className="mt-6 border-t border-smoke-200 pt-5 pb-5">
         <span className="field-label">Add on</span>
@@ -199,17 +201,8 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
           aria-label="Chains to add items on"
           className="mt-2.5 flex min-w-0 flex-wrap gap-2"
         >
-          {targets.map(target => {
-            const compatible =
-              !!target.hook &&
-              !!target.pricing &&
-              target.pricing.currency === activePricing.currency && !target.error
+          {compatibleTargets.map(target => {
             const checked = selected.includes(target.chainId)
-            const unavailableReason =
-              target.error ??
-              (target.pricing
-                ? 'Different pricing currency'
-                : 'Shop unavailable')
             return (
               <ChainPillButton
                 key={target.chainId}
@@ -217,18 +210,20 @@ export function AddShopItemsModal({ targets, activePricing, existingCategories, 
                 selected={checked}
                 ariaLabel={`${checked ? 'Remove' : 'Add'} ${chainName(target.chainId)}`}
                 onClick={() => toggleChain(target.chainId)}
-                disabled={!compatible || busy || !!review}
-                title={compatible ? undefined : unavailableReason}
+                disabled={busy || !!review}
                 size="lg"
               >
                 <span>{chainName(target.chainId)}</span>
-                {!compatible ? (
-                  <span className="sr-only"> — {unavailableReason}</span>
-                ) : null}
               </ChainPillButton>
             )
           })}
         </div>
+        {targets.some(target => target.error) ? (
+          <p className="mt-2 text-xs text-smoke-700">
+            Couldn&rsquo;t read the shop on{' '}
+            {targets.filter(target => target.error).map(target => chainName(target.chainId)).join(', ')}. Reload to add there.
+          </p>
+        ) : null}
       </div>
 
       {message && !review ? (

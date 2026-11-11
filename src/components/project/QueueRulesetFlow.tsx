@@ -62,7 +62,7 @@ import {
   formatDuration,
   toLocalDateTimeInput,
 } from "@/lib/format";
-import { TaxValueInput } from "@/components/create/ui";
+import { AddButton, OptionRow, TaxValueInput } from "@/components/create/ui";
 import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
@@ -1488,8 +1488,8 @@ function RulesetEditorForm({
   return (
     <div>
       <p className="text-xs text-smoke-700">
-        Anything you don&apos;t touch — including payout recipients and the
-        rule-change deadline — carries forward from the ruleset named below.
+        Anything you don&apos;t change carries forward, including payout
+        recipients and the rule-change notice.
       </p>
 
       {projectChains.length > 1 ? <fieldset className="mt-4 space-y-2">
@@ -1498,7 +1498,7 @@ function RulesetEditorForm({
           const row = destinationsQuery.data?.find(item => item.chainId === id);
           const eligible = id === chainId || (primaryRelayable && relayrSupportsChains([chainId, id]) && row?.relayable && !!row.destination?.data.sources[action]);
           return <label key={id} className="flex items-start gap-2 text-sm text-smoke-700">
-            <input type="checkbox" className="mt-1" checked={selectedChains.has(id)} disabled={busy || review !== null || id === chainId || !eligible} onChange={() => {
+            <input type="checkbox" checked={selectedChains.has(id)} disabled={busy || review !== null || id === chainId || !eligible} onChange={() => {
               setSelectedChains(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
               setReview(null); setFlowError(null);
             }} />
@@ -1532,8 +1532,8 @@ function RulesetEditorForm({
             inputClassName="input-well min-h-[40px] w-full px-3 text-sm"
           />
           <span className="mt-1 block text-xs text-smoke-600">
-            This queued ruleset has no duration, so it has no automatic end.
-            Pick when the following rules may replace it.
+            The queued ruleset has no automatic end, so pick when these rules
+            may replace it.
           </span>
           {!startValid && scheduledStart ? (
             <span className="mt-1 block text-xs font-medium text-red-700">
@@ -1558,7 +1558,7 @@ function RulesetEditorForm({
         return (
           <div
             key={f.id}
-            className="mt-5 rounded-lg border border-smoke-200 bg-smoke-75 p-4"
+            className="mt-5 rounded-lg border border-smoke-200 bg-white p-4 max-sm:-mx-5 max-sm:rounded-none max-sm:border-x-0 max-sm:px-5"
           >
             <div className="flex items-center justify-between gap-3">
               <span className="text-sm font-medium text-ink">
@@ -1568,7 +1568,7 @@ function RulesetEditorForm({
                 type="button"
                 onClick={() => removeFollower(f.id)}
                 disabled={busy}
-                className="text-xs font-medium text-smoke-700 underline underline-offset-4 hover:text-ink"
+                className="shrink-0 text-xs font-medium text-smoke-700 underline underline-offset-2 hover:text-ink disabled:opacity-60"
               >
                 Remove
               </button>
@@ -1652,14 +1652,11 @@ function RulesetEditorForm({
         );
       })}
 
-      <button
-        type="button"
-        onClick={addFollower}
-        disabled={busy}
-        className="mt-4 text-sm font-medium text-bluebs-600 underline decoration-bluebs-300 underline-offset-4 hover:text-bluebs-700"
-      >
-        + Add a following ruleset
-      </button>
+      <div className="mt-4">
+        <AddButton onClick={addFollower} disabled={busy}>
+          Add a following ruleset
+        </AddButton>
+      </div>
 
       {lastTimed ? (
         <div className="mt-5 border-t border-smoke-200 pt-4">
@@ -1674,7 +1671,7 @@ function RulesetEditorForm({
               setReview(null);
               setFlowError(null);
             }}
-            className="input-well select-caret mt-1.5 min-h-[40px] w-full max-w-xs px-3 pr-9 text-sm"
+            className="input-well select-caret mt-1.5 min-h-[40px] !w-auto max-w-full px-3 pr-9 text-sm"
           >
             <option value="cycle">Cycle</option>
             <option value="wait">Wait</option>
@@ -1682,7 +1679,7 @@ function RulesetEditorForm({
           </select>
           <p className="mt-1.5 text-xs leading-relaxed text-smoke-700">
             {afterMode === "wait"
-              ? "The project idles — payments and issuance pause until the project owner queues more rules."
+              ? "Payments and issuance pause until the project owner queues more rules."
               : afterMode === "terminal"
                 ? "These terms are locked in forever — they can never be changed again."
                 : "The ruleset restarts each time it ends. Any issuance cut applies each cycle, and the project owner can still queue changes."}
@@ -1784,7 +1781,7 @@ function RulesFields({
           value={rules.duration}
           disabled={disabled}
           onChange={(e) => set("duration", Number(e.target.value))}
-          className="input-well select-caret mt-1.5 min-h-[40px] w-full max-w-xs px-3 pr-9 text-sm"
+          className="input-well select-caret mt-1.5 min-h-[40px] !w-auto max-w-full px-3 pr-9 text-sm"
         >
           {DURATION_PRESETS.some(
             (p) => p.seconds === rules.duration,
@@ -1962,7 +1959,11 @@ function QueueActionPicker({
   return (
     <section className="mt-4">
       <span className="field-label">Queue position</span>
-      <div className="mt-2 space-y-2">
+      <div
+        className="mt-2 space-y-2"
+        role={data.plan.options.length > 1 ? "radiogroup" : undefined}
+        aria-label={data.plan.options.length > 1 ? "Queue position" : undefined}
+      >
         {data.plan.options.map((option) => {
           const selected = option.action === action;
           const cycle = Number(option.source.cycleNumber);
@@ -1981,48 +1982,40 @@ function QueueActionPicker({
           let description: string;
           if (option.action === "current") {
             description =
-              "The form is copied from the rules governing the project now. Their approval hook and cycle schedule determine when the change can take effect.";
+              "Copies the current rules. The approval hook and cycle schedule set when the change can take effect.";
           } else if (option.action === "replace") {
             // "its scheduled cycle" overstates the guarantee: a long-DURATION approval hook
             // can push the replacement past that cycle to a later multiple, so the start the
             // user reads here can differ from the actual one by whole cycles.
-            description = `${approvalStatusLabel(status)}. The form is copied from this queued change and targets the next cycle its approval window allows.`;
+            description = `${approvalStatusLabel(status)}. Copies this queued change and targets the next cycle its approval window allows.`;
             if (data.plan.hasMultipleQueuedRulesets) {
               description +=
-                " Earlier queued configurations remain in place.";
+                " Earlier queued changes stay in place.";
             }
           } else if (option.requiresStartDate) {
             description = `${approvalStatusLabel(status)}. This ruleset has no automatic end, so choose when the following rules may start.`;
           } else {
-            description = `${approvalStatusLabel(status)}. The form is copied from the last queued configuration and starts no earlier than ${formatRulesetDate(option.mustStartAtOrAfter ?? 0)}.`;
+            description = `${approvalStatusLabel(status)}. Copies the last queued change and starts no earlier than ${formatRulesetDate(option.mustStartAtOrAfter ?? 0)}.`;
           }
 
-          return (
-            <label
+          return data.plan.options.length > 1 ? (
+            <OptionRow
               key={option.action}
-              className={`flex cursor-pointer gap-3 rounded-lg border px-3 py-3 text-sm ${
-                selected
-                  ? "border-bluebs-500 bg-bluebs-50"
-                  : "border-smoke-200 bg-white"
-              } ${disabled ? "cursor-default opacity-70" : ""}`}
-            >
-              {data.plan.options.length > 1 ? (
-                <input
-                  type="radio"
-                  name="queue-position"
-                  checked={selected}
-                  disabled={disabled}
-                  onChange={() => onChange(option.action)}
-                  className="mt-0.5"
-                />
-              ) : null}
-              <span>
-                <span className="block font-medium text-ink">{label}</span>
-                <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
-                  {description}
-                </span>
+              checked={selected}
+              onSelect={() => {
+                if (!selected) onChange(option.action);
+              }}
+              disabled={disabled}
+              title={label}
+              blurb={description}
+            />
+          ) : (
+            <div key={option.action} className="text-sm">
+              <span className="block font-medium text-ink">{label}</span>
+              <span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
+                {description}
               </span>
-            </label>
+            </div>
           );
         })}
       </div>
@@ -2258,13 +2251,12 @@ function Toggle({
   disabled: boolean;
 }) {
   return (
-    <label className="flex items-center gap-2 text-sm text-smoke-900">
+    <label className="flex items-start gap-2 text-sm text-smoke-900">
       <input
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
         disabled={disabled}
-        className="h-4 w-4 accent-ink"
       />
       {label}
     </label>
@@ -2282,7 +2274,7 @@ function LimitRow({
 }) {
   const unit = currencyLabel(limit.currency, limit.symbol);
   return (
-    <div className="rounded-lg border border-smoke-200 bg-smoke-75 p-3">
+    <div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-sm font-medium text-ink">{limit.symbol}</span>
         <select
@@ -2291,7 +2283,7 @@ function LimitRow({
           onChange={(e) =>
             onChange({ mode: e.target.value as LimitDraft["mode"] })
           }
-          className="input-well select-caret min-h-[36px] max-w-xs px-2.5 pr-9 text-xs"
+          className="input-well select-caret min-h-[36px] !w-auto px-2.5 pr-9 text-xs"
         >
           <option value="none">No payouts</option>
           <option value="limited">Limited</option>
