@@ -22,6 +22,7 @@ import {
   type BsActivityEvent,
   type EventToken,
 } from '@/lib/bendystraw'
+import { sameTxKey } from '@/lib/activity-rows'
 import { knownTokenSymbol } from '@/lib/token-symbol'
 import { explorerHostname } from '@/lib/chainDisplay'
 import {
@@ -216,13 +217,6 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
       event.bridgeClaimEvent
     )
   )
-}
-
-function sameTxKey(event: BsActivityEvent): string {
-  // Account-history rows span protocol versions; a V4 row must never fold
-  // into a V6 group even when the tx and project id line up.
-  const version = (event as { version?: number }).version ?? ''
-  return `${event.chainId}:${event.projectId}:${version}:${event.txHash}`
 }
 
 /**

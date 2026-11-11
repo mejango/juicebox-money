@@ -21,7 +21,8 @@ import shopIllustration from '@/assets/illustrations/shop.png'
 import splitsIllustration from '@/assets/illustrations/splits.png'
 import termsIllustration from '@/assets/illustrations/terms.png'
 import { getTrendingCards, TrendingCard } from '@/lib/trending'
-import { getRecentActivity, type BsFreshActivityEvent } from '@/lib/bendystraw'
+import { readActivityRows } from '@/lib/activity-rows'
+import { getRecentActivity } from '@/lib/bendystraw'
 import { readIndexedMetadataJson } from '@/lib/metadata-json.server'
 import { getTopBalanceProjects, type TopBalanceProject } from '@/lib/top-projects'
 import { ChainIcon } from '@/components/ChainIcon'
@@ -267,14 +268,11 @@ async function ReservesPanel() {
 }
 
 async function ActivityPanel() {
-  // A buy through the buyback pool is two events in one row, so read twice the rows shown.
-  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(17, 0, readIndexedMetadataJson), [])
-  return (
-    <FreshActivity
-      initialEvents={activity.slice(0, 16)}
-      initialHasMore={activity.length > 16}
-    />
+  const activity = await settled(
+    readActivityRows((limit, offset) => getRecentActivity(limit, offset, readIndexedMetadataJson), 8, 0),
+    { events: [], hasMore: false },
   )
+  return <FreshActivity initialEvents={activity.events} initialHasMore={activity.hasMore} />
 }
 
 async function TrendingPanel() {

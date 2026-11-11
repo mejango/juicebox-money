@@ -1,7 +1,6 @@
 'use client'
 
 import type { JBChainId } from '@bananapus/nana-sdk-core'
-import { useMemo } from 'react'
 import { useLiveFeed } from '@/hooks/useLiveFeed'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
@@ -15,9 +14,8 @@ import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
 
 const POLL_MS = 15_000
-const PAGE_SIZE = 8
-/** Rows the rail opens with. One row can hold several events of the same transaction. */
-const INITIAL_ROWS = 8
+/** Feed rows per page. A row holds every event of one transaction. */
+const PAGE_ROWS = 8
 
 /**
  * The "Fresh activity" rail: latest project-oriented V6 events. Server-renders the initial rows,
@@ -30,19 +28,14 @@ export function FreshActivity({
   initialEvents: BsFreshActivityEvent[]
   initialHasMore: boolean
 }) {
-  // Cut at the event that would open row nine, so the paging offset stays a plain prefix.
-  const initial = useMemo(() => {
-    const next = groupSameTxEvents(initialEvents)[INITIAL_ROWS]?.[0]
-    return next ? initialEvents.slice(0, initialEvents.indexOf(next)) : initialEvents
-  }, [initialEvents])
   const feed = useLiveFeed({
-    initial,
-    initialMore: initialHasMore || initial.length < initialEvents.length,
+    initial: initialEvents,
+    initialMore: initialHasMore,
     updatedAt: 'mount',
     pollMs: POLL_MS,
     pollKey: 'fresh',
     read: async (offset, signal) => {
-      const response = await fetch(`/api/activity?limit=${PAGE_SIZE}&offset=${offset}`, { signal })
+      const response = await fetch(`/api/activity?rows=${PAGE_ROWS}&offset=${offset}`, { signal })
       if (!response.ok) throw new Error('Activity unavailable')
       const page = (await response.json()) as { events?: BsFreshActivityEvent[]; hasMore?: boolean }
       return { items: page.events ?? [], more: Boolean(page.hasMore) }
