@@ -691,7 +691,7 @@ function StickyFields({
     />
   )
   return (
-    <div className="-ml-[7.5rem] mt-2 space-y-2 sm:ml-0">
+    <div className="mt-2 space-y-2">
       <AddressField
         value={split.beneficiary}
         onChange={beneficiary => onChange({ beneficiary })}
