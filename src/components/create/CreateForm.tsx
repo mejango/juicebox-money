@@ -3709,7 +3709,7 @@ export function CreateForm() {
               id={`stage-${stage.id}`}
               // A fresh stage's id is random, so the server's and the browser's differ until the draft loads.
               suppressHydrationWarning
-              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white"
+              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white max-sm:not-first:-mt-px"
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
@@ -3868,7 +3868,7 @@ export function CreateForm() {
                   setApprovalDeadline(e.target.value as ApprovalDeadline)
                 }
                 disabled={busy}
-                className="input-well select-caret mt-2 min-h-[44px] w-full max-w-xs px-3.5 pr-9 text-sm disabled:opacity-60"
+                className="input-well select-caret mt-2 min-h-[44px] !w-auto px-3.5 pr-9 text-sm disabled:opacity-60"
               >
                 <option value="3hours">3 hours</option>
                 <option value="1day">1 day</option>
@@ -3974,7 +3974,7 @@ export function CreateForm() {
           <div
             role="radiogroup"
             aria-label="Pricing currency"
-            className="mt-2.5 grid max-w-lg gap-1 sm:grid-cols-3"
+            className="mt-2.5 grid max-w-lg grid-cols-2 gap-1 sm:grid-cols-3"
           >
             {(
               [

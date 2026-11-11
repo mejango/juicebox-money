@@ -285,7 +285,7 @@ export function SplitsEditor({
                     }}
                     disabled={disabled}
                     aria-label="Recipient type"
-                    className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60"
+                    className="input-well select-caret min-h-[44px] w-28 shrink-0 px-3 pr-8 text-sm disabled:opacity-60 max-sm:w-[6.75rem]"
                   >
                     <option value="address">Address</option>
                     <option value="project">Project</option>
@@ -333,7 +333,8 @@ export function SplitsEditor({
                       onChange={projectId => update(split.id, { projectId })}
                       disabled={disabled}
                       chainIds={chainIds?.length ? chainIds : [1]}
-                      className="w-28"
+                      // Narrow on phones so the id stays on the selector's line.
+                      className="w-28 max-sm:w-[4.5rem]"
                     />
                   ) : null}
                 </div>
@@ -518,7 +519,7 @@ export function SplitsEditor({
               ) : null}
 
               {multiChain && split.kind !== 'hook' ? (
-                <div className="-ml-[7.5rem] mt-2 border-l-2 border-smoke-200 pl-3 sm:ml-0 sm:border-l-0 sm:pl-0">
+                <div className="mt-2">
                   <button
                     onClick={() =>
                       update(split.id, { perChainOpen: !split.perChainOpen })

@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, type ReactNode } from "react";
 import { AddressField } from "./AddressField";
 import { SplitsEditor } from "./SplitsEditor";
 import { AddButton, CheckRow } from "./ui";
@@ -43,6 +44,42 @@ function mediaEmoji(type: string): string {
   return "📄";
 }
 
+/** An optional setting: its fields stay hidden until the box is checked, and unchecking clears them. */
+function Optional({
+  label,
+  on,
+  onClear,
+  disabled,
+  children,
+}: {
+  label: string;
+  /** Whether the draft already holds a value for this setting. */
+  on: boolean;
+  onClear: () => void;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(on);
+  return (
+    <div>
+      <label className="flex min-h-[28px] items-center gap-2 text-sm font-medium text-smoke-700">
+        <input
+          type="checkbox"
+          checked={open}
+          onChange={(e) => {
+            setOpen(e.target.checked);
+            if (!e.target.checked) onClear();
+          }}
+          disabled={disabled}
+          className="h-4 w-4 accent-ink"
+        />
+        {label}
+      </label>
+      {open ? children : null}
+    </div>
+  );
+}
+
 export function StoreEditor({
   items,
   onChange,
@@ -63,6 +100,8 @@ export function StoreEditor({
   /** Revnet item transferability is fixed per item at launch. */
   isRevnet?: boolean;
 }) {
+  // The item whose "+ Add category…" field is open, and what has been typed into it.
+  const [newCategory, setNewCategory] = useState<{ itemId: string; name: string } | null>(null);
   const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(
       items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
@@ -95,7 +134,7 @@ export function StoreEditor({
       {items.map((item, index) => (
         <div
           key={item.id}
-          className="mt-4 rounded-xl border border-smoke-200 bg-bone p-4 sm:p-5 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white"
+          className="mt-4 rounded-xl border border-smoke-200 bg-bone p-4 sm:p-5 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white max-sm:not-first:-mt-px"
         >
           <div className="flex items-center justify-between">
             <span className="field-label">Item {index + 1}</span>
@@ -159,21 +198,12 @@ export function StoreEditor({
                 placeholder="Item name"
                 className="input-well min-h-[44px] px-3.5 text-sm font-medium placeholder:font-normal disabled:opacity-60"
               />
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <div>
                 <label
                   htmlFor={`item-price-${item.id}`}
-                  className="field-label min-w-0"
+                  className="field-label"
                 >
                   Price ({currencyLabel})
-                </label>
-                <label
-                  htmlFor={`item-quantity-${item.id}`}
-                  className="field-label min-w-0"
-                >
-                  Quantity{" "}
-                  <span className="font-normal text-smoke-500">
-                    (on each chain)
-                  </span>
                 </label>
                 <input
                   id={`item-price-${item.id}`}
@@ -185,30 +215,51 @@ export function StoreEditor({
                   }
                   disabled={disabled}
                   placeholder={currencyLabel === "USD" ? "25" : "0.01"}
-                  className={`input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
+                  className={`input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
                     item.price && !itemPriceOk(item.price)
                       ? "!border-red-400"
                       : ""
                   }`}
                 />
-                <input
-                  id={`item-quantity-${item.id}`}
-                  type="text"
-                  inputMode="numeric"
-                  value={item.supply}
-                  onChange={(e) =>
-                    update(item.id, {
-                      supply: e.target.value.slice(0, 9),
-                    })
-                  }
-                  disabled={disabled}
-                  placeholder="Unlimited"
-                  className={`input-well min-h-[44px] px-3.5 text-sm disabled:opacity-60 ${
-                    !itemSupplyOk(item.supply) ? "!border-red-400" : ""
-                  }`}
-                />
+              </div>
+              <Optional
+                label="Limited supply"
+                on={
+                  item.supply.trim() !== "" ||
+                  Object.values(item.perChainSupply).some((v) => v?.trim())
+                }
+                onClear={() =>
+                  update(item.id, {
+                    supply: "",
+                    perChainSupply: {},
+                    perChainSupplyOpen: false,
+                  })
+                }
+                disabled={disabled}
+              >
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    value={item.supply}
+                    onChange={(e) =>
+                      update(item.id, {
+                        supply: e.target.value.slice(0, 9),
+                      })
+                    }
+                    disabled={disabled}
+                    placeholder="100"
+                    aria-label="Quantity on each chain"
+                    className={`input-well min-h-[44px] !w-28 px-3.5 text-sm tabular-nums disabled:opacity-60 ${
+                      !itemSupplyOk(item.supply) ? "!border-red-400" : ""
+                    }`}
+                  />
+                  {chainIds.length > 1 ? (
+                    <span className="text-xs text-smoke-700">on each chain</span>
+                  ) : null}
+                </div>
                 {chainIds.length > 1 ? (
-                  <div className="col-start-2 mt-0.5 min-w-0">
+                  <div className="mt-1.5 min-w-0">
                     <button
                       type="button"
                       onClick={() =>
@@ -257,7 +308,7 @@ export function StoreEditor({
                     ) : null}
                   </div>
                 ) : null}
-              </div>
+              </Optional>
             </div>
           </div>
 
@@ -289,15 +340,12 @@ export function StoreEditor({
                   Group items into named shelves on your store page.
                 </p>
                 <select
-                  value={String(item.category)}
+                  value={newCategory?.itemId === item.id ? "new" : String(item.category)}
                   onChange={(e) => {
                     if (e.target.value === "new") {
-                      const name = window.prompt("New category name")?.trim();
-                      if (name) {
-                        const id = onAddCategory(name);
-                        update(item.id, { category: id });
-                      }
+                      setNewCategory({ itemId: item.id, name: "" });
                     } else {
+                      setNewCategory(null);
                       update(item.id, { category: Number(e.target.value) });
                     }
                   }}
@@ -312,6 +360,38 @@ export function StoreEditor({
                   ))}
                   <option value="new">+ Add category…</option>
                 </select>
+                {newCategory?.itemId === item.id ? (
+                  <form
+                    className="mt-2 flex items-center gap-2"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const name = newCategory.name.trim();
+                      if (!name) return;
+                      update(item.id, { category: onAddCategory(name) });
+                      setNewCategory(null);
+                    }}
+                  >
+                    <input
+                      type="text"
+                      value={newCategory.name}
+                      onChange={(e) =>
+                        setNewCategory({ itemId: item.id, name: e.target.value.slice(0, 40) })
+                      }
+                      disabled={disabled}
+                      autoFocus
+                      placeholder="Category name"
+                      aria-label="New category name"
+                      className="input-well min-h-[44px] !w-56 px-3 text-sm disabled:opacity-60"
+                    />
+                    <button
+                      type="submit"
+                      disabled={disabled || !newCategory.name.trim()}
+                      className="btn-secondary min-h-[44px] px-3.5 text-sm disabled:opacity-60"
+                    >
+                      Add
+                    </button>
+                  </form>
+                ) : null}
               </div>
 
               <div>
@@ -337,8 +417,12 @@ export function StoreEditor({
                 ) : null}
               </div>
 
-              <div>
-                <span className="field-label">Discount</span>
+              <Optional
+                label="Discount"
+                on={item.discountPct.trim() !== ""}
+                onClear={() => update(item.id, { discountPct: "" })}
+                disabled={disabled}
+              >
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Launch the item at a discount off its price — the{" "}
                   {isRevnet ? "revnet operator" : "project owner"} can end the
@@ -362,10 +446,19 @@ export function StoreEditor({
                   />
                   <span className="text-sm text-smoke-700">% off</span>
                 </div>
-              </div>
+              </Optional>
 
-              <div>
-                <span className="field-label">Reserve inventory</span>
+              <Optional
+                label="Reserve inventory"
+                on={
+                  item.reserveN.trim() !== "" ||
+                  item.reserveBeneficiary.trim() !== ""
+                }
+                onClear={() =>
+                  update(item.id, { reserveN: "", reserveBeneficiary: "" })
+                }
+                disabled={disabled}
+              >
                 <p className="mt-1 text-xs leading-relaxed text-smoke-700">
                   Reserve some of this item for a specific wallet as others
                   buy it.
@@ -399,14 +492,7 @@ export function StoreEditor({
                     className="flex-1"
                   />
                 </div>
-              </div>
-
-              <div>
-                <span className="field-label">Voting power</span>
-                <p className="mt-1 text-xs leading-relaxed text-smoke-700">
-                  Voting power for each item is based on its price.
-                </p>
-              </div>
+              </Optional>
 
               <div className="space-y-2">
                 <span className="field-label">Item rules</span>
