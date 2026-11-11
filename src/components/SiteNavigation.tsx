@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import logoFull from '@/assets/brand/logo-full.svg'
 import logoIcon from '@/assets/brand/logo-icon.svg'
 import { projectRouteSegmentFromPathname } from '@/lib/project-handle-route'
@@ -43,12 +43,40 @@ function GuideLinks({ className = '' }: { className?: string }) {
   )
 }
 
+/** How long the full logo shows before the wordmark folds away. */
+const WORDMARK_SHOWN_MS = 1200
+
+/**
+ * The full logo, whose wordmark folds away after a moment and leaves the icon,
+ * so the search field beside it gets the room.
+ */
+function FoldingLogo() {
+  const [folded, setFolded] = useState(false)
+  useEffect(() => {
+    const timer = window.setTimeout(() => setFolded(true), WORDMARK_SHOWN_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
+  return (
+    // The icon is the left 24px of the full logo at this height.
+    <span
+      className={`block overflow-hidden transition-[max-width] duration-500 ease-in-out motion-reduce:transition-none ${
+        folded ? 'max-w-6' : 'max-w-36'
+      }`}
+    >
+      <Image src={logoFull} alt="Juicebox" width={144} height={33} priority className="h-8 w-auto max-w-none" />
+    </span>
+  )
+}
+
 function Logo({
   iconOnly,
+  fold = false,
   inlineOnMobile = false,
   showGuideLinks = true,
 }: {
   iconOnly: boolean
+  /** Show the full logo, then fold it to the icon. */
+  fold?: boolean
   inlineOnMobile?: boolean
   showGuideLinks?: boolean
 }) {
@@ -63,14 +91,18 @@ function Logo({
         className="flex min-h-10 min-w-11 items-center justify-start md:min-w-0"
         aria-label="Juicebox home"
       >
-        <Image
-          src={iconOnly ? logoIcon : logoFull}
-          alt="Juicebox"
-          width={iconOnly ? 25 : 144}
-          height={iconOnly ? 32 : 33}
-          priority
-          className="h-8 w-auto"
-        />
+        {fold && !iconOnly ? (
+          <FoldingLogo />
+        ) : (
+          <Image
+            src={iconOnly ? logoIcon : logoFull}
+            alt="Juicebox"
+            width={iconOnly ? 25 : 144}
+            height={iconOnly ? 32 : 33}
+            priority
+            className="h-8 w-auto"
+          />
+        )}
       </Link>
       {showGuideLinks ? (
         <GuideLinks
@@ -107,7 +139,7 @@ function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: bo
   )
 }
 
-function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
+function MobileNavigation({ iconOnly, foldLogo }: { iconOnly: boolean; foldLogo: boolean }) {
   const [searchFocused, setSearchFocused] = useState(false)
   // The search column can get too narrow for even the word "Search" once the
   // wallet pill takes its share; then it collapses to an icon at the right,
@@ -120,7 +152,7 @@ function MobileNavigation({ iconOnly }: { iconOnly: boolean }) {
     // on them; the guide links hang in a second row underneath.
     <nav aria-label="Main navigation" className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
       <div className={expanded ? 'hidden' : 'row-start-1 justify-self-start'}>
-        <Logo iconOnly={iconOnly} inlineOnMobile={iconOnly} showGuideLinks={false} />
+        <Logo iconOnly={iconOnly} fold={foldLogo} inlineOnMobile={iconOnly} showGuideLinks={false} />
       </div>
       {!expanded ? (
         <GuideLinks className="col-span-3 col-start-1 row-start-2 min-h-11 justify-self-start" />
@@ -178,7 +210,7 @@ export function SiteNavigation() {
   return (
     <>
       <DesktopNavigation iconOnly={iconOnly} isWide={isWide} />
-      <MobileNavigation iconOnly={iconOnly} />
+      <MobileNavigation iconOnly={iconOnly} foldLogo={pathname === '/'} />
     </>
   )
 }
