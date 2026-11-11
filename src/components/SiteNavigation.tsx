@@ -43,27 +43,63 @@ function GuideLinks({ className = '' }: { className?: string }) {
   )
 }
 
-/** How long the full logo shows before the wordmark folds away. */
+/** How long the full logo shows before its wordmark goes. */
 const WORDMARK_SHOWN_MS = 1200
+/** The beat between letters. */
+const LETTER_MS = 45
+/** Rendered px per unit of the full logo's 460x104 viewBox at the header's 32px height. */
+const LOGO_SCALE = 32 / 104
+/** Where the icon ends and the wordmark starts, in viewBox units. */
+const WORDMARK_START = 74.35
+/** Where each letter of "Juicebox" ends, in viewBox units. */
+const LETTER_ENDS = [126, 177.5, 196.5, 251, 305.5, 360.5, 413, 460]
 
 /**
- * The full logo, whose wordmark folds away after a moment and leaves the icon,
- * so the search field beside it gets the room.
+ * The full logo, whose wordmark goes one letter at a time after a moment, first
+ * letter first, the rest closing up on the icon. The search field beside it
+ * takes the room.
  */
 function FoldingLogo() {
-  const [folded, setFolded] = useState(false)
+  const [gone, setGone] = useState(0)
   useEffect(() => {
-    const timer = window.setTimeout(() => setFolded(true), WORDMARK_SHOWN_MS)
-    return () => window.clearTimeout(timer)
+    let interval: number | undefined
+    const timer = window.setTimeout(() => {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        setGone(LETTER_ENDS.length)
+        return
+      }
+      let count = 0
+      interval = window.setInterval(() => {
+        setGone(++count)
+        if (count === LETTER_ENDS.length) window.clearInterval(interval)
+      }, LETTER_MS)
+    }, WORDMARK_SHOWN_MS)
+    return () => {
+      window.clearTimeout(timer)
+      window.clearInterval(interval)
+    }
   }, [])
+  const cut = gone === 0 ? WORDMARK_START : LETTER_ENDS[gone - 1]
+  const image = (offset: number, alt: string) => (
+    <Image
+      src={logoFull}
+      alt={alt}
+      width={144}
+      height={33}
+      priority
+      className="h-8 w-auto max-w-none"
+      style={{ marginLeft: -offset * LOGO_SCALE }}
+    />
+  )
   return (
-    // The icon is the left 23px of the full logo at this height.
-    <span
-      className={`block overflow-hidden transition-[max-width] duration-500 ease-in-out motion-reduce:transition-none ${
-        folded ? 'logo-folded max-w-[23px]' : 'max-w-36'
-      }`}
-    >
-      <Image src={logoFull} alt="Juicebox" width={144} height={33} priority className="h-8 w-auto max-w-none" />
+    <span className={`flex ${gone === LETTER_ENDS.length ? 'logo-folded' : ''}`}>
+      <span className="block shrink-0 overflow-hidden" style={{ width: WORDMARK_START * LOGO_SCALE }}>
+        {image(0, 'Juicebox')}
+      </span>
+      {/* The same logo again, windowed to the letters still showing. */}
+      <span aria-hidden className="block shrink-0 overflow-hidden" style={{ width: (460 - cut) * LOGO_SCALE }}>
+        {image(cut, '')}
+      </span>
     </span>
   )
 }
@@ -156,7 +192,7 @@ function MobileNavigation({ iconOnly, foldLogo }: { iconOnly: boolean; foldLogo:
         className={
           expanded
             ? 'hidden'
-            : 'row-start-1 justify-self-start transition-[margin] duration-500 ease-in-out motion-reduce:transition-none has-[.logo-folded]:-mr-3'
+            : 'row-start-1 justify-self-start has-[.logo-folded]:-mr-3'
         }
       >
         <Logo iconOnly={iconOnly} fold={foldLogo} inlineOnMobile={iconOnly} showGuideLinks={false} />
