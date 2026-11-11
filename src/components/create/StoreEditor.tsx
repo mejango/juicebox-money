@@ -393,7 +393,7 @@ export function StoreEditor({
                     }
                     disabled={disabled}
                     ariaLabel="Reserve beneficiary"
-                    className="flex-1"
+                    className="flex-1 max-sm:basis-full"
                   />
                 </div>
               </div>
