@@ -6,8 +6,8 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-what",
     "title": "What is Juicebox?",
     "paragraphs": [
-      "Juicebox lets people fund a project together and receive incentives in return, under rules for the money that anyone can read. Those rules run as public programs on a blockchain, called smart contracts.",
-      "Incentives are tokens. Depending on the rules, holders can return them for a share of the project’s balance sheet. This is a cash out.",
+      "Juicebox lets people fund a project together and receive incentives in return, under rules for the money that anyone can read. Smart contracts run those rules as public programs on a blockchain.",
+      "Incentives are digital assets with certain guarantees. Depending on the rules, incentive holders can cash them out for a share of the project’s balance sheet.",
       "A project’s page shows what your payment supports, what you receive, and who can change the rules."
     ],
     "blocks": [
@@ -59,7 +59,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "text",
-        "text": "The owner sets how much can be paid out, how many tokens a payment creates, and how cash outs work. Together these terms are a ruleset."
+        "text": "The owner sets a ruleset: how much can be paid out, how many tokens a payment creates, and how cash outs work."
       },
       {
         "type": "text",
@@ -72,7 +72,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-projects",
     "title": "Projects and owners",
     "paragraphs": [
-      "A project has a balance sheet, terms, and an owner. Ownership is a unique token, an NFT: whoever holds it owns the project.",
+      "A project has a balance sheet, terms, and an owner. Whoever holds the project’s unique ownership NFT owns the project.",
       "The current ruleset decides what the owner can do: schedule new terms, change recipients, create tokens, or add extras. Upcoming terms show what can change next.",
       "The owner can give another account permission for specific tasks, like sending payouts, without handing over ownership. Some tasks, like sending scheduled payouts, are open to anyone. When ownership changes hands, permissions the previous owner gave stop working.",
       "Projects accept ETH and other currencies, including stablecoins. A project can price its terms in USD while accepting ETH; it uses a price feed to convert."
@@ -128,7 +128,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
         "type": "steps",
         "items": [
           "Confirm the project, chain, and currency. A project on several chains keeps a separate balance on each.",
-          "Open the Rulesets tab, called Terms on some projects. Check how many tokens you’ll receive, where the money goes, when you can cash out, and what can change.",
+          "Open the Rulesets or Terms tab. Check how many tokens you’ll receive, where the money goes, when you can cash out, and what can change.",
           "Read the project description and any item terms, and check who runs the project.",
           "Enter an amount and review the result. Keep some ETH for gas. Paying with a token like USDC needs an approval first.",
           "Approve in your wallet and wait for confirmation. If it stays pending, check its status before trying again."
@@ -161,8 +161,8 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-tokens",
     "title": "Tokens and reserved tokens",
     "paragraphs": [
-      "Creating new tokens is called issuance. At 500 tokens per ETH, a 2 ETH payment creates 1,000 tokens. A rate of zero creates none.",
-      "A project can set aside part of every new batch for chosen recipients. These are its reserved tokens. With 20% reserved, a payment that creates 1,000 tokens gives 800 to the payer and reserves 200, which are sent to recipients in a later transaction. Revnets call reserved tokens splits.",
+      "At an issuance rate of 500 tokens per ETH, a 2 ETH payment creates 1,000 tokens. A rate of zero creates none.",
+      "A project can set aside part of every new batch as reserved tokens for chosen recipients. With 20% reserved, a payment that creates 1,000 tokens gives 800 to the payer and reserves 200, which are sent to recipients in a later transaction. Revnets call reserved tokens splits.",
       "You can hold tokens as credits inside Juicebox, or as standard ERC-20 tokens that wallets and markets use. Both count toward your balance; claiming turns credits into ERC-20 tokens one for one."
     ],
     "blocks": [
@@ -264,7 +264,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-splits",
     "title": "Payouts and splits",
     "paragraphs": [
-      "A project can send money from its balance sheet to chosen recipients. These are payouts, and each recipient’s share is a split. A split can go to a wallet, another project, or a contract that does something with it. Anyone can send scheduled payouts, unless the project limits that to the owner.",
+      "A project can send payouts from its balance sheet to chosen recipients, each receiving a split of the total. A split can go to a wallet, another project, or a contract that does something with it. Anyone can send scheduled payouts, unless the project limits that to the owner.",
       "A payout limit caps how much can be paid out each cycle, per currency and per chain. Everything above the limit stays on the balance sheet and backs cash outs. The owner can also have an allowance to withdraw beyond payouts.",
       "A split can be locked until a date. Until then the owner can’t remove it, but can extend the lock or add new splits."
     ],
@@ -419,7 +419,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-hooks",
     "title": "Markets and buybacks",
     "paragraphs": [
-      "People can deposit tokens and money into a shared market, called a liquidity pool, for others to trade against. When you pay a project that has one, it checks the pool and buys existing tokens for you when they’re cheaper than new ones. Cash outs work in reverse: if selling to the pool pays more, the cash out sells there, and the review shows the route.",
+      "People can deposit tokens and money into a shared liquidity pool for others to trade against. When you pay a project that has one, it checks the pool and buys existing tokens for you when they’re cheaper than new ones. Cash outs work in reverse: if selling to the pool pays more, the cash out sells there, and the review shows the route.",
       "A project can also accept currencies it doesn’t hold directly; the payment converts them first."
     ],
     "blocks": [
@@ -470,7 +470,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-revnets",
     "title": "Revnets",
     "paragraphs": [
-      "A revnet is a Juicebox project with its token schedule fixed at launch: tokenized incentives backed by a balance sheet. Each period in the schedule is a stage, and later stages can create fewer tokens per payment.",
+      "A revnet is a Juicebox project with its token schedule fixed at launch: tokenized incentives backed by a balance sheet. The schedule runs in stages, and later stages can create fewer tokens per payment.",
       "A revnet has no owner who can change its terms. An operator can manage details like its name, recipients, and shop, but can’t change the schedule or withdraw from the balance sheet.",
       "Revnet holders can also borrow against their tokens. The tokens are burned while the loan is open and minted back when it’s repaid within 10 years. Revnets add their own fees on cash outs and loans."
     ],
@@ -513,7 +513,7 @@ export const LEARN_SECTIONS: readonly GuideSection[] = [
     "id": "learn-distributor",
     "title": "Reward distributors",
     "paragraphs": [
-      "A project can set up a separate contract to share rewards with holders over time. This is a distributor. Rewards come from funds deposited into it; holding tokens doesn’t create them.",
+      "A project can set up a distributor contract to share rewards with holders over time. Rewards come from funds deposited into it; holding tokens doesn’t create them.",
       "Each round records who qualifies at that moment, then unlocks their share gradually. Token holders must delegate their votes, even to themselves, to qualify; NFT holders qualify through eligible shop items. Claim unlocked rewards before the round expires."
     ],
     "blocks": [

@@ -96,7 +96,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     part: 'Start here',
     title: 'Find the right contract',
     paragraphs: [
-      'Juicebox publishes [every deployed contract by chain](https://github.com/Bananapus/deploy-all-v6/tree/main/deployments), with its address and the format used to call it, called an ABI. The [SDK](#apps-set-up-the-sdk) includes the same address map. A project can use its own contracts, so use JBDirectory to find the contracts currently managing its rules and payments before building a transaction.',
+      'Juicebox publishes [every deployed contract by chain](https://github.com/Bananapus/deploy-all-v6/tree/main/deployments), with its address and the ABI format used to call it. The [SDK](#apps-set-up-the-sdk) includes the same address map. A project can use its own contracts, so use JBDirectory to find the contracts currently managing its rules and payments before building a transaction.',
     ],
     blocks: [
       {
@@ -118,11 +118,11 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         type: 'table',
         label: 'Who does what',
         rows: [
-          ['JBProjects', 'Records each project’s owner using a unique token (NFT)'],
+          ['JBProjects', 'Records each project’s owner as a unique NFT'],
           ['JBController', 'Manages rules, creates project tokens, and records project details'],
           ['JBMultiTerminal', 'Receives payments, holds funds, sends payouts, and handles cash outs'],
           ['JBRulesets, JBSplits, JBFundAccessLimits, JBTokens, JBTerminalStore', 'Store rules, recipients, spending limits, tokens, and balances'],
-          ['JBDirectory', 'Finds a project’s rules manager (controller) and payment contracts (terminals)'],
+          ['JBDirectory', 'Finds the controller that manages a project’s rules and the terminals that take its payments'],
           ['JBPermissions', 'Records permission to act for another account'],
           ['JBPrices', 'Converts currencies when calculating new tokens and spending limits'],
           ['JBFeelessAddresses', 'Lists addresses that pay and receive without the protocol fee'],
@@ -173,7 +173,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Send reserved tokens to other recipients', 'JBController.sendReservedTokensToSplitsOf'],
           ['Schedule new terms', 'JBController.queueRulesetsOf (buildQueueRulesetsTx)'],
           ['Edit recipients and shares', 'JBController.setSplitGroupsOf (buildSetSplitGroupsTx)'],
-          ['Create a transferable token contract (ERC-20)', 'JBController.deployERC20For (buildDeployErc20Tx)'],
+          ['Create the project’s transferable ERC-20 token contract', 'JBController.deployERC20For (buildDeployErc20Tx)'],
           ['Move tokens tracked in Juicebox into the ERC-20', 'JBController.claimTokensFor (buildClaimTokensTx)'],
           ['Create more tokens', 'JBController.mintTokensOf (buildMintTokensTx)'],
           ['Give someone permission', 'JBPermissions.setPermissionsFor (buildSetPermissionsTx)'],
@@ -185,7 +185,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         type: 'text',
-        text: 'Store amounts as whole numbers in the token’s smallest unit, using bigint. Convert only for display. Identify each project by both chain ID and project ID. Linked projects share a group ID, called a sucker group, but keep separate addresses, balances, and rule IDs on each chain.',
+        text: 'Store amounts as whole numbers in the token’s smallest unit, using bigint. Convert only for display. Identify each project by both chain ID and project ID. Linked projects share a sucker group ID, but keep separate addresses, balances, and rule IDs on each chain.',
       },
     ],
   },
@@ -252,7 +252,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['founders'],
     title: 'Choose the project’s rules',
     paragraphs: [
-      'A group of project terms is called a ruleset. It can repeat on a schedule, with each repeat called a cycle. These are the settings in the [launch form](/create).',
+      'A ruleset groups a project’s terms and can repeat in cycles. These are its settings in the [launch form](/create).',
     ],
     blocks: [
       {
@@ -297,8 +297,8 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         items: [
           { key: 'Launch contract', text: 'the app uses REVDeployer.deployFor for revnets, JBOmnichainDeployer.launchProjectFor for linked chains, and JB721TiersHookProjectDeployer.launchProjectFor for other projects. These launchers set up the required extensions.' },
           { key: 'Transaction value', text: 'read JBProjects.creationFee() right before each launch and pass that exact amount as value. Show it in the review before signing.' },
-          { key: 'One transaction per chain', text: 'sign each launch in order with the same wallet. The app keeps a shared value, called a salt, so linked bridge contracts get matching addresses.' },
-          { key: 'Afterwards', text: 'each chain has its own project ID; the page lives at /<chain>:<id>. The Rulesets (or Terms) tab shows the terms as the contracts hold them.' },
+          { key: 'One transaction per chain', text: 'sign each launch in order with the same wallet. The app keeps a shared salt so linked bridge contracts get matching addresses.' },
+          { key: 'Afterwards', text: 'each chain has its own project ID; the page lives at /<chain>:<id>. The Rulesets or Terms tab shows the terms as the contracts hold them.' },
         ],
       },
       {
@@ -352,7 +352,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Use the Juicebox software library',
     paragraphs: [
-      'The Juicebox software library (SDK), @bananapus/nana-sdk-core, helps you read projects and prepare transactions. It includes addresses and contract call formats (ABIs). Import shared addresses, formats, and project details from the package root; import V6 reads and transaction builders from /v6.',
+      'The Juicebox SDK, @bananapus/nana-sdk-core, helps you read projects and prepare transactions. It includes addresses and contract ABIs. Import shared addresses, formats, and project details from the package root; import V6 reads and transaction builders from /v6.',
       'A builder prepares a request without sending it: { chainId, address, abi, functionName, args, value }. Read with a public client and sign with a wallet client on the same chain.',
     ],
     blocks: [
@@ -575,7 +575,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Move tokens across chains',
     paragraphs: [
-      'Linked projects move tokens through bridge contract pairs called suckers. A move has separate steps: prepare on the source chain, send through a bridge, then claim on the destination with a proof. A source receipt does not mean the destination tokens are ready.',
+      'Sucker contracts bridge tokens between linked projects in pairs. A move has separate steps: prepare on the source chain, send through a bridge, then claim on the destination with a proof. A source receipt does not mean the destination tokens are ready.',
       'Track each move’s source sucker, peer, token mapping, leaf index, beneficiary, proof, fees, and status, and keep queued, in transit, claimable, claimed, and failed distinct. CCIP and native bridges need different value and take different times; find the payable value by simulating the exact call. Accounting sync is separate: it updates the peer’s view of the balance without moving funds.',
     ],
     blocks: [
@@ -842,7 +842,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           { key: 'Metadata format', text: 'JBMetadataResolver: a reserved first word, then a table of 4-byte ids with word offsets, then 32-byte-aligned blobs. createMetadata(ids, datas), addToMetadata, getDataFor(id, metadata). Ids are getId(purpose, target) = bytes4(bytes20(target) ^ bytes20(keccak256(purpose))).' },
           { key: 'Minting from a hook', text: 'JBController.mintTokensOf lets the terminal, the ruleset’s data hook, or any address the data hook’s hasMintPermissionFor approves mint without a grant; everyone else needs MINT_TOKENS (10) and allowOwnerMinting.' },
           { key: 'Split hooks', text: 'a split whose hook field is set receives its share through processSplitWith. On the reserved-token path the controller approves an ERC-20 for the amount and burns whatever the hook leaves unspent; on payouts the terminal checks ERC-165 first.' },
-          { key: 'Reentrancy', text: 'a hook can call back into your contract before its first call finishes, called reentrancy. Protect your state updates and test each callback. A guard that blocks every nested call can break intended flows. Use override(ERC165, IERC165) for supportsInterface.' },
+          { key: 'Reentrancy', text: 'a hook can call back into your contract before its first call finishes. Protect your state updates and test each callback. A guard that blocks every nested call can break intended flows. Use override(ERC165, IERC165) for supportsInterface.' },
         ],
       },
       {
@@ -919,7 +919,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         label: 'Foundry',
         rows: [
           ['TestBaseWorkflow', '@bananapus/core-v6/test/helpers/TestBaseWorkflow.sol: deploys the full protocol locally with a mock USDC and two terminals, plus Permit2. Extend it for unit tests of hooks and integrations'],
-          ['Fork tests', 'Create a local copy of the chain at one fixed block, called a fork. Configure foundry.toml rpc_endpoints and test against the published deployment addresses'],
+          ['Fork tests', 'Fork the chain at one fixed block for a local copy. Configure foundry.toml rpc_endpoints and test against the published deployment addresses'],
           ['Sizes', 'forge build --sizes early; several V6 contracts sit near EIP-170 and were split or trimmed to fit. Plan for library extraction if you are close'],
           ['Bytecode parity', 'compare the deployed machine code with the published deployment artifacts. Matching source alone is insufficient because linked libraries change the resulting code'],
         ],

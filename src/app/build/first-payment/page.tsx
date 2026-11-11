@@ -22,7 +22,7 @@ export default async function FirstPaymentPage() {
     {
       id: 'understand', part: 'Learn', title: 'Know what a payment does',
       paragraphs: [
-        'Read project 1 on Base Sepolia, preview a payment, then try it in the app. Base Sepolia is a practice network that uses test ETH.',
+        'Read project 1 on Base Sepolia, a practice network that uses test ETH. Preview a payment, then try it in the app.',
         'Paying usually funds a project and creates tokens for you. Some projects can instead buy existing tokens from a market. They can also set aside a share of new tokens for other recipients. Tokens alone do not promise ownership, votes, or profit.',
         'Before paying, check how many tokens you receive, who else receives tokens, how you can exchange them for project funds, and what the owner can change. Project 1 is a working test project, so its terms and balances can change.',
       ],
@@ -39,7 +39,7 @@ export default async function FirstPaymentPage() {
       id: 'read', part: 'Build', title: 'Read the project',
       paragraphs: [
         'Use Node.js 22 or newer. In a new folder, install the packages below, download read-project.mjs, and run it. This step only reads public data.',
-        'The script finds the contract that manages the project’s rules and tokens, called its controller. It reads the active terms, called a ruleset, from one recorded block of chain history. It checks the network and block again so the result refers to one consistent observation.',
+        'The script finds the controller that manages the project’s rules and tokens. It reads the active ruleset from one recorded block of chain history. It checks the network and block again so the result refers to one consistent observation.',
       ],
       blocks: [
         { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
@@ -57,21 +57,21 @@ export default async function FirstPaymentPage() {
     {
       id: 'preview', part: 'Build', title: 'Preview a payment',
       paragraphs: [
-        'This step prepares a payment of 0.000001 test ETH. It finds the project’s payment contract, called a terminal, and requests a quote that includes any configured extensions. It sets a minimum of 99% of the quoted tokens, or of the minted tokens if the market price can’t load, then runs a trial of that exact request, called a simulation. Enter only your public wallet address, never a private key.',
-        'The trial does not send a payment. It shows how this request would run against current chain data. The app may find a different way to buy tokens, so review its fresh quote when you pay.',
+        'This step prepares a payment of 0.000001 test ETH. It finds the terminal that takes the project’s payments and requests a quote that includes any configured extensions. It sets a minimum of 99% of the quoted tokens, or of the minted tokens if the market price can’t load, then simulates that exact request. Enter only your public wallet address, never a private key.',
+        'The simulation does not send a payment. It shows how this request would run against current chain data. The app may find a different way to buy tokens, so review its fresh quote when you pay.',
       ],
       blocks: [
         { type: 'code', label: 'Download and simulate with your public address', code: 'curl --fail -O https://juicebox.money/examples/preview-payment.mjs\n# Replace this placeholder with your public wallet address.\nJB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs' },
         { type: 'links', items: [{ href: '/examples/preview-payment.mjs', label: 'Read or save preview-payment.mjs' }] },
         { type: 'code', label: 'Complete preview-payment.mjs', code: previewExample },
-        { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" wei. Wei is ETH’s smallest unit; divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the trial result, and the encoded request (calldata). Divide token amounts by 10^18 for displayed amounts.' },
-        { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox software library (SDK) 3.5.2 and viem 2.55.19. The read used Base Sepolia block 48474379, hash 0x3a95b1444467e678b41aa9e4abb612fe9a0632246dcf28b257455f60c37bb083. The payment was simulated only. Run the examples again to get current results.' },
+        { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" in wei, ETH’s smallest unit. Divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the simulation result, and the encoded calldata of the request. Divide token amounts by 10^18 for displayed amounts.' },
+        { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox SDK 3.5.2 and viem 2.55.19. The read used Base Sepolia block 48474379, hash 0x3a95b1444467e678b41aa9e4abb612fe9a0632246dcf28b257455f60c37bb083. The payment was simulated only. Run the examples again to get current results.' },
       ],
     },
     {
       id: 'pay', part: 'Try it', title: 'Make a small test payment in the app',
       paragraphs: [
-        'To try the payment, connect a wallet with Base Sepolia test ETH. Keep some test ETH for the network’s cost of processing the transaction, called gas. Use the app’s payment form to get a fresh quote and review it before signing.',
+        'To try the payment, connect a wallet with Base Sepolia test ETH. Keep some test ETH to pay the network’s gas cost for the transaction. Use the app’s payment form to get a fresh quote and review it before signing.',
       ],
       blocks: [
         { type: 'steps', items: [
@@ -79,7 +79,7 @@ export default async function FirstPaymentPage() {
           'Connect your test wallet on Base Sepolia. Choose ETH and enter 0.000001. If the form cannot accept it, check the reason and stay on the test network.',
           'Review where the money goes, who receives tokens, the expected and minimum token amounts, and the total cost. Paying with ETH needs no separate permission to spend tokens. Other assets may need that approval.',
           'Read the form’s fresh trial result and transaction details. Sign only the matching wallet request.',
-          'Save the transaction’s unique ID, called its hash. Wait for its receipt to show success. If you use a shared Safe wallet, the proposal still needs the required approvals and execution.',
+          'Save the transaction hash that identifies it. Wait for its receipt to show success. If you use a shared Safe wallet, the proposal still needs the required approvals and execution.',
         ] },
         { type: 'links', items: [
           { href: '/basesep:1', label: 'Open the test payment form' },
@@ -100,10 +100,10 @@ export default async function FirstPaymentPage() {
         { type: 'steps', items: [
           'Find your transaction by its hash. Check the network, success status, sender, destination, amount, and action.',
           'Read its recorded events to check the project, recipient, and tokens received. Buying existing tokens can send money to a market instead of adding it all to the project.',
-          'Check the recipient’s total holdings. Include tokens tracked inside Juicebox, called credits, and any tokens in a separate ERC-20 contract. Other payments can also change balances; use your transaction’s events to explain this change.',
+          'Check the recipient’s total holdings. Include credits tracked inside Juicebox and any tokens in a separate ERC-20 contract. Other payments can also change balances; use your transaction’s events to explain this change.',
           'Compare the network and project ID with the tutorial output. Terms and balances may have changed since the earlier read. Activity lists can take time to catch up; keep the receipt while you wait.',
         ] },
-        { type: 'text', text: 'You are done when you can explain where your payment went and show the tokens received. Exchanging tokens for project funds, called cashing out, is a separate action that depends on the project’s terms and available funds.' },
+        { type: 'text', text: 'You are done when you can explain where your payment went and show the tokens received. Cashing out tokens for project funds is a separate action that depends on the project’s terms and available funds.' },
       ],
     },
     {

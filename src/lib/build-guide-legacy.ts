@@ -8,7 +8,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Manage tokens",
     "paragraphs": [
-      "Juicebox can track token balances itself; these balances are called credits. A project can also create a separate token contract using the ERC-20 standard. Holders can then move credits into that contract. Count both forms when showing a holder’s total balance."
+      "Juicebox can track token balances itself as credits. A project can also create a separate token contract using the ERC-20 standard. Holders can then move credits into that contract. Count both forms when showing a holder’s total balance."
     ],
     "blocks": [
       {
@@ -58,7 +58,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Life of a project",
     "title": "Send funds and reserved tokens",
     "paragraphs": [
-      "Payouts send funds to the project’s chosen recipients. Reserved tokens are new tokens reserved for other recipients. Anyone can normally trigger these distributions, but the ownerMustSendPayouts setting can restrict payouts to the owner or an operator with SEND_PAYOUTS permission."
+      "Payouts send funds to the project’s chosen recipients, and reserved tokens send new tokens to recipients other than the payer. Anyone can normally trigger these distributions, but the ownerMustSendPayouts setting can restrict payouts to the owner or an operator with SEND_PAYOUTS permission."
     ],
     "blocks": [
       {
@@ -144,7 +144,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "4 - CASH_OUT_TOKENS",
-            "Cash out (redeem) project tokens on a holder’s behalf."
+            "Cash out project tokens on a holder’s behalf."
           ],
           [
             "5 - SEND_PAYOUTS",
@@ -212,7 +212,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "21 - ADD_ACCOUNTING_CONTEXTS",
-            "Add accounting contexts (accepted tokens) to a terminal."
+            "Add accounting contexts to a terminal so it accepts more tokens."
           ],
           [
             "22 - SET_TOKEN_METADATA",
@@ -240,7 +240,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "28 - SET_BUYBACK_TWAP",
-            "Set the period used to calculate the buyback market’s average price (TWAP)."
+            "Set the TWAP window the buyback hook averages the market price over."
           ],
           [
             "29 - SET_BUYBACK_POOL",
@@ -256,7 +256,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           ],
           [
             "32 - MAP_SUCKER_TOKEN",
-            "Link matching assets across a pair of bridge contracts (suckers)."
+            "Link matching assets across a pair of sucker bridge contracts."
           ],
           [
             "33 - DEPLOY_SUCKERS",
@@ -299,7 +299,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Sell collectibles and memberships",
     "paragraphs": [
-      "A project shop can sell uniquely identified tokens, called NFTs. Items are grouped into tiers with a price and supply. The JB721TiersHook extension delivers the selected items when a payment covers their price."
+      "A project shop can sell items as uniquely identified NFTs. Items are grouped into tiers with a price and supply. The JB721TiersHook extension delivers the selected items when a payment covers their price."
     ],
     "blocks": [
       {
@@ -378,7 +378,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Add custom behavior with hooks",
     "paragraphs": [
-      "An extension can change a payment’s token output, send rewards, or check a rule change. These extensions are called hooks. Choose the interface for the moment when your code needs to run."
+      "A hook can change a payment’s token output, send rewards, or check a rule change. Choose the interface for the moment when your code needs to run."
     ],
     "blocks": [
       {
@@ -423,7 +423,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Share rewards over time",
     "paragraphs": [
-      "A distributor shares reward tokens with eligible holders over time. Rewards unlock gradually, called vesting. Deploy this optional extension for your project; it is separate from the shared core contracts.",
+      "A distributor shares reward tokens with eligible holders over time. Rewards vest gradually. Deploy this optional extension for your project; it is separate from the shared core contracts.",
       "JBTokenDistributor supports tokens with IJBActiveVotes, such as Juicebox JBERC20. JB721Distributor supports NFT holders. Fund either through project distributions or direct deposits. Each round records the available rewards and holders’ eligible balances, then unlocks their shares evenly over the configured rounds."
     ],
     "blocks": [
@@ -490,7 +490,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Give a project a name",
     "paragraphs": [
-      "A project can use a readable Ethereum Name Service (ENS) name. JBProjectHandles checks that the name’s record also points back to the project before returning it from handleOf().",
+      "A project can use a readable ENS name. JBProjectHandles checks that the name’s record also points back to the project before returning it from handleOf().",
       "Anyone can propose a name. The registry stores each proposal by its setter, chain ID, and project ID. Apps should also check that the project’s current owner or operator claimed the name."
     ],
     "blocks": [
@@ -527,7 +527,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Ecosystem tools",
     "title": "Create an address that forwards payments",
     "paragraphs": [
-      "A payer address forwards incoming ETH to a project. Deploy JBProjectPayer as a small copy of a shared implementation, called a clone. Its constructor takes JBDirectory; set defaults through initialize() or setDefaultValues().",
+      "A payer address forwards incoming ETH to a project. Deploy JBProjectPayer as a small clone of a shared implementation. Its constructor takes JBDirectory; set defaults through initialize() or setDefaultValues().",
       "When defaultAddToBalance is false, incoming ETH calls pay() and delivers project tokens to the beneficiary. When true, it adds funds without creating tokens. With no chosen beneficiary, the contract finds the original payer, including through supported forwarding contracts. ERC-20 payments need an explicit pay() or addToBalanceOf() call after approval; sending those tokens directly will not trigger a payment."
     ],
     "blocks": [
@@ -585,7 +585,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "title": "Buy existing tokens when they offer more",
     "paragraphs": [
       "A payment can create new tokens or buy existing ones from a market. JBBuybackHook compares both and uses the configured Uniswap V4 pool when it gives the payer more tokens. It can also route cash outs.",
-      "To limit price changes during a swap, the hook uses an average price over time, called TWAP, to calculate its default minimum. Buyback 1.4.0 falls back to minting when the swap cannot meet that floor. Pay metadata under getId(\"pay\", hook) must encode (amountToSwapWith, minimumSwapAmountOut, skipSplits); the third word is a bool, and a two-word quote reverts."
+      "To limit price changes during a swap, the hook calculates its default minimum from a time-weighted average price. Buyback 1.4.0 falls back to minting when the swap cannot meet that floor. Pay metadata under getId(\"pay\", hook) must encode (amountToSwapWith, minimumSwapAmountOut, skipSplits); the third word is a bool, and a two-word quote reverts."
     ],
     "blocks": [
       {
@@ -620,7 +620,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "part": "Build your own",
     "title": "Search project data with Bendystraw",
     "paragraphs": [
-      "Bendystraw gathers Juicebox chain records into a searchable database. This service, called an indexer, supplies project lists, activity, charts, and market positions through GraphQL queries.",
+      "Bendystraw indexes Juicebox chain records into a searchable database. It supplies project lists, activity, charts, and market positions through GraphQL queries.",
       "Use it for fast browsing. Before signing, read balances, terms, spending approvals, and quotes directly from the chain again. The index can be a few blocks behind, so missing activity does not prove that a transaction failed."
     ],
     "blocks": [
