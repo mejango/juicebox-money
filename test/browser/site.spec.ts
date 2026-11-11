@@ -166,6 +166,7 @@ async function expectCreateDraftsSurviveEditorNavigation(page: Page) {
   await page.getByRole('button', { name: '+ Add an item', exact: true }).click()
   const itemName = page.getByPlaceholder('Item name', { exact: true })
   await itemName.fill('Saved shop draft')
+  await page.getByRole('checkbox', { name: 'Limited supply', exact: true }).click()
   await page.getByRole('button', { name: 'Set per chain', exact: true }).click()
   await page.getByLabel('Quantity on Ethereum', { exact: true }).fill('7')
   await page.getByLabel('Quantity on Base', { exact: true }).fill('11')
