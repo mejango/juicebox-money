@@ -348,9 +348,10 @@ function DashboardColumn({
       >
         {title}
       </h2>
+      {/* Phones run the card edge to edge, so its rows keep the page gutter as their only inset. */}
       <div
         data-scroll-container
-        className={`card max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] ${panelClassName}`}
+        className={`card max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-h-[70svh] min-h-[420px] overflow-y-auto md:h-[calc(100svh-12rem)] md:max-h-none md:min-h-[520px] ${panelClassName}`}
       >
         {children}
       </div>
