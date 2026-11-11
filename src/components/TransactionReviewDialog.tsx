@@ -584,11 +584,11 @@ function ReviewModal({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
           {model.context.length ? (
-            <dl data-review-context className="mb-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+            <dl data-review-context className="mb-4 grid text-sm">
               {model.context.map((row, index) => (
                 <Fragment key={index}>
-                  <dt className="text-smoke-500">{row.label}</dt>
-                  <dd className={`min-w-0 text-right text-ink ${row.mono ? 'break-all font-mono text-xs' : 'break-words'} ${row.strong ? 'font-medium' : ''}`}>
+                  <dt className="text-xs text-smoke-500 not-first:mt-3">{row.label}</dt>
+                  <dd className={`min-w-0 text-ink ${row.mono ? 'break-all font-mono text-xs' : 'break-words'} ${row.strong ? 'font-medium' : ''}`}>
                     {row.value}
                     {row.lines?.map((line, lineIndex) => <span key={lineIndex} className="block">{line}</span>)}
                     {row.note ? <span className="block text-xs text-smoke-500">{row.note}</span> : null}

@@ -257,9 +257,9 @@ export function SiteNavigation() {
   const routeSegment = projectRouteSegmentFromPathname(pathname)
   const onProject = !!routeSegment && /^(?:[^/]+:\d+|@[^/]+)$/.test(routeSegment)
   const isWide = pathname === '/' || onProject
-  // The create form needs the row's width for search more than it needs the wordmark.
-  const iconOnly = onProject || pathname === '/create'
+  // Only the home page shows the wordmark, and folds it; everywhere else the row's width goes to search.
   const foldLogo = pathname === '/'
+  const iconOnly = !foldLogo
 
   return (
     <>

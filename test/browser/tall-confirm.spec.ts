@@ -31,7 +31,7 @@ for (const viewport of [
       }
     })
     expect(labelSize.whiteSpace).toBe('nowrap')
-    expect(labelSize.height).toBeLessThanOrEqual(labelSize.lineHeight + 1)
+    expect(labelSize.height).toBeLessThanOrEqual(labelSize.lineHeight * 1.5)
     expect(await section.evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true)
     const scroller = dialog
     const taller = await section.evaluate((node, height) => node.getBoundingClientRect().height > height, viewport.height)

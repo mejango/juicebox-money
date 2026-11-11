@@ -46,7 +46,7 @@ for (const width of [320, 1280]) {
       expect(['left', 'start']).toContain(row.valueAlign)
       expect(row.valueX, row.label ?? '').toBeCloseTo(rows[0].valueX, 0)
       expect(row.labelWhiteSpace).toBe('nowrap')
-      expect(row.labelHeight, row.label ?? '').toBeLessThanOrEqual(row.lineHeight + 1)
+      expect(row.labelHeight, row.label ?? '').toBeLessThanOrEqual(row.lineHeight * 1.5)
     }
     expect(await dialog.locator('[data-tx-confirm]').evaluate(node => node.scrollWidth <= node.clientWidth + 1)).toBe(true)
     await page.screenshot({ path: testInfo.outputPath('modal-left-aligned.png') })

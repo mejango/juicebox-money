@@ -147,7 +147,7 @@ export function TxProgress({
           ) : (
             <>
               {rows && rows.length > 0 ? (
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                <div className="grid text-sm">
                   {rows.map((row, index) => (
                     <TxConfirmRowItem key={index} row={row} />
                   ))}
@@ -234,7 +234,7 @@ function LinkedText({ text }: { text: string }) {
 function TxConfirmRowItem({ row }: { row: TxConfirmRow }) {
   return (
     <>
-      <span className="whitespace-nowrap text-smoke-500">{row.label}</span>
+      <span className="whitespace-nowrap text-xs text-smoke-500 not-first:mt-3">{row.label}</span>
       <span
         className={`min-w-0 text-left text-ink ${
           row.mono ? 'break-all font-mono text-xs' : 'break-words'
