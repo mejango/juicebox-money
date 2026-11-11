@@ -86,7 +86,10 @@ async function click(label: string) { const button = renderer.root.findAllByType
 const offered = () => renderer.root.findAllByType('button').find(node => ['Try again', 'Review again'].includes(text(node)) && !node.props.disabled)
 const reviewOpen = () => renderer.root.findAllByType('button').some(node => text(node) === 'Close')
 async function settle() { await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) }) }
-async function manual(value = '1000000001') { await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === 'Token IDs separated by commas')!.props.onChange({ target: { value } })) }
+/** The optional fields sit behind their checkboxes: token IDs first, then the transfer recipient. */
+async function gate(index: number) { const box = renderer.root.findAllByType('input').filter(node => node.props.type === 'checkbox')[index]; if (!box.props.checked) await act(async () => box.props.onChange({ target: { checked: true } })) }
+async function manual(value = '1000000001') { await gate(0); await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === 'Token IDs separated by commas')!.props.onChange({ target: { value } })) }
+async function recipient(value = OTHER) { await gate(1); await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value } })) }
 function element(projectId = 1, collection = shop) { return createElement(QueryClientProvider, { client: queries }, createElement(DefifaOwnedNfts, { chainId: 1, projectId, shop: collection })) }
 beforeEach(async () => {
   m.realEngine = false
@@ -112,7 +115,7 @@ describe('native owned NFT actions', () => {
     wallet.client.request.mockImplementation(async ({ method }) => method === 'eth_call' ? simulated : Promise.reject(new Error(`unexpected ${method}`)))
     await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
     await manual()
-    if (action === 'transfer') await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    if (action === 'transfer') await recipient()
     await click(action === 'transfer' ? 'Transfer Defifa NFT' : 'Cash out Defifa NFTs')
     expect(wallet.client.request).toHaveBeenCalledWith(expect.objectContaining({ method: 'eth_call' }))
     expect(wallet.writeContract).not.toHaveBeenCalled()
@@ -131,7 +134,7 @@ describe('native owned NFT actions', () => {
     vi.stubGlobal('navigator', { locks: { request: async (_key: string, _options: unknown, run: (lock: object) => Promise<unknown>) => run({}) } })
     await act(async () => { renderer = TestRenderer.create(element()) }); await settle()
     await manual()
-    if (action === 'transfer') await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    if (action === 'transfer') await recipient()
     const originalSet = Storage.prototype.setItem
     let unmounted = false
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
@@ -157,12 +160,13 @@ describe('native owned NFT actions', () => {
     expect(m.cash.mock.calls[1][1]).toMatchObject({ tokenIds: [1000000001n], minimumReclaim: 0n })
   })
   it('wallet-action:transfer-defifa-nft prepares and freshly checks exactly one NFT and recipient', async () => {
-    await manual(); await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    await manual(); await recipient()
     await click('Transfer Defifa NFT')
     expect(m.transfer).toHaveBeenCalledTimes(2); expect(m.transfer.mock.calls[1][1]).toMatchObject({ recipient: OTHER, tokenId: 1000000001n })
   })
   it.each([0, 3])('does not offer cash-out in phase %s but retains transfers', async phase => {
     await act(async () => renderer.update(element(1, { ...shop, phase })))
+    await gate(1)
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Cash out Defifa NFTs')).toBeUndefined()
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Transfer Defifa NFT')).toBeDefined()
   })
@@ -183,6 +187,7 @@ describe('native owned NFT actions', () => {
     m.holdings.mockResolvedValueOnce({ hook: HOOK, blockNumber: 100n, tokens: [], totalOwned: 0n, totalCandidates: 200n, nextCursor: '100', complete: false })
     await click('Refresh ownership')
     expect(text(renderer.root)).toContain('Partial ownership scan')
+    await gate(0); await gate(1)
     expect(renderer.root.findAllByType('input').find(node => node.props.placeholder === 'Token IDs separated by commas')).toBeDefined()
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Cash out Defifa NFTs')).toBeDefined()
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Transfer Defifa NFT')).toBeDefined()
@@ -200,7 +205,7 @@ describe('native owned NFT actions', () => {
     await manual(); await click('Cash out Defifa NFTs'); expect(m.cash).toHaveBeenCalledTimes(2)
   })
   it('reports SDK transfer-pause failure without wallet submission', async () => {
-    await manual(); await act(async () => renderer.root.findAllByType('input').find(node => node.props.placeholder === '0x…')!.props.onChange({ target: { value: OTHER } }))
+    await manual(); await recipient()
     m.transfer.mockRejectedValueOnce(new Error('Transfers are paused'))
     await click('Transfer Defifa NFT'); expect(text(renderer.root)).toContain('Transfers are paused'); expect(m.send).not.toHaveBeenCalled()
   })
@@ -214,7 +219,7 @@ describe('native owned NFT actions', () => {
   it('blocks empty-value cashouts and invalid transfer recipients before sending', async () => {
     m.cash.mockImplementation(async () => ({ ...cash(), protocolRewards: { ...cash().protocolRewards, defifaAmount: 0n } }))
     await manual(); await click('Cash out Defifa NFTs'); expect(text(renderer.root)).toContain('nothing to claim')
-    await click('Transfer Defifa NFT'); expect(text(renderer.root)).toContain('nonzero recipient'); expect(m.send).not.toHaveBeenCalled()
+    await gate(1); await click('Transfer Defifa NFT'); expect(text(renderer.root)).toContain('nonzero recipient'); expect(m.send).not.toHaveBeenCalled()
   })
   it('rejects changed reward evidence after review', async () => {
     // The review's fresh check reads different rewards than the prepared ones.

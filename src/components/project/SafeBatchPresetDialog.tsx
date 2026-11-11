@@ -174,12 +174,12 @@ function PresetPlan({
       ) : query.isError ? (
         <p className="mt-3 text-sm text-red-700">Could not resolve this preset.</p>
       ) : (
-        <ul className="mt-3 space-y-2" aria-label="Preset chains">
+        <ul className="mt-3 divide-y divide-smoke-200" aria-label="Preset chains">
           {plans.map(plan => {
             const ready = plan.status === 'ready'
             const checked = ready && !deselected.has(plan.chainId)
             return (
-              <li key={plan.chainId} className="rounded-xl border border-smoke-200 p-3">
+              <li key={plan.chainId} className="py-3 first:pt-0 last:pb-0">
                 <label className={`flex items-center gap-2 text-sm ${ready ? 'cursor-pointer' : 'opacity-70'}`}>
                   <input
                     type="checkbox"
@@ -218,7 +218,7 @@ function PresetPlan({
                           <span className="block text-amber-700">{step.note}</span>
                         ) : null}
                         {isPoolStep(step) ? (
-                          <label className="mt-1 flex items-center gap-2">
+                          <label className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                             <span className="text-smoke-500">TWAP window (seconds)</span>
                             <input
                               type="text"

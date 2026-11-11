@@ -92,9 +92,9 @@ function QueuedChainPanel({
     : null
   return (
     <>
-      <div className="overflow-x-auto rounded-xl border border-smoke-200">
-        <table className="w-full text-sm">
-          <thead className="bg-smoke-50">
+      <div className="overflow-x-auto rounded-xl border border-smoke-200 max-sm:rounded-none max-sm:border-0">
+        <table className="w-full text-sm max-sm:block max-sm:[&_tbody]:block max-sm:[&_td]:block max-sm:[&_td]:px-0 max-sm:[&_td]:py-0 max-sm:[&_tr]:block max-sm:[&_tr]:py-2.5">
+          <thead className="max-sm:hidden">
             <tr className="border-b border-smoke-200 text-left text-xs text-smoke-500">
               <th className="w-8 px-4 py-3 font-normal">#</th>
               <th className="whitespace-nowrap px-4 py-3 font-normal">Action</th>
@@ -104,8 +104,8 @@ function QueuedChainPanel({
           <tbody>
             {steps.map((step, index) => (
               <tr key={step.id} className="border-b border-smoke-100 last:border-b-0">
-                <td className="px-4 py-3 text-smoke-500">{index + 1}</td>
-                <td className="whitespace-nowrap px-4 py-3 text-ink">{step.label}</td>
+                <td className="px-4 py-3 text-smoke-500 max-sm:text-xs">{index + 1}</td>
+                <td className="px-4 py-3 text-ink sm:whitespace-nowrap">{step.label}</td>
                 <td className="px-4 py-3 text-smoke-700">{step.detail}</td>
               </tr>
             ))}

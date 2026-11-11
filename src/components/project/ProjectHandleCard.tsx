@@ -1099,7 +1099,7 @@ export function ProjectHandleCard({
               </label>
               {input && !normalized ? (
                 <p className="mt-2 text-xs text-red-700">
-                  Enter a valid ENSIP-15 name under .eth.
+                  Enter a valid ENS name ending in .eth.
                 </p>
               ) : normalized ? (
                 <div className="mt-3 space-y-1 text-xs text-smoke-700">
@@ -1108,7 +1108,7 @@ export function ProjectHandleCard({
                     = <span className="font-mono">{expectedRecord}</span>
                   </p>
                   <p>
-                    Resolver preflight:{' '}
+                    Current value:{' '}
                     <span className={textMatches ? 'text-melon-700' : 'text-amber-700'}>
                       {previewQuery.isLoading
                         ? 'Checking…'
@@ -1137,9 +1137,8 @@ export function ProjectHandleCard({
               {needsMainnetSafe ? (
                 <div className="callout callout-warning mt-3 text-xs leading-relaxed">
                   <p>
-                    This project is controlled by a Safe on its project chain,
-                    but that same address is not deployed on Ethereum. Deploy
-                    it there before publishing the mainnet handle claim.
+                    This project’s Safe is not deployed at the same address on
+                    Ethereum. Deploy it there before publishing the handle.
                   </p>
                   <button
                     type="button"
@@ -1164,25 +1163,25 @@ export function ProjectHandleCard({
 
               {safePolicyMismatch ? (
                 <div className="callout callout-warning mt-3 text-xs leading-relaxed">
-                  The project-chain and Ethereum Safes do not have the same
-                  current owners, threshold, and module-free policy. Align them
-                  in Safe before publishing this handle.
+                  The Safe on the project’s chain and the one on Ethereum must
+                  have the same owners and threshold, and no modules. Align
+                  them in Safe before publishing this handle.
                 </div>
               ) : null}
 
               {delegatedSafeCollision ? (
                 <div className="callout callout-warning mt-3 text-xs leading-relaxed">
-                  This project is controlled by a Safe on its project chain, but
-                  the same Ethereum address is occupied by an EIP-7702 delegated
-                  EOA. A same-address Safe cannot be deployed there.
+                  On Ethereum, this project’s Safe address is already used by
+                  a delegated wallet (EIP-7702), so the same Safe cannot be
+                  deployed there.
                 </div>
               ) : null}
 
               {unsupportedCrossChainAuthority ? (
                 <div className="callout callout-warning mt-3 text-xs leading-relaxed">
-                  Cross-chain handle claims support only the same EOA on both
-                  chains or matching module-free Safes. This authority does not
-                  meet that policy.
+                  A handle for a project on another chain needs the same wallet
+                  on both chains, or matching Safes with no modules. This
+                  project’s {isRevnet ? 'operator' : 'owner'} does not qualify.
                 </div>
               ) : null}
 
@@ -1236,10 +1235,10 @@ export function ProjectHandleCard({
                 },
                 {
                   key: 'authority-claim',
-                  title: 'Publish the JBProjectHandles reverse claim on Ethereum',
+                  title: 'Publish the handle on Ethereum',
                 },
               ]}
-              stepsIntro="Two independently authorized onchain steps publish this handle. A verified step is skipped when you resume."
+              stepsIntro="Two onchain steps publish this handle. A finished step is skipped when you resume."
               activeIndex={setupStepIndex}
               status={progress}
               error={discard.active ? null : error}

@@ -245,7 +245,7 @@ describe('ProjectHandleCard', () => {
       'Step 1 of 2: Set the ENS juicebox text record to 1:42',
     )
     expect(textOf(setupSteps[1])).toContain(
-      'Step 2 of 2: Publish the JBProjectHandles reverse claim on Ethereum',
+      'Step 2 of 2: Publish the handle on Ethereum',
     )
     expect(setupSteps.map(step => step.props['data-state'])).toEqual([
       'active',

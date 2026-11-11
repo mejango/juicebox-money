@@ -51,6 +51,7 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
   const pinnedRef = useRef<Hex | null>(null)
   const busy = ['checking', 'pinning', 'writing'].includes(phase)
   const chainTargets = useMemo(() => (targets ?? []).filter(target => target.hook && !target.error), [targets])
+  const usableTargets = chainTargets.filter(target => eligible?.[target.chainId] === null)
   const savedContext = batch?.calls[0]?.context as ShopCallContext | undefined
   const itemName = savedContext?.items[0]?.name ?? freshPlan?.itemName ?? current?.name ?? `Item #${tierId}`
   const plan = batch ? { account: batch.account, chainIds: batch.calls.map(call => call.chainId), mediaName: savedContext?.mediaName ?? 'Saved media' } : freshPlan ? { account: freshPlan.account, chainIds: freshPlan.snapshots.map(snapshot => snapshot.target.chainId), mediaName: freshPlan.file.name } : null
@@ -176,48 +177,50 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
 
   return (
     <ModalShell
-      title={`Replace media for ${itemName}`}
-      subtitle="Preserves the original metadata and updates the media on each reviewed chain."
+      title="Replace media"
+      subtitle={`${itemName}. Everything else about the item stays the same.`}
       footer={footer}
       onClose={onClose}
     >
       <div className="space-y-5">
         <div className="callout callout-info text-xs">
-          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the SET_721_METADATA permission can do this. All other original metadata fields carry over. Eligible chains share one funding transaction; Safe and unsupported chains proceed in separate rounds.
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an authorized operator can do this.
         </div>
-        <label className="block">
+        <div>
           <span className="field-label">New media</span>
-          <input
-            type="file"
-            accept="image/*,video/*,audio/*,application/pdf,text/*"
-            disabled={busy || !!plan}
-            onChange={event => pick(event.target.files?.[0] ?? null)}
-            className="mt-2 block w-full text-sm text-smoke-700 file:mr-3 file:rounded-lg file:border file:border-smoke-300 file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-ink"
-          />
+          <label className={`btn-secondary mt-2 min-h-[40px] cursor-pointer px-4 text-sm ${busy || plan ? 'pointer-events-none opacity-60' : ''}`}>
+            {file ? 'Change media' : 'Upload media'}
+            <input
+              type="file"
+              accept="image/*,video/*,audio/*,application/pdf,text/*"
+              disabled={busy || !!plan}
+              onChange={event => pick(event.target.files?.[0] ?? null)}
+              className="sr-only"
+            />
+          </label>
           {preview ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={preview} alt="" className="mt-3 max-h-48 rounded-lg object-contain" />
+            <img src={preview} alt="" className="mt-3 block max-h-48 rounded-lg object-contain" />
           ) : file ? (
             <p className="mt-2 text-xs text-smoke-500">{file.name}</p>
           ) : null}
-        </label>
+        </div>
         <div>
           <span className="field-label">Chains</span>
           {!targets || !eligible ? (
             <div role="status" aria-label="Resolving linked shops" className="mt-2 h-9 w-full animate-pulse rounded-lg bg-smoke-100" />
           ) : (
             <ul className="mt-2 space-y-1.5">
-              {chainTargets.map(target => {
-                const reason = eligible[target.chainId] === null ? null : eligible[target.chainId] ?? 'Item not verified'
+              {usableTargets.map(target => {
                 const status = statuses[target.chainId]
                 const checked = selected.includes(target.chainId)
                 return (
                   <li key={target.chainId} className="flex items-center justify-between gap-3 text-sm">
-                    <label className={`flex items-center gap-2 ${reason ? 'text-smoke-400' : 'text-ink'}`}>
+                    <label className="flex items-center gap-2 text-ink">
                       <input
                         type="checkbox"
                         checked={checked}
-                        disabled={!!reason || busy || !!plan}
+                        disabled={busy || !!plan}
                         onChange={event =>
                           setSelected(prev =>
                             event.target.checked
@@ -229,7 +232,6 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
                       />
                       <ChainIcon chainId={target.chainId} size={16} />
                       {chainName(target.chainId)}
-                      {reason ? <span className="text-xs">— {reason}</span> : null}
                     </label>
                     {status ? (
                       <span className={`text-xs ${status.phase === 'failed' ? 'text-error-700' : status.phase === 'done' ? 'text-melon-700' : 'text-smoke-500'}`}>
@@ -251,6 +253,12 @@ export function ReplaceTierMediaModal({ chainId, hook, tierId, current, targets,
               })}
             </ul>
           )}
+          {eligible && usableTargets.length < chainTargets.length ? (
+            <p className="mt-2 text-xs text-smoke-700">
+              Couldn&rsquo;t match this item on{' '}
+              {chainTargets.filter(target => !usableTargets.includes(target)).map(target => chainName(target.chainId)).join(', ')}, so its media stays as is there.
+            </p>
+          ) : null}
         </div>
       </div>
       {message && !plan ? (

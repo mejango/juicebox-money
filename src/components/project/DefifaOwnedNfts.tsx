@@ -61,6 +61,8 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [manual, setManual] = useState('')
   const [recipient, setRecipient] = useState('')
+  const [manualOpen, setManualOpen] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -274,25 +276,31 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
   return <DefifaRecovery chainId={chainId} projectId={projectId} account={address} hook={shop.hook} actions={['cash-out', 'transfer']} active={!!plan}><div className="card mt-5 space-y-4 p-5">
     <span className="field-label">Your Defifa NFTs</span>
     {!address ? <><p className="text-sm">Sign in to see and manage your NFTs.</p><button type="button" onClick={openSignIn} className="btn-primary px-4 py-2">Connect wallet</button></> : <>
-      {holdings.isLoading ? <p role="status">Checking NFT ownership…</p> : holdings.isError ? <div role="alert">{message(holdings.error)} <button type="button" onClick={() => void holdings.refetch()} disabled={busy}>Retry</button></div> : holdings.data ? <>
+      {holdings.isLoading ? <p role="status" className="text-sm">Checking NFT ownership…</p> : holdings.isError ? <div role="alert" className="text-sm">{message(holdings.error)} <button type="button" className="font-medium text-bluebs-600 hover:text-bluebs-700 disabled:opacity-40" onClick={() => void holdings.refetch()} disabled={busy}>Retry</button></div> : holdings.data ? <>
         <p className="text-sm">{empty ? 'You do not own any NFTs from this collection.' : `${holdings.data.totalOwned.toString()} NFTs owned. ${holdings.data.complete ? 'Ownership scan complete.' : 'Partial ownership scan. Load more candidates to find remaining NFTs.'}`}</p>
         {!empty ? <div className="flex max-h-64 flex-wrap gap-3 overflow-y-auto">
           {holdings.data.tokens.map(token => <label key={token.tokenId.toString()} className="flex items-center gap-2 text-sm"><input type="checkbox" disabled={busy || !!plan} checked={selected.has(token.tokenId.toString())} onChange={() => setSelected(previous => {
             const next = new Set(previous); const id = token.tokenId.toString(); if (next.has(id)) next.delete(id); else next.add(id); return next
           })} />{shop.tiers.find(tier => tier.id === token.tierId)?.name ?? `Tier ${token.tierId}`}, token {token.tokenId.toString()}</label>)}
         </div> : null}
-        {holdings.data.nextCursor ? <button type="button" disabled={busy || !!plan} onClick={() => { setSelected(new Set()); setContinuation({ cursor: holdings.data!.nextCursor!, blockNumber: holdings.data!.blockNumber }) }}>Load next ownership page</button> : null}
       </> : null}
-      <button type="button" disabled={busy || !!plan} onClick={() => { setSelected(new Set()); if (continuation) setContinuation(undefined); else void holdings.refetch() }}>Refresh ownership</button>
+      <div className="flex flex-wrap gap-2">
+        {!holdings.isLoading && !holdings.isError && holdings.data?.nextCursor ? <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy || !!plan} onClick={() => { setSelected(new Set()); setContinuation({ cursor: holdings.data!.nextCursor!, blockNumber: holdings.data!.blockNumber }) }}>Load next ownership page</button> : null}
+        <button type="button" className="btn-secondary px-3 py-1 text-xs" disabled={busy || !!plan} onClick={() => { setSelected(new Set()); if (continuation) setContinuation(undefined); else void holdings.refetch() }}>Refresh ownership</button>
+      </div>
       {!empty ? <>
-      <label className="block text-sm">Token IDs, optional manual selection<input className="input-well mt-1 w-full px-3 py-2" value={manual} disabled={busy || !!plan} onChange={event => setManual(event.target.value)} placeholder="Token IDs separated by commas" /></label>
-      <p className="text-xs text-smoke-700">Manual IDs are verified against current ownership before review.</p>
-      <label className="block text-sm">Transfer recipient<input className="input-well mt-1 w-full px-3 py-2" value={recipient} disabled={busy || !!plan} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
-      <div className="flex flex-wrap gap-3">{shop.phase === undefined || defifaPhaseAllowsCashOut(shop.phase) ? <button type="button" className="btn-primary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('cash-out')}>Cash out Defifa NFTs</button> : <p className="text-sm">NFT cash-out is not available in this phase.</p>}<button type="button" className="btn-secondary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('transfer')}>Transfer Defifa NFT</button></div>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={manualOpen} disabled={busy || !!plan} onChange={event => { setManualOpen(event.target.checked); if (!event.target.checked) setManual('') }} />Add NFTs by token ID</label>
+      {manualOpen ? <div>
+        <input aria-label="Token IDs" className="input-well w-full px-3 py-2 text-sm" value={manual} disabled={busy || !!plan} onChange={event => setManual(event.target.value)} placeholder="Token IDs separated by commas" />
+        <p className="mt-1 text-xs text-smoke-700">IDs are checked against what you hold before review.</p>
+      </div> : null}
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={transferOpen} disabled={busy || !!plan} onChange={event => { setTransferOpen(event.target.checked); if (!event.target.checked) setRecipient('') }} />Transfer one NFT to another address</label>
+      {transferOpen ? <label className="block"><span className="field-label">Recipient</span><input className="input-well mt-1 w-full px-3 py-2 font-mono text-sm" value={recipient} autoComplete="off" spellCheck={false} disabled={busy || !!plan} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label> : null}
+      <div className="flex flex-wrap gap-3">{shop.phase === undefined || defifaPhaseAllowsCashOut(shop.phase) ? <button type="button" className="btn-primary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('cash-out')}>Cash out Defifa NFTs</button> : <p className="text-sm">NFT cash-out is not available in this phase.</p>}{transferOpen ? <button type="button" className="btn-secondary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('transfer')}>Transfer Defifa NFT</button> : null}</div>
       </> : null}
     </>}
     {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}
-    {proof === 'error' ? <button type="button" onClick={() => void verifyReceipt()}>Retry receipt verification</button> : null}
+    {proof === 'error' ? <button type="button" className="btn-secondary px-3 py-1 text-xs" onClick={() => void verifyReceipt()}>Retry receipt verification</button> : null}
     {tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(plan?.chainId ?? chainId, tx.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View transaction</a> : null}
     {failedTransaction && failedTransaction.hash !== tx.hash ? <a className="block text-sm underline" href={etherscanTxUrl(failedTransaction.chainId, failedTransaction.hash) ?? undefined} target="_blank" rel="noopener noreferrer">View previous failed transaction</a> : null}
     {plan ? <TxProgress open title={plan.kind === 'cash-out' ? 'Cash out Defifa NFTs' : 'Transfer Defifa NFT'} rows={[

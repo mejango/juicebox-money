@@ -196,8 +196,8 @@ export function MoveCard({
   return (
     <div>
       <p className="text-sm leading-relaxed text-smoke-700">
-        Bridge your tokens to another chain. Only the deployed ERC-20 can move
-        — internal credits can&apos;t bridge.
+        Move your tokens to another chain. Only ERC-20 tokens can move,
+        credits can&apos;t.
       </p>
 
       {!connected ? (
@@ -213,8 +213,8 @@ export function MoveCard({
         <div className="mt-4 space-y-3">
           {fromPid === null ? (
             <p className="callout callout-warning text-xs">
-              This deployment&apos;s project ID could not be verified. Moving
-              stays unavailable until the linked projects can be resolved.
+              This project could not be verified on {chainName(from)}, so
+              moving from it is unavailable.
             </p>
           ) : null}
           {srcFailed && !src ? (
@@ -255,7 +255,7 @@ export function MoveCard({
             <p className="callout callout-warning text-xs">
               You don&apos;t have any ERC-20 {' '}
               tokens on {chainName(from)}. If you hold credits, claim them as
-              ERC-20 in the Accounts tab first — credits can&apos;t bridge.
+              ERC-20 in the Accounts tab first. Credits can&apos;t move.
             </p>
           ) : (
             <>
@@ -655,12 +655,12 @@ function MoveFlow({
     {
       key: 'prepare',
       title: 'Prepare the move',
-      detail: "Queues your move into the bridge's outbox.",
+      detail: 'Queues your move with the bridge.',
     },
     {
       key: 'send',
       title: `Send to ${chainName(to)}`,
-      detail: `Ships the queued outbox to ${chainName(to)}. Anyone can send this; the value is the bridge's messaging fee, not the bridged tokens.`,
+      detail: `Sends the queued move to ${chainName(to)}. The value sent is the bridge's messaging fee, not your tokens.`,
     },
   ]
 
@@ -698,7 +698,7 @@ function MoveFlow({
   const activeIndex = step === 'prepare' ? (run.steps ? run.index : 0) : steps.length - 1
 
   return (
-    <div className="rounded-xl border border-smoke-200 p-4">
+    <div>
       {step === 'review' ? (
         <div className="flex justify-end">
           <button
@@ -764,7 +764,7 @@ function MoveFlow({
         rows={rows}
         steps={steps}
         activeIndex={activeIndex}
-        stepsIntro={`${needsApproval ? 'The approval and the prepare are' : 'The prepare is'} one review. The send to ${chainName(to)} is reviewed once the move is queued, since its fee is read from the queue. You can leave and resume where you stopped.`}
+        stepsIntro={`Two steps: first queue the move, then send it to ${chainName(to)}. You can leave and resume where you stopped.`}
         // A stopped step (refused, failed or reverted) waits for Retry: it never starts again by itself.
         start={(step === 'prepare' || step === 'send') && !tx.stopped ? stepRun : undefined}
         startKey={`${step}:${run.index}`}

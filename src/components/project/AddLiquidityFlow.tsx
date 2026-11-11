@@ -1009,15 +1009,14 @@ function AddLiquidityForm({
         <span className="text-xs text-smoke-500">{chainName}</span>
       </div>
       <p className="mt-1 text-xs leading-relaxed text-smoke-500">
-        Seed the buyback pool so payers can route through the AMM, at the
-        current pool price of{' '}
+        Add liquidity to the pool at the current price of{' '}
         <span className="font-medium text-ink">
           {poolP > 0 ? `~${formatPrice(poolP)} ${pairSym}/${sym}` : '—'}
         </span>
         .
       </p>
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         {(
           (hasCorridor
             ? [
@@ -1072,14 +1071,9 @@ function AddLiquidityForm({
       {/* Price range */}
       {mode === 'range' ? (
         <div className="mt-3">
-          <div className="flex items-baseline justify-between gap-3">
-            <span className="field-label">
-              Price range ({pairSym} per {sym})
-            </span>
-            <span className="text-[11px] text-smoke-500">
-              cash-out floor → issuance ceiling
-            </span>
-          </div>
+          <span className="field-label">
+            Price range ({pairSym} per {sym})
+          </span>
           <div className="mt-1.5 flex items-center gap-2">
             <input
               type="number"
@@ -1114,7 +1108,7 @@ function AddLiquidityForm({
       ) : null}
 
       {/* Deposit amounts */}
-      <div className="mt-3 grid grid-cols-2 gap-3">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div className={mode === 'range' ? disabledCol(sides.tok) : mode === 'market' ? disabledCol(marketRoom.tok) : ''}>
           <div className="flex items-baseline justify-between">
             <span className="field-label">
@@ -1180,9 +1174,8 @@ function AddLiquidityForm({
 
       {mode === 'market' ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-          {sym} sells from the current price up to the ceiling; {pairSym} buys from the current
-          price down to the floor. Two positions, one each side of the price, so the amounts are
-          independent and used in full.
+          {sym} sells as the price rises to the ceiling. {pairSym} buys as it falls to the floor.
+          Each amount is used in full.
           {!marketRoom.tok
             ? ` The price is at or above the ceiling, so only the ${pairSym} side can be placed right now.`
             : !marketRoom.pair
@@ -1203,21 +1196,20 @@ function AddLiquidityForm({
         </p>
       ) : mode === 'full' ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-          Your liquidity works at every price, like a classic v2 pool. Enter
-          either amount; the other follows at the pool price.
+          Your liquidity works at every price. Enter either amount and the
+          other follows at the pool price.
         </p>
       ) : (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-          Enter either amount; the other follows at the pool price. Near Min
-          uses more {sym}; near Max uses more {pairSym}.
+          Enter either amount and the other follows at the pool price.
         </p>
       )}
 
       {mode === 'range' && (!sides.tok || !sides.pair) ? (
         <p className="mt-2 text-xs leading-relaxed text-orange-600">
           {sides.pair
-            ? `At the current price (top of your range) the position is single-sided ${pairSym} — add ${pairSym} only.`
-            : `At the current price (bottom of your range) the position is single-sided ${sym} — add ${sym} only.`}
+            ? `The current price is at the top of your range, so add ${pairSym} only.`
+            : `The current price is at the bottom of your range, so add ${sym} only.`}
         </p>
       ) : null}
 

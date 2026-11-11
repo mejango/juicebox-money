@@ -39,6 +39,7 @@ export function BurnTokensFlow({
   const tx = useReviewedAction(chainId)
   const [amount, setAmount] = useState('')
   const [memo, setMemo] = useState('')
+  const [memoOn, setMemoOn] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [plan, setPlan] = useState<ReturnType<
     typeof buildBurnTokensRequest
@@ -164,7 +165,7 @@ export function BurnTokensFlow({
       ) : null}
       <p className="mt-1 text-sm text-smoke-700">
         Permanently remove tokens from supply without receiving funds.
-        Internal credits are burned before claimed ERC-20 tokens.
+        Credits are burned before ERC-20 tokens.
       </p>
       <label className="mt-3 block">
         <span className="field-label">Amount to burn</span>
@@ -197,15 +198,26 @@ export function BurnTokensFlow({
             ? 'Checking your balance…'
             : `You hold ${formatTokenAmount(balance, 18)} ${tokenSymbol}.`}
       </p>
-      <label className="mt-3 block">
-        <span className="field-label">Memo (optional)</span>
+      <label className="mt-3 flex min-h-[28px] cursor-pointer items-center gap-2 text-sm font-medium text-smoke-700">
         <input
-          className="field mt-1.5 w-full"
+          type="checkbox"
+          checked={memoOn}
+          onChange={event => {
+            if (!event.target.checked) setMemo('')
+            setMemoOn(event.target.checked)
+          }}
+        />
+        Add a memo
+      </label>
+      {memoOn ? (
+        <input
+          aria-label="Memo"
+          className="input-well mt-1.5 min-h-[44px] px-3.5 text-sm"
           value={memo}
           onChange={event => setMemo(event.target.value)}
           maxLength={256}
         />
-      </label>
+      ) : null}
       {exceedsBalance ? (
         <p className="mt-2 text-sm text-red-600">That is more than you hold.</p>
       ) : null}

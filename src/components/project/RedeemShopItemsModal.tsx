@@ -445,7 +445,7 @@ export function RedeemShopItemsModal({
   return (
     <ModalShell
       title="Redeem items"
-      subtitle="Give up selected items for project funds under the cash out rules. Review the amount you will receive."
+      subtitle="Give up the selected items for project funds. Check the amount you will receive."
       onClose={onClose}
       busy={busy}
       maxWidth="max-w-lg"
@@ -483,7 +483,7 @@ export function RedeemShopItemsModal({
               : `Select all (${target.items.length})`}
           </button>
         </div>
-        <div className="mt-2 max-h-64 overflow-y-auto rounded-xl border border-smoke-200 px-3 py-2">
+        <div className="mt-2">
           {groups.map(([tierId, items]) => (
             <div key={tierId} className="py-2 first:pt-0 last:pb-0">
               <p className="text-[11px] font-medium uppercase tracking-wide text-smoke-500">
@@ -493,7 +493,7 @@ export function RedeemShopItemsModal({
                 {items.map(item => (
                   <label
                     key={item.tokenId}
-                    className="flex min-h-[36px] cursor-pointer items-center gap-2 rounded-lg px-2 text-sm hover:bg-smoke-50"
+                    className="flex min-h-[36px] cursor-pointer items-center gap-2 text-sm"
                   >
                     <input
                       type="checkbox"
@@ -512,7 +512,7 @@ export function RedeemShopItemsModal({
       </div>
 
       <div
-        className="mt-4 min-h-[44px] rounded-xl border border-smoke-200 bg-smoke-25 px-3.5 py-3 text-sm text-smoke-700"
+        className="mt-4 border-t border-smoke-200 pt-4 text-sm text-smoke-700"
         aria-live="polite"
       >
         {selectedTokenIds.length === 0 ? (
@@ -540,8 +540,8 @@ export function RedeemShopItemsModal({
       </div>
 
       {tx.phase === 'done' ? (
-        <div className="mt-4 rounded-xl border border-melon-200 bg-melon-50 p-4 text-sm text-melon-700">
-          Items redeemed successfully.
+        <div className="callout callout-success mt-4">
+          Items redeemed.
           {txUrl ? (
             <>
               {' '}

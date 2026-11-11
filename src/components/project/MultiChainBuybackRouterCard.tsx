@@ -362,9 +362,7 @@ export function MultiChainBuybackRouterCard({
         <p className="mt-2 text-sm leading-relaxed text-smoke-700">
           Choose the hook that decides, on every payment, whether to issue
           tokens or buy them on the AMM, then point it at a Uniswap v4 pool
-          and tune the pool’s TWAP window. Select every intended chain; EOA
-          actions use one payment, while Safe actions are proposed to
-          each chain’s multisig.
+          and tune the pool’s TWAP window.
         </p>
         {body(['hook', 'pool', 'setPool', 'twap'], 'Buyback hook')}
       </section>
@@ -403,7 +401,7 @@ function ActionRow({
 
   return (
     <div className="py-4 first:pt-0 last:pb-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-sm font-medium text-ink">{action.title}</p>
@@ -421,21 +419,21 @@ function ActionRow({
           type="button"
           onClick={() => setOpen(value => !value)}
           disabled={!availableRows.length}
-          className="btn-secondary min-h-[36px] shrink-0 px-3 text-xs"
+          className="btn-secondary min-h-[36px] shrink-0 self-start px-3 text-xs"
         >
           {open ? 'Close' : action.title}
         </button>
       </div>
 
       {showPerChain ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 divide-y divide-smoke-100 sm:grid sm:grid-cols-2 sm:gap-2 sm:divide-y-0">
           {rows.map(row => {
             const available = isKindAvailable(kind, row)
             const value = current(row)
             return (
               <div
                 key={row.chainId}
-                className="flex min-w-0 items-start gap-2 rounded-lg bg-smoke-50 px-3 py-2"
+                className="flex min-w-0 items-start gap-2 py-2 sm:rounded-lg sm:border sm:border-smoke-200 sm:px-3"
               >
                 <ChainIcon chainId={row.chainId} size={18} className="mt-0.5" />
                 <div className="min-w-0">
@@ -841,11 +839,7 @@ export function BuybackActionForm({
     <div>
       <ChainPicker
         label="Run on"
-        rows={rows.map(row => ({
-          chainId: row.chainId,
-          name: row.name,
-          disabled: !isKindAvailable(kind, row),
-        }))}
+        rows={available.map(row => ({ chainId: row.chainId, name: row.name }))}
         selected={selected}
         onChange={setSelected}
         disabled={busy}
@@ -861,9 +855,10 @@ export function BuybackActionForm({
         disabled={busy}
       >
         {kind === 'pool' || kind === 'setPool' || kind === 'twap' ? (
-          <p className="mt-2 text-xs leading-relaxed text-smoke-500">
-            Use the native-token sentinel for native ETH pools. USDC and other
-            pair-token addresses may differ by chain.
+          <p className="mt-2 break-words text-xs leading-relaxed text-smoke-500">
+            For a native ETH pool, enter{' '}
+            <span className="break-all font-mono">{NATIVE_TOKEN}</span>. USDC
+            and other token addresses can differ by chain.
           </p>
         ) : null}
       </PerChainAddressField>
@@ -884,11 +879,11 @@ export function BuybackActionForm({
       {kind === 'pool' || kind === 'setPool' ? (
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <NumberField
-            label="Fee (hundredths of a bip)"
+            label="Pool fee (3000 = 0.3%)"
             value={fee}
             onChange={setFee}
             disabled={busy}
-            placeholder="3000 = 0.3%"
+            placeholder="3000"
           />
           <NumberField
             label="Tick spacing"
@@ -917,7 +912,7 @@ export function BuybackActionForm({
         </div>
       ) : null}
 
-      <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+      <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 p-3">
         <input
           type="checkbox"
           checked={ack}

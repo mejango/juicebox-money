@@ -369,7 +369,6 @@ describe('project draft export', () => {
 
   it('honors cancellation when reconstructing the draft produces warnings', async () => {
     const download = stubDraftDownload()
-    download.confirm.mockReturnValue(false)
     mocks.buildProjectDraftExport.mockResolvedValue({
       draft: { name: 'Test project', stages: [] },
       warnings: ['Review the reconstructed rules.'],
@@ -381,12 +380,21 @@ describe('project draft export', () => {
 
     await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
 
-    expect(download.confirm).toHaveBeenCalledWith(
-      'Review the reconstructed rules.\n\nExport this editable .jb anyway?',
-    )
+    // The warnings and the question show inline; nothing downloads until it is answered.
+    expect(download.confirm).not.toHaveBeenCalled()
+    expect(renderedText(renderer.root)).toContain('Review the reconstructed rules.')
+    expect(renderedText(renderer.root)).toContain('Export this editable .jb anyway?')
+    expect(download.createObjectURL).not.toHaveBeenCalled()
+
+    await act(async () => buttonWith(renderer, 'Cancel').props.onClick())
     expect(download.createObjectURL).not.toHaveBeenCalled()
     expect(download.anchor.click).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).toContain('Cancelled')
+
+    await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
+    await act(async () => buttonWith(renderer, 'Export anyway').props.onClick())
+    expect(download.anchor.click).toHaveBeenCalledTimes(1)
+    expect(renderedText(renderer.root)).toContain('Exported .jb')
   })
 
   it('shows a verified reconstruction error without creating a download', async () => {
@@ -451,18 +459,19 @@ describe('project payer write flow', () => {
       buttonWith(renderer, 'Create payer address').props.onClick(),
     )
 
+    // The memo field sits behind the first checkbox; "Let me edit this later" is the second.
+    const checkbox = (index: number) =>
+      renderer.root.findAllByType('input').filter(input => input.props.type === 'checkbox')[index]
     await act(async () => {
-      renderer.root.findByType('select').props.onChange({
-        target: { value: 'balance' },
-      })
+      buttonWith(renderer, 'Add to balance').props.onClick()
+      checkbox(0).props.onChange({ target: { checked: true } })
+    })
+    await act(async () => {
       renderer.root
         .findAllByType('input')
         .find(input => input.props['aria-label'] === 'Memo')!
         .props.onChange({ target: { value: ' treasury top-up ' } })
-      renderer.root
-        .findAllByType('input')
-        .find(input => input.props.type === 'checkbox')!
-        .props.onChange({ target: { checked: true } })
+      checkbox(1).props.onChange({ target: { checked: true } })
     })
     await act(async () => buttonWith(renderer, 'Deploy payer address').props.onClick())
 

@@ -46,8 +46,8 @@ export function ViewAsForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="mt-2 flex items-start gap-2">
-      <div className="min-w-0 flex-1">
+    <form onSubmit={submit} className="space-y-2 px-3 py-2">
+      <div>
         <input
           value={value}
           onChange={event => setValue(event.target.value)}
@@ -61,7 +61,7 @@ export function ViewAsForm({ onDone }: { onDone: () => void }) {
       <button
         type="submit"
         disabled={busy}
-        className="btn-secondary h-9 shrink-0 px-3 text-xs disabled:opacity-60"
+        className="btn-secondary h-9 w-full px-3 text-xs disabled:opacity-60"
       >
         {busy ? 'Resolving…' : 'View'}
       </button>

@@ -11,7 +11,7 @@ export function safeAccountQueryOptions(chainId: JBChainId, address: Address) {
     queryKey: ['safeAccount', chainId, address.toLowerCase()] as const,
     staleTime: 30_000,
     retry: false,
-    queryFn: async (): Promise<{ safe: SafeInfo | null; accountType: 'Safe Multisig' | 'EOA' | 'Contract' }> => {
+    queryFn: async (): Promise<{ safe: SafeInfo | null; accountType: 'Safe Multisig' | 'Wallet' | 'Contract' }> => {
       const [{ readAuthorityIdentity }, { publicClient }] = await Promise.all([
         import('@bananapus/nana-sdk-core/safe'),
         import('@/lib/wallet-core'),
@@ -20,7 +20,7 @@ export function safeAccountQueryOptions(chainId: JBChainId, address: Address) {
       if (!identity) throw new Error('Could not verify this account. Retry the check.')
       return identity.kind === 'safe'
         ? { safe: { owners: identity.owners, threshold: identity.threshold }, accountType: 'Safe Multisig' }
-        : { safe: null, accountType: identity.kind === 'eoa' ? 'EOA' : 'Contract' }
+        : { safe: null, accountType: identity.kind === 'eoa' ? 'Wallet' : 'Contract' }
     },
   })
 }

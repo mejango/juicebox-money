@@ -41,6 +41,7 @@ import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
 import { netLoanProceeds } from '@/lib/loanFees'
 import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
+import { ChipButton } from '@/components/create/ui'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 const BURN_TOKENS = JBPermissionIdsV6.BURN_TOKENS
@@ -510,7 +511,7 @@ export function GetLoanFlow({
                   setCtxToken(e.target.value as Address)
                   resetInputs()
                 }}
-                className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm"
+                className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
               >
                 {ctxs.map(c => (
                   <option key={c.token} value={c.token}>
@@ -521,33 +522,33 @@ export function GetLoanFlow({
             </label>
           ) : null}
 
-          <label className="block">
+          <div role="group" aria-label="Prepaid fee">
             <span className="field-label">
               <ConceptTerm note={PROTOCOL_CONCEPTS.prepaidFee}>Prepaid fee</ConceptTerm>
             </span>
-            <select
-              value={prepaid}
-              disabled={busy}
-              onChange={e => {
-                setPrepaid(Number(e.target.value))
-                resetInputs()
-              }}
-              className="input-well select-caret mt-1.5 min-h-[40px] w-32 py-2 pl-3 pr-9 text-sm"
-            >
+            <div className="mt-1.5 flex flex-wrap gap-2">
               {PREPAID_OPTIONS.map(o => (
-                <option key={o.value} value={o.value}>
+                <ChipButton
+                  key={o.value}
+                  active={prepaid === o.value}
+                  disabled={busy}
+                  onClick={() => {
+                    setPrepaid(o.value)
+                    resetInputs()
+                  }}
+                >
                   {o.label}
-                </option>
+                </ChipButton>
               ))}
-            </select>
-          </label>
+            </div>
+          </div>
 
           {collateral > 0n ? (
             <p className="text-xs text-smoke-700">
               {borrowableFetching
                 ? 'Checking how much you can borrow…'
                 : borrowableNow === undefined
-                  ? 'Could not read the live loan quote — try again shortly.'
+                  ? 'Could not read the live loan quote. Try again shortly.'
                   : borrowableNow > 0n && meta
                     ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
                     : 'Loans are locked until this revnet’s cash-out delay passes.'}

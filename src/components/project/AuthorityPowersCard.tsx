@@ -126,9 +126,8 @@ export function AuthorityPowersCard({
     <section className="card p-5">
       <span className="field-label">Powers</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        What each chain’s current rules let the owner do. Enabled powers can be
-        used here; disabled ones need a ruleset change. Chain differences stay
-        visible and every write follows the same review and confirmation flow.
+        What each chain’s current rules let the owner do. Disabled powers need
+        a rules change first.
       </p>
 
       {query.isLoading ? (
@@ -512,7 +511,7 @@ export function PowerActionForm({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-red-200 p-4">
+    <div className="mt-4 rounded-xl border border-red-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">{power.actionLabel}</p>
         <button
@@ -528,18 +527,7 @@ export function PowerActionForm({
       <ChainPicker
         className="mt-4"
         label="Run on"
-        rows={rows.map(row => ({
-          chainId: row.chainId,
-          name: (
-            <>
-              {row.name}
-              {!flagState(row, power.flag) ? (
-                <span className="text-xs text-smoke-500">disabled</span>
-              ) : null}
-            </>
-          ),
-          disabled: !(flagState(row, power.flag) && !row.error),
-        }))}
+        rows={enabledRows.map(row => ({ chainId: row.chainId, name: row.name }))}
         selected={selected}
         onChange={setSelected}
         disabled={busy}
@@ -693,7 +681,7 @@ export function PowerActionForm({
           }}
         >
           {powerRun.discard.element}
-          <label className="flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+          <label className="flex items-start gap-2 rounded-lg border border-red-300 p-3">
             <input
               type="checkbox"
               checked={ack}
@@ -706,7 +694,7 @@ export function PowerActionForm({
             </span>
           </label>
           {power.extreme ? (
-            <label className="mt-2 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+            <label className="mt-2 flex items-start gap-2 rounded-lg border border-red-300 p-3">
               <input
                 type="checkbox"
                 checked={ackExtreme}

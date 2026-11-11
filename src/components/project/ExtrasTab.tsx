@@ -9,6 +9,7 @@ import { isAddress, zeroAddress, type Address, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressField } from '@/components/create/AddressField'
+import { ChipButton } from '@/components/create/ui'
 import { AddressLink } from '@/components/ui/AddressLink'
 import { ModalShell } from '@/components/ui/ModalShell'
 import { TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
@@ -82,6 +83,25 @@ function ProjectDraftExportCard({
     kind: 'idle' | 'success' | 'error'
     text: string
   }>({ kind: 'idle', text: '' })
+  /** A reconstructed draft whose warnings wait for a second, explicit confirmation. */
+  const [pending, setPending] = useState<{ warnings: string[]; draft: unknown } | null>(null)
+
+  const save = (draft: unknown) => {
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(draft, null, 2)], {
+        type: 'application/json',
+      }),
+    )
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = draftFileName(profile.name)
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setStatus({
+      kind: 'success',
+      text: 'Exported .jb. Import it from Start a project to review and edit.',
+    })
+  }
 
   const download = async () => {
     if (!client || busy) return
@@ -102,29 +122,12 @@ function ProjectDraftExportCard({
         chains: chains.map(([id]) => id),
         authorityByChain,
       })
-      if (
-        result.warnings.length &&
-        !window.confirm(
-          `${result.warnings.join('\n\n')}\n\nExport this editable .jb anyway?`,
-        )
-      ) {
-        setStatus({ kind: 'idle', text: 'Cancelled' })
+      if (result.warnings.length) {
+        setPending({ warnings: result.warnings, draft: result.draft })
+        setStatus({ kind: 'idle', text: '' })
         return
       }
-      const url = URL.createObjectURL(
-        new Blob([JSON.stringify(result.draft, null, 2)], {
-          type: 'application/json',
-        }),
-      )
-      const anchor = document.createElement('a')
-      anchor.href = url
-      anchor.download = draftFileName(profile.name)
-      anchor.click()
-      URL.revokeObjectURL(url)
-      setStatus({
-        kind: 'success',
-        text: 'Exported .jb. Import it from Start a project to review and edit.',
-      })
+      save(result.draft)
     } catch (error) {
       setStatus({
         kind: 'error',
@@ -142,9 +145,8 @@ function ProjectDraftExportCard({
     <div className="card p-5">
       <h2 className="font-agrandir text-lg font-medium">Export deployment</h2>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Download this project&apos;s deployed configuration as a .jb file.
-        Import it from Start a project to review the reconstructed rules and
-        make changes before deploying. No transaction is required.
+        Download this project&apos;s setup as a .jb file. Import it from Start
+        a project to review, edit and deploy it again.
       </p>
       {status.text ? (
         <p
@@ -159,14 +161,39 @@ function ProjectDraftExportCard({
           {status.text}
         </p>
       ) : null}
-      <button
-        type="button"
-        onClick={() => void download()}
-        disabled={busy || !client}
-        className="btn-secondary mt-4 min-h-[40px] px-4 text-sm disabled:opacity-50"
-      >
-        {busy ? 'Verifying…' : 'Export .jb'}
-      </button>
+      {pending ? (
+        <div className="mt-4">
+          <div className="callout callout-warning space-y-2">
+            {pending.warnings.map(warning => <p key={warning}>{warning}</p>)}
+          </div>
+          <p className="mt-3 text-sm font-medium text-ink">Export this editable .jb anyway?</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => { save(pending.draft); setPending(null) }}
+              className="btn-secondary min-h-[40px] px-4 text-sm"
+            >
+              Export anyway
+            </button>
+            <button
+              type="button"
+              onClick={() => { setPending(null); setStatus({ kind: 'idle', text: 'Cancelled' }) }}
+              className="btn-secondary min-h-[40px] px-4 text-sm"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => void download()}
+          disabled={busy || !client}
+          className="btn-secondary mt-4 min-h-[40px] px-4 text-sm disabled:opacity-50"
+        >
+          {busy ? 'Verifying…' : 'Export .jb'}
+        </button>
+      )}
     </div>
   )
 }
@@ -191,6 +218,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
   const [addToBalance, setAddToBalance] = useState(false)
   const [beneficiary, setBeneficiary] = useState('')
   const [memo, setMemo] = useState('')
+  const [memoOpen, setMemoOpen] = useState(false)
   const [editable, setEditable] = useState(false)
   const [adminInput, setAdminInput] = useState('')
   const [flowError, setFlowError] = useState<string | null>(null)
@@ -279,7 +307,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
       {!dialogOpen ? <SavedAttemptFromError error={savedShown} onDone={() => { setSavedShown(null); setFlowError(null) }} /> : null}
       {dialogOpen ? (
         <ModalShell title="Create payer address" subtitle="Choose the project chains that need a payer address." onClose={() => setDialogOpen(false)} busy={busy}>
-          <div className="max-h-[min(72vh,46rem)] overflow-y-auto px-5 py-5 sm:px-6">
+          <div>
             {session ? (
               <>
                 <p className="text-sm text-smoke-700">Saved payer settings: {session.calls[0].addToBalance ? 'Add to balance' : 'Pay'}.
@@ -305,21 +333,23 @@ function PayerAddressCard({ chainId, projectId, chains }: {
               </>
             ) : (
               <>
-                <label className="block max-w-sm"><span className="field-label">Behavior</span>
-                  <select value={addToBalance ? 'balance' : 'pay'} disabled={busy} onChange={e => { setAddToBalance(e.target.value === 'balance'); invalidate() }} className="input-well select-caret mt-1.5 min-h-[40px] w-full px-3 pr-9 text-sm">
-                    <option value="pay">Pay</option><option value="balance">Add to balance</option>
-                  </select>
-                </label>
+                <span className="field-label">Behavior</span>
+                <div role="group" aria-label="Behavior" className="mt-1.5 flex flex-wrap gap-2">
+                  <ChipButton active={!addToBalance} onClick={() => { setAddToBalance(false); invalidate() }} disabled={busy}>Pay</ChipButton>
+                  <ChipButton active={addToBalance} onClick={() => { setAddToBalance(true); invalidate() }} disabled={busy}>Add to balance</ChipButton>
+                </div>
                 <p className="mt-1.5 text-xs text-smoke-700">{addToBalance ? 'Adds funds to the project without minting any tokens.' : 'Pays the project and mints its tokens to the beneficiary.'}</p>
                 {!addToBalance ? <div className="mt-4"><span className="field-label">{beneficiaryLabel}</span>
                   <AddressField value={beneficiary} onChange={value => { setBeneficiary(value); invalidate() }} disabled={busy}
                     placeholder="0x… or name.eth (optional)" ariaLabel={beneficiaryLabel} className="mt-1.5" compact />
                   <p className="mt-1.5 text-xs text-smoke-700">Leave empty and whoever sends the ETH gets the tokens.</p>
                 </div> : null}
-                <label className="mt-4 block"><span className="field-label">Memo</span>
-                  <input type="text" value={memo} onChange={e => { setMemo(e.target.value.slice(0, 256)); invalidate() }} disabled={busy}
-                    placeholder="Optional note attached to every payment" aria-label="Memo" className="input-well mt-1.5 min-h-[40px] w-full px-3 text-sm" />
+                <label className="mt-4 flex items-center gap-2.5 text-sm text-ink">
+                  <input type="checkbox" checked={memoOpen} disabled={busy} onChange={e => { setMemoOpen(e.target.checked); if (!e.target.checked) setMemo(''); invalidate() }} />
+                  Attach a memo to every payment
                 </label>
+                {memoOpen ? <input type="text" value={memo} onChange={e => { setMemo(e.target.value.slice(0, 256)); invalidate() }} disabled={busy}
+                  placeholder="Memo" aria-label="Memo" className="input-well mt-2 min-h-[40px] w-full px-3 text-sm" /> : null}
                 <label className="mt-4 flex items-start gap-2.5 text-sm text-ink">
                   <input type="checkbox" checked={editable} disabled={busy} onChange={e => { setEditable(e.target.checked); invalidate() }} className="mt-0.5" />
                   <span>Let me edit this later<span className="mt-0.5 block text-xs leading-relaxed text-smoke-700">
@@ -337,7 +367,7 @@ function PayerAddressCard({ chainId, projectId, chains }: {
                     <ChainIcon chainId={id as JBChainId} size={16} />{chainName(id)}, project #{pid}
                   </label>)}
                 </fieldset>
-                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address. Supported deployments can share one payment across all mainnets or all testnets. Safe deployments confirm in sequence.</p>
+                <p className="mt-2 text-xs text-smoke-700">Each selected chain gets its own payer address.</p>
                 <button onClick={() => void handleReview()} disabled={busy} className="btn-primary mt-4 min-h-[44px] px-5 text-sm">{busy && !review ? 'Checking…' : isConnected ? 'Deploy payer address' : 'Sign in to continue'}</button>
               </>
             )}
@@ -488,7 +518,7 @@ function PayerDeployedPanel({
   }, [copied])
 
   return (
-    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+    <div className="mt-3">
       <p className="text-sm font-medium text-ink">
         Payer address deployed. Anyone who sends ETH to it pays this project.
       </p>
@@ -496,7 +526,7 @@ function PayerDeployedPanel({
         <div className="mt-3">
           <span className="field-label">Send ETH to</span>
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <code className="break-all rounded-lg bg-split-50 px-3 py-2 font-mono text-xs text-ink">
+            <code className="break-all rounded-lg border border-smoke-200 px-3 py-2 font-mono text-xs text-ink">
               {payer}
             </code>
             <button

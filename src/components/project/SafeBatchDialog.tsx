@@ -54,7 +54,7 @@ function routeDescription(route: SafeBatchRoute, count: number, chainId: JBChain
 
 function authorityTag(route: SafeBatchRoute): string {
   if (route.authorityKind === 'safe') return 'Safe'
-  if (route.authorityKind === 'eoa') return 'EOA'
+  if (route.authorityKind === 'eoa') return 'Wallet'
   return route.authorityKind === 'contract' ? 'Contract' : 'Unknown'
 }
 
@@ -76,16 +76,16 @@ function DecodedCall({ step }: { step: BatchStep }) {
       item.type === 'function' && item.name === step.functionName,
   )
   return (
-    <div className="mt-2 rounded-lg bg-grey-25 px-3 py-2">
+    <div className="mt-2 border-t border-smoke-100 pt-2">
       <p className="break-all font-mono text-xs text-ink">
         {step.contractName}.{step.functionName}(
         {fn?.inputs.map(input => input.type).join(', ') ?? ''})
       </p>
       {fn ? (
-        <dl className="mt-1 space-y-0.5">
+        <dl className="mt-1.5 space-y-1.5">
           {fn.inputs.map((input, index) => (
-            <div key={`${input.name ?? 'arg'}-${index}`} className="flex gap-2 text-xs">
-              <dt className="shrink-0 text-smoke-500">{input.name || `arg${index}`}</dt>
+            <div key={`${input.name ?? 'arg'}-${index}`} className="text-xs">
+              <dt className="text-smoke-500">{input.name || `arg${index}`}</dt>
               <dd className="min-w-0 break-all font-mono text-ink">
                 {argumentText(step.args[index])}
               </dd>
@@ -291,7 +291,7 @@ export function SafeBatchDialog({
               <li
                 key={step.id}
                 className={`rounded-xl border px-3 py-2.5 ${
-                  problem ? 'border-red-300 bg-red-50' : 'border-smoke-200 bg-white'
+                  problem ? 'border-red-300' : 'border-smoke-200'
                 }`}
               >
                 <div className="flex items-start gap-2">

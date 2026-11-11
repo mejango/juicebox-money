@@ -231,7 +231,7 @@ export function LiquidityPositions({
       <div className={allEmpty ? 'hidden' : 'overflow-x-auto'}>
         <table className="w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-smoke-500">
+            <tr className="text-left text-xs text-smoke-500 max-sm:hidden">
               <th className="py-1.5 pr-3 font-normal">Chain</th>
               <th className="py-1.5 pr-3 font-normal">Position</th>
               <th className="py-1.5 pr-3 text-right font-normal">Holdings</th>
@@ -258,8 +258,8 @@ export function LiquidityPositions({
       <div ref={setPanelHost} className="min-w-0" />
       {isViewAs ? (
         <p className="mt-2 text-xs text-smoke-500">
-          You&apos;re viewing another account — connect as its owner to claim,
-          edit, or remove.
+          You&apos;re viewing another account. Connect as it to claim, edit,
+          or remove.
         </p>
       ) : null}
     </div>
@@ -665,7 +665,7 @@ function ChainLpRows({
   if (!address) return null
 
   const chainCell = (
-    <td className="whitespace-nowrap py-2 pr-3">
+    <td className="whitespace-nowrap py-2 pr-3 max-sm:col-span-2">
       {/* Inline so the auto table layout measures the icon + name; a block flex
           container here reports no min width and the next column overlaps it. */}
       <span className="inline-flex items-center gap-2 text-xs text-smoke-700">
@@ -677,9 +677,9 @@ function ChainLpRows({
 
   if (summary.isLoading) {
     return (
-      <tr className="border-t border-smoke-100">
+      <tr className="border-t border-smoke-100 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:py-1">
         {chainCell}
-        <td colSpan={5} className="py-2 text-xs text-smoke-500">
+        <td colSpan={5} className="py-2 text-xs text-smoke-500 max-sm:col-span-2">
           Reading your positions…
         </td>
       </tr>
@@ -688,11 +688,11 @@ function ChainLpRows({
   // An incomplete log scan must not read as "you have no positions".
   if (summary.isError) {
     return (
-      <tr className="border-t border-smoke-100">
+      <tr className="border-t border-smoke-100 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:py-1">
         {chainCell}
-        <td colSpan={5} className="py-2 text-xs text-red-700">
-          Could not verify the complete position history — nothing has been
-          hidden as an empty result.
+        <td colSpan={5} className="py-2 text-xs text-red-700 max-sm:col-span-2">
+          Could not read your positions on this chain. You may still have
+          some.
         </td>
       </tr>
     )
@@ -710,20 +710,20 @@ function ChainLpRows({
         return (
           <tr
             key={position.tokenId.toString()}
-            className="border-t border-smoke-100 align-top"
+            className="border-t border-smoke-100 align-top max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:py-1"
           >
             {chainCell}
-            <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
+            <td data-label="Position" className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink max-sm:before:block max-sm:before:font-sans max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
               #{position.tokenId.toString()}
             </td>
-            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+            <td data-label="Holdings" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
               {formatTokenAmount(position.tokenAmount, 18)} {sym}
               <span className="block text-xs text-smoke-500">
                 {formatTokenAmount(position.pairAmount, pool.pair.decimals)}{' '}
                 {pool.pair.symbol}
               </span>
             </td>
-            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+            <td data-label="Unclaimed fees" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
               {owed === undefined ? (
                 <span className="text-smoke-500">Reading…</span>
               ) : owed === null ? (
@@ -740,7 +740,7 @@ function ChainLpRows({
                 </>
               )}
             </td>
-            <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+            <td data-label="Lifetime fees" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
               {(() => {
                 // The pool forgets what a position already took, so
                 // lifetime is only knowable where the index has been
@@ -764,8 +764,8 @@ function ChainLpRows({
                 )
               })()}
             </td>
-            <td className="whitespace-nowrap py-2 text-right">
-              <span className="inline-flex gap-2">
+            <td className="whitespace-nowrap py-2 text-right max-sm:col-span-2 max-sm:whitespace-normal">
+              <span className="inline-flex flex-wrap justify-end gap-2">
                 <button
                   type="button"
                   className="btn-secondary min-h-[32px] px-3 text-xs"
@@ -825,22 +825,22 @@ function ChainLpRows({
     return (
       <tr
         key={`market:${group.tokenSide.tokenId.toString()}:${group.pairSide.tokenId.toString()}`}
-        className="border-t border-smoke-100 align-top"
+        className="border-t border-smoke-100 align-top max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:py-1"
       >
         {chainCell}
-        <td className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink">
+        <td data-label="Position" className="whitespace-nowrap py-2 pr-3 font-mono text-xs text-ink max-sm:before:block max-sm:before:font-sans max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
           Market
           <span className="block text-smoke-500">
             #{group.tokenSide.tokenId.toString()}, #{group.pairSide.tokenId.toString()}
           </span>
         </td>
-        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+        <td data-label="Holdings" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
           {formatTokenAmount(tokenHeld, 18)} {sym}
           <span className="block text-xs text-smoke-500">
             {formatTokenAmount(pairHeld, pool.pair.decimals)} {pool.pair.symbol}
           </span>
         </td>
-        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+        <td data-label="Unclaimed fees" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
           {!feesKnown ? (
             <span className="text-smoke-500">Reading…</span>
           ) : !feesUsable ? (
@@ -856,7 +856,7 @@ function ChainLpRows({
             </>
           )}
         </td>
-        <td className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700">
+        <td data-label="Lifetime fees" className="whitespace-nowrap py-2 pr-3 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
           {!lifetimeKnown ? (
             <span className="text-smoke-500">—</span>
           ) : lifetimeToken <= 0n && lifetimePair <= 0n ? (
@@ -870,8 +870,8 @@ function ChainLpRows({
             </>
           )}
         </td>
-        <td className="whitespace-nowrap py-2 text-right">
-          <span className="inline-flex gap-2">
+        <td className="whitespace-nowrap py-2 text-right max-sm:col-span-2 max-sm:whitespace-normal">
+          <span className="inline-flex flex-wrap justify-end gap-2">
             <button
               type="button"
               className="btn-secondary min-h-[32px] px-3 text-xs"

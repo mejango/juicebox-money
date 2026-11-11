@@ -64,6 +64,7 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
   const media = useShop721Media(chainId, shop, visibleTiers.map(tier => tier.id))
   const mediaById = media.data
   const [delegate, setDelegate] = useState('')
+  const [delegateOpen, setDelegateOpen] = useState(false)
   const [review, setReview] = useState<Review | null>(null)
   const [preparing, setPreparing] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -298,12 +299,13 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
         </div> : null}
       </div>
     {allowed ? <>
-      <label className="block text-sm">Voting delegate, optional<input className="input-well mt-1 w-full px-3 py-2" value={delegate} placeholder="Use the contract default" disabled={!!review || preparing} onChange={event => setDelegate(event.target.value)} /></label>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={delegateOpen} disabled={!!review || preparing} onChange={event => { setDelegateOpen(event.target.checked); if (!event.target.checked) setDelegate('') }} />Choose a voting delegate</label>
+      {delegateOpen ? <input aria-label="Voting delegate" className="input-well w-full px-3 py-2 font-mono text-sm" value={delegate} placeholder="0x…" autoComplete="off" spellCheck={false} disabled={!!review || preparing} onChange={event => setDelegate(event.target.value)} /> : null}
       <CheckoutAmountRow
         amount={<input type="text" readOnly aria-label="NFT amount" value={amountValue} className={CHECKOUT_AMOUNT_INPUT_CLASS} />}
         currency={<span className="text-sm font-medium text-ink">{amountSymbol}</span>}
         action={isConnected ? <button className={CHECKOUT_ACTION_BUTTON_CLASS} disabled={!count || preparing || !!review} onClick={() => void prepare()}>{preparing ? 'Preparing mint…' : 'Review mint'}</button> : <button className={CHECKOUT_ACTION_BUTTON_CLASS} onClick={openSignIn}>Connect wallet</button>} />
-      {selectedTiers.length ? <div aria-label="Selected NFTs" className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
+      {selectedTiers.length ? <div aria-label="Selected NFTs" className="mt-2 space-y-2 border-y border-smoke-200 py-2.5">
         {selectedTiers.map(tier => {
           const quantity = quantities[tier.id]
           return <NftCartLine key={tier.id} tierId={tier.id} name={tier.name ?? `Tier #${tier.id}`} image={mediaById?.[tier.id]?.image} quantity={quantity}
@@ -311,8 +313,8 @@ export function DefifaCheckout({ chainId, projectId, shop }: { chainId: JBChainI
             onAdd={() => setQuantities(q => ({ ...q, [tier.id]: quantity + 1 }))}
             removeDisabled={preparing || !!review} addDisabled={preparing || !!review || count >= MAX_DEFIFA_ACTION_NFTS || quantity >= tier.remaining} />
         })}
-        <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
-          <div className="flex items-center justify-between gap-3"><span>{count} NFTs</span><span>{amountValue} {amountSymbol}</span></div>
+        <div className="border-t border-smoke-200 pt-2 text-xs">
+          <span className="block text-smoke-500">{count} NFTs</span><span className="block text-sm tabular-nums text-ink">{amountValue} {amountSymbol}</span>
         </div>
       </div> : null}
     </> : <p className="text-sm text-smoke-600">NFT minting is {shop.phase === undefined ? 'unavailable while the protocol phase is unknown' : 'not open in this phase'}.</p>}

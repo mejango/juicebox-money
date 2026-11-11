@@ -214,9 +214,8 @@ export function AuthorityEditsCard({
     <section className="card p-5">
       <span className="field-label">Edits</span>
       <p className="mt-2 text-sm leading-relaxed text-smoke-700">
-        Everyday owner/operator changes. Review exactly which chains will
-        change; EOAs sign per-chain requests and pay once, while Safe
-        signers propose the same calls to each multisig.
+        Everyday owner/operator changes. Check which chains will change
+        before you confirm.
       </p>
 
       {query.isLoading ? (
@@ -275,10 +274,7 @@ export function AuthorityEditsCard({
             open={false}
             onToggle={() => pushProjectTabHash(editReservedSplitsHash(isRevnet))}
           >
-            <p className="mt-2 text-xs leading-relaxed text-smoke-500">
-              Opens the live split editor, which preserves locked recipients and
-              re-checks the group before saving.
-            </p>
+            {null}
           </EditRow>
         </div>
       )}
@@ -403,11 +399,11 @@ function PerChainTokenState({
     )
   }
   return (
-    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+    <div className="mt-3 divide-y divide-smoke-100 sm:grid sm:grid-cols-2 sm:gap-2 sm:divide-y-0">
       {rows.map(row => (
         <div
           key={row.chainId}
-          className="flex min-w-0 items-center gap-2 rounded-lg bg-smoke-50 px-3 py-2"
+          className="flex min-w-0 items-center gap-2 py-2 sm:rounded-lg sm:border sm:border-smoke-200 sm:px-3"
         >
           <ChainIcon chainId={row.chainId} size={18} />
           <div className="min-w-0 text-xs">
@@ -439,7 +435,7 @@ function reviewValue(value: string): string {
   return trimmed.length > 48 ? `${trimmed.slice(0, 45)}…` : trimmed
 }
 
-/** The shared ChainPicker fed by this card's per-chain read state. */
+/** The shared ChainPicker fed by this card's per-chain read state: only the chains that can be edited. */
 function EditChainPicker({
   rows,
   selected,
@@ -451,19 +447,24 @@ function EditChainPicker({
   onChange: (next: Set<number>) => void
   disabled: boolean
 }) {
+  const unread = rows.filter(row => row.error)
   return (
-    <ChainPicker
-      label="Apply on"
-      rows={rows.map(row => ({
-        chainId: row.chainId,
-        name: row.name,
-        disabled: !!row.error,
-        title: row.error ?? undefined,
-      }))}
-      selected={selected}
-      onChange={onChange}
-      disabled={disabled}
-    />
+    <>
+      <ChainPicker
+        label="Apply on"
+        rows={rows
+          .filter(row => !row.error)
+          .map(row => ({ chainId: row.chainId, name: row.name }))}
+        selected={selected}
+        onChange={onChange}
+        disabled={disabled}
+      />
+      {unread.length > 0 ? (
+        <p className="mt-2 text-xs text-smoke-700">
+          Couldn&rsquo;t read {unread.map(row => row.name).join(', ')}. Reload to edit there.
+        </p>
+      ) : null}
+    </>
   )
 }
 
@@ -885,7 +886,7 @@ export function MetadataEditor({
   const preview = logoPreview ?? projectLogoUrl(initial.logoUri)
 
   return (
-    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">Edit project metadata</p>
         <button
@@ -909,8 +910,7 @@ export function MetadataEditor({
           disabled={busy || locked}
         />
         <p className="mt-2 text-xs leading-relaxed text-smoke-500">
-          Only fields you change are applied to every selected chain. Other
-          values stay as they are on each chain.
+          Only the fields you change are saved, on every selected chain.
         </p>
       </div>
 
@@ -992,7 +992,7 @@ export function MetadataEditor({
         </div>
       </div>
 
-      <details className="mt-4 rounded-lg border border-smoke-200 p-3">
+      <details className="mt-4 border-t border-smoke-200 pt-3">
         <summary className="cursor-pointer text-sm font-medium text-ink">
           Links
         </summary>
@@ -1020,9 +1020,9 @@ export function MetadataEditor({
         </div>
       </details>
 
-      <details className="mt-4 rounded-lg border border-smoke-200 p-3">
+      <details className="mt-3 border-t border-smoke-200 pt-3">
         <summary className="cursor-pointer text-sm font-medium text-ink">
-          Advanced — custom properties (JSON)
+          Custom properties (JSON)
         </summary>
         <p className="mt-2 text-xs leading-relaxed text-smoke-500">
           {metadataSource ? `Prefilled from ${metadataSource.name}. ` : ''}
@@ -1226,7 +1226,7 @@ export function TokenEditor({
   })
 
   return (
-    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">Edit token</p>
         <button
@@ -1329,7 +1329,7 @@ export function TokenEditor({
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
             {review.some(call => call.functionName === 'deployERC20For')
-              ? ' Every deploy uses the same salt, so the ERC-20 lands on one address across the chains you sign from this account.'
+              ? ' The token gets the same address on every chain you sign from this account.'
               : ''}
           </p>
         </TxProgress>

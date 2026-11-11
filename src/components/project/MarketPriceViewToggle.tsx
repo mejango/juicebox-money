@@ -2,6 +2,12 @@
 
 export type MarketPriceView = 'smooth' | 'trades'
 
+const OPTIONS: [MarketPriceView, string, string][] = [
+  ['smooth', 'Smooth', 'Show time-weighted averages of the pool price'],
+  ['trades', 'Every trade', 'Show every exact post-trade pool price'],
+]
+
+/** Two compact chips: small enough to sit on a chart's legend line. */
 export function MarketPriceViewToggle({
   value,
   onChange,
@@ -10,36 +16,23 @@ export function MarketPriceViewToggle({
   onChange: (value: MarketPriceView) => void
 }) {
   return (
-    <div className="relative inline-flex shrink-0 items-center text-bluebs-700">
-      <select
-        value={value}
-        onChange={event => onChange(event.target.value as MarketPriceView)}
-        aria-label="Pool price detail"
-        title={
-          value === 'smooth'
-            ? 'Show time-weighted averages of the pool price'
-            : 'Show every exact post-trade pool price'
-        }
-        className="w-[4.15rem] cursor-pointer appearance-none border-0 bg-none bg-transparent p-0 pr-4 text-xs font-medium text-current hover:underline focus:border-0 focus:ring-0 focus-visible:!outline-none focus-visible:underline data-[view=trades]:w-[5.7rem]"
-        data-view={value}
-      >
-        <option value="smooth">Smooth</option>
-        <option value="trades">Every trade</option>
-      </select>
-      <svg
-        viewBox="0 0 12 12"
-        aria-hidden="true"
-        className="pointer-events-none absolute right-0 h-3 w-3"
-      >
-        <path
-          d="m2.5 4.25 3.5 3.5 3.5-3.5"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+    <div role="group" aria-label="Pool price detail" className="inline-flex shrink-0 gap-1.5">
+      {OPTIONS.map(([view, label, title]) => (
+        <button
+          key={view}
+          type="button"
+          onClick={() => onChange(view)}
+          aria-pressed={value === view}
+          title={title}
+          className={`whitespace-nowrap rounded-lg border px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none ${
+            value === view
+              ? 'border-bluebs-500 bg-bluebs-25 text-bluebs-700'
+              : 'border-grey-300 bg-white text-grey-700 hover:border-bluebs-300 hover:text-bluebs-600'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
     </div>
   )
 }

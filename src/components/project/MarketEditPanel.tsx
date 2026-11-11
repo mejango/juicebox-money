@@ -496,11 +496,10 @@ export function MarketEditPanel({
 
   if (done) {
     return (
-      <div className="mt-3 border border-smoke-200 p-3">
+      <div className="mt-3 border-t border-smoke-200 pt-3">
         <p className="text-xs font-medium text-ink">
           Market {ids} on {chainName(chainId)} updated.
         </p>
-        <p className="mt-1 text-xs text-smoke-500">The table above reflects it.</p>
         <button type="button" className="btn-secondary mt-3 min-h-[32px] px-3 text-xs" onClick={onClose}>
           Close
         </button>
@@ -510,15 +509,14 @@ export function MarketEditPanel({
   }
 
   return (
-    <div className="mt-3 border border-smoke-200 p-3">
+    <div className="mt-3 border-t border-smoke-200 pt-3">
       <p className="text-xs font-medium text-ink">
         Edit market {ids} on {chainName(chainId)}
       </p>
       <p className="mt-1 text-xs text-smoke-500">
-        {sym} sells from the current price up to the ceiling; {pairSym} buys from the current
-        price down to the floor. Each side is its own position, so each amount is used in full
-        and a change on one side never touches the other. Anything added comes from your wallet
-        and anything freed returns to it, with unclaimed fees, in one transaction.
+        {sym} sells as the price rises to the ceiling. {pairSym} buys as it falls to the floor.
+        Each amount is used in full. Added amounts come from your wallet, and freed amounts and
+        unclaimed fees return to it.
       </p>
       <LiquidityRangePreview
         floor={floor}
@@ -529,7 +527,7 @@ export function MarketEditPanel({
         pairSymbol={pairSym}
         tokenSymbol={sym}
       />
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <label className="text-xs text-smoke-500">
           {sym} to sell above the price
           <input
@@ -567,11 +565,11 @@ export function MarketEditPanel({
             onChange={event => setRefit(event.target.checked)}
           />
           <span>
-            Re-fit both sides to the current corridor ({formatPrice(corridor.floor)} –{' '}
+            Match both sides to the current floor and ceiling ({formatPrice(corridor.floor)} to{' '}
             {formatPrice(corridor.ceiling)} {pairSym}/{sym}).
             {moved
-              ? ' The floor or ceiling moved since these positions were minted, so their edges are stale.'
-              : ' Not needed right now — the positions already match it.'}
+              ? ' They have moved since you made this market.'
+              : ' Not needed right now, they already match.'}
           </span>
         </label>
       ) : (

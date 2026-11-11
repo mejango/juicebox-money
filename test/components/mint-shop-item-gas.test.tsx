@@ -73,7 +73,7 @@ import { MintShopItemModal } from '@/components/project/MintShopItemModal'
 let renderer: ReactTestRenderer
 
 async function settle() {
-  await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)) })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
 }
 
 async function click(label: string) {

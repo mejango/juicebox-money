@@ -128,7 +128,7 @@ describe('owner actions whose saved Relayr session can only be discarded', () =>
   })
 
   it('shows Discard in the ownership transfer review', async () => {
-    const rows = PROJECTS.map(project => ({ ...project, indexedAuthority: ALICE, authority: ALICE, safe: null, accountType: 'EOA' as const }))
+    const rows = PROJECTS.map(project => ({ ...project, indexedAuthority: ALICE, authority: ALICE, safe: null, accountType: 'Wallet' as const }))
     await render(<TransferAuthorityFlow rows={rows} authority={ALICE} isRevnet={false} onDone={vi.fn()} />)
     await click('Transfer project ownership')
     await act(async () => { renderer!.root.findByProps({ 'aria-label': 'New project owner' }).props.onChange({ target: { value: OTHER } }) })
@@ -141,7 +141,7 @@ describe('owner actions whose saved Relayr session can only be discarded', () =>
 
   it('shows Discard in the operator permissions review', async () => {
     const deployments = PROJECTS.map(({ chainId, projectId }) => ({ chainId, projectId, indexedAuthority: ALICE }))
-    const authorityRows = PROJECTS.map(project => ({ ...project, indexedAuthority: ALICE, authority: ALICE, safe: null, accountType: 'EOA' as const }))
+    const authorityRows = PROJECTS.map(project => ({ ...project, indexedAuthority: ALICE, authority: ALICE, safe: null, accountType: 'Wallet' as const }))
     await render(<PermissionEditor grant={null} presetIds={[24]} deployments={deployments} authorityRows={authorityRows} onCancel={vi.fn()} onDone={vi.fn()} />)
     await act(async () => { renderer!.root.findByProps({ 'aria-label': 'Operator address' }).props.onChange({ target: { value: OTHER } }) })
     await check()

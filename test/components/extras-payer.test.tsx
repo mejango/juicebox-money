@@ -232,7 +232,7 @@ describe('payer deploy input validation', () => {
     await act(async () =>
       renderer.root
         .findAllByType('input')
-        .find(input => input.props.type === 'checkbox')!
+        .filter(input => input.props.type === 'checkbox')[1]
         .props.onChange({ target: { checked: true } }),
     )
     await act(async () =>
@@ -254,7 +254,7 @@ describe('payer deploy input validation', () => {
     await act(async () =>
       renderer.root
         .findAllByType('input')
-        .find(input => input.props.type === 'checkbox')!
+        .filter(input => input.props.type === 'checkbox')[1]
         .props.onChange({ target: { checked: true } }),
     )
     await act(async () =>
@@ -379,7 +379,7 @@ describe('payer deployment recovery', () => {
     await act(async () => {
       inputLabelled(renderer, 'Deploy on Optimism project #84').props.onChange({ target: { checked: true } })
       inputLabelled(renderer, 'Token beneficiary').props.onChange({ target: { value: ADMIN } })
-      renderer.root.findAllByType('input').find(input => input.props.type === 'checkbox')!.props.onChange({ target: { checked: true } })
+      renderer.root.findAllByType('input').filter(input => input.props.type === 'checkbox')[1].props.onChange({ target: { checked: true } })
     })
     await act(async () => inputLabelled(renderer, 'Address admin').props.onChange({ target: { value: ADMIN } }))
     // The review stays open in the wallet layer, beside the dialog's rows.

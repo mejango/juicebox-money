@@ -162,7 +162,7 @@ function ActivityTypeFilter({
           />
         </svg>
       </summary>
-      <div className="absolute right-0 top-full mt-1 min-w-56 border border-smoke-400 bg-bone p-2 shadow-lg">
+      <div className="absolute right-0 top-full mt-1 min-w-56 border border-smoke-400 bg-white p-2 shadow-lg">
         <label className="flex cursor-pointer items-center gap-2 border-b border-smoke-200 px-1 py-2 text-sm text-smoke-700">
           <input
             type="checkbox"

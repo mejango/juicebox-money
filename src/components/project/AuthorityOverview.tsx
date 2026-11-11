@@ -75,7 +75,7 @@ type AuthorityRow = AuthorityDeployment & {
   name: string;
   authority: Address | null;
   safe: SafeInfo | null;
-  accountType: "Safe Multisig" | "EOA" | "Contract" | "Unknown";
+  accountType: "Safe Multisig" | "Wallet" | "Contract" | "Unknown";
   checking?: boolean;
   error?: string;
 };
@@ -305,7 +305,7 @@ export function AuthorityOverview({
               const safeElsewhere =
                 !group.safe &&
                 !group.checking && !group.error &&
-                group.accountType === "EOA" &&
+                group.accountType === "Wallet" &&
                 !!group.authority &&
                 rows.some(
                   (row) =>
@@ -316,7 +316,7 @@ export function AuthorityOverview({
               return (
                 <div
                   key={group.key}
-                  className="rounded-xl border border-smoke-200 p-4"
+                  className="rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0"
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     {group.rows.map((row) => (
@@ -329,8 +329,9 @@ export function AuthorityOverview({
                       </span>
                     ))}
                   </div>
-                  <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[7rem_1fr]">
-                    <dt className="text-smoke-500">{authorityLabel}</dt>
+                  <dl className="mt-3 space-y-2 text-sm [&_dt]:text-xs [&_dt]:text-smoke-500">
+                    <div>
+                    <dt>{authorityLabel}</dt>
                     <dd>
                       {group.authority ? (
                         <AddressLink
@@ -344,20 +345,26 @@ export function AuthorityOverview({
                         <span className="text-smoke-500">{group.checking ? "Checking…" : "Unknown"}</span>
                       )}
                     </dd>
-                    <dt className="text-smoke-500">Type</dt>
+                    </div>
+                    <div>
+                    <dt>Type</dt>
                     <dd className="font-medium text-ink">
                       {group.checking ? "Checking…" : safeElsewhere
                         ? "Safe Multisig (not deployed here yet)"
                         : group.accountType}
                     </dd>
+                    </div>
                     {group.safe ? (
                       <>
-                        <dt className="text-smoke-500">Policy</dt>
+                        <div>
+                        <dt>Policy</dt>
                         <dd className="font-medium text-ink">
                           Requires {group.safe.threshold} of{" "}
                           {group.safe.owners.length} signatures
                         </dd>
-                        <dt className="text-smoke-500">Signers</dt>
+                        </div>
+                        <div>
+                        <dt>Signers</dt>
                         <dd className="flex flex-wrap gap-x-2 gap-y-1">
                           {group.safe.owners.map((owner) => (
                             <AddressLink
@@ -369,6 +376,7 @@ export function AuthorityOverview({
                             />
                           ))}
                         </dd>
+                        </div>
                       </>
                     ) : null}
                   </dl>
@@ -397,7 +405,7 @@ export function AuthorityOverview({
                   {group.authority &&
                   !group.checking && !group.error &&
                   !safeElsewhere &&
-                  (group.safe || group.accountType === "EOA") ? (
+                  (group.safe || group.accountType === "Wallet") ? (
                     <TransferAuthorityFlow
                       rows={group.rows}
                       authority={group.authority}
@@ -718,7 +726,7 @@ export function TransferAuthorityFlow({
   }
 
   return (
-    <div className="mt-4 rounded-xl border border-smoke-200 p-4">
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">{title}</p>
         <button
@@ -731,6 +739,10 @@ export function TransferAuthorityFlow({
         </button>
       </div>
       <div className="mt-3">
+        <span className="field-label">
+          {isRevnet ? "New revnet operator" : "New project owner"}
+        </span>
+        <div className="mt-1.5">
         <AddressField
           value={destination}
           onChange={(value) => {
@@ -738,18 +750,15 @@ export function TransferAuthorityFlow({
             setError(null);
           }}
           disabled={busy}
-          placeholder={
-            isRevnet
-              ? "0x… new revnet operator (zero address relinquishes)"
-              : "0x… new project owner"
-          }
           ariaLabel={isRevnet ? "New revnet operator" : "New project owner"}
         />
+        </div>
       </div>
       <p className="mt-2 text-xs text-smoke-500">
         Applies on {rows.map((row) => row.name).join(", ")}.
+        {isRevnet ? " The zero address relinquishes the role." : ""}
       </p>
-      <label className="mt-3 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+      <label className="mt-3 flex items-start gap-2 rounded-lg border border-red-300 p-3">
         <input
           type="checkbox"
           checked={ack}
@@ -1226,7 +1235,7 @@ export function PermissionEditor({
   ) : null;
 
   return (
-    <div className="mt-5 rounded-xl border border-smoke-200 p-4">
+    <div className="mt-5 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm font-medium text-ink">
           {grant ? "Edit permissions" : presetIds ? "Add shop operator" : "Add operator"}
@@ -1242,7 +1251,7 @@ export function PermissionEditor({
       </div>
 
       {grant?.wildcard ? (
-        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium leading-relaxed text-amber-800">
+        <p className="mt-3 rounded-lg border border-amber-300 px-3 py-2 text-xs font-medium leading-relaxed text-amber-800">
           This is a wildcard grant on project 0 — it applies to EVERY project this
           owner owns, not just this one. Editing it here changes the operator’s
           powers on all of them.
@@ -1289,10 +1298,10 @@ export function PermissionEditor({
       />
 
       <div className="mt-4">
-        <span className="field-label">All V6 permissions</span>
+        <span className="field-label">Permissions</span>
         <p className="mt-1 text-xs leading-relaxed text-smoke-500">
-          Saving replaces this operator’s known permission set on every selected
-          chain. Unrecognized future permission bits are preserved.
+          Saving replaces this operator’s permissions on every selected chain.
+          Permissions this site does not recognize are kept.
         </p>
         {perChain ? (
           <p className="mt-1 text-xs leading-relaxed text-amber-700">
@@ -1301,7 +1310,7 @@ export function PermissionEditor({
                   JB_CHAINS[[...selectedChains][0] as JBChainId]?.name ??
                   [...selectedChains][0]
                 } only. Select one chain at a time to edit each set on its own.`
-              : "Showing the union across the selected chains. Saving grants this same set on every one of them, including chains where the operator currently holds less."}
+              : "Showing every permission held on any selected chain. Saving grants this same set on every one of them, including chains where the operator currently holds less."}
           </p>
         ) : null}
         <div className="mt-3 max-h-[34rem] space-y-2 overflow-y-auto pr-1">
@@ -1320,7 +1329,7 @@ export function PermissionEditor({
         </div>
       </div>
 
-      <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+      <label className="mt-4 flex items-start gap-2 rounded-lg border border-red-300 p-3">
         <input
           type="checkbox"
           checked={ack}

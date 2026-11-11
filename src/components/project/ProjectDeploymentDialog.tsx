@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import type { ProjectDeploymentCheck } from '@bananapus/nana-sdk-core/v6'
 import { ModalShell } from '@/components/ui/ModalShell'
 import type { ProjectDiagnosticReport } from '@/lib/project-diagnostics'
@@ -38,6 +39,7 @@ export default function ProjectDeploymentDialog({
   onCopy: () => Promise<void>
 }) {
   const serialized = report ? JSON.stringify(report, null, 2) : ''
+  const [operatorOpen, setOperatorOpen] = useState(!!operator)
   return (
         <ModalShell
           title="Check deployment"
@@ -58,8 +60,8 @@ export default function ProjectDeploymentDialog({
         >
           <div className="space-y-5 text-sm">
             <label className="block">
-              <span className="mb-1 block font-medium">Deployment</span>
-              <select className="min-h-11 w-full rounded border border-smoke-300 bg-white p-2" value={selected} onChange={event => onSelect(Number(event.target.value))}>
+              <span className="field-label">Deployment</span>
+              <select className="input-well select-caret mt-1.5 min-h-11 w-auto max-w-full px-3 pr-9 text-sm" value={selected} onChange={event => onSelect(Number(event.target.value))}>
                 {deployments.map((deployment, index) => (
                   <option key={`${deployment.chainId}:${deployment.projectId}:${deployment.version}`} value={index}>
                     {chainName(deployment.chainId)}, #{deployment.projectId}, V{deployment.version}
@@ -67,11 +69,15 @@ export default function ProjectDeploymentDialog({
                 ))}
               </select>
             </label>
-            <label className="block">
-              <span className="mb-1 block font-medium">Operator address (optional)</span>
-              <input value={operator} spellCheck={false} placeholder="0x…" className="min-h-11 w-full rounded border border-smoke-300 p-2" onChange={event => onOperatorChange(event.target.value.trim())} />
-              <span className="mt-1 block text-xs text-smoke-600">Include an address to check its current shop permissions.</span>
-            </label>
+            <div>
+              <label className="flex items-center gap-2.5">
+                <input type="checkbox" checked={operatorOpen || !!operator} onChange={event => { setOperatorOpen(event.target.checked); if (!event.target.checked && operator) onOperatorChange('') }} />
+                Check an address&apos;s shop permissions
+              </label>
+              {operatorOpen || operator ? (
+                <input value={operator} spellCheck={false} autoComplete="off" placeholder="0x…" aria-label="Operator address" className="input-well mt-2 min-h-11 w-full px-3 font-mono text-sm" onChange={event => onOperatorChange(event.target.value.trim())} />
+              ) : null}
+            </div>
             {checking ? <p role="status">Checking contracts and project data…</p> : null}
             {error ? <p role="alert">{error}</p> : null}
             {report ? (
@@ -105,7 +111,7 @@ export default function ProjectDeploymentDialog({
                 {copyState === 'manual' ? (
                   <label className="block">
                     <span className="mb-2 block">Clipboard unavailable. Select and copy the diagnostics below.</span>
-                    <textarea aria-label="Deployment diagnostics" readOnly value={serialized} rows={10} className="w-full rounded border border-smoke-300 p-2 font-mono text-xs" onFocus={event => event.target.select()} />
+                    <textarea aria-label="Deployment diagnostics" readOnly value={serialized} rows={10} className="input-well w-full p-2 font-mono text-xs" onFocus={event => event.target.select()} />
                   </label>
                 ) : null}
               </>

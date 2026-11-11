@@ -179,16 +179,16 @@ export function MintShopItemModal({
   return (
     <ModalShell
       title={`Mint ${itemName}`}
-      subtitle={`Send inventory from item #${tierId} on ${chainName(chainId)} without collecting payment.`}
+      subtitle={`Item #${tierId} on ${chainName(chainId)}, without collecting payment.`}
       footer={footer}
       onClose={onClose}
     >
       <div className="space-y-5">
         <div className="callout callout-info text-xs">
-          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an address with the MINT_721 permission can use this. The contract will reject tiers that did not enable free minting or lack inventory.
+          Only the {isRevnet ? 'revnet operator' : 'project owner'} or an authorized operator can do this, and only for items that allow free mints.
         </div>
         <label className="block">
-          <span className="field-label">Beneficiary address</span>
+          <span className="field-label">Send to</span>
           <input
             value={beneficiary}
             onChange={event => {
@@ -217,7 +217,7 @@ export function MintShopItemModal({
             disabled={busy}
             className="input-well mt-2 min-h-[44px] w-28 px-3 text-sm tabular-nums"
           />
-          <p className="mt-1 text-xs text-smoke-500">Up to {maxQuantity} per transaction and no more than current inventory.</p>
+          <p className="mt-1 text-xs text-smoke-500">Up to {maxQuantity} at a time.</p>
         </label>
       </div>
       {message && !review ? <p role="alert" className="mt-4 rounded-lg bg-error-50 px-3.5 py-2.5 text-xs text-error-700">{message}</p> : null}

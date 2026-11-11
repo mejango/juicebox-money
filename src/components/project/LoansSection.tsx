@@ -255,7 +255,7 @@ function LoanTable({
     <div className="mt-2 overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-smoke-500">
+          <tr className="text-left text-xs text-smoke-500 max-sm:hidden">
             <th className="pb-1.5 font-normal">Borrowed</th>
             <th className="pb-1.5 text-right font-normal">Collateral</th>
             <th className="pb-1.5 text-right font-normal">
@@ -271,8 +271,8 @@ function LoanTable({
             const isNative =
               loan.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
             return (
-              <tr key={loan.id} className="border-t border-smoke-100">
-                <td className="py-1.5 pr-3">
+              <tr key={loan.id} className="border-t border-smoke-100 max-sm:grid max-sm:grid-cols-2 max-sm:gap-x-3 max-sm:py-1.5">
+                <td data-label="Borrowed" className="py-1.5 pr-3 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
                   {!meta ? "Unavailable" : explorerTokenUrl(chainId, loan.token) && !isNative ? (
                     <a
                       href={explorerTokenUrl(chainId, loan.token)!}
@@ -287,17 +287,17 @@ function LoanTable({
                     `${formatTokenAmount(loan.borrowAmount, meta.decimals)} ${meta.symbol}`
                   )}
                 </td>
-                <td className="py-1.5 text-right">
+                <td data-label="Collateral" className="py-1.5 text-right max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
                   {formatTokenAmount(loan.collateral)} {collateralSymbol}
                 </td>
-                <td className="py-1.5 text-right">
+                <td data-label="Prepaid fee" className="py-1.5 text-right max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
                   {(loan.prepaidFeePercent / 10).toString()}%
                 </td>
-                <td className="py-1.5 text-right text-smoke-700">
+                <td data-label="Opened" className="py-1.5 text-right text-smoke-700 max-sm:text-left max-sm:before:block max-sm:before:text-xs max-sm:before:text-smoke-500 max-sm:before:content-[attr(data-label)]">
                   {formatDate(loan.createdAt)}
                 </td>
                 {holder ? (
-                  <td className="py-1.5 text-right">
+                  <td className="py-1.5 text-right max-sm:col-span-2">
                     <RepayFlow
                       chainId={chainId}
                       loan={loan}

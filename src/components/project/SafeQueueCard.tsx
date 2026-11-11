@@ -1499,7 +1499,7 @@ export function SafeQueueCard({
   const executeAllDialog = (
     <ModalShell
       title={`Execute ${batchRows.length} Safe transactions`}
-      subtitle="One payment executes each chain's next fully signed transaction. Later nonces need a new review after these land."
+      subtitle="One payment executes the next fully signed transaction on each chain. Later ones need a new review."
       busy={busy === "execute-all"}
       onClose={closeExecuteAll}
       footer={
@@ -1538,7 +1538,7 @@ export function SafeQueueCard({
                 value={paymentIndex}
                 onChange={(event) => setPaymentIndex(Number(event.target.value))}
                 disabled={!!busy}
-                className={`select-caret min-h-[42px] w-full truncate rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
+                className={`select-caret block min-h-[42px] w-auto max-w-full rounded-lg border border-smoke-300 bg-white py-2 pr-9 text-sm text-ink disabled:opacity-60 ${
                   payment ? "pl-9" : "pl-3"
                 }`}
               >
@@ -1568,14 +1568,14 @@ export function SafeQueueCard({
         )
       }
     >
-      <ul className="divide-y divide-smoke-200 rounded-lg border border-smoke-200">
+      <ul className="divide-y divide-smoke-200">
         {batchRows.map((row) => {
           const status = rowStatus(row);
           const record = paidRecord(row.chainId);
           const hash = executionProgress[row.chainId]?.hash ?? (record ? relayrDestinationHash(record) : null);
           const failed = status === "Failed" || status === "Check failed" || status === "Changed";
           return (
-            <li key={row.chainId} className="px-3 py-2.5 text-sm">
+            <li key={row.chainId} className="py-2.5 text-sm first:pt-0">
               <div className="flex items-center gap-2">
                 <ChainIcon chainId={row.chainId as JBChainId} size={16} />
                 <span className="font-medium text-ink">{chainName(row.chainId)}</span>
@@ -1717,9 +1717,9 @@ export function SafeQueueCard({
             return (
               <div
                 key={chain.chainId}
-                className="rounded-xl border border-smoke-200"
+                className="rounded-xl border border-smoke-200 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0"
               >
-                <div className="flex items-center justify-between gap-3 border-b border-smoke-200 px-4 py-3">
+                <div className="flex items-center justify-between gap-3 border-b border-smoke-200 px-4 py-3 max-sm:px-0">
                   <div className="flex items-center gap-2 text-sm font-medium text-ink">
                     <ChainIcon chainId={chain.chainId} size={20} />
                     {chain.name}
@@ -1742,7 +1742,7 @@ export function SafeQueueCard({
                 </div>
 
                 {chain.error ? (
-                  <div className="px-4 py-4 text-sm">
+                  <div className="px-4 py-4 max-sm:px-0 text-sm">
                     <p className="text-red-700">{transactionMessage(chain.error)}</p>
                     <button type="button" className="btn-secondary mt-3 px-3 py-2" disabled={query.isFetching || !!busy}
                       onClick={() => void query.refetch()}>
@@ -1750,15 +1750,15 @@ export function SafeQueueCard({
                     </button>
                   </div>
                 ) : !chain.info ? (
-                  <p className="px-4 py-4 text-sm text-smoke-500">
+                  <p className="px-4 py-4 max-sm:px-0 text-sm text-smoke-500">
                     Safe is not deployed on {chain.name}.
                   </p>
                 ) : !hasSafeService(chain.chainId) ? (
-                  <p className="px-4 py-4 text-sm text-smoke-700">
+                  <p className="px-4 py-4 max-sm:px-0 text-sm text-smoke-700">
                     {`Safe queue isn't available on ${chain.name}.`}
                   </p>
                 ) : chain.transactions.length === 0 ? (
-                  <p className="px-4 py-4 text-sm text-smoke-500">
+                  <p className="px-4 py-4 max-sm:px-0 text-sm text-smoke-500">
                     No pending transactions.
                   </p>
                 ) : (
@@ -1793,7 +1793,7 @@ export function SafeQueueCard({
                       return (
                         <li
                           key={`${tx.nonce}:${hash ?? tx.data}`}
-                          className="px-4 py-3.5"
+                          className="px-4 py-3.5 max-sm:px-0"
                         >
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <details className="min-w-0 flex-1">
@@ -1840,7 +1840,7 @@ export function SafeQueueCard({
                                   </p>
                                 ) : null}
                               </summary>
-                              <div className="mt-3 rounded-lg bg-smoke-50 p-3 font-mono text-[11px] leading-relaxed text-smoke-700">
+                              <div className="mt-3 rounded-lg border border-smoke-200 p-3 font-mono text-[11px] leading-relaxed text-smoke-700">
                                 <p className="break-all">To: {tx.to}</p>
                                 <p>
                                   Operation:{" "}

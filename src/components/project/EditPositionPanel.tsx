@@ -567,11 +567,10 @@ export function EditPositionPanel({
 
   if (done) {
     return (
-      <div className="mt-3 border border-smoke-200 p-3">
+      <div className="mt-3 border-t border-smoke-200 pt-3">
         <p className="text-xs font-medium text-ink">
           Position #{position.tokenId.toString()} on {chainName(chainId)} updated.
         </p>
-        <p className="mt-1 text-xs text-smoke-500">The table above reflects it.</p>
         <button
           type="button"
           className="btn-secondary mt-3 min-h-[32px] px-3 text-xs"
@@ -585,16 +584,15 @@ export function EditPositionPanel({
   }
 
   return (
-    <div className="mt-3 border border-smoke-200 p-3">
+    <div className="mt-3 border-t border-smoke-200 pt-3">
       <p className="text-xs font-medium text-ink">
         Edit position #{position.tokenId.toString()} on {chainName(chainId)}
       </p>
       <p className="mt-1 text-xs text-smoke-500">
-        Set what this position should hold and the band it covers. Anything added comes from
-        your wallet and anything freed returns to it, with unclaimed fees, in one transaction.
-        The band and the current price fix the ratio, so amounts are ceilings. Changing the band
-        burns this position and mints a new one; if the price moves too far before it lands,
-        the whole edit reverts and the position stays as it is.
+        Set this position&apos;s amounts and price range. Added amounts come from your wallet,
+        and freed amounts and unclaimed fees return to it. Amounts are upper limits. Changing
+        the range replaces this position with a new one. If the price moves too far first,
+        nothing changes.
       </p>
       <LiquidityRangePreview
         floor={floor}
@@ -643,7 +641,7 @@ export function EditPositionPanel({
           />
         </label>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         <label className="text-xs text-smoke-500">
           {sym} in position
           <input
@@ -673,7 +671,7 @@ export function EditPositionPanel({
       </div>
       {preview && preview.plan.kind !== 'remove' ? (
         <p className="mt-1.5 text-xs leading-relaxed text-smoke-700" role="status">
-          At this band it holds about {formatTokenAmount(preview.plan.tokenHolding, 18)} {sym} +{' '}
+          At this range it holds about {formatTokenAmount(preview.plan.tokenHolding, 18)} {sym} +{' '}
           {formatTokenAmount(preview.plan.pairHolding, pairDec)} {pairSym}.
           {capped ? (
             <>
@@ -682,14 +680,14 @@ export function EditPositionPanel({
               {capped.side === 'token'
                 ? `${formatTokenAmount(preview.tokenAmount, 18)} ${sym}`
                 : `${formatTokenAmount(preview.pairAmount, pairDec)} ${pairSym}`}{' '}
-              at this band takes about {capped.needed} {capped.binding}.{' '}
+              at this range takes about {capped.needed} {capped.binding}.{' '}
               {pool.price && !editing ? (
                 <button
                   type="button"
                   className="underline underline-offset-2 hover:text-ink"
                   onClick={fitBand}
                 >
-                  Fit the band to these amounts
+                  Fit the range to these amounts
                 </button>
               ) : null}
             </>
@@ -697,8 +695,7 @@ export function EditPositionPanel({
         </p>
       ) : null}
       <p className="mt-1.5 text-xs leading-relaxed text-smoke-500">
-        Set both to 0 to remove the position. Keep the band and raise or lower the amounts to
-        top up or free part of it without a new position id.
+        Set both to 0 to remove the position.
       </p>
 
       <div className="mt-3 flex flex-wrap justify-end gap-2">
