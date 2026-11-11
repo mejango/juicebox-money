@@ -7,7 +7,7 @@ export default function NotFound() {
       <div className="flex flex-col items-start">
         <span className="chip bg-crush-100 text-crush-700">404 | Not found</span>
         <h1 className="mt-6 font-agrandir-wide text-4xl font-bold sm:text-5xl">
-          This juicebox is empty<span className="text-split-500">.</span>
+          This juicebox is empty
         </h1>
         <p className="mt-4 max-w-md text-base leading-relaxed text-smoke-700">
           We couldn&apos;t find that page. It may have moved, or the project

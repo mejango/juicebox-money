@@ -26,7 +26,7 @@ export default function AuditPage() {
         Audit
       </p>
       <h1 className="mt-3 font-agrandir-wide text-4xl font-bold leading-tight sm:text-6xl">
-        Verify Juicebox.
+        Verify Juicebox
       </h1>
       <p className="mt-5 max-w-2xl text-base leading-relaxed text-smoke-700 sm:text-lg">
         Read the code directly, then use a prompt to review the whole system or one exact transaction.

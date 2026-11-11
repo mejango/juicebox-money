@@ -48,8 +48,8 @@ const routes = [
   { route: '/', path: '/', kib: 349, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
-  { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment.' },
-  { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox.' },
+  { route: '/build/first-payment', path: '/build/first-payment', kib: 225, text: 'Your first Juicebox payment' },
+  { route: '/audit', path: '/audit', kib: 230, text: 'Verify Juicebox' },
   // 395 -> 397 and /[urn] 504 -> 517: writes to another chain's deployment confirm the pair onchain with the SDK's
   // resolveSuckers, which brings every version's address table (jbContractAddress). A v6-only reader in the SDK takes it back.
   // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.

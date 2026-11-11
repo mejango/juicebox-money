@@ -16,7 +16,7 @@ export default function GlobalError({
           textAlign: 'center',
         }}
       >
-        <h1 style={{ fontSize: '1.1rem' }}>Something went wrong.</h1>
+        <h1 style={{ fontSize: '1.1rem' }}>Something went wrong</h1>
         <button
           type="button"
           onClick={() => {

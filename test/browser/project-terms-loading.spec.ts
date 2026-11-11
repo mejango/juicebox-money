@@ -142,7 +142,7 @@ for (const persistent of [false, true]) {
     await page.getByRole('tablist', { name: 'Project sections' }).getByRole('tab', { name: 'Terms', exact: true }).click()
 
     if (persistent) {
-      await expect(page.getByRole('heading', { name: 'Something went wrong loading this page.', exact: true })).toBeVisible()
+      await expect(page.getByRole('heading', { name: 'Something went wrong loading this page', exact: true })).toBeVisible()
       await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeVisible()
       expect(rejected).toBe(2)
     } else {

@@ -129,7 +129,7 @@ export default async function FirstPaymentPage() {
   return (
     <div className="mx-auto w-full max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
       <header className="mb-10 max-w-3xl">
-        <h1 className="font-agrandir-wide text-4xl font-bold sm:text-6xl">Your first Juicebox payment.</h1>
+        <h1 className="font-agrandir-wide text-4xl font-bold sm:text-6xl">Your first Juicebox payment</h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Understand the terms, read a live test project, try a small payment, and inspect its result.
         </p>

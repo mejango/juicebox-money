@@ -153,7 +153,15 @@ function Logo({
   )
 }
 
-function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: boolean }) {
+function DesktopNavigation({
+  iconOnly,
+  foldLogo,
+  isWide,
+}: {
+  iconOnly: boolean
+  foldLogo: boolean
+  isWide: boolean
+}) {
   return (
     <nav
       aria-label="Main navigation"
@@ -162,7 +170,7 @@ function DesktopNavigation({ iconOnly, isWide }: { iconOnly: boolean; isWide: bo
       }`}
     >
       <div className="col-start-1 row-start-1 flex flex-col items-start gap-y-1 justify-self-start md:flex-row md:items-center md:gap-x-5">
-        <Logo iconOnly={iconOnly} showGuideLinks={false} />
+        <Logo iconOnly={iconOnly} fold={foldLogo} showGuideLinks={false} />
         <GuideLinks className="h-10 translate-y-0.5 md:self-center" />
       </div>
       <div className="col-start-2 row-start-1 w-full min-w-0 max-w-96 justify-self-center">
@@ -247,17 +255,16 @@ function MobileNavigation({ iconOnly, foldLogo }: { iconOnly: boolean; foldLogo:
 export function SiteNavigation() {
   const pathname = usePathname()
   const routeSegment = projectRouteSegmentFromPathname(pathname)
-  const iconOnly = !!routeSegment && /^(?:[^/]+:\d+|@[^/]+)$/.test(routeSegment)
-  const isWide = pathname === '/' || iconOnly
+  const onProject = !!routeSegment && /^(?:[^/]+:\d+|@[^/]+)$/.test(routeSegment)
+  const isWide = pathname === '/' || onProject
+  // The create form needs the row's width for search more than it needs the wordmark.
+  const iconOnly = onProject || pathname === '/create'
+  const foldLogo = pathname === '/'
 
   return (
     <>
-      <DesktopNavigation iconOnly={iconOnly} isWide={isWide} />
-      {/* The create form needs the row's width for search more than it needs the wordmark. */}
-      <MobileNavigation
-        iconOnly={iconOnly || pathname === '/create'}
-        foldLogo={pathname === '/'}
-      />
+      <DesktopNavigation iconOnly={iconOnly} foldLogo={foldLogo} isWide={isWide} />
+      <MobileNavigation iconOnly={iconOnly} foldLogo={foldLogo} />
     </>
   )
 }

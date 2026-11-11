@@ -29,7 +29,7 @@ export default function LearnPage() {
           How it works
         </p>
         <h1 className="mt-2 font-agrandir-wide text-4xl font-bold sm:text-6xl">
-          Learn Juicebox<span className="text-split-500">.</span>
+          Learn Juicebox
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Learn where your money goes, what project tokens let you do, and who can change the rules.

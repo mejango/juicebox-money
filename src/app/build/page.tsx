@@ -30,7 +30,7 @@ export default function BuildPage() {
           Build guide
         </p>
         <h1 className="mt-2 font-agrandir-wide text-4xl font-bold sm:text-6xl">
-          Build on Juicebox<span className="text-split-500">.</span>
+          Build on Juicebox
         </h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Launch a project, build an app, or write contracts. Choose a path to get started.

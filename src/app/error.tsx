@@ -53,7 +53,7 @@ export default function AppError({
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
       <h1 className="font-agrandir-wide text-lg font-bold">
-        Something went wrong loading this page.
+        Something went wrong loading this page
       </h1>
       <p className="max-w-md text-sm leading-relaxed text-smoke-700">
         This is usually a hiccup while the app wakes up. Trying again almost
