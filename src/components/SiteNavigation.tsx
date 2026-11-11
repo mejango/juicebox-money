@@ -57,10 +57,10 @@ function FoldingLogo() {
     return () => window.clearTimeout(timer)
   }, [])
   return (
-    // The icon is the left 24px of the full logo at this height.
+    // The icon is the left 23px of the full logo at this height.
     <span
       className={`block overflow-hidden transition-[max-width] duration-500 ease-in-out motion-reduce:transition-none ${
-        folded ? 'max-w-6' : 'max-w-36'
+        folded ? 'logo-folded max-w-[23px]' : 'max-w-36'
       }`}
     >
       <Image src={logoFull} alt="Juicebox" width={144} height={33} priority className="h-8 w-auto max-w-none" />
@@ -151,7 +151,14 @@ function MobileNavigation({ iconOnly, foldLogo }: { iconOnly: boolean; foldLogo:
     // The logo alone shares row one with the search and wallet, so it centers
     // on them; the guide links hang in a second row underneath.
     <nav aria-label="Main navigation" className="mx-auto grid min-h-[84px] max-w-6xl grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[auto_auto] items-center gap-x-2 px-4 py-2 md:hidden">
-      <div className={expanded ? 'hidden' : 'row-start-1 justify-self-start'}>
+      {/* The folded icon keeps its 44px tap width; the search field tucks into the spare part of it. */}
+      <div
+        className={
+          expanded
+            ? 'hidden'
+            : 'row-start-1 justify-self-start transition-[margin] duration-500 ease-in-out motion-reduce:transition-none has-[.logo-folded]:-mr-3'
+        }
+      >
         <Logo iconOnly={iconOnly} fold={foldLogo} inlineOnMobile={iconOnly} showGuideLinks={false} />
       </div>
       {!expanded ? (
