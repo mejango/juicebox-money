@@ -230,7 +230,8 @@ export function Chevron({ open }: { open: boolean }) {
 
 /**
  * Collapsible subsection: label + summary when closed. Phones run it edge to edge inside its
- * 16px-padded parent, and inside a `.nested-sections` parent it is a row of a divided list.
+ * 16px-padded parent, neighbours share one line, and inside a `.nested-sections` parent it
+ * is a row of a divided list.
  */
 export function SubSection({
   label,
@@ -246,7 +247,7 @@ export function SubSection({
   children: React.ReactNode
 }) {
   return (
-    <div className="mt-3 rounded-xl border border-grey-200 bg-white max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:in-[.nested-sections]:mt-0 max-sm:in-[.nested-sections]:border-b-0">
+    <div className="mt-3 rounded-xl border border-grey-200 bg-white max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:[&+&]:-mt-px max-sm:in-[.nested-sections]:mt-0 max-sm:in-[.nested-sections]:border-b-0">
       <button
         onClick={onToggle}
         aria-expanded={open}
