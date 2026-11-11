@@ -267,11 +267,12 @@ async function ReservesPanel() {
 }
 
 async function ActivityPanel() {
-  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(9, 0, readIndexedMetadataJson), [])
+  // A buy through the buyback pool is two events in one row, so read twice the rows shown.
+  const activity = await settled<BsFreshActivityEvent[]>(getRecentActivity(17, 0, readIndexedMetadataJson), [])
   return (
     <FreshActivity
-      initialEvents={activity.slice(0, 8)}
-      initialHasMore={activity.length > 8}
+      initialEvents={activity.slice(0, 16)}
+      initialHasMore={activity.length > 16}
     />
   )
 }
