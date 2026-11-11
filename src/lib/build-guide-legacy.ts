@@ -113,11 +113,11 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "label": "Checking permissions",
         "rows": [
           [
-            "JBPermissions.hasPermission(operator, account, projectId, permissionId, includeRoot, includeWildcard)",
+            "JBPermissions.hasPermission(operator, account, projectId, permissionId, includeRoot, includeWildcardProjectId)",
             "Check a single permission"
           ],
           [
-            "JBPermissions.hasPermissions(operator, account, projectId, permissionIds[], includeRoot, includeWildcard)",
+            "JBPermissions.hasPermissions(operator, account, projectId, permissionIds[], includeRoot, includeWildcardProjectId)",
             "Check multiple permissions at once"
           ],
           [
@@ -305,7 +305,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       {
         "type": "code",
         "label": "JB721TiersHookProjectDeployer.launchProjectFor (call outline)",
-        "code": "launchProjectFor(\n  owner,\n  deployTiersHookConfig,    // NFT name, symbol, tiers[]\n  launchProjectConfig,      // standard project config\n  controller,\n  salt                      // CREATE2 salt for a deterministic hook address (0 for none)\n)\n// Always use this deployer, even with empty tiers"
+        "code": "launchProjectFor(\n  owner,\n  deployTiersHookConfig,    // NFT name, symbol, tiers[]\n  launchProjectConfig,      // standard project config\n  controller,\n  salt                      // CREATE2 salt for a deterministic hook address (0 for none)\n)\n// Creates the project and its shop in one call, even with empty tiers"
       },
       {
         "type": "table",
@@ -545,7 +545,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
   {
     "id": "build-swap-terminal",
     "part": "Ecosystem tools",
-    "title": "Accept payments in other assets",
+    "title": "Router terminal: accept other assets",
     "paragraphs": [
       "A router can convert a payment into an asset the project accepts. JBRouterTerminal finds a supported route, makes the conversion, and forwards the result to the project’s payment contract. It does not keep a project balance.",
       "JBPayRouteResolver compares available routes by the tokens the payer would receive. A route may forward an accepted asset, swap through Uniswap V3 or V4, cash out other Juicebox tokens, or combine these steps. Availability depends on the project, asset, and market; check previewPayFor before offering the route."
@@ -585,7 +585,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
     "title": "Buy existing tokens when they offer more",
     "paragraphs": [
       "A payment can create new tokens or buy existing ones from a market. JBBuybackHook compares both and uses the configured Uniswap V4 pool when it gives the payer more tokens. It can also route cash outs.",
-      "To limit price changes during a swap, the hook calculates its default minimum from a time-weighted average price. Buyback 1.4.0 falls back to minting when the swap cannot meet that floor. Pay metadata under getId(\"pay\", hook) must encode (amountToSwapWith, minimumSwapAmountOut, skipSplits); the third word is a bool, and a two-word quote reverts."
+      "To limit price changes during a swap, the hook calculates its default minimum from a time-weighted average price. The buyback hook mints when the swap cannot meet its floor. Pay metadata under getId(\"pay\", hook) must encode (amountToSwapWith, minimumSwapAmountOut, skipSplits); the third word is a bool, and a two-word quote reverts."
     ],
     "blocks": [
       {
@@ -597,16 +597,18 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
         "type": "diagram",
         "label": "Buyback decision flow",
         "lines": [
-          "  payment arrives",
-          "     │",
-          "     ▼",
-          "  query TWAP oracle for market price",
-          "     │",
-          "     ├─ pool gives more tokens than minting",
-          "     │  └─▶ swap on Uniswap V4, mint any unswapped remainder",
-          "     │",
-          "     └─ minting gives equal or more tokens",
-          "        └─▶ normal mint flow (weight × amount)"
+          "payment arrives",
+          "  │",
+          "  ▼",
+          "query TWAP oracle for market price",
+          "  │",
+          "  ├─ pool gives more than minting",
+          "  │  └▶ swap on Uniswap V4,",
+          "  │     mint any unswapped remainder",
+          "  │",
+          "  └─ minting gives equal or more",
+          "     └▶ normal mint flow",
+          "        (weight × amount)"
         ]
       },
       {
@@ -644,8 +646,8 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
       },
       {
         "type": "code",
-        "label": "A first query (call outline)",
-        "code": "POST https://bendystraw.up.railway.app/graphql\n{\n  projects(where: { chainId: 8453, version: 6 }, orderBy: \"balance\", orderDirection: \"desc\", limit: 10) {\n    items { projectId chainId name balance suckerGroupId }\n    totalCount\n  }\n}"
+        "label": "A first query",
+        "code": "curl -s https://bendystraw.up.railway.app/graphql -H 'content-type: application/json' -d '{\"query\":\"{ projects(where:{chainId:8453,version:6}, orderBy:\\\"balanceUsd\\\", orderDirection:\\\"desc\\\", limit:10){ items{ projectId chainId name balance balanceUsd tokenSymbol decimals suckerGroupId } totalCount } }\"}'"
       },
       {
         "type": "table",
@@ -654,6 +656,18 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           [
             "projects / project(chainId, projectId, version: 6)",
             "Name, metadata URI, balance, token, owner, and the sucker group that links its chains"
+          ],
+          [
+            "balance, volume",
+            "BigInt strings in the project’s own token; read token, tokenSymbol, and decimals to format them"
+          ],
+          [
+            "balanceUsd, volumeUsd",
+            "BigInt strings with 18 decimals; 0 when the token has no price feed"
+          ],
+          [
+            "limit",
+            "At most 1000 rows per page; the default is 50"
           ],
           [
             "payEvents, cashOutTokensEvents, activityEvents",
@@ -688,7 +702,7 @@ export const LEGACY_BUILD_SECTIONS: readonly GuideSection[] = [
           "Numeric arguments on singular queries are Float!, not Int! (Ponder’s choice). Declare variables as Float! or the request fails validation with no data.",
           "Lists page with limit and offset and return totalCount; loop until you have them all rather than trusting one page.",
           "suckerGroupId is as-of-event: when chains are linked later, old event rows keep the group id they were written with. Query by every project in the group when you need the full history.",
-          "The [SDK](#apps-set-up-the-sdk)’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId.",
+          "The [SDK](#apps-set-up-the-sdk)’s requestBendystraw(endpoint, query, variables) handles the POST, error surfacing, and endpoint normalisation; selectBendystrawEndpoint picks mainnet vs testnet from a chainId. Both import from the package root.",
           "Do not send GraphQL text from a browser to an index you expose. Register each query on your server under an operation id and have the browser post { operation, variables } to a same-origin route that validates them. Keep heavy history and ranking queries server-only.",
           "Pool reserves need no RPC: sum the indexed positions at the latest swap’s sqrtPriceX96. The jb-bendystraw skill has the recipe."
         ]

@@ -6,10 +6,21 @@ import { GuideSections, type GuideSection } from '@/components/GuideSections'
 
 export const dynamic = 'force-static'
 
+const title = 'Your first Juicebox payment: learn, build, and inspect'
+const description = 'Read a test project, preview a payment, then make a small test payment and check the result.'
+
 export const metadata: Metadata = {
-  title: 'Your first Juicebox payment: learn, build, and inspect',
-  description: 'Read a test project, preview a payment, then make a small test payment and check the result.',
+  title,
+  description,
   alternates: { canonical: '/build/first-payment' },
+  openGraph: {
+    title,
+    description,
+    url: '/build/first-payment',
+    type: 'website',
+    images: [{ url: '/assets/juicebox-social.png', alt: 'Juicebox' }],
+  },
+  twitter: { card: 'summary_large_image', title, description, images: ['/assets/juicebox-social.png'] },
 }
 
 export default async function FirstPaymentPage() {
@@ -23,7 +34,7 @@ export default async function FirstPaymentPage() {
       id: 'understand', part: 'Learn', title: 'Know what a payment does',
       paragraphs: [
         'Read project 1 on Base Sepolia, a practice network that uses test ETH. Preview a payment, then try it in the app.',
-        'Paying usually funds a project and creates tokens for you. Some projects can instead buy existing tokens from a market. They can also set aside a share of new tokens for other recipients. Tokens alone do not promise ownership, votes, or profit.',
+        'Paying usually funds a project and creates tokens for you. Some projects can instead buy existing tokens from a market. They can also set aside a share of new tokens for other recipients.',
         'Before paying, check how many tokens you receive, who else receives tokens, how you can exchange them for project funds, and what the owner can change. Project 1 is a working test project, so its terms and balances can change.',
       ],
       blocks: [
@@ -42,7 +53,7 @@ export default async function FirstPaymentPage() {
         'The script finds the controller that manages the project’s rules and tokens. It reads the active ruleset from one recorded block of chain history. It checks the network and block again so the result refers to one consistent observation.',
       ],
       blocks: [
-        { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
+        { type: 'code', label: 'Set up and read', code: 'mkdir juicebox-first-payment\ncd juicebox-first-payment\nnpm init -y\nnpm install --save-exact @bananapus/nana-sdk-core@6.3.1 viem@2.55.19\ncurl --fail -O https://juicebox.money/examples/read-project.mjs\nnode read-project.mjs' },
         { type: 'links', items: [{ href: '/examples/read-project.mjs', label: 'Read or save read-project.mjs' }] },
         { type: 'code', label: 'Complete read-project.mjs', code: readExample },
         { type: 'table', label: 'What success looks like', rows: [
@@ -65,7 +76,7 @@ export default async function FirstPaymentPage() {
         { type: 'links', items: [{ href: '/examples/preview-payment.mjs', label: 'Read or save preview-payment.mjs' }] },
         { type: 'code', label: 'Complete preview-payment.mjs', code: previewExample },
         { type: 'text', text: 'Expected output: state is "simulated-only", decoded.functionName is "pay", and nativeValue is "1000000000000" in wei, ETH’s smallest unit. Divide by 10^18 to get ETH. The output shows the tokens for you and other recipients, the minimum you would accept, the simulation result, and the encoded calldata of the request. Divide token amounts by 10^18 for displayed amounts.' },
-        { type: 'info', text: 'Checked on October 21, 2026 with the Juicebox SDK 3.5.2 and viem 2.55.19. The read used Base Sepolia block 48474379, hash 0x3a95b1444467e678b41aa9e4abb612fe9a0632246dcf28b257455f60c37bb083. The payment was simulated only. Run the examples again to get current results.' },
+        { type: 'info', text: 'Checked on November 11, 2026 with the Juicebox SDK 6.3.1 and viem 2.55.19. The read used Base Sepolia block 57475923, hash 0x0f72af56ae4f5b9610480e3cbe12db9cc439390fb236f3ea5ed1f5eae8eb4fda. The payment was simulated only. Run the examples again to get current results.' },
       ],
     },
     {
@@ -121,7 +132,8 @@ export default async function FirstPaymentPage() {
         { type: 'links', items: [
           { href: '/build#apps-transaction-boundary', label: 'Build the review and confirmation flow' },
           { href: 'https://juicebox.center/api/docs/transactions', label: 'How Center handles plans and confirmations' },
-          { href: 'https://revnet.money/build#choosing-the-numbers', label: 'Next: choose a revnet’s terms' },
+          { href: '/build#founders-launch-without-code', label: 'Next: launch your own project' },
+          { href: 'https://revnet.money/build#choosing-the-numbers', label: 'Or choose a revnet’s terms' },
         ] },
       ],
     },
@@ -132,6 +144,9 @@ export default async function FirstPaymentPage() {
         <h1 className="font-agrandir-wide text-4xl font-bold sm:text-6xl">Your first Juicebox payment</h1>
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Understand the terms, read a live test project, try a small payment, and inspect its result.
+        </p>
+        <p className="mt-3 text-base leading-relaxed text-smoke-700 sm:text-lg">
+          No code? Skip to <a className="underline underline-offset-4" href="#pay">Make a small test payment in the app</a>.
         </p>
         <nav aria-label="First payment resources" className="mt-6 flex flex-wrap gap-4 underline underline-offset-4">
           <Link href="/learn">Learn Juicebox</Link>

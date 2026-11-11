@@ -1,4 +1,4 @@
-import { CHAIN_SLUGS, JUICEBOX_CENTER_API_URL, JUICEBOX_MCP_URL, JUICEBOX_SKILLS_URL } from '@/lib/agent-guide'
+import { CHAIN_SLUGS, JUICEBOX_CENTER_API_URL, JUICEBOX_MCP_GUIDE_URL, JUICEBOX_MCP_URL, JUICEBOX_SKILLS_URL } from '@/lib/agent-guide'
 import { publicReadHeaders } from '@/lib/api-cache'
 import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
 
@@ -46,16 +46,22 @@ identifier, description and logo.
 - [Agent skill](${siteOrigin}/skill.md): how to launch, check, pay, cash out, and run projects here.
 - [Juicebox MCP](${JUICEBOX_MCP_URL}): reads, quotes, metadata pinning, and unsigned
   transaction plans. Holds no keys; the user signs.
+- [MCP guide](${JUICEBOX_MCP_GUIDE_URL}): how to connect a client.
+- [Contract addresses](https://juicebox.center/api/v1/catalog/contracts): every V6 contract per chain, keyless JSON.
 - [Juicebox Center API](${JUICEBOX_CENTER_API_URL}): RPC, IPFS, and indexed data in one place.
 - [Juicebox V6 skills](${JUICEBOX_SKILLS_URL}): instructions for launching,
   paying, cashing out, loans, and integrations.
 - [Launch with an AI assistant](${siteOrigin}/build#founders-launch-with-an-agent): the MCP or a .jb draft.
+- [Example .jb draft](${siteOrigin}/examples/project.jb): one project on Base that imports at ${siteOrigin}/create.
+  \`issuanceRate\` is tokens per ETH, \`durationValue\` is seconds (\`0\` for no cycles), \`reservedPct\` and
+  \`cutPct\` are 0 to 100, and \`cashOutTax\` is a whole number out of 10,000 (\`1000\` is a 0.1 tax).
 - [Juicebox Center for apps](${siteOrigin}/build#apps-juicebox-center): one place for chain data, files, and indexed data.
 - [Audit prompts](${siteOrigin}/audit): review the whole system or one transaction.
 
 ## JSON endpoints
 
-Read-only, no key required, cached at the edge.
+Read-only, no key required, cached at the edge. Terms are not in the page HTML or these
+endpoints; use \`jb_get_rulesets\` on the MCP.
 
 - \`GET /api/search?q=<text>\`: projects matching a name, handle or id.
 - \`GET /api/top-projects?limit=<1-32>&offset=<n>\`: projects ranked by balance.
@@ -64,7 +70,7 @@ Read-only, no key required, cached at the edge.
 - \`GET /api/participants?suckerGroupId=<id>\`: token holders across chains.
 - \`GET /api/movements?suckerGroupId=<id>\`: token moves queued between chains. Empty when none are queued, which says nothing about payments.
 - \`GET /api/price-history?suckerGroupId=<id>&chainId=<id>\`: price of newly created tokens over time.
-- \`GET /api/loans?...\`: loans taken against project tokens.
+- \`GET /api/loans?chainId=<id>&projectId=<id>\`: loans taken against project tokens.
 - \`GET /api/project-og/<chainId>/<projectId>\`: 1200x630 PNG link-preview card.
 
 ## Source

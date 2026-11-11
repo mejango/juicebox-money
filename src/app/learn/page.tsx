@@ -34,11 +34,12 @@ export default function LearnPage() {
         <p className="mt-4 text-base leading-relaxed text-smoke-700 sm:text-lg">
           Learn where your money goes, what project tokens let you do, and who can change the rules.
         </p>
-        <nav className="mt-6 grid gap-3 sm:grid-cols-3" aria-label="Choose where to start learning">
+        <nav className="mt-6 grid grid-cols-2 gap-3" aria-label="Choose where to start learning">
           {[
             { href: '#learn-what', title: 'New to Juicebox', text: 'Learn the basics in plain language.' },
             { href: '#learn-before-you-pay', title: 'Ready to pay', text: 'Check what you’ll receive and how the project works.' },
-            { href: '/build', title: 'Ready to build', text: 'Launch a project or connect your app.' },
+            { href: '#learn-cash-outs', title: 'Ready to cash out', text: 'See what you’ll get back and what stays behind.' },
+            { href: '/build', title: 'Ready to launch or build', text: 'Launch a project or connect your app.' },
           ].map(item => (
             <a key={item.href} href={item.href} className="rounded-xl border border-smoke-300 p-4 text-ink transition-colors hover:border-bluebs-600 hover:bg-bluebs-25 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-bluebs-600">
               <span className="block font-agrandir font-medium">{item.title}</span>
@@ -47,7 +48,7 @@ export default function LearnPage() {
           ))}
         </nav>
         <p className="mt-6 text-sm text-smoke-700">
-          Try <Link className="underline underline-offset-4" href="/build/first-payment">your first test payment</Link>, or look up a word in the <a className="underline underline-offset-4" href="#learn-glossary">glossary</a>.
+          <Link className="underline underline-offset-4" href="/build/first-payment#pay">Try a test payment in the app</Link>, or look up a term in the <a className="underline underline-offset-4" href="#learn-glossary">glossary</a>.
         </p>
         <AgentSkillsNote className="mt-6 text-sm text-smoke-700" />
       </div>

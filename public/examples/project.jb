@@ -1,0 +1,24 @@
+{
+  "v": 1,
+  "flavor": "project",
+  "name": "Example project",
+  "ticker": "EXMPL",
+  "tagline": "Replace every value before launching.",
+  "owner": "",
+  "accepts": ["eth"],
+  "issuanceBase": "eth",
+  "chains": [8453],
+  "approvalDeadline": "1day",
+  "stages": [
+    {
+      "durationValue": "0",
+      "issuanceRate": "10000",
+      "cutPct": "",
+      "reservedPct": "0",
+      "reservedSplits": [],
+      "payouts": "none",
+      "cashOuts": true,
+      "cashOutTax": 1000
+    }
+  ]
+}

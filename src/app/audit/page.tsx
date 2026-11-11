@@ -2,9 +2,21 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { AuditPromptActions } from '@/components/AuditPromptActions'
 
+const title = 'Audit Juicebox'
+const description = 'Inspect the Juicebox V6 protocol and Juicebox Money webclient.'
+
 export const metadata: Metadata = {
-  title: 'Audit Juicebox',
-  description: 'Inspect the Juicebox V6 protocol and Juicebox Money webclient.',
+  title,
+  description,
+  alternates: { canonical: '/audit' },
+  openGraph: {
+    title,
+    description,
+    url: '/audit',
+    type: 'website',
+    images: [{ url: '/assets/juicebox-social.png', alt: 'Juicebox' }],
+  },
+  twitter: { card: 'summary_large_image', title, description, images: ['/assets/juicebox-social.png'] },
 }
 
 const CODE_LINKS = [

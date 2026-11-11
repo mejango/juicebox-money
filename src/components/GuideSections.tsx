@@ -37,7 +37,15 @@ type GuideBlock =
   | { type: 'text'; text: string }
   | { type: 'code'; label: string; code: string }
   | { type: 'diagram'; label: string; description?: string; lines: readonly string[] }
-  | { type: 'table'; label: string; rows: readonly (readonly [string, string])[] }
+  | {
+      type: 'table'
+      label: string
+      /** Row names are plain words, not code: render them in the body font. */
+      plainKeys?: boolean
+      /** Gives each row a linkable id, such as `term-cash-out-tax` for the prefix `term`. */
+      rowIdPrefix?: string
+      rows: readonly (readonly [string, string])[]
+    }
   | {
       type: 'compare'
       label: string
@@ -59,6 +67,11 @@ export type GuideSection = {
   blocks?: readonly GuideBlock[]
 }
 
+/** The id of a table row that has a `rowIdPrefix`. */
+export function guideRowId(prefix: string, name: string) {
+  return `${prefix}-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`
+}
+
 function Block({ block, id }: { block: GuideBlock; id: string }) {
   switch (block.type) {
     case 'text':
@@ -77,7 +90,7 @@ function Block({ block, id }: { block: GuideBlock; id: string }) {
         <figure className="guide-diagram">
           <figcaption id={`${id}-label`} className="guide-diagram-title">{block.label}</figcaption>
           {block.description ? (
-            <p id={`${id}-description`} className="guide-diagram-description">{block.description}</p>
+            <p id={`${id}-description`} className="sr-only">{block.description}</p>
           ) : null}
           <div
             className="guide-scroll"
@@ -98,8 +111,12 @@ function Block({ block, id }: { block: GuideBlock; id: string }) {
           <h3 id={`${id}-label`} className="guide-prop-title">{block.label}</h3>
           <dl aria-labelledby={`${id}-label`}>
             {block.rows.map(([name, desc]) => (
-              <div key={name} className="guide-prop-row">
-                <dt className="guide-prop-name">{name}</dt>
+              <div
+                key={name}
+                id={block.rowIdPrefix ? guideRowId(block.rowIdPrefix, name) : undefined}
+                className="guide-prop-row"
+              >
+                <dt className={block.plainKeys ? 'guide-prop-name guide-prop-name-plain' : 'guide-prop-name'}>{name}</dt>
                 <dd className="guide-prop-desc">{desc}</dd>
               </div>
             ))}
@@ -217,9 +234,7 @@ export function GuideSections({
               {group.sections.map(section => (
                 <section key={section.id} id={section.id} className="guide-section" tabIndex={-1}>
                   {section.aliases?.map(alias => (
-                    <span key={alias} id={alias} className="guide-section-alias sr-only" tabIndex={-1}>
-                      {section.title}
-                    </span>
+                    <span key={alias} id={alias} className="guide-section-alias sr-only" aria-hidden="true" />
                   ))}
                   <h2 className="guide-section-title">
                     <a className="guide-section-link" href={`#${section.id}`}>

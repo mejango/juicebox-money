@@ -13,7 +13,7 @@ handling or a write command to these examples.
 Use Node.js 22 or newer and the pinned package versions:
 
 ```sh
-npm install --save-exact @bananapus/nana-sdk-core@3.5.2 viem@2.55.19
+npm install --save-exact @bananapus/nana-sdk-core@6.3.1 viem@2.55.19
 node read-project.mjs
 JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 ```
@@ -29,6 +29,4 @@ block. A successful trial does not mean a payment was sent. The app must refresh
 and review its own request before signing.
 
 The app's guide browser tests cover the tutorial at narrow and desktop widths,
-including keyboard navigation and reading without JavaScript. Center's inspection
-route follows the same published Juicescan deployment as its directory; deploy
-the new Center route before publishing links that depend on it.
+including keyboard navigation and reading without JavaScript.

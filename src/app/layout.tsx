@@ -110,6 +110,11 @@ export default function RootLayout({
       lang="en"
       className={`${agrandir.variable} ${agrandirWide.variable} ${beatrice.variable}`}
     >
+      <head>
+        {/* Plain tags, not metadata.alternates: a page that sets its own canonical replaces that whole field. */}
+        <link rel="alternate" type="text/markdown" href="/skill.md" title="Agent skill" />
+        <link rel="alternate" type="text/plain" href="/llms.txt" title="llms.txt" />
+      </head>
       <body className="flex min-h-screen flex-col">
         <a
           href="#main-content"

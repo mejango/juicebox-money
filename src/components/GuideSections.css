@@ -81,11 +81,13 @@
 }
 
 .juicebox-guide .guide-text {
+  max-width: 38rem; /* about 68 characters a line */
   font-size: 1rem;
   overflow-wrap: anywhere;
 }
 
 .juicebox-guide .guide-info {
+  max-width: 38rem; /* about 68 characters a line */
   overflow-wrap: anywhere;
 }
 
@@ -117,14 +119,6 @@
   font-size: 0.875rem;
 }
 
-.juicebox-guide .guide-diagram-description {
-  padding: 1rem 1rem 0;
-  font-size: 0.9375rem;
-  line-height: 1.75;
-  color: #3f3a2e;
-  overflow-wrap: anywhere;
-}
-
 .juicebox-guide .guide-prop-name,
 .juicebox-guide .guide-prop-desc {
   min-width: 0;
@@ -134,6 +128,16 @@
 .juicebox-guide .guide-prop-name {
   font-size: 0.875rem;
   line-height: 1.65;
+}
+
+.juicebox-guide .guide-prop-name-plain {
+  color: #1a1a1a;
+  font-family: inherit;
+  font-size: 0.9375rem;
+}
+
+.juicebox-guide .guide-prop-row[id] {
+  scroll-margin-top: 7rem;
 }
 
 .juicebox-guide .guide-prop-desc {

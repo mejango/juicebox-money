@@ -15,13 +15,16 @@ describe('AuditPromptActions', () => {
     await act(async () => {
       renderer = TestRenderer.create(createElement(AuditPromptActions))
     })
-    expect(renderer.root.findAllByType('textarea')).toHaveLength(0)
+    // Both prompts are in the markup before any click, collapsed.
+    expect(renderer.root.findAllByType('textarea')[0].props.value).toBe(AUDIT_PROMPT)
+    expect(renderer.root.findAllByType('textarea')).toHaveLength(2)
+    expect(renderer.root.findAllByType('details').map(details => details.props.open)).toEqual([undefined, undefined])
 
     await act(async () => renderer.root.findAllByType('button')[0].props.onClick())
 
     expect(renderer.root.findByProps({ role: 'status' }).children.join('')).toContain(
       'Copy was blocked by your browser',
     )
-    expect(renderer.root.findByType('textarea').props.value).toBe(AUDIT_PROMPT)
+    expect(renderer.root.findAllByType('details').map(details => details.props.open)).toEqual([true, undefined])
   })
 })

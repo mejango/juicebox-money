@@ -62,11 +62,15 @@ export function AuditPromptActions() {
             </span>
           </button>
           {blocked === item.id ? (
-            <div className="pb-4 text-sm leading-relaxed">
-              <p role="status" className="mb-2">{COPY_BLOCKED_MESSAGE}</p>
-              <ManualCopyField id={`audit-prompt-${item.id}`} label={item.label} value={item.prompt} />
-            </div>
+            <p role="status" className="mb-2 text-sm leading-relaxed">{COPY_BLOCKED_MESSAGE}</p>
           ) : null}
+          {/* Always in the page HTML, so a reader without a clipboard still gets the prompt. */}
+          <details className="pb-4 text-sm leading-relaxed" open={blocked === item.id ? true : undefined}>
+            <summary className="min-h-11 py-3 text-bluebs-700 underline underline-offset-4">
+              Read or manually copy the prompt
+            </summary>
+            <ManualCopyField id={`audit-prompt-${item.id}`} label={item.label} value={item.prompt} />
+          </details>
         </div>
       ))}
     </div>
