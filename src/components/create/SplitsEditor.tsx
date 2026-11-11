@@ -189,7 +189,7 @@ export function SplitsEditor({
   allocatedLabel?: string
   /** Offer split-hook recipients. */
   allowHook?: boolean
-  /** Offer the Market maker LP hook preset (reserved-token splits). */
+  /** Offer the Market maker LP hook preset (reserved-token and payout splits; it reverts for shop sales). */
   allowFundMarket?: boolean
   /** Offer Pay vs Add-to-balance routing on project rows (payouts). */
   showRouting?: boolean
@@ -383,13 +383,14 @@ export function SplitsEditor({
                   </p>
                 ) : split.hookKind === 'fundmarket' && !allowFundMarket ? (
                   <p role="alert" className="mt-2 text-[11px] leading-relaxed text-error-600">
-                    The Market maker only takes reserved tokens. Pick another hook.
+                    The Market maker only takes reserved tokens and payouts. Pick another hook.
                   </p>
                 ) : split.hookKind === 'fundmarket' ? (
                   <div className="mt-2">
                     <p className="rounded-lg bg-smoke-75 px-3 py-2 text-[11px] leading-relaxed text-smoke-700">
-                      Makes these tokens available to trade on Uniswap V4.
-                      Trading fees route back to your project.
+                      {showRouting
+                        ? 'Adds these funds to the project’s market on Uniswap V4. Until that market exists, and for any other token, this share stays in the project.'
+                        : 'Makes these tokens available to trade on Uniswap V4. Trading fees route back to your project.'}
                     </p>
                     {lpGapChains.length > 0 ? (
                       <p className="mt-1.5 text-[11px] leading-relaxed text-error-600">
@@ -737,7 +738,7 @@ function StickyFields({
               disabled={disabled}
               className="h-3.5 w-3.5 accent-ink"
             />
-            Set max time
+            {maxOn ? 'up to' : 'Set max time'}
           </label>
           {maxOn ? (
             <>

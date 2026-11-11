@@ -1893,7 +1893,7 @@ function RulesFields({
             disabled={disabled}
           />
           <Toggle
-            label="Pause eligible shop item transfers"
+            label="Pause shop item transfers"
             checked={rules.pause721Transfers}
             onChange={(v) => set("pause721Transfers", v)}
             disabled={disabled}

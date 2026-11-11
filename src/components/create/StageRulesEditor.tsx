@@ -271,7 +271,7 @@ export function StageRulesEditor({
     (stage.payouts !== "none" && stage.holdFees ? " | fees held" : "");
 
   const cashOutsSummary = routedAll
-    ? "Off — all funds committed to payouts"
+    ? "Off"
     : isRevnet && !stage.cashOuts
       ? `On | ${cashOutTaxValue(CASH_OUTS_OFF_REVNET)} tax`
       : stage.cashOuts
@@ -825,6 +825,7 @@ export function StageRulesEditor({
                 amountLabel={fundsUnit}
                 chainIds={chainIds}
                 allowHook
+                allowFundMarket
                 showRouting
                 allowLock={duration > 0 && duration !== FOREVER_SECONDS}
                 allowSticky
@@ -863,6 +864,7 @@ export function StageRulesEditor({
                     amountLabel="USDC"
                     chainIds={chainIds}
                     allowHook
+                    allowFundMarket
                     showRouting
                     allowLock={duration > 0 && duration !== FOREVER_SECONDS}
                     allowSticky
@@ -1127,8 +1129,8 @@ export function StageRulesEditor({
                 set({ pause721Transfers: !stage.pause721Transfers })
               }
               disabled={disabled}
-              title="Pause eligible shop item transfers"
-              blurb="Items created with ‘Transfers pausable’ can't move between wallets during this ruleset. Minting and burning still work."
+              title="Pause shop item transfers"
+              blurb="Items marked ‘Transfers pausable’ can't be sent to another wallet during this ruleset. Buying still works."
             />
           </div>
         </SubSection>

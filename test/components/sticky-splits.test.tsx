@@ -249,7 +249,7 @@ describe('Sticky split editor', () => {
     expect(hookOptions(html)).toContain('Custom')
   })
 
-  it('offers the Sticky hook on payouts, which have no Market maker', () => {
+  it('offers the Sticky hook alone where the Market maker is not offered', () => {
     const html = render({ splits: [hookRow], allowHook: true, allowSticky: true })
     expect(hookOptions(html)).toContain('<option value="sticky">Sticky</option>')
     expect(hookOptions(html)).not.toContain('Market maker')
@@ -271,9 +271,19 @@ describe('Sticky split editor', () => {
     expect(render({ allowSticky: false, splits: [newDraftSplit()] })).not.toContain('value="sticky"')
   })
 
-  it('flags a Market maker row outside reserved splits', () => {
+  it('flags a Market maker row where it is not offered', () => {
     const html = render({ allowHook: true, allowSticky: true, splits: [{ ...hookRow, hookKind: 'fundmarket' }] })
-    expect(html).toContain('The Market maker only takes reserved tokens.')
+    expect(html).toContain('The Market maker only takes reserved tokens and payouts.')
+  })
+
+  it('says what a Market maker payout does', () => {
+    const html = render({
+      allowHook: true,
+      allowFundMarket: true,
+      showRouting: true,
+      splits: [{ ...hookRow, hookKind: 'fundmarket' }],
+    })
+    expect(html).toContain('Adds these funds to the project’s market on Uniswap V4.')
   })
 })
 

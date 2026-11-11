@@ -908,20 +908,11 @@ export function CreateForm() {
         ),
       )
     );
-  // The LP hook only takes reserved tokens (it reverts for payouts and shop sales), so a
-  // Market maker row anywhere else, e.g. from an older draft, blocks the launch.
+  // The LP hook takes reserved tokens and payouts but reverts for shop sales, so a Market
+  // maker row on a shop item, e.g. from an older draft, blocks the launch.
   const isFundMarketRow = (split: DraftSplit) =>
     split.kind === "hook" && split.hookKind === "fundmarket";
-  const fundMarketPlacedOk =
-    !stages.some(
-      (stage) =>
-        !isSimpleProject &&
-        flavor !== "revnet" &&
-        stage.payouts === "routed" &&
-        [...stage.payoutSplits, ...(multiToken ? stage.payoutSplitsUsdc : [])].some(
-          isFundMarketRow,
-        ),
-    ) && !items.some((item) => item.splits.some(isFundMarketRow));
+  const fundMarketPlacedOk = !items.some((item) => item.splits.some(isFundMarketRow));
   // Sticky rows that this launch encodes. A new project has no ERC-20 at launch, so only a
   // revnet (REVDeployer deploys one) can send reserved tokens to Sticky holders, and shop
   // items can't pay Sticky holders at all (the distributor only takes terminals and the
@@ -999,7 +990,7 @@ export function CreateForm() {
     [tickerOk, "Ticker: 1–11 letters or numbers.", 1],
     [bridgeOk, "Native linking needs ETH on Ethereum and one L2. Otherwise use CCIP.", 0],
     [lpHookOk, `Market maker is unavailable on ${missingLpHookChains.map(chainName).join(", ")}. Remove its recipients or change chains.`, 0],
-    [fundMarketPlacedOk, "Market maker accepts reserved tokens only. Remove it from payout or shop recipients.", items.some(item => item.splits.some(isFundMarketRow)) ? storeStep : 2],
+    [fundMarketPlacedOk, "Market maker accepts reserved tokens and payouts only. Remove it from shop recipients.", storeStep],
     [stickyOk, stickyBlock ?? "Checking Sticky recipients on every selected chain…", items.some(item => item.splits.some(isStickyRow)) ? storeStep : 2],
     [selected.length > 0, "Choose at least one chain.", 0],
     [stagesOk, `Complete ${flavor === "revnet" ? "stage" : "ruleset"} #${invalidStage + 1} settings and recipients.`, 2],

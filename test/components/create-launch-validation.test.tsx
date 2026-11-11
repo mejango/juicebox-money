@@ -328,7 +328,7 @@ describe('multichain launch validation', () => {
     expect(launchButton(root).props.disabled).toBe(true)
     const requirements = launchSection(root).findByProps({ 'aria-label': 'Launch requirements' })
     expect(textOf(requirements)).toContain('Market maker is unavailable on Optimism Sepolia')
-    expect(textOf(requirements)).toContain('Remove it from payout or shop recipients')
+    expect(textOf(requirements)).toContain('Remove it from shop recipients')
   })
 
 

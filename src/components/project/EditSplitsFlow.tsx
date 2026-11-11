@@ -1032,7 +1032,7 @@ function EditSplitsModal({
             chainIds={[chainId]}
             addLabel="Add a recipient"
             allowHook
-            allowFundMarket={isReserved}
+            allowFundMarket
             showRouting={!isReserved}
             allowLock
             allowSticky
