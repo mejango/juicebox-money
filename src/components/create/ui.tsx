@@ -44,6 +44,19 @@ export function CheckIcon({ className }: { className: string }) {
   )
 }
 
+/** The form's square check mark. Its focus ring follows a `group` parent (the button that owns it). */
+export function CheckMark({ checked, className = '' }: { checked: boolean; className?: string }) {
+  return (
+    <span
+      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
+        checked ? 'border-bluebs-600 bg-bluebs-600' : 'border-grey-300 bg-white'
+      } ${className}`}
+    >
+      {checked ? <CheckIcon className="h-3 w-3 text-white" /> : null}
+    </span>
+  )
+}
+
 /** Selectable row shared by OptionRow (radio mark) and CheckRow (square mark). */
 function SelectableRow({
   kind,
@@ -80,15 +93,7 @@ function SelectableRow({
           {checked ? <span className="h-2 w-2 rounded-full bg-bluebs-500" /> : null}
         </span>
       ) : (
-        <span
-          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border transition-shadow group-focus-visible:ring-4 group-focus-visible:ring-bluebs-50 ${
-            checked
-              ? 'border-bluebs-600 bg-bluebs-600'
-              : 'border-grey-300 bg-white'
-          }`}
-        >
-          {checked ? <CheckIcon className="h-3 w-3 text-white" /> : null}
-        </span>
+        <CheckMark checked={checked} className="mt-0.5" />
       )}
       <span className="min-w-0">
         <span className="block text-sm font-medium text-ink">{title}</span>

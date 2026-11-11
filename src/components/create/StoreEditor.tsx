@@ -3,7 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { AddressField } from "./AddressField";
 import { SplitsEditor } from "./SplitsEditor";
-import { AddButton, CheckRow } from "./ui";
+import { AddButton, CheckMark, CheckRow } from "./ui";
 import { ChainIcon } from "@/components/ChainIcon";
 import { chainName } from "@/lib/urn";
 import { JBCENTER_MAX_MEDIA_BYTES } from "@/lib/jbcenter-ipfs";
@@ -54,7 +54,8 @@ function Optional({
   children,
 }: {
   title: string;
-  blurb: string;
+  /** Shown once the setting is on. */
+  blurb?: string;
   /** Whether the draft already holds a value for this setting. */
   on: boolean;
   onClear: () => void;
@@ -64,17 +65,28 @@ function Optional({
   const [open, setOpen] = useState(on);
   return (
     <div>
-      <CheckRow
-        checked={open}
-        onToggle={() => {
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={open}
+        onClick={() => {
           if (open) onClear();
           setOpen(!open);
         }}
         disabled={disabled}
-        title={title}
-        blurb={blurb}
-      />
-      {open ? children : null}
+        className="group flex min-h-[28px] items-center gap-2 text-left text-sm font-medium text-smoke-700 focus-visible:outline-none disabled:opacity-60"
+      >
+        <CheckMark checked={open} />
+        {title}
+      </button>
+      {open ? (
+        <>
+          {blurb ? (
+            <p className="mt-1 text-xs leading-relaxed text-smoke-700">{blurb}</p>
+          ) : null}
+          {children}
+        </>
+      ) : null}
     </div>
   );
 }
@@ -232,7 +244,6 @@ export function StoreEditor({
               </div>
               <Optional
                 title="Limited supply"
-                blurb="Cap how many can be sold."
                 on={
                   item.supply.trim() !== "" ||
                   Object.values(item.perChainSupply).some((v) => v?.trim())
