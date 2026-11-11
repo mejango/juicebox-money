@@ -95,7 +95,7 @@ export function StoreEditor({
       {items.map((item, index) => (
         <div
           key={item.id}
-          className="mt-4 rounded-xl border border-smoke-200 bg-bone p-4 sm:p-5 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:bg-white"
+          className="mt-4 rounded-xl border border-smoke-200 bg-bone p-4 sm:p-5 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white"
         >
           <div className="flex items-center justify-between">
             <span className="field-label">Item {index + 1}</span>

@@ -3718,7 +3718,7 @@ export function CreateForm() {
               id={`stage-${stage.id}`}
               // A fresh stage's id is random, so the server's and the browser's differ until the draft loads.
               suppressHydrationWarning
-              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:bg-white"
+              className="mt-4 scroll-mt-28 rounded-xl border border-smoke-300 bg-bone first:mt-0 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-bluebs-600 max-sm:bg-white"
             >
               <div className="flex items-center justify-between gap-3 px-4 py-3.5">
                 <button
