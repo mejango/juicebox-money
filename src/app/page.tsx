@@ -111,10 +111,10 @@ const JUICEBOX_FEATURES = [
     art: 'tall',
   },
   {
-    title: 'Move between chains',
+    title: 'Scale effortlessly',
     description:
-      'Let holders move tokens and their backing funds between supported networks.',
-    illustration: settlementIllustration,
+      'Easy enough for a group of friends, powerful enough for a global network of anons and agents.',
+    illustration: extrasIllustration,
     art: 'wide',
   },
   {
@@ -133,10 +133,10 @@ const JUICEBOX_FEATURES = [
     art: 'tall',
   },
   {
-    title: 'Payments that fit anywhere',
+    title: 'Move between chains',
     description:
-      'Anyone can build on Juicebox. Create your own apps, tools, and payment experiences.',
-    illustration: extrasIllustration,
+      'Let holders move tokens and their backing funds between supported networks.',
+    illustration: settlementIllustration,
     art: 'wide',
   },
   {
@@ -546,13 +546,8 @@ export default function HomePage() {
               <span className="whitespace-nowrap">to scale.</span>
             </h3>
             <p className="mx-auto mt-4 max-w-xl text-center text-base leading-relaxed text-smoke-700 sm:text-lg">
-              <span className="block">
-                Start simply, add powerful tools when you need them, and keep the
-                important rules visible to everyone along the way.
-              </span>
-              <span className="mt-2 block">
-                Easy enough for a group of friends, powerful enough for a global network of anons and agents.
-              </span>
+              Start simply, add powerful tools when you need them, and keep the
+              important rules visible to everyone along the way.
             </p>
 
             <div className="mt-12 grid gap-x-16 gap-y-20 md:grid-cols-2 sm:mt-16 sm:gap-y-28">

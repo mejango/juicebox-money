@@ -94,12 +94,15 @@ export function PowerYourPlatform() {
               Power your platform<span className="text-split-500">.</span>
             </h2>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
+              Anyone can build on Juicebox. Create your own apps, tools, and payment experiences.
+            </p>
+            <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
               Build your own marketplace, community, game, or payment app. Juicebox handles
               payments, programmable incentives, and rules for the funds. You design the experience.
             </p>
             <p className="mt-5 text-base leading-relaxed text-smoke-700 sm:text-lg">
-              Use projects with terms their owners can change, revnets with financial schedules
-              fixed at launch, or both. The same public contracts can support different products.
+              Projects on Juicebox automatically interoperate across platforms you develop, so you
+              don&apos;t have to start from zero.
             </p>
             <div className="mt-7 flex flex-wrap gap-3 max-sm:justify-center">
               <Link href="/build" className="btn-primary min-h-11 px-5 text-sm">
