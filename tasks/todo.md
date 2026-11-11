@@ -1465,3 +1465,15 @@ Decisions: https://claude.ai/artifact/NH7572B3MRnxrBBfXmoo1b. Evidence: `.ux-rev
 Review (2026-11-10): Draft PR https://github.com/mejango/juicebox-money/pull/175, five commits on e67410f9. Core 6.2.0; the SDK owns stop, dismiss and following; every journal save runs through `fence(locks, …)`; locks reach every SDK send and sign entry; withLaunchLock awaits its work and its refusal is shown; the held-writes list shows every phase and takes a lost hash. Behavior tests failed first on the old code. Green: lint, ts, source, protocol, schema, transaction, wallet inventories, test:ci 286 files 3554 tests. Open: build:browser, budget and test:browser stopped on ENOSPC (disk full, scratchpad deletion hook-blocked); rerun once space is freed. Not merged.
 
 Rerun (2026-11-10, Node 26, npm ci, caches cleared): every `npm run check` step green except schema:check, where testnet.bendystraw.xyz answered 502 after 15 s (railway endpoint 200; the offline registry check passes). test:ci 286 files 3554 tests; budget passes after all scripts 2702 -> 2706 KiB (measured 2705.0 locally and on CI); test:browser 90 passed after making the pay card's "Payment token" locator exact (the loading skeleton's "Loading payment tokens" label matched it as a substring and failed desktop-1280 under load). Lock-lapse outcomes: SDK 6.3.0 will keep them under a fresh lock (coordinator, approved by jango), so no client-local reconcile here; the per-fence list went to the coordinator.
+
+## 2026-11-10 SDK core 6.3.0 adoption
+
+Plan: bump core to 6.3.0 and delete what it now owns. The closed-while-following memory and CLOSED_SEND_CONFIRMED_LINE go to useReviewedRun's dismissal rule. REVIEW_STOPPED_LINE and the held-hash lines come from the SDK, with `attachHash(...).hashCheck` in place of the read-first workaround. Relayr's "nothing sent" restore moves from each catch to relayrPay's `onUnsent` (payRelayrReviewed and sendReviewed); relayrPay passes a lost lock's refusal from `onSent` through, so the SDK keeps it. The sped-up hash and the queue result go through `keepOutcome`. ConfirmationQueuedError from `ended()` shows CONFIRMATION_QUEUED_LINE, and the next run is allowed. Lapse regressions use `lapsingLocksForTests`, then the full `npm run check` and Codex pass 1 with the merge bar.
+
+- [x] Bump core 6.3.0
+- [x] Delete closed memory, local lines, read-first workaround
+- [x] onUnsent for relayr, raw lifecycle and launch; keepOutcome for the sped-up hash and the queue result
+- [x] ConfirmationQueuedError in useReviewedAction
+- [x] Lapse regressions (relayr hash and 4001, launch, payer, queue, queued confirmation); each failed on the old code
+- [x] Full check (every step green, schema online; budgets /[urn] 533 -> 535 and all scripts 2706 -> 2710 for 6.3.0), push
+- [ ] Codex pass 1

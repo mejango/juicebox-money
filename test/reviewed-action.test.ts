@@ -103,7 +103,9 @@ vi.mock('@/lib/safe-connector', async importOriginal => ({
   useSafeConnection: () => false,
 }))
 
-import { CLOSED_SEND_CONFIRMED_LINE, liveStep, useReviewedAction } from '@/hooks/useReviewedAction'
+import { liveStep, useReviewedAction } from '@/hooks/useReviewedAction'
+import { CONFIRMATION_QUEUED_LINE } from '@bananapus/nana-sdk-core/review'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 import { writeHolds } from '@/lib/write-holds'
 
 type Action = ReturnType<typeof useReviewedAction>
@@ -267,16 +269,57 @@ describe('useReviewedAction', () => {
     // The payment confirms after its confirm closed.
     client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
     await vi.waitFor(() => expect(ref.current!.phase).toBe('done'), { timeout: 15_000, interval: 100 })
-    // Reopened with the same payment: it shows that one confirmed and sends nothing.
+    // Reopened with the same payment: it closes as done on that one and sends nothing.
     let again: Awaited<ReturnType<Action['run']>> = null
     await act(async () => { again = await ref.current!.run({ account: ALICE, calls: [call] }) })
     expect(walletSends).toHaveLength(1)
-    expect(again).toBeNull()
-    expect(ref.current!.error).toBe(CLOSED_SEND_CONFIRMED_LINE)
+    expect(again).toMatchObject({ status: 'done' })
     // Asked again, it is a new payment of the user's own choosing.
     await act(async () => { again = await ref.current!.run({ account: ALICE, calls: [call] }) })
     expect(again).toMatchObject({ status: 'done' })
     expect(walletSends).toHaveLength(2)
+    await act(async () => renderer.unmount())
+  }, 40_000)
+
+  it('a confirmation queued behind the run\'s own lapsed lock shows the queued line, sends nothing more, and can be tried again', async () => {
+    confirmEveryReview()
+    client.getTransactionReceipt.mockImplementation(async () => { throw new Error('rpc outage') })
+    const leases = lapsingLocksForTests()
+    currentWallet = { ...walletClient, sendTransaction: vi.fn(async (tx: Parameters<typeof walletClient.sendTransaction>[0]) => {
+      const hash = await walletClient.sendTransaction(tx)
+      // The lease lapses while the user is in the wallet.
+      leases.lapse()
+      return hash
+    }) }
+    const ref = createRef<Action>()
+    let renderer!: TestRenderer.ReactTestRenderer
+    await act(async () => { renderer = TestRenderer.create(createElement(QueryClientProvider, { client: new QueryClient() }, createElement(Harness, { ref }))) })
+    const built = REQUESTS.pay as Built
+    const call = { chainId: 10, to: built.address, data: baseline.pay.data as Hex, value: built.value ?? 0n, intent: `queued-${crypto.randomUUID()}` }
+    const confirmed = vi.fn()
+    let ended: unknown = 'pending'
+    let work!: Promise<unknown>
+    await act(async () => {
+      work = leases.locks.request(`queued-${call.intent}`, async lock => {
+        ended = await ref.current!.run({ account: ALICE, calls: [call], locks: [lock!], follow: { timeoutMs: 50 },
+          onConfirmed: async () => { await lock!.assertHeld(); confirmed() } })
+      })
+    })
+    await vi.waitFor(() => expect(ref.current!.following).toBe(true), { timeout: 15_000, interval: 50 })
+    // The receipt is readable again while the run still holds its lapsed lock.
+    client.getTransactionReceipt.mockImplementation(async ({ hash }: { hash: Hex }) => receipt(hash))
+    await act(async () => { await work })
+    expect(ended).toBeNull()
+    expect(ref.current!.error).toBe(CONFIRMATION_QUEUED_LINE)
+    expect(walletSends).toHaveLength(1)
+    // Its work ended: the kept confirmation is told under the lock taken back, and nothing is sent again.
+    await vi.waitFor(() => expect(confirmed).toHaveBeenCalledOnce(), { timeout: 15_000, interval: 50 })
+    // Tried again, it closes as done on that payment and sends nothing.
+    let again: Awaited<ReturnType<Action['run']>> = null
+    await act(async () => { again = await ref.current!.run({ account: ALICE, calls: [call] }) })
+    expect(again).toMatchObject({ status: 'done' })
+    expect(ref.current!.error).toBeNull()
+    expect(walletSends).toHaveLength(1)
     await act(async () => renderer.unmount())
   }, 40_000)
 

@@ -114,6 +114,7 @@ import {
 import { clearViewAs, setViewAs, VIEW_AS_WRITE_BLOCKED } from '@/lib/viewAs'
 import { formatDateTime } from '@/lib/format'
 import { coreReviews } from '../support/core-review'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
 const BOB = '0x2222222222222222222222222222222222222222' as Address
@@ -1510,6 +1511,24 @@ describe('Relayr funding choice and exact execution proof', () => {
     expect(mocks.wallet.signTypedData).toHaveBeenCalledTimes(1)
     expect(mocks.wallet.sendTransaction).toHaveBeenCalledTimes(1)
     expect(posts[1]).toEqual(posts[0])
+  })
+
+  it.each([
+    ['the payment hash', () => HASH, { paymentStatus: 'submitted', payments: [expect.objectContaining({ hash: HASH })] }],
+    ['a definite rejection', () => { throw Object.assign(new Error('User rejected the payment'), { code: 4001 }) }, { paymentStatus: 'unpaid', paymentHash: null }],
+  ] as const)('keeps %s the wallet returned after its lock lapsed, under a fresh lock', async (_name, wallet, outcome) => {
+    vi.stubGlobal('window', localStorageWindow().window)
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    installSuccessfulBundle()
+    const options = { calls, account: ALICE, pendingScope: `lapsed-payment-${crypto.randomUUID()}` }
+    mocks.wallet.sendTransaction.mockImplementationOnce(async () => {
+      expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject({ paymentStatus: 'sending' })
+      leases.lapse()
+      return wallet()
+    })
+    await runRelayrCalls(options).catch(() => {})
+    await vi.waitFor(() => expect(loadRelayrPendingSession(options.pendingScope)).toMatchObject(outcome))
   })
 
   it('refuses a scope locked in another tab before signing or paying', async () => {

@@ -52,6 +52,7 @@ import { clientFor, runAuthorityCalls, safeOutcomeMessage, type AuthorityCall, t
 import { FlowError } from "@/lib/errors";
 import { readAuthorityIdentity } from "@bananapus/nana-sdk-core/safe";
 import { fence, type TabLocks } from "@/lib/tab-locks";
+import { assertLocksHeld, keepOutcome } from "@bananapus/nana-sdk-core/review/locks";
 import { loadRelayrPendingSession, relayrCallsScope, RELAYR_REQUEST_REFRESH_SECONDS } from "@/lib/relayr";
 import { relayrDestinationHash, relayrRecordChain, relayrSupportsChain, relayrSupportsChains } from "@bananapus/nana-sdk-core/review/relayr";
 import {
@@ -747,6 +748,11 @@ const withQueueDestinationLocks = <T,>(destinations: readonly Pick<QueueDestinat
 
 const clearQueueJournal = queueJournals.clear;
 
+/** Save a sent update's hashes; a lost lock keeps them for when its locks are back (keepOutcome) and stops here. */
+const keepQueueResult = async (locks: TabLocks, write: () => Promise<unknown>) => {
+  if (!(await keepOutcome(locks, write))) await assertLocksHeld(locks);
+};
+
 /**
  * Send reviewed rules under their destinations' locks. Rules for several
  * chains are saved before any signature can be published, so they can be
@@ -772,7 +778,7 @@ export async function submitQueueReview(review: Reviewed, action: QueueAction, o
       if (staged) {
         // Keep execution hashes while verifying ancestry so a failed read
         // resumes verification instead of exposing another queue submission.
-        await save({ ...journal, result });
+        await keepQueueResult(locks, () => save({ ...journal, result }));
         await verifyQueuedStageOrder(review, result);
       }
       clearQueueJournal(journal);
@@ -838,7 +844,7 @@ export function QueueRecovery({ journal, onComplete, onDiscard, onError }: { jou
         // A paid bundle is proven before any recheck, and signed again only by its own calls (ruling R114).
         const result = journal.result ?? await runAuthorityCalls({ calls: reviewedQueueCalls(journal.review, journal.action), onProgress: progress => setStatus(progress.message), signal: flowSignal(), locks });
         if (journal.review.destinations.some(destination => destination.configs.length > 1)) {
-          await fence(locks, saveQueueJournal)({ ...journal, result });
+          await keepQueueResult(locks, () => fence(locks, saveQueueJournal)({ ...journal, result }));
           await verifyQueuedStageOrder(journal.review, result);
         }
         clearQueueJournal(journal);

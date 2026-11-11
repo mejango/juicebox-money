@@ -43,6 +43,7 @@ const routes = [
   // 347 -> 348: the dashboard home layout restored (matches revnet), measured 347.0 on CI.
   // 348 -> 349, /create 407 -> 409, /account 425 -> 427: one reviewed run vocabulary (SDK run status, held writes),
   // shared tab locks and explicit dialog states; measured 348.3, 408.1 and 426.3.
+  // /[urn] 533 -> 535: SDK 6.3.0 keeps lost-lock outcomes and owns the dismissal rule; measured 534.8.
   { route: '/', path: '/', kib: 349, text: 'Fund your' },
   { route: '/learn', path: '/learn', kib: 225, text: 'Learn Juicebox' },
   { route: '/build', path: '/build', kib: 227, text: 'Build on Juicebox' },
@@ -60,7 +61,7 @@ const routes = [
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
   // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 533, text: 'Browser Fixture Project' },
+  { route: '/[urn]', path: '/eth:1', kib: 535, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -85,7 +86,8 @@ const budgets = {
   // Buyback 2.0.0 rollout presets and LP move: measured 2686.6 KiB, rounded up only.
   // SDK 6.1.0 published (run vocabulary, held writes, tab locks): measured 2701.2 KiB, rounded up only.
   // SDK 6.2.0 (run wrapper, lock fencing) and fenced journal saves: measured 2705.0 KiB locally and on CI, rounded up only.
-  allScripts: 2706 * KIB,
+  // SDK 6.3.0 (kept lost-lock outcomes, dismissal rule, shared lines): measured 2709.0 KiB, rounded up only.
+  allScripts: 2710 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

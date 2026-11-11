@@ -56,7 +56,6 @@ import {
   relayrLaunchInFlight,
   relayrLaunchPaying,
   relayrLaunchUnfunded,
-  relayrPaymentAttemptOutcome,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -755,6 +754,14 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
           await persist() // reload during the wallet prompt cannot silently pay again
           sending = true
         },
+        // Nothing was sent after the marker was saved: the quote is unpaid again, or stays on its retry rule.
+        onUnsent: async () => {
+          if (!sending) return
+          const outcome = journal!.payments?.length ? 'reverted' : 'unpaid'
+          if (outcome === 'unpaid') delete current.paymentChainId
+          advanceRelayrLaunch(journal!, { type: 'unsent', outcome })
+          await persist()
+        },
         onSent: async payments => {
           sending = false
           advanceRelayrLaunch(journal!, { type: 'sent', payments })
@@ -763,9 +770,8 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         onConfirming: onProgress,
       }))
     } catch (error) {
-      const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!journal.payments?.length })
-      if (outcome === 'unpaid') delete current.paymentChainId
-      if (advanceRelayrLaunch(journal, { type: 'unsent', outcome })) await persist()
+      // A payment that reverted onchain; one nothing sent is `onUnsent`'s.
+      if (error instanceof RelayrPaymentRevertedError && advanceRelayrLaunch(journal, { type: 'unsent', outcome: 'reverted' })) await persist()
       throw error
     }
     advanceRelayrLaunch(journal, { type: 'executing' })

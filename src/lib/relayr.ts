@@ -1,7 +1,7 @@
 'use client'
 
 import { fence, withTabLocks, type TabLocks } from '@/lib/tab-locks'
-import { LockLostError } from '@bananapus/nana-sdk-core/review/locks'
+import { keepOutcome, LockLostError } from '@bananapus/nana-sdk-core/review/locks'
 import { relayrPaymentReview } from '@/lib/relayr-payment-review'
 
 import { getAccount } from '@wagmi/core'
@@ -56,7 +56,6 @@ import {
   relayrDestinationHash,
   relayrForwardRequest,
   relayrForwarderDeadline,
-  relayrPaymentAttemptOutcome,
   relayrPaymentChains,
   relayrPaymentDetails,
   relayrPaymentOptions,
@@ -1111,6 +1110,7 @@ export async function relayrPay({
   reverifyBeforeSendOnly = false,
   onSending,
   onSent,
+  onUnsent,
   onConfirming,
   planned,
   locks,
@@ -1133,6 +1133,8 @@ export async function relayrPay({
   onSending?: (details: RelayrPaymentDetails) => void | Promise<void>
   /** Save every payment sent for the quote, again when this one is mined under another hash. */
   onSent?: (payments: RelayrSentPayment[]) => void | Promise<void>
+  /** Restore the record `onSending` saved once nothing was sent (a 4001 or a refusal before the wallet), kept for a lost lock. */
+  onUnsent?: () => Promise<void>
   /** The sent payment's receipt is still confirming, with the line to show: it is followed before this resolves. */
   onConfirming?: (line: string) => void
   /**
@@ -1185,6 +1187,7 @@ export async function relayrPay({
         plan: planned.plan,
         relayrRound: planned.round,
         locks,
+        ...(onUnsent ? { onUnsent } : {}),
         onSending: async () => {
           readReviewed()
           await reverify?.()
@@ -1197,7 +1200,9 @@ export async function relayrPay({
           payments = [sentRelayrPayment(reviewed, submitted)]
           try {
             await onSent?.(payments)
-          } catch {
+          } catch (error) {
+            // A lost lock's refusal is the SDK's to keep (keepOutcome): the hash is saved once the locks are back.
+            if (error instanceof LockLostError) throw error
             throw new RelayrPaymentSubmittedError(submitted, chainId)
           }
         },
@@ -1266,6 +1271,7 @@ export async function relayrPay({
         await onSending?.(details)
         walletOpened = true
       },
+      ...(onUnsent ? { onUnsent: () => onUnsent() } : {}),
       onSubmitted: async (_call, _step, submitted) => {
         hash = submitted
         // Once the wallet returns a hash, a storage, receipt or proof failure is an
@@ -1273,7 +1279,8 @@ export async function relayrPay({
         payments = [...sent, sentRelayrPayment(details, submitted)]
         try {
           await onSent?.(payments)
-        } catch {
+        } catch (error) {
+          if (error instanceof LockLostError) throw error
           throw new RelayrPaymentSubmittedError(submitted, chainId)
         }
       },
@@ -1299,8 +1306,9 @@ export async function relayrPay({
   if (typeof mined !== 'string' || !isHash(mined)) throw new RelayrPaymentSubmittedError(hash!, chainId)
   if (mined.toLowerCase() !== hash!.toLowerCase()) {
     payments = [...sent, sentRelayrPayment(details, mined)]
+    const replaced = payments
     try {
-      await onSent?.(payments)
+      await keepOutcome(locks, () => onSent?.(replaced))
     } catch {
       throw new RelayrPaymentSubmittedError(mined, chainId)
     }
@@ -1963,6 +1971,12 @@ async function executeRelayrCalls({
         if (pendingScope) session = await persistRelayrPublication(locks, pendingScope, session)
         sending = true
       },
+      // Nothing was sent after the marker was saved: the quote is unpaid again, or stays on its retry rule.
+      onUnsent: async () => {
+        if (!sending || !pendingScope) return
+        const paid = !!session.payments?.length
+        await save(pendingScope, { ...session, paymentStatus: paid ? 'reverted' : 'unpaid', paymentHash: paid ? session.payments!.at(-1)!.hash : null })
+      },
       onSent: async payments => {
         sending = false
         const hash = payments[payments.length - 1].hash
@@ -1972,10 +1986,9 @@ async function executeRelayrCalls({
       },
     }))
   } catch (error) {
-    const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!session.payments?.length })
-    if (pendingScope && outcome) {
-      await save(pendingScope, { ...session, paymentStatus: outcome,
-        paymentHash: outcome === 'reverted' ? session.payments?.at(-1)?.hash ?? null : null })
+    // A payment that reverted onchain; one nothing sent is `onUnsent`'s.
+    if (pendingScope && error instanceof RelayrPaymentRevertedError) {
+      await save(pendingScope, { ...session, paymentStatus: 'reverted', paymentHash: session.payments?.at(-1)?.hash ?? null })
     }
     throw error
   }

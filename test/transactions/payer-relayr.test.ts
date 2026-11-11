@@ -98,6 +98,8 @@ import { RelayrPaymentSubmittedError, relayrPay, relayrPoll } from '@/lib/relayr
 import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
 import { SAFE_NONCE_GUIDANCE } from '@/lib/safe-connector'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
+import { keepOutcome } from '@bananapus/nana-sdk-core/review/locks'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
@@ -458,6 +460,29 @@ describe('payer deployment review and raw Relayr execution', () => {
     await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow(/You checked this payment/)
     expect(loadPayerDeployment(review.scope)).toBeNull()
     expect(mocks.pay).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    ['the payment hash', true, { phase: 'executing', payments: [expect.objectContaining({ hash: PAYMENT_HASH })] }],
+    ['a definite rejection', false, { phase: 'quoted' }],
+  ] as const)('keeps %s the wallet returned after its lock lapsed, under a fresh lock', async (_name, paid, outcome) => {
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    // relayrPay's engine keeps each outcome its callback refused for a lost lock, as core does.
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending, onSent, onUnsent, locks }: Parameters<typeof relayrPay>[0]) => {
+      const details = relayrPaymentDetails(payment, { bundleUuid, destinationChainIds })
+      await onSending?.(details)
+      leases.lapse()
+      if (!paid) {
+        await keepOutcome(locks, () => onUnsent?.())
+        throw Object.assign(new Error('Rejected'), { code: 4001 })
+      }
+      const payments = [sentRelayrPayment(details, PAYMENT_HASH)]
+      await keepOutcome(locks, () => onSent?.(payments))
+      return { hash: PAYMENT_HASH, payments }
+    })
+    await runPayerDeployments(review, vi.fn(), flow).catch(() => {})
+    await vi.waitFor(() => expect(loadPayerDeployment(review.scope)).toMatchObject(outcome))
   })
 
   it('keeps a saved payment the chain shows to be another transaction pending, since raw calls carry no nonce or deadline to prove them dead', async () => {
@@ -1021,8 +1046,9 @@ describe('paying a reverted payer quote again', () => {
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     mocks.pay.mockImplementationOnce(revertingPay)
     await expect(runPayerDeployments(review, vi.fn(), flow)).rejects.toThrow(/reverted onchain/)
-    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending }: Parameters<typeof relayrPay>[0]) => {
+    mocks.pay.mockImplementationOnce(async ({ payment, bundleUuid, destinationChainIds, onSending, onUnsent }: Parameters<typeof relayrPay>[0]) => {
       await onSending?.(relayrPaymentDetails(payment, { bundleUuid, destinationChainIds }))
+      await onUnsent?.()
       throw Object.assign(new Error('User rejected'), { code: 4001 })
     })
     await expect(runPayerDeployments(loadPayerDeployment(review.scope)!, vi.fn(), flow)).rejects.toThrow('User rejected')

@@ -17,7 +17,8 @@ const client = vi.hoisted(() => ({
 vi.mock('@/lib/wallet-core', () => ({ publicClient: () => client }))
 vi.mock('@/lib/chains', async original => ({ ...(await original<typeof import('@/lib/chains')>()), SUPPORTED_CHAINS: [{ id: 10 }] }))
 
-import HeldWritesList, { HELD_HASH_MISMATCH_LINE, HELD_HASH_UNVERIFIED_LINE } from '@/components/ui/HeldWritesList'
+import HeldWritesList from '@/components/ui/HeldWritesList'
+import { HELD_HASH_MISMATCH_LINE, HELD_HASH_UNVERIFIED_LINE } from '@bananapus/nana-sdk-core/review'
 import { WriteHeldNotice } from '@/components/ui/WriteHeldNotice'
 import { writeHolds } from '@/lib/write-holds'
 

@@ -37,6 +37,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<ty
 import { assertQueueExecutionWindow, buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, verifyQueuedStageOrder, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { clearSuckerGroups } from '@/lib/sucker-group'
 import { relayrCallsScope } from '@/lib/relayr'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 
 /** A flow that never ends, for runs whose signal is not under test. */
 const flow = new AbortController().signal
@@ -545,6 +546,20 @@ describe('frozen queue stage schedules', () => {
     mocks.receipt.mockResolvedValueOnce(queueReceipt(prepared))
     await expect(verifyQueuedStageOrder(prepared, { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }))
       .rejects.toThrow(/ruleset order could not be verified/)
+  })
+
+  it('keeps the hashes the wallet returned after its lock lapsed, under a fresh lock, so a resume never sends the queue again', async () => {
+    const prepared = stagedReview()
+    const result = { directResults: [queueHash], relayrGroups: 0, relayrResults: [], safeResults: [] }
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    mocks.runAuthorityCalls.mockImplementationOnce(async () => {
+      expect(readQueueJournal('jbm:queue-rulesets:1:101')?.result).toBeUndefined()
+      leases.lapse()
+      return result
+    })
+    await expect(submitQueueReview(prepared, 'current', vi.fn(), flow)).rejects.toMatchObject({ code: 'LOCK_LOST' })
+    await vi.waitFor(() => expect(readQueueJournal('jbm:queue-rulesets:1:101')?.result).toEqual(result))
   })
 
   it('recovers a confirmed ancestry check without resubmitting the saved queue', async () => {

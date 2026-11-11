@@ -6,7 +6,7 @@ import { recoverSaved, strictRetirable } from '@/lib/write-holds'
 import { requireFundingChainSelection } from '@/lib/transaction-review'
 import { fence, type TabLocks } from '@/lib/tab-locks'
 import { RelayrPaymentSubmittedError, RelayrQuoteTimeoutError, relayrChainClient, relayrPay, relayrPaymentLabel, relayrPoll, relayrPostBundle } from '@/lib/relayr'
-import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, relayrPaymentAttemptOutcome, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
+import { proveSavedRelayrPayment, relayrDeadlinePassed, relayrQuotedOptions, RelayrPaymentRevertedError, relayrPaymentOptions, relayrRetryOption, requireRelayrBundleUnpaid, revertedRelayrQuote, type RelayrEntry, type RelayrPayment, type RelayrQuote, type RelayrSentPayment, type RelayrTransactionRecord } from '@bananapus/nana-sdk-core/review/relayr'
 
 /** A raw Relayr session's phases, in order; `payment-reverted` follows `payment-sending` when its payment canonically reverted. */
 const RAW_RELAYR_PHASES = ['reviewed', 'publishing', 'quoted', 'payment-sending', 'payment-reverted', 'executing', 'complete'] as const
@@ -220,6 +220,12 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
               await persist(true)
               sending = true
             },
+            // Nothing was sent after the marker was saved: the quote is unpaid again, or stays on its retry rule.
+            onUnsent: async () => {
+              if (!sending) return
+              session.phase = session.payments?.length ? 'payment-reverted' : 'quoted'
+              await persist()
+            },
             onSent: async payments => {
               sending = false
               session.payments = payments
@@ -233,9 +239,9 @@ export async function runRawRelayrLifecycle<S extends RawRelayrState>({ session,
           await persist()
           paidNow = true
         } catch (error) {
-          const outcome = relayrPaymentAttemptOutcome(error, { sending, paid: !!session.payments?.length })
-          if (outcome) {
-            session.phase = outcome === 'reverted' ? 'payment-reverted' : 'quoted'
+          // A payment that reverted onchain; one nothing sent is `onUnsent`'s.
+          if (error instanceof RelayrPaymentRevertedError) {
+            session.phase = 'payment-reverted'
             await persist()
           }
           const latest = session.payments?.at(-1)

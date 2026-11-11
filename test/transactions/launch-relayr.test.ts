@@ -72,6 +72,8 @@ vi.mock('@/lib/relayr', async importOriginal => ({
 import { RELAYR_PAYMENT_ADDRESS, RELAYR_NATIVE_TOKEN, RELAYR_PAYMENT_SELECTOR, RelayrPaymentRevertedError } from '@bananapus/nana-sdk-core/review/relayr'
 import { canRelayrLaunch, runRelayrLaunch } from '@/lib/launch-relayr'
 import { relayrHeldMessage } from '@/lib/relayr'
+import { keepOutcome } from '@bananapus/nana-sdk-core/review/locks'
+import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
 import { abandonLaunchSession, canAbandonRelayrLaunch, completeLaunchSession, loadLaunchSession, recordLaunchChainStatus, saveLaunchSession, type LaunchSession } from '@/lib/launch-session'
 import { friendlyError } from '@/lib/errors'
 import { savedAttempts } from '@/lib/write-holds'
@@ -873,9 +875,30 @@ describe('relayed launch execution and recovery', () => {
     expect(loadLaunchSession()?.relayr?.paymentChainId).toBe(funding)
   })
 
+  it.each([
+    ['the payment hash', true, { phase: 'submitted', payments: [expect.objectContaining({ hash: HASH })] }],
+    ['a definite rejection', false, { phase: 'quoted' }],
+  ] as const)('keeps %s the wallet returned after its lock lapsed, under a fresh lock', async (_name, paid, outcome) => {
+    const leases = lapsingLocksForTests()
+    vi.stubGlobal('navigator', { locks: leases.locks })
+    // relayrPay's engine keeps each outcome its callback refused for a lost lock, as core does.
+    m.pay.mockImplementationOnce(async ({ payment, reverify, onSending, onSent, onUnsent, locks }) => {
+      await reverify(); await onSending()
+      leases.lapse()
+      if (!paid) {
+        await keepOutcome(locks, onUnsent)
+        throw Object.assign(new Error('Rejected'), { code: 4001 })
+      }
+      await keepOutcome(locks, () => onSent([sentFor(payment, HASH)]))
+      return { hash: HASH, payments: [sentFor(payment, HASH)] }
+    })
+    await run().catch(() => {})
+    await vi.waitFor(() => expect(loadLaunchSession()?.relayr).toMatchObject(outcome))
+  })
+
   it('allows retrying a positively rejected funding prompt', async () => {
-    m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
-      await reverify(); await onSending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+    m.pay.mockImplementationOnce(async ({ reverify, onSending, onUnsent }) => {
+      await reverify(); await onSending(); await onUnsent(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr?.phase).toBe('quoted')
@@ -1340,8 +1363,8 @@ describe('paying a reverted launch quote again', () => {
   it('keeps a declined retry on the retry rule, never back to a fresh choice', async () => {
     m.pay.mockImplementationOnce(reverting)
     await expect(run()).rejects.toThrow(/reverted onchain/)
-    m.pay.mockImplementationOnce(async ({ reverify, onSending }) => {
-      await reverify(); await onSending(); throw Object.assign(new Error('Rejected'), { code: 4001 })
+    m.pay.mockImplementationOnce(async ({ reverify, onSending, onUnsent }) => {
+      await reverify(); await onSending(); await onUnsent(); throw Object.assign(new Error('Rejected'), { code: 4001 })
     })
     await expect(run()).rejects.toThrow('Rejected')
     expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'payment-reverted', paymentChainId: 8453,
