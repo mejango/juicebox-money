@@ -300,7 +300,13 @@ async function exerciseProjectSurfaces(
     expect(payBox!.x).toBeLessThan(tabsBox!.x)
   } else {
     expect(tabsBox!.y).toBeGreaterThanOrEqual(payBox!.y + payBox!.height)
-    expect(Math.abs(tabsBox!.x - payBox!.x)).toBeLessThanOrEqual(8)
+    // Phones run the pay card edge to edge; wider stacked layouts align it with the tabs.
+    if (viewport.width < 640) {
+      expect(payBox!.x).toBe(0)
+      expect(payBox!.width).toBe(viewport.width)
+    } else {
+      expect(Math.abs(tabsBox!.x - payBox!.x)).toBeLessThanOrEqual(8)
+    }
   }
   // USDC only appears after the ABI-correct accounting-context and ERC-20
   // reads resolve; the unhydrated fallback says ETH.

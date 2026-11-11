@@ -749,8 +749,13 @@ describe('cash-out write flow', () => {
     await act(async () => buttonWith(renderer, 'Max').props.onClick())
     expect(buttonWith(renderer, 'Cash out 5 JBT')).toBeDefined()
 
+    const custom = () => renderer.root.findByProps({ type: 'checkbox' })
+    await act(async () => custom().props.onChange({ target: { checked: true } }))
     await act(async () => buttonWith(renderer, '3%').props.onClick())
     expect(buttonWith(renderer, '3%').props['aria-pressed']).toBe(true)
+    await act(async () => custom().props.onChange({ target: { checked: false } }))
+    expect(buttonWith(renderer, '3%')).toBeUndefined()
+    expect(renderedText(custom().parent!)).toContain('(1%)')
 
     const amount = renderer.root
       .findAllByType('input')
@@ -776,6 +781,7 @@ describe('cash-out write flow', () => {
       )
     })
 
+    await act(async () => renderer.root.findByProps({ type: 'checkbox' }).props.onChange({ target: { checked: true } }))
     const customSlippage = renderer.root
       .findAllByType('input')
       .find(input => input.props.type === 'number')!

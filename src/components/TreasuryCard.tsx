@@ -28,7 +28,7 @@ export function TreasuryCard({
   return (
     <div
       id="project-pay-card"
-      className="rounded-xl border-2 border-bluebs-500 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(87,119,235,0.25)] ring-4 ring-bluebs-500/10"
+      className="rounded-xl border-2 border-bluebs-500 bg-white p-6 shadow-[0_4px_20px_-4px_rgba(87,119,235,0.25)] ring-4 ring-bluebs-500/10 max-sm:-mx-4 max-sm:rounded-none max-sm:border-x-0 max-sm:px-4 max-sm:ring-0"
     >
       <PayPanel
         chainId={chainId}

@@ -1573,7 +1573,7 @@ export function PayPanel({
         <p className="mt-1 text-sm text-smoke-700">
           {mode === "pay"
             ? `You supported ${projectName}.`
-            : `${projectName}'s balance grew — no tokens minted.`}
+            : `${projectName}'s balance grew. You got no tokens.`}
         </p>
         {tx.hash && explorerTxUrl(chainId, tx.hash) ? (
           <a
@@ -1872,7 +1872,7 @@ export function PayPanel({
           maxWidth="max-w-md"
           onClose={() => setBuyExplainerOpen(false)}
         >
-          <div className="px-5 py-5">
+          <div>
             <p className="text-sm leading-relaxed text-smoke-700">
               {/* One string, not JSX text around an expression: a line break after `{asset}`
                   swallows the space that follows it, which is how this shipped as "USDCin". */}
@@ -1957,29 +1957,29 @@ export function PayPanel({
       ) : mode === "pay" && cartCount > 0 && shop ? (
         <div className="mt-4">
           {selectedCartRows.length > 0 ? (
-            <div className="mt-2 space-y-2 rounded-lg border border-smoke-200 bg-smoke-50 p-2.5">
+            <div className="mt-2 space-y-2 border-y border-smoke-200 py-2.5">
               {selectedCartRows.map((row) => (
                 <NftCartLine key={row.tierId} tierId={row.tierId} name={row.name} image={row.image} quantity={row.quantity}
                   onRemove={() => setQuantity(row.tierId, row.quantity - 1)}
                   onAdd={() => setQuantity(row.tierId, Math.min(row.cap, row.quantity + 1))}
                   removeDisabled={busy} addDisabled={busy || row.quantity >= row.cap} />
               ))}
-              <div className="space-y-1 border-t border-smoke-200 pt-2 text-xs">
+              <div className="space-y-2 border-t border-smoke-200 pt-2 text-xs">
                 {cartAmountDue !== cartTotal ? (
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-smoke-600">
+                  <div>
+                    <span className="block text-smoke-500">
                       {cartCount} item{cartCount === 1 ? "" : "s"}
                     </span>
-                    <span className="tabular-nums text-ink">
+                    <span className="block text-sm tabular-nums text-ink">
                       {formatTokenAmount(cartTotal, shop?.pricingDecimals ?? 18)}{" "}
                       {shopPricingSymbol}
                     </span>
                   </div>
                 ) : null}
                 {!shopCreditsLoading && shopCreditApplied > 0n ? (
-                  <div className="flex items-center justify-between gap-3 text-emerald-700">
-                    <span>Shop credit applied</span>
-                    <span className="tabular-nums">
+                  <div>
+                    <span className="block text-smoke-500">Shop credit applied</span>
+                    <span className="block text-sm tabular-nums text-emerald-700">
                       −
                       {formatTokenAmount(
                         shopCreditApplied,
@@ -1989,9 +1989,9 @@ export function PayPanel({
                     </span>
                   </div>
                 ) : !shopCreditsLoading && shopCredits > 0n ? (
-                  <div className="flex items-center justify-between gap-3 text-smoke-500">
-                    <span>Shop credit available</span>
-                    <span className="tabular-nums">
+                  <div>
+                    <span className="block text-smoke-500">Shop credit available</span>
+                    <span className="block text-sm tabular-nums text-ink">
                       {formatTokenAmount(
                         shopCredits,
                         shop?.pricingDecimals ?? 18,
@@ -2003,13 +2003,13 @@ export function PayPanel({
                 {!shopCreditsLoading &&
                 shopCredits > 0n &&
                 restrictedCartTotal > 0n ? (
-                    <div className="flex items-center justify-between gap-3 text-smoke-500">
-                      <span>
+                    <div>
+                      <span className="block text-smoke-500">
                         {restrictedCartTotal === cartTotal
                           ? 'These items require fresh payment'
                           : 'Some items require fresh payment'}
                       </span>
-                      <span className="tabular-nums">
+                      <span className="block text-sm tabular-nums text-ink">
                         {formatTokenAmount(
                           restrictedCartTotal,
                           shop?.pricingDecimals ?? 18,
@@ -2018,9 +2018,9 @@ export function PayPanel({
                       </span>
                     </div>
                 ) : null}
-                <div className="flex items-center justify-between gap-3 pt-0.5 font-medium">
-                  <span className="text-ink">Amount due</span>
-                  <span className="tabular-nums text-ink">
+                <div>
+                  <span className="block text-smoke-500">Amount due</span>
+                  <span className="block text-sm font-medium tabular-nums text-ink">
                     {formatTokenAmount(
                       cartAmountDue,
                       shop?.pricingDecimals ?? 18,
@@ -2162,8 +2162,7 @@ export function PayPanel({
       ) : null}
       {addBalanceViaRouter ? (
         <p className="mt-3 text-sm text-smoke-700">
-          Add to balance only supports tokens the project accepts directly —
-          choose one of those tokens, or use Pay to convert this one.
+          Add to balance can&apos;t convert this token. Pick another, or use Pay.
         </p>
       ) : null}
       {terminalBlocked ? (
@@ -2174,11 +2173,11 @@ export function PayPanel({
       ) : null}
       {!terminalBlocked && surface?.unknown && surface.unknown.length > 0 ? (
         <p className="mt-3 text-xs leading-relaxed text-smoke-700">
-          This project also lists payment contracts this app doesn&apos;t recognize:{" "}
+          This app doesn&apos;t recognize some of this project&apos;s payment contracts:{" "}
           {surface.unknown
             .map((a) => `${a.slice(0, 6)}…${a.slice(-4)}`)
             .join(", ")}
-          . This form only sends to a recognized Juicebox payment contract.
+          . Payments here only go to recognized ones.
         </p>
       ) : null}
       {panelTxError ? (

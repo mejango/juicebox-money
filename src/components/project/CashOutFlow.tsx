@@ -112,6 +112,7 @@ export function CashOutPanel({
   const [amount, setAmount] = useState('')
   const [debouncedAmount, setDebouncedAmount] = useState('')
   const [slippageBps, setSlippageBps] = useState(DEFAULT_SLIPPAGE_BPS)
+  const [customSlippage, setCustomSlippage] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [usedDirectSell, setUsedDirectSell] = useState(false)
   const [plan, setPlan] = useState<CashOutPlan | null>(null)
@@ -849,17 +850,26 @@ export function CashOutPanel({
         )}
       </div>
 
-      <details className="mt-3 text-xs text-smoke-700">
-        <summary className="cursor-pointer font-medium">Allowed decrease {slippageBps / 100}%</summary>
-        <AllowedDecreaseField bps={slippageBps} onChange={setSlippageBps} hideLabel />
+      <div className="mt-3 text-xs text-smoke-700">
+        <label className="flex min-h-[28px] cursor-pointer items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            checked={customSlippage}
+            onChange={event => {
+              if (!event.target.checked) setSlippageBps(DEFAULT_SLIPPAGE_BPS)
+              setCustomSlippage(event.target.checked)
+            }}
+          />
+          Change the allowed decrease ({slippageBps / 100}%)
+        </label>
+        {customSlippage ? <AllowedDecreaseField bps={slippageBps} onChange={setSlippageBps} hideLabel /> : null}
         {!directSellWins && poolBufferBps !== null ? (
           <p className="mt-2">
-            This pool&apos;s preview already allows about{' '}
-            {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for its fee
-            and the price change caused by the trade.
+            This quote already allows about{' '}
+            {(poolBufferBps / 100).toFixed(2).replace(/\.00$/, '')}% for the pool&apos;s fee and price change.
           </p>
         ) : null}
-      </details>
+      </div>
 
       <div className="mt-4 min-h-[20px] text-sm text-smoke-700" aria-live="polite">
         {exceedsBalance ? (
