@@ -44,6 +44,10 @@ import { JUICEBOX_ONE_LINER } from '@/lib/one-liner'
 
 export const revalidate = 120
 
+const ONE_LINER_BREAK = JUICEBOX_ONE_LINER.indexOf('transparently')
+const ONE_LINER_LEAD = JUICEBOX_ONE_LINER.slice(0, ONE_LINER_BREAK).trimEnd()
+const ONE_LINER_REST = JUICEBOX_ONE_LINER.slice(ONE_LINER_BREAK)
+
 const FRUIT_SEPARATOR = [
   { src: fruitCherries, className: '-rotate-6' },
   { src: fruitDragon, className: 'translate-y-2 rotate-6' },
@@ -481,16 +485,18 @@ function HeroColumn() {
         />
       </div>
       <div className="mx-auto w-full shrink-0 [container-type:inline-size]">
-        {/* Nowrap segments set the only allowed break points, so a narrow
-            column reads "Fund your / thing." — never one word per line. */}
-        <h1 className="font-agrandir-wide text-[min(12cqw,2.25rem)] font-bold leading-[1.05] sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
+        {/* Phones scale the type to hold one line. Wider layouts can put the hero in a
+            narrow column, where the nowrap segments allow "Fund your / thing." only. */}
+        <h1 className="whitespace-nowrap font-agrandir-wide text-[min(10.5cqw,2.25rem)] font-bold leading-[1.05] sm:whitespace-normal sm:text-[min(12cqw,3rem)] xl:text-[min(12cqw,5.5svh,3.75rem)]">
           <span className="whitespace-nowrap">Fund your</span>{' '}
           <span className="whitespace-nowrap">
             thing<span className="text-split-500">.</span>
           </span>
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-balance text-base leading-relaxed text-smoke-700 xl:mt-2">
-          {JUICEBOX_ONE_LINER}
+        {/* Phones hold the first clause on one line and the rest on the next. */}
+        <p className="mx-auto mt-5 max-w-xl text-[min(4.8cqw,1rem)] leading-relaxed text-smoke-700 sm:text-balance sm:text-base xl:mt-2">
+          <span className="max-sm:whitespace-nowrap">{ONE_LINER_LEAD}</span>{' '}
+          <span className="max-sm:whitespace-nowrap">{ONE_LINER_REST}</span>
         </p>
         {/* /create is the heaviest route (~70 KiB); fetch it on click, not on view. */}
         <Link
