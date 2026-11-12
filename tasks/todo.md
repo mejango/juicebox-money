@@ -1477,3 +1477,24 @@ Plan: bump core to 6.3.0 and delete what it now owns. The closed-while-following
 - [x] Lapse regressions (relayr hash and 4001, launch, payer, queue, queued confirmation); each failed on the old code
 - [x] Full check (every step green, schema online; budgets /[urn] 533 -> 535 and all scripts 2706 -> 2710 for 6.3.0), push
 - [ ] Codex pass 1
+
+
+# 2026-11-12: Adopt Node 26.13.1 security release
+
+## Plan refinement
+- **Objective:** Move jbm development, CI and applicable production build/runtime to Node26.13.1, with executable checks passing on the exact reviewed change.
+- **System fit:** Runtime selection belongs to existing .nvmrc, package engines, CI setup and any OCI base image. Wallet authority, protocol data, SDK ownership and application behavior remain unchanged. User authorized this runtime upgrade; main merge is coordinated by the root agent after review and checks.
+- **Reuse and simplicity:** Update existing pins and runtime consistency guards, preserve the independently pinned npm12.0.1 and existing install-script policy, and reuse the full CI suite. Keep dependency versions and resolved lock entries unchanged, modifying only lockfile root engine metadata where required. Preserve historical measurement records.
+- **Evidence and unknowns:** Current origin/main was fetched into an isolated worktree; official Node release evidence confirms26.13.1 is a security release. Verify the official OCI digest where used. Local static checks establish configuration agreement; GitHub CI establishes Linux build/test compatibility, not live deployment.
+- **Verification:** Run plan checker, diff whitespace and runtime consistency review, existing lightweight deployment/container checks, then full existing CI including coverage/browser and OCI smoke where configured. Investigate failures without weakening checks or increasing existing deadlines. Confirm dependency-lock package entries unchanged.
+- **Resource budget:** Reuse GitHub CI for expensive Linux checks and avoid overlapping local builds with service verification. All commands use this absolute worktree and journal writes use absolute paths with a snapshot. Escalate concrete incompatibility to root for replanning.
+
+- [x] Read required workspace resources, descendant instructions and relevant lessons; inspect current-main runtime configuration.
+- [x] Update exact runtime pins and matching active documentation/guards.
+- [x] Verify minimal lock metadata change and local configuration checks.
+- [ ] Prepare PR and verify full existing CI on its exact head.
+
+## Review
+Runtime and deployment-policy checks pass under verified Node26.13.1. All non-root lockfile package records are unchanged. The official multiarchitecture Docker index digest was independently rechecked on2026-11-12. Full Linux CI is required on the PR head before merge.
+
+Independent review found one active local-setup instruction still naming Node26.12. It now points to .nvmrc, reusing the existing runtime owner. The preceding OCI smoke passed; the final source head requires a fresh full CI run.
