@@ -1496,3 +1496,5 @@ Plan: bump core to 6.3.0 and delete what it now owns. The closed-while-following
 
 ## Review
 Runtime and deployment-policy checks pass under verified Node26.13.1. All non-root lockfile package records are unchanged. The official multiarchitecture Docker index digest was independently rechecked on2026-11-12. Full Linux CI is required on the PR head before merge.
+
+Independent review found one active local-setup instruction still naming Node26.12. It now points to .nvmrc, reusing the existing runtime owner. The preceding OCI smoke passed; the final source head requires a fresh full CI run.

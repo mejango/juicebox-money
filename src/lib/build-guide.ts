@@ -729,7 +729,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
     audience: ['frontend'],
     title: 'Run this site locally',
     paragraphs: [
-      'Needs Node.js 26.12 and npm 12 (the engines in package.json). Copy the example public configuration before starting. NEXT_PUBLIC values are shipped to the browser, so they must never contain private keys or secrets.',
+      'Use the Node.js version in .nvmrc and npm 12 (the engines in package.json). Copy the example public configuration before starting. NEXT_PUBLIC values are shipped to the browser, so they must never contain private keys or secrets.',
     ],
     blocks: [
       {
