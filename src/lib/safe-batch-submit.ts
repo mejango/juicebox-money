@@ -271,6 +271,7 @@ export async function submitSafeBatch({
   authority,
   steps,
   route,
+  proposalNonce,
   onProgress,
   onStep,
   onProposed,
@@ -280,6 +281,8 @@ export async function submitSafeBatch({
   authority: Address
   steps: readonly BatchStep[]
   route: SafeBatchRoute
+  /** The Safe nonce to propose at (Safe service route). Default: the next free one. */
+  proposalNonce?: number
   /** The flow's: when it aborts, the wait for the Safe to execute the batch ends, and the proposal stays queued. */
   signal: AbortSignal
   onProgress?: (message: string) => void
@@ -384,6 +387,7 @@ export async function submitSafeBatch({
         functionName: 'multiSend',
         args: [packed],
         contractName: 'MultiSendCallOnly',
+        ...(proposalNonce === undefined ? {} : { nonce: proposalNonce }),
         calls: sequence.map(call => ({
           chainId,
           to: call.to,

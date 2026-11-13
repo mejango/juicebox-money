@@ -42,8 +42,8 @@ import {
   canonicalSafeTxHash,
   hasSafeService,
   listPendingSafeTransactions,
-  nextProposalNonce,
   onchainApprovalStep,
+  proposalNonceChoices,
   proposeSafeTransaction,
   SAFE_EXEC_ABI,
   safeBatchProposalFor,
@@ -93,6 +93,8 @@ export type SafeCall = {
   contractName?: string
   /** The inner calls of a MultiSend batch, for the review. */
   calls?: readonly TransactionReviewCall[]
+  /** The Safe nonce to propose at (Safe service route), one of readProposalNonces. Default: the next free one. */
+  nonce?: number
   reverifyAuthority?: () => Promise<void>
   onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
 }
@@ -405,6 +407,20 @@ export async function readSafeQueue(
     nonce,
     pending: await listPendingSafeTransactions(chainId, safe, nonce, SAFE_SERVICE),
   }
+}
+
+/**
+ * The Safe nonces a new proposal may take, ascending, the last being the next
+ * free one. A queued nonce offers the proposal as a replacement of what is
+ * queued there.
+ */
+export async function readProposalNonces(
+  chainId: JBChainId,
+  safe: Address,
+): Promise<{ choices: number[]; next: number }> {
+  const { nonce, pending } = await readSafeQueue(chainId, safe)
+  const choices = proposalNonceChoices(nonce, pending)
+  return { choices, next: choices[choices.length - 1] }
 }
 
 /**
@@ -1000,13 +1016,20 @@ export async function runSafeCalls({
           `Could not read the pending Safe queue on chain ${call.chainId}. Nothing was proposed. Try again shortly.`,
         )
       })
+      const choices = proposalNonceChoices(nextNonce, pending)
+      if (call.nonce !== undefined && !choices.includes(call.nonce)) {
+        throw new Error(
+          `Safe nonce ${call.nonce} is not available. Nothing was proposed; pick ${choices.join(', ')}.`,
+        )
+      }
+      const proposalNonce = call.nonce ?? choices[choices.length - 1]
       const matching = pending.find(tx =>
         safeTransactionMatchesCall(tx, {
           to: call.target,
           data: call.data,
           value: call.value,
           operation: call.operation,
-        }),
+        }) && (call.nonce === undefined || Number(tx.nonce) === call.nonce),
       )
       if (matching) {
         await call.onSafePrepared?.(matching)
@@ -1042,7 +1065,7 @@ export async function runSafeCalls({
       const proposed = await proposeSafeTx({
         ...call,
         signer,
-        nonce: nextProposalNonce(nextNonce, pending),
+        nonce: proposalNonce,
       })
       results.push({
         chainId: call.chainId,

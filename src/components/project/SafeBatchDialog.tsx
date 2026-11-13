@@ -23,6 +23,7 @@ import {
   submitSafeBatch,
   type SafeBatchRoute,
 } from '@/lib/safe-batch-submit'
+import { readProposalNonces } from '@/lib/safe'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { chainName } from '@/lib/urn'
 
@@ -173,6 +174,19 @@ export function SafeBatchDialog({
   const count = steps.length
   const preparing = routeQuery.isLoading
 
+  // A Safe service proposal takes the next free nonce unless a queued one is picked to replace.
+  const proposalSafe = route?.kind === 'safe-owner' && hasSafeService(chainId) ? authority : null
+  const noncesQuery = useQuery({
+    queryKey: ['safeBatchNonces', chainId, proposalSafe],
+    enabled: !!proposalSafe,
+    staleTime: 15_000,
+    queryFn: () => readProposalNonces(chainId, proposalSafe!),
+  })
+  const nonces = proposalSafe ? noncesQuery.data : undefined
+  const [pickedNonce, setPickedNonce] = useState<number | null>(null)
+  const proposalNonce =
+    nonces && pickedNonce !== null && nonces.choices.includes(pickedNonce) ? pickedNonce : nonces?.next
+
   const rows: TxConfirmRow[] = [
     { label: 'On', value: chainName(chainId) },
     {
@@ -188,6 +202,26 @@ export function SafeBatchDialog({
       label: 'Route',
       value: route ? routeDescription(route, count, chainId) : routeQuery.isError ? 'Unavailable' : '…',
     },
+    ...(nonces && proposalNonce !== undefined
+      ? [{
+          label: 'Safe nonce',
+          value: (
+            <select
+              aria-label="Safe nonce"
+              className="input-well block min-h-[40px] w-auto max-w-full px-2"
+              value={proposalNonce}
+              disabled={busy || complete}
+              onChange={event => setPickedNonce(Number(event.target.value))}
+            >
+              {nonces.choices.map(nonce => (
+                <option key={nonce} value={nonce}>
+                  {nonce === nonces.next ? `${nonce}, next available` : `${nonce}, replaces what is queued there`}
+                </option>
+              ))}
+            </select>
+          ),
+        }]
+      : []),
   ]
 
   const onchainApproval = route?.kind === 'safe-owner' && !hasSafeService(chainId)
@@ -215,6 +249,7 @@ export function SafeBatchDialog({
         authority,
         steps,
         route,
+        proposalNonce,
         onProgress: line => progress({ line }),
         onStep: step => progress({ step }),
         signal: flowSignal(),

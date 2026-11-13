@@ -79,6 +79,7 @@ import {
   MULTI_SEND_CALL_ONLY,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
+import { readProposalNonces } from '@/lib/safe'
 import { listedHeld } from '../support/held-chain'
 import { HELD_RELEASED_ELSEWHERE_LINE } from '@bananapus/nana-sdk-core/review'
 import { modelNode } from '../support/chain-node'
@@ -308,6 +309,38 @@ describe('Safe owner batch', () => {
     expect(mocks.client.simulateCalls).toHaveBeenCalledWith({ account: SAFE, calls })
     expect(mocks.client.getCode).toHaveBeenCalledWith({ address: MULTI_SEND_CALL_ONLY })
     expect(mocks.sendCalls).not.toHaveBeenCalled()
+  })
+
+  it('proposes at a picked queued nonce as a replacement, and refuses a nonce that is not offered', async () => {
+    const steps = presetSteps()
+    const stale = {
+      to: ALICE, value: '0', data: '0x12345678' as const, operation: 0 as const, safeTxGas: '0', baseGas: '0',
+      gasPrice: '0', gasToken: zeroAddress, refundReceiver: zeroAddress, nonce: 7,
+    }
+    const queued = { ...stale, safe: SAFE, safeTxHash: safeTransactionHash(1, SAFE, stale), confirmations: [], isExecuted: false }
+    const posted: Array<Record<string, unknown>> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === 'POST') {
+          posted.push(JSON.parse(String(init.body)))
+          return new Response('{}', { status: 201 })
+        }
+        return new Response(
+          JSON.stringify(String(input).includes('multisig-transactions') ? { results: [queued], next: null } : { nonce: 7 }),
+          { status: 200 },
+        )
+      }),
+    )
+    await expect(readProposalNonces(1, SAFE)).resolves.toEqual({ choices: [7, 8], next: 8 })
+    const submit = (proposalNonce: number) => submitSafeBatch({
+      signal: flow, chainId: 1, authority: SAFE, steps, route: { kind: 'safe-owner', authorityKind: 'safe' }, proposalNonce,
+    })
+
+    await expect(submit(9)).rejects.toThrow('Safe nonce 9 is not available. Nothing was proposed; pick 7, 8.')
+    expect(posted).toHaveLength(0)
+    await expect(submit(7)).resolves.toMatchObject({ result: { status: 'queued', nonce: 7 } })
+    expect(posted[0]).toMatchObject({ to: MULTI_SEND_CALL_ONLY, nonce: '7' })
   })
 
   it('refuses a chain where MultiSendCallOnly has no code, before any signature', async () => {
