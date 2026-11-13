@@ -280,6 +280,27 @@ function YouCard({
   // Only a settled zero on every chain hides the actions: a failed read keeps them.
   const holdsNothing = !!heldByChain?.every(balance => balance === 0n)
 
+  // Credits claim as an ERC-20 only where the project has one.
+  const { data: claimableByChain } = useQuery({
+    queryKey: ['youClaimableByChain', address, chains],
+    enabled: !!address && !isRevnet,
+    staleTime: 30_000,
+    retry: 1,
+    queryFn: () =>
+      Promise.all(
+        chains.map(async ([cid, pid]) => {
+          const client = clientFor(cid as JBChainId)
+          const pair = { chainId: cid as JBChainId, projectId: BigInt(pid) }
+          const [credits, token] = await Promise.all([
+            getCreditBalance(client, { ...pair, holder: address! }),
+            getTokenAddress(client, pair),
+          ])
+          return !!token && credits > 0n
+        }),
+      ),
+  })
+  const nothingToClaim = !!claimableByChain?.every(claimable => !claimable)
+
   // Cash out is the card's one primary action.
   const actionBtn = (id: YouAction, label: string) => (
     <button
@@ -366,7 +387,7 @@ function YouCard({
             </table>
           </div>
 
-          {!isRevnet ? <ClaimCreditsAcrossChains home={[chainId, projectId]} chains={listed} holder={address!} /> : null}
+          {!isRevnet ? <ClaimCreditsAcrossChains home={[chainId, projectId]} chains={listed} holder={address!} nothingToClaim={nothingToClaim} /> : null}
 
           <div className="mt-4 flex flex-wrap gap-2">
             {!holdsNothing ? actionBtn('cashOut', 'Cash out') : null}

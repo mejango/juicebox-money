@@ -27,13 +27,15 @@ function reviewedCallsKey(calls: ProjectBatchCall[]): string {
   })), (_key, value) => typeof value === 'bigint' ? value.toString() : value)
 }
 
-export function ClaimCreditsAcrossChains({ home, chains, holder, onDone }: {
+export function ClaimCreditsAcrossChains({ home, chains, holder, nothingToClaim, onDone }: {
   home: ProjectPair
   chains: readonly ProjectTokenDestination[]
   holder: Address
+  /** The holder has no credits an ERC-20 can be claimed for: only a saved batch still shows. */
+  nothingToClaim?: boolean
   onDone?: () => void
 }) {
-  return <ProjectTokenBatchFlow action="claim-credits" home={home} chains={chains} holder={holder} onDone={onDone} />
+  return <ProjectTokenBatchFlow action="claim-credits" home={home} chains={chains} holder={holder} idle={nothingToClaim} onDone={onDone} />
 }
 
 export function AutoIssueAcrossChains({ home, chains, onDone }: {
@@ -56,13 +58,15 @@ export function AutoIssueAllocation({ home, chainId, projectId, stageId, benefic
     allocation={{ stageId, beneficiary }} onDone={onDone} />
 }
 
-function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDone }: {
+function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, idle, onDone }: {
   action: 'claim-credits' | 'auto-issuance'
   /** The page's own deployment, which the onchain registry links the others to. */
   home: ProjectPair
   chains: readonly ProjectTokenDestination[]
   holder?: Address
   allocation?: { stageId: string; beneficiary: Address }
+  /** Nothing to start: the button shows only for a saved batch. */
+  idle?: boolean
   onDone?: () => void
 }) {
   const { address, openSignIn } = useWallet()
@@ -184,7 +188,7 @@ function ProjectTokenBatchFlow({ action, home, chains, holder, allocation, onDon
     ]
   })
 
-  if (!chains.length) return null
+  if (!chains.length || (idle && !savedForDisplay && !open)) return null
   return (
     <div className={allocation ? 'text-right' : 'mt-3'}>
       <button type="button" disabled={busy} className={allocation
