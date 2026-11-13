@@ -605,11 +605,6 @@ function ReviewModal({
               {model.description}
             </p>
           </div>
-          {commitment ? (
-            <div className="mt-3 rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3 text-xs leading-relaxed text-bluebs-700">
-              {COMMITMENT_TEXT[commitment].banner}
-            </div>
-          ) : null}
 
           <div className="mt-4 space-y-4">
             {model.signatures.map((signature, index) => (
@@ -643,6 +638,11 @@ function ReviewModal({
             ))}
           </div>
 
+          {commitment ? (
+            <div className="mt-4 rounded-xl border border-bluebs-100 bg-bluebs-25 px-4 py-3 text-xs leading-relaxed text-bluebs-700">
+              {COMMITMENT_TEXT[commitment].banner}
+            </div>
+          ) : null}
           <details className="mt-4 overflow-hidden rounded-xl border border-smoke-200 bg-white">
             <summary className="cursor-pointer px-4 py-3 text-xs font-medium text-smoke-700 hover:bg-grey-25">
               Raw transaction payload
