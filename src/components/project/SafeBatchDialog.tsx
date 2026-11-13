@@ -58,15 +58,25 @@ function authorityTag(route: SafeBatchRoute): string {
   return route.authorityKind === 'contract' ? 'Contract' : 'Unknown'
 }
 
-function argumentText(value: unknown): string {
-  if (typeof value === 'bigint') return value.toString()
-  if (Array.isArray(value)) return `[${value.map(argumentText).join(', ')}]`
-  if (value && typeof value === 'object') {
-    return `{${Object.entries(value)
-      .map(([key, entry]) => `${key}: ${argumentText(entry)}`)
-      .join(', ')}}`
-  }
-  return String(value)
+/** One argument: a scalar as its text, a tuple or array as its named rows indented below. */
+function ArgumentValue({ value }: { value: unknown }) {
+  if (value === null || typeof value !== 'object') return <>{String(value)}</>
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [`${index + 1}`, item] as const)
+    : Object.entries(value)
+  if (!entries.length) return <>[]</>
+  return (
+    <dl className="ml-1 space-y-1 border-l border-smoke-100 pl-2">
+      {entries.map(([name, item]) => (
+        <div key={name}>
+          <dt className="font-sans text-smoke-500">{name}</dt>
+          <dd className="min-w-0 break-all">
+            <ArgumentValue value={item} />
+          </dd>
+        </div>
+      ))}
+    </dl>
+  )
 }
 
 /** The decoded call: `name(types)` and one row per named argument. */
@@ -87,7 +97,7 @@ function DecodedCall({ step }: { step: BatchStep }) {
             <div key={`${input.name ?? 'arg'}-${index}`} className="text-xs">
               <dt className="text-smoke-500">{input.name || `arg${index}`}</dt>
               <dd className="min-w-0 break-all font-mono text-ink">
-                {argumentText(step.args[index])}
+                <ArgumentValue value={step.args[index]} />
               </dd>
             </div>
           ))}
