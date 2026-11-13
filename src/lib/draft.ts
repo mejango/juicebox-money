@@ -323,6 +323,12 @@ export function parseDraft(text: string): CreateDraft {
     throw new Error("That doesn't look like a .jb file.")
   }
   const d = raw as Record<string, unknown>
+  // Juicescan saves a different draft shape (projectType, details, chainIds).
+  // Its rules do not map one to one onto this form, so the file is named
+  // instead of being half read.
+  if (typeof d.projectType === 'string' && d.details && typeof d.details === 'object' && Array.isArray(d.chainIds)) {
+    throw new Error('This draft was saved on Juicescan. Open it there.')
+  }
   if (!Array.isArray(d.stages) || typeof d.name !== 'string') {
     throw new Error('No Juicebox draft found in that file.')
   }

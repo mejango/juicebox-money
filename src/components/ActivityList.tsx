@@ -1246,6 +1246,7 @@ export function ActivityList({
             className="h-32 w-32 object-contain"
             aria-hidden
           />
+          <span className="sr-only">No activity yet.</span>
         </div>
       </div>
     )

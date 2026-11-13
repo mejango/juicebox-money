@@ -31,7 +31,7 @@ describe('explainCashOutChange', () => {
     const first = { balance: 100n, tokenSupply: 100n, cashOutTax: 0, price: 2, balanceUsd: 200n }
     expect(
       explainCashOutChange(first, { ...first, price: 1.5, balanceUsd: 150n }),
-    ).toBe('Cash-out price fell because token prices moved the USD value of the backing.')
+    ).toBe('Cash out price fell because token prices moved the USD value of the backing.')
     expect(
       explainCashOutChange(first, {
         balance: 80n,
@@ -41,7 +41,7 @@ describe('explainCashOutChange', () => {
         balanceUsd: 133n,
       }),
     ).toBe(
-      'Cash-out price fell because a cash out burned supply faster than it removed backing, increasing backing per remaining token and token prices moved the USD value of the backing.',
+      'Cash out price fell because a cash out burned supply faster than it removed backing, increasing backing per remaining token and token prices moved the USD value of the backing.',
     )
     expect(explainCashOutChange(first, { ...first, balance: 150n, balanceUsd: 300n })).not.toContain('token prices')
   })
@@ -52,7 +52,7 @@ describe('explainCashOutChange', () => {
     const first = { balance: 3_000n, tokenSupply: 1_000n, cashOutTax: 0, price: 2.925, mixedBacking: true }
     expect(
       explainCashOutChange(first, { ...first, balance: 4_000n, tokenSupply: 1_100n, price: 3.54545 }),
-    ).toBe('Cash-out price rose because the USD value of the backing rose and token supply increased.')
+    ).toBe('Cash out price rose because the USD value of the backing rose and token supply increased.')
   })
 
   it('explains a dilutive payment', () => {

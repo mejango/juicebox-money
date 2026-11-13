@@ -37,7 +37,7 @@ const METRICS: { value: Metric; label: string; chartLabel: string }[] = [
   },
   {
     value: 'fees',
-    label: 'Total fees to JBX',
+    label: 'Total fees to JBP6',
     chartLabel:
       'Cumulative protocol fees over time, shown as bars. Focus and use arrow keys to inspect values.',
   },

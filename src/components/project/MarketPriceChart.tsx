@@ -330,7 +330,7 @@ export function MarketPriceChart({
           ? 'Smooth uses time-weighted averages, so brief spikes carry only the weight of how long they lasted.'
           : 'Every trade shows each exact post-trade pool price.'}{' '}
         Arbitrage keeps the pool price between the issuance ceiling and the
-        cash-out floor.
+        cash out floor.
       </p>
     </div>
   )

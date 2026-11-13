@@ -92,7 +92,7 @@ export function cashOutExecutionErrorMessage(error: unknown): string {
     return 'The buyback pool moved below your protected minimum. Refresh the quote or choose a larger max slippage, then try again.'
   }
   if (classified?.code === 'TERMINAL_UNDER_MIN') {
-    return 'The project cash-out fell below your protected minimum. Refresh the quote and try again.'
+    return 'The project cash out fell below your protected minimum. Refresh the quote and try again.'
   }
   return error instanceof Error ? error.message : 'Something went wrong.'
 }
@@ -332,7 +332,7 @@ export function buildCashOutRequest({
   beneficiary: Address
 }): V6CashOutTxRequest {
   if (route.minimumReturn <= 0n) {
-    throw new Error('Nothing to reclaim for this cash-out.')
+    throw new Error('Nothing to reclaim for this cash out.')
   }
   return buildCashOutTx({
     chainId,

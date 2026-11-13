@@ -89,7 +89,7 @@ describe('buyback direction across the project, home, and account feeds', () => 
     expect(parts.amountRaw).toBe('23000000000000')
   })
 
-  it('keeps both cash-out and pool-sale amounts without describing a purchase', () => {
+  it('keeps both cash out and pool-sale amounts without describing a purchase', () => {
     const parts = combinedActivityParts([swapOf('sell'), cashOut], 'SBB')
     expect(plainAction(parts)).toBe(
       'cashed out 2.39 SBB and sold 2.34 SBB via the buyback pool',

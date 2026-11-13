@@ -12,6 +12,7 @@ import {
   buildPermit2ApproveTx,
   buildUniswapV4ExactInputSwapTx,
   chooseBestCashOutRoute,
+  getCashOutDelay,
   getHookAwareCashOutQuote,
   getTokenAddress,
   prepareHookAwareCashOut,
@@ -47,7 +48,7 @@ import {
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
-import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
+import { formatDate, etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { AllowedDecreaseField } from '@/components/project/AllowedDecreaseField'
@@ -302,6 +303,16 @@ export function CashOutPanel({
         ? chooseBestCashOutRoute({ cashOut: route, cashOutCount })
         : null
   const directSellWins = bestRoute?.kind === 'direct-swap'
+
+  // A revnet's cash out delay makes the terminal quote fail; say why instead of "try again shortly".
+  const { data: cashOutDelay } = useQuery({
+    queryKey: ['cashOutDelay', chainId, projectId],
+    enabled: !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () => getCashOutDelay(publicClient!, { chainId, revnetId: BigInt(projectId) }),
+  })
+  const delayActive = !!cashOutDelay && cashOutDelay > BigInt(Math.floor(Date.now() / 1000))
   const poolBufferBps = cashOutPoolBufferBps(route)
 
   const swapDeployment = directSellWins
@@ -490,7 +501,7 @@ export function CashOutPanel({
       })
       if (prepared.route.expectedReturn <= 0n) {
         throw new Error(
-          'The cash-out quote is no longer available. Review and try again.',
+          'The cash out quote is no longer available. Review and try again.',
         )
       }
       const request = prepared.transaction
@@ -568,7 +579,7 @@ export function CashOutPanel({
           refreshedCashOut.data.expectedReturn <= 0n
         ) {
           throw new Error(
-            'The cash-out quote is no longer available. Review and try again.',
+            'The cash out quote is no longer available. Review and try again.',
           )
         }
         const freshQuote = await quoteUniswapV4ExactInputSingle(publicClient!, {
@@ -587,7 +598,7 @@ export function CashOutPanel({
           slippageBps: BigInt(slippageBps),
         })
         if (refreshedBest.kind !== 'direct-swap') {
-          throw new Error('The pool no longer beats the project cash-out route. Review the refreshed quote.')
+          throw new Error('The pool no longer beats the project cash out route. Review the refreshed quote.')
         }
         const request = buildUniswapV4ExactInputSwapTx({
           chainId,
@@ -735,7 +746,7 @@ export function CashOutPanel({
       steps={[]}
       activeIndex={-1}
       busy
-      status="Getting a fresh cash-out quote…"
+      status="Getting a fresh cash out quote…"
       onClose={closeReview}
     />
   ) : null
@@ -875,7 +886,9 @@ export function CashOutPanel({
         {exceedsBalance ? (
           <span className="text-red-600">That&apos;s more than you hold.</span>
         ) : nothingToReclaim ? (
-          'The current cash-out quote returns no funds.'
+          'The current cash out quote returns no funds.'
+        ) : cashOutCount > 0n && quoteFailed && delayActive ? (
+          `Cash outs are locked until this revnet’s cash out delay passes (${formatDate(Number(cashOutDelay))}).`
         ) : cashOutCount > 0n && quoteFailed ? (
           'Couldn’t get a quote right now. Try again shortly.'
         ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (

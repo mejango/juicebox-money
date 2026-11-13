@@ -57,7 +57,7 @@ const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as Address
 // proves it is passed straight down without being rebuilt.
 const CLIENT = { __sentinel: 'public-client' } as unknown as PublicClient
 
-describe('cash-out arithmetic', () => {
+describe('cash out arithmetic', () => {
   it('derives the payment asymptote from issuance price and tax', () => {
     expect(minimumCashOutPriceAtIssuancePrice(0.0001, 4_000)).toBeCloseTo(
       0.00006,
@@ -224,7 +224,7 @@ describe('cash-out arithmetic', () => {
     ).toBeNull()
   })
 
-  it('has no cash-out price for an empty treasury or a supply-less project', () => {
+  it('has no cash out price for an empty treasury or a supply-less project', () => {
     const one = 10n ** 18n
     expect(
       minimumCashOutPriceFromTotals({
@@ -261,7 +261,7 @@ describe('cash-out arithmetic', () => {
     ).toBeNull()
   })
 
-  it('derives the asymptotic minimum cash-out price', () => {
+  it('derives the asymptotic minimum cash out price', () => {
     const one = 10n ** 18n
     expect(
       minimumCashOutPriceFromTotals({
@@ -282,7 +282,7 @@ describe('cash-out arithmetic', () => {
   })
 })
 
-describe('cash-out accounting context reads', () => {
+describe('cash out accounting context reads', () => {
   const usdcContext: JBAccountingContext = {
     token: USDC,
     decimals: 6,
@@ -346,7 +346,7 @@ describe('cash-out accounting context reads', () => {
   })
 })
 
-describe('cash-out transaction request', () => {
+describe('cash out transaction request', () => {
   it('explains the buyback hook slippage error instead of exposing its selector', () => {
     expect(
       // Read from revert data: text alone never names a revert (SDK 3.4).

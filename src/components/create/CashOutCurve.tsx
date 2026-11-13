@@ -49,7 +49,7 @@ export function CashOutCurve({ rate }: { rate: number }) {
         viewBox="0 0 220 150"
         className="h-auto w-full max-w-[300px] cursor-crosshair touch-none"
         role="img"
-        aria-label={`Cash-out curve at ${cashOutTaxValue(rate)} tax`}
+        aria-label={`Cash out curve at ${cashOutTaxValue(rate)} tax`}
         onPointerMove={onPointerMove}
         onPointerLeave={() => setHoverX(null)}
       >

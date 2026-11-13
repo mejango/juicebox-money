@@ -167,7 +167,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       if (!raw.length || raw.some(value => !/^[1-9]\d{0,77}$/.test(value))) throw new ReviewLineError('Select NFTs or enter valid positive token IDs.')
       const tokenIds = [...new Set(raw)].map(BigInt)
       if (tokenIds.length > MAX_DEFIFA_ACTION_NFTS) throw new ReviewLineError(`Select at most ${MAX_DEFIFA_ACTION_NFTS} NFTs per action.`)
-      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new ReviewLineError('NFT cash-out is not available in this phase.')
+      if (kind === 'cash-out' && shop.phase !== undefined && !defifaPhaseAllowsCashOut(shop.phase)) throw new ReviewLineError('NFT cash out is not available in this phase.')
       if (kind === 'transfer' && tokenIds.length !== 1) throw new ReviewLineError('Select exactly one NFT to transfer.')
       if (kind === 'transfer' && (!isAddress(recipient) || recipient === zeroAddress)) throw new ReviewLineError('Enter a valid nonzero recipient address.')
       const to = kind === 'transfer' ? recipient as Address : address
@@ -296,7 +296,7 @@ function OwnedNfts({ chainId, projectId, shop }: { chainId: JBChainId; projectId
       </div> : null}
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={transferOpen} disabled={busy || !!plan} onChange={event => { setTransferOpen(event.target.checked); if (!event.target.checked) setRecipient('') }} />Transfer one NFT to another address</label>
       {transferOpen ? <label className="block"><span className="field-label">Recipient</span><input className="input-well mt-1 w-full px-3 py-2 font-mono text-sm" value={recipient} autoComplete="off" spellCheck={false} disabled={busy || !!plan} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label> : null}
-      <div className="flex flex-wrap gap-3">{shop.phase === undefined || defifaPhaseAllowsCashOut(shop.phase) ? <button type="button" className="btn-primary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('cash-out')}>Cash out Defifa NFTs</button> : <p className="text-sm">NFT cash-out is not available in this phase.</p>}{transferOpen ? <button type="button" className="btn-secondary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('transfer')}>Transfer Defifa NFT</button> : null}</div>
+      <div className="flex flex-wrap gap-3">{shop.phase === undefined || defifaPhaseAllowsCashOut(shop.phase) ? <button type="button" className="btn-primary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('cash-out')}>Cash out Defifa NFTs</button> : <p className="text-sm">NFT cash out is not available in this phase.</p>}{transferOpen ? <button type="button" className="btn-secondary px-4 py-2" disabled={busy || !!plan} onClick={() => void prepare('transfer')}>Transfer Defifa NFT</button> : null}</div>
       </> : null}
     </>}
     {error ? <p role="alert" className="text-sm text-red-600">{error}</p> : null}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { shopCartTotal } from '@/lib/shop-cart-total'
+import { shopCartTotal, shopCheckoutBlocked } from '@/lib/shop-cart-total'
 
 describe('shop subtotal', () => {
   it('totals mixed discounted prices exactly, independently of category ordering and omitted quantities', () => {
@@ -17,5 +17,18 @@ describe('shop subtotal', () => {
     expect(shopCartTotal([], { 1: 2 })).toBe(0n)
     expect(shopCartTotal([{ id: 1, price: 100n, discountPercent: 0 }], {})).toBe(0n)
     expect(shopCartTotal([{ id: 1, price: 0n, discountPercent: 0 }], { 1: 8 })).toBe(0n)
+  })
+})
+
+describe('shop checkout gate', () => {
+  const ready = { count: 1, routesLoading: false, creditsLoading: false, creditsFailed: false, matchesToken: true }
+  it('lets a settled cart through and an empty cart never blocks', () => {
+    expect(shopCheckoutBlocked(ready)).toBe(false)
+    expect(shopCheckoutBlocked({ ...ready, count: 0, creditsFailed: true })).toBe(false)
+  })
+  it('waits for a credit read that failed, since unread credit is not zero credit', () => {
+    expect(shopCheckoutBlocked({ ...ready, creditsFailed: true })).toBe(true)
+    expect(shopCheckoutBlocked({ ...ready, creditsLoading: true })).toBe(true)
+    expect(shopCheckoutBlocked({ ...ready, matchesToken: false })).toBe(true)
   })
 })

@@ -357,7 +357,7 @@ export function PriceChart({
       now={now}
       symbol={symbol}
       baseSymbol={baseSymbol}
-      ariaLabel={`${symbol} issuance ceiling history through Now, with the cash-out price${showMinimum ? ', dotted minimum cash-out price,' : ','} and AMM price in ${baseSymbol}`}
+      ariaLabel={`${symbol} issuance ceiling history through Now, with the cash out price${showMinimum ? ', dotted minimum cash out price,' : ','} and AMM price in ${baseSymbol}`}
       header={
         <div className="flex flex-wrap items-center justify-between gap-4">
           <span className="flex min-w-0 flex-wrap items-center gap-2">

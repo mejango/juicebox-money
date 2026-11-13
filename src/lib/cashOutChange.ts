@@ -16,7 +16,7 @@ export function explainCashOutChange(
   previous: CashOutObservation | undefined,
   current: CashOutObservation,
 ): string {
-  if (!previous) return 'First indexed cash-out price observation.'
+  if (!previous) return 'First indexed cash out price observation.'
 
   const causes: string[] = []
   const balanceRose = current.balance > previous.balance
@@ -60,7 +60,7 @@ export function explainCashOutChange(
   }
   if (current.cashOutTax !== previous.cashOutTax) {
     causes.push(
-      `the cash-out tax changed from ${cashOutTaxValue(previous.cashOutTax)} to ${cashOutTaxValue(current.cashOutTax)}`,
+      `the cash out tax changed from ${cashOutTaxValue(previous.cashOutTax)} to ${cashOutTaxValue(current.cashOutTax)}`,
     )
   }
 
@@ -71,8 +71,8 @@ export function explainCashOutChange(
         ? 'fell'
         : 'was unchanged'
   return causes.length
-    ? `Cash-out price ${direction} because ${joinCauses(causes)}.`
-    : `Cash-out price ${direction}; the indexed backing, supply, and tax inputs did not change.`
+    ? `Cash out price ${direction} because ${joinCauses(causes)}.`
+    : `Cash out price ${direction}; the indexed backing, supply, and tax inputs did not change.`
 }
 
 function compareBackingPerToken(

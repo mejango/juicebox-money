@@ -1182,7 +1182,7 @@ export function MarketSection({
         <p className="mt-4 border-t border-smoke-100 pt-3 text-xs leading-relaxed text-smoke-500">
           The market fills orders that would give payers more {sym} than
           issuance. Arbitrage keeps its price between the issuance ceiling and
-          the cash-out floor.
+          the cash out floor.
         </p>
       </div>
 

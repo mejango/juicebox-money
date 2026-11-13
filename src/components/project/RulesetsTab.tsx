@@ -155,7 +155,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "cashOutTaxRate",
-      label: "Cash-out tax",
+      label: "Cash out tax",
       raw: String(m.cashOutTaxRate),
       value:
         m.cashOutTaxRate >= 10_000
@@ -484,6 +484,39 @@ function ruleRows(
       label: "Add price sources",
       value: m.allowAddPriceFeed ? "Allowed" : "Not allowed",
     },
+    ...dataHookRows(m),
+  ];
+}
+
+/**
+ * The data hook and what it is used for. A custom data hook can change what a
+ * payment mints and what a cash out returns, so a visitor checking the rules
+ * sees it beside them, not only in the cross-chain comparison.
+ */
+export function dataHookRows(m: JBRulesetWithMetadata["metadata"]): RuleRow[] {
+  const dataHook = String(m.dataHook ?? zeroAddress);
+  const none = dataHook.toLowerCase() === zeroAddress;
+  return [
+    {
+      section: "Other rules",
+      label: "Data hook",
+      value: none ? "None" : dataHook,
+    },
+    {
+      section: "Other rules",
+      label: "Use data hook for payments",
+      value: m.useDataHookForPay ? "Yes" : "No",
+    },
+    {
+      section: "Other rules",
+      label: "Use data hook for cash outs",
+      value: m.useDataHookForCashOut ? "Yes" : "No",
+    },
+    {
+      section: "Other rules",
+      label: "Cash outs use total surplus",
+      value: m.scopeCashOutsToLocalBalances ? "No, this chain only" : "Yes",
+    },
   ];
 }
 
@@ -539,7 +572,7 @@ function StackedRule({
       <dt className="text-xs text-smoke-500">
         {note ? <ConceptTerm note={note}>{label}</ConceptTerm> : label}
       </dt>
-      <dd className="mt-1 text-left font-medium leading-snug text-ink">
+      <dd className="mt-1 text-left font-medium leading-snug text-ink [overflow-wrap:anywhere]">
         {value}
       </dd>
       {hint ? (
