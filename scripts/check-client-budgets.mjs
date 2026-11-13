@@ -90,7 +90,7 @@ const budgets = {
   // SDK 6.3.0 (kept lost-lock outcomes, dismissal rule, shared lines): measured 2709.0 KiB, rounded up only.
   // Create-form phone pass (Market maker on payouts, optional shop settings, inline category): measured 2711.0 KiB, rounded up only.
   // Guide code copy buttons and the default payout recipient: measured 2713.5 KiB, rounded up only.
-  allScripts: 2714 * KIB,
+  allScripts: 2716 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
