@@ -420,24 +420,29 @@ function SignatureView({
   signature,
   index,
   total,
+  headerAction,
 }: {
   signature: ReviewSignatureModel
   index: number
   total: number
+  headerAction?: ReactNode
 }) {
   return (
     <section className="rounded-xl border border-smoke-200 bg-white p-4 sm:p-5">
       <p className="mb-2 text-xs font-medium uppercase tracking-wide text-smoke-500">
         {total > 1 ? `Signature ${index + 1} of ${total}` : 'Signature'}
       </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
-          <ChainIcon chainId={signature.chainId} size={16} />
-          {chainName(signature.chainId)}
-        </span>
-        <span className="font-mono text-[11px] text-smoke-500">
-          chain {signature.chainId}
-        </span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="chip flex items-center gap-1.5 bg-bluebs-50 text-bluebs-700">
+            <ChainIcon chainId={signature.chainId} size={16} />
+            {chainName(signature.chainId)}
+          </span>
+          <span className="font-mono text-[11px] text-smoke-500">
+            chain {signature.chainId}
+          </span>
+        </div>
+        {headerAction}
       </div>
       <h3 className="mt-3 font-agrandir text-base font-medium text-ink">
         {SIGNATURE_KINDS[signature.kind]}
@@ -540,6 +545,17 @@ function ReviewModal({
     window.setTimeout(() => setCopyState('idle'), 2200)
   }
 
+  // One audit prompt per review, on its first signature or, with none, its first call.
+  const copyButton = (
+    <button type="button" onClick={copyPrompt} className="btn-link min-h-[36px] text-xs">
+      {copyState === 'copied'
+        ? 'Prompt copied — paste into your LLM'
+        : copyState === 'failed'
+          ? 'Could not copy prompt'
+          : '[copy tx audit prompt]'}
+    </button>
+  )
+
   const titleId = `transaction-review-title-${pending.id}`
   const descriptionId = `transaction-review-description-${pending.id}`
   if (model.warnings.some(warning => warning.code === 'unreadable')) {
@@ -613,6 +629,7 @@ function ReviewModal({
                 signature={signature}
                 index={index}
                 total={model.signatures.length}
+                headerAction={index === 0 ? copyButton : null}
               />
             ))}
             {model.calls.map((call, index) => (
@@ -621,19 +638,7 @@ function ReviewModal({
                 call={call}
                 index={index}
                 total={model.calls.length}
-                headerAction={index === 0 ? (
-                  <button
-                    type="button"
-                    onClick={copyPrompt}
-                    className="btn-link min-h-[36px] text-xs"
-                  >
-                    {copyState === 'copied'
-                      ? 'Prompt copied — paste into your LLM'
-                      : copyState === 'failed'
-                        ? 'Could not copy prompt'
-                        : '[copy tx audit prompt]'}
-                  </button>
-                ) : null}
+                headerAction={index === 0 && !model.signatures.length ? copyButton : null}
               />
             ))}
           </div>
