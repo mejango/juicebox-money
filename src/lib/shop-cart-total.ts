@@ -10,3 +10,17 @@ export function shopCartTotal(
     0n,
   )
 }
+
+/**
+ * Whether a cart must wait before checkout. A credit read that failed is not
+ * zero credits: checkout waits for it, so credits are never left unspent.
+ */
+export function shopCheckoutBlocked(cart: {
+  count: number
+  routesLoading: boolean
+  creditsLoading: boolean
+  creditsFailed: boolean
+  matchesToken: boolean
+}): boolean {
+  return cart.count > 0 && (cart.routesLoading || cart.creditsLoading || cart.creditsFailed || !cart.matchesToken)
+}

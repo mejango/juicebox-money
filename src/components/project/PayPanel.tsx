@@ -87,7 +87,7 @@ import { paymentSequenceLocked } from "@/lib/payment-sequence-lock";
 import { NFT_CHECKOUT_PREVIEW_PAGE_SIZE, useShop721, useShop721Media, type Shop, type TierMedia } from "@/hooks/useShop721";
 import { CheckoutAmountRow, CHECKOUT_AMOUNT_INPUT_CLASS } from "@/components/project/CheckoutAmountRow";
 import { NftCartLine } from "@/components/project/NftCartLine";
-import { shopCartTotal } from "@/lib/shop-cart-total";
+import { shopCartTotal, shopCheckoutBlocked } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField";
 import dynamic from 'next/dynamic'
@@ -678,7 +678,7 @@ export function PayPanel({
     }
   }, [shop, cart, registerItem, setQuantity]);
 
-  const { data: shopCredits = 0n, isLoading: shopCreditsLoading } = useQuery({
+  const { data: shopCredits = 0n, isLoading: shopCreditsLoading, isError: shopCreditsFailed, refetch: refetchShopCredits } = useQuery({
     queryKey: ["payShopCredits", chainId, shop?.hook, address],
     enabled: !!publicClient && !!shop && !!address,
     staleTime: 15_000,
@@ -1292,8 +1292,13 @@ export function PayPanel({
     addBalanceViaRouter ||
     (surface?.pausePay && mode === "pay");
   const formBlocked = busy || formClosed;
-  const cartBlocked =
-    cartCount > 0 && (shopRoutesLoading || shopCreditsLoading || !shopMatchesToken);
+  const cartBlocked = shopCheckoutBlocked({
+    count: cartCount,
+    routesLoading: shopRoutesLoading,
+    creditsLoading: shopCreditsLoading,
+    creditsFailed: shopCreditsFailed,
+    matchesToken: shopMatchesToken,
+  });
   const cartKey = tierIds.join(",");
 
   // The last check before the wallet: the same guards, the payment's preparation
@@ -1940,6 +1945,18 @@ export function PayPanel({
         ) : null}
       </div>
 
+      {mode === "pay" && cartCount > 0 && shopCreditsFailed ? (
+        <p role="alert" className="mt-4 text-sm text-red-600">
+          Couldn&apos;t read your shop credit.{" "}
+          <button
+            type="button"
+            onClick={() => void refetchShopCredits()}
+            className="font-medium underline underline-offset-2"
+          >
+            Try again
+          </button>
+        </p>
+      ) : null}
       {/* Selected shop items share the payment receipt shown above. */}
       {mode === "pay" && cartCount > 0 && shopFailed ? (
         <p role="alert" className="mt-4 text-sm text-red-600">
