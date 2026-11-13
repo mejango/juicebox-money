@@ -315,6 +315,14 @@ const contractFixtures = [
     result: [ruleset, rulesetMetadata],
   },
   {
+    name: 'JBController.upcomingRulesetOf',
+    address: CONTROLLER,
+    abi: jbControllerAbi,
+    functionName: 'upcomingRulesetOf',
+    args: [1n],
+    result: [ruleset, rulesetMetadata],
+  },
+  {
     name: 'JBController.allRulesetsOf',
     address: CONTROLLER,
     abi: jbControllerAbi,
