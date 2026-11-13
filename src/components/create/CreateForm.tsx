@@ -572,7 +572,7 @@ export function CreateForm() {
     (customOn ? "token" : accepts.includes("eth") ? "eth" : "usd");
   const storeUsd = effectiveStoreCurrency === "usd";
   const tokenLabel =
-    flavor === "revnet" && ticker.trim() ? `$${ticker.trim()}` : "tokens";
+    flavor === "revnet" && ticker.trim() ? ticker.trim() : "tokens";
   const multiToken = !customOn && accepts.length > 1;
   const accountingDecimals = customActive
     ? customMeta.decimals
@@ -2587,7 +2587,7 @@ export function CreateForm() {
         flavor === "simple"
           ? "Simple project"
           : flavor === "revnet"
-            ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ""}`
+            ? `Revnet${ticker.trim() ? ` — ${ticker.trim()}` : ""}`
             : "Project",
     },
     {
@@ -2599,7 +2599,7 @@ export function CreateForm() {
     {
       label: "Accounting",
       value: customOn
-        ? `$${customMeta?.symbol ?? "TOKEN"}`
+        ? (customMeta?.symbol ?? "TOKEN")
         : accepts.map((t) => (t === "eth" ? "ETH" : "USDC")).join(" + "),
     },
     ...stageRows,
@@ -3179,7 +3179,7 @@ export function CreateForm() {
               />
               {customMeta ? (
                 <p className="mt-1.5 text-xs text-smoke-700">
-                  ${customMeta.symbol} | {customMeta.decimals} decimals |
+                  {customMeta.symbol} | {customMeta.decimals} decimals |
                   verified on {selected.map((id) => chainName(id)).join(", ")}
                 </p>
               ) : customChainError ? (
@@ -3982,7 +3982,7 @@ export function CreateForm() {
                   ? ([
                       [
                         "token",
-                        `$${customMeta?.symbol ?? "TOKEN"}`,
+                        (customMeta?.symbol ?? "TOKEN"),
                         "Project token",
                       ],
                     ] as const)
@@ -4207,7 +4207,7 @@ export function CreateForm() {
               {flavor === "simple"
                 ? "Simple project"
                 : flavor === "revnet"
-                  ? `Revnet${ticker.trim() ? ` — $${ticker.trim()}` : ""}`
+                  ? `Revnet${ticker.trim() ? ` — ${ticker.trim()}` : ""}`
                   : "Project"}
             </dd>
           </div>
@@ -4215,7 +4215,7 @@ export function CreateForm() {
             <dt className="text-smoke-700">Accounting</dt>
             <dd>
               {customOn
-                ? `$${customMeta?.symbol ?? "TOKEN"}`
+                ? (customMeta?.symbol ?? "TOKEN")
                 : accepts
                     .map((t) => (t === "eth" ? "ETH" : "USDC"))
                     .join(" + ")}{" "}

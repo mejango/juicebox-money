@@ -96,7 +96,7 @@ export function TokenPanel({
           label: 'Symbol',
           dd: (
             <dd className="font-medium text-ink">
-              {meta?.[0]?.result ? `$${meta[0].result}` : '—'}
+              {meta?.[0]?.result || '—'}
             </dd>
           ),
         },
