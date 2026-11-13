@@ -38,22 +38,18 @@ import { revLoansAddress, tokenMeta } from '@/components/project/LoansSection'
 import { contextRows, TxProgress, type TxConfirmRow } from '@/components/ui/TxProgress'
 import { TxError } from '@/components/ui/TxError'
 import { etherscanTxUrl, formatDate, formatTokenAmount } from '@/lib/format'
-import { netLoanProceeds } from '@/lib/loanFees'
+import { MAX_PREPAID_FEE_PERCENT, MIN_PREPAID_FEE_PERCENT, netLoanProceeds } from '@/lib/loanFees'
 import { chainName } from '@/lib/urn'
 import { ConceptTerm } from '@/components/project/ConceptTerm'
-import { ChipButton } from '@/components/create/ui'
 import { PROTOCOL_CONCEPTS } from '@/lib/protocol-concepts'
 
 const BURN_TOKENS = JBPermissionIdsV6.BURN_TOKENS
 
-/** Prepaid-fee choices, out of 1000. Prepaying more buys more fee-free time
- *  before the repayment cost starts to grow (see the SDK MIN_PREPAID_FEE_PERCENT
- *  docstring). 25 (2.5%) is the on-chain minimum — 0 reverts. */
-const PREPAID_OPTIONS = [
-  { value: 25, label: '2.5%' },
-  { value: 50, label: '5%' },
-  { value: 100, label: '10%' },
-] as const
+/** The prepaid fee, out of 1000, from the protocol minimum to its maximum in 2.5% steps. Prepaying more buys
+ *  more fee-free time before the repayment cost starts to grow. Below the minimum reverts. */
+const PREPAID_MIN = Number(MIN_PREPAID_FEE_PERCENT)
+const PREPAID_MAX = Number(MAX_PREPAID_FEE_PERCENT)
+const PREPAID_STEP = 25
 
 /** A reviewed borrow: the inputs are frozen so what the user confirms is what
  *  gets sent (the min is re-quoted fresh at submit). */
@@ -113,7 +109,7 @@ export function GetLoanFlow({
 
   const [amount, setAmount] = useState('')
   const [ctxToken, setCtxToken] = useState<Address | null>(null)
-  const [prepaid, setPrepaid] = useState<number>(PREPAID_OPTIONS[0].value)
+  const [prepaid, setPrepaid] = useState<number>(PREPAID_MIN)
   const [review, setReview] = useState<ReviewedBorrow | null>(null)
   const [flowError, setFlowError] = useState<string | null>(null)
   const [quoting, setQuoting] = useState(false)
@@ -522,26 +518,25 @@ export function GetLoanFlow({
             </label>
           ) : null}
 
-          <div role="group" aria-label="Prepaid fee">
+          <label className="block">
             <span className="field-label">
-              <ConceptTerm note={PROTOCOL_CONCEPTS.prepaidFee}>Prepaid fee</ConceptTerm>
+              <ConceptTerm note={PROTOCOL_CONCEPTS.prepaidFee}>Prepaid fee</ConceptTerm>: {prepaid / 10}%
             </span>
-            <div className="mt-1.5 flex flex-wrap gap-2">
-              {PREPAID_OPTIONS.map(o => (
-                <ChipButton
-                  key={o.value}
-                  active={prepaid === o.value}
-                  disabled={busy}
-                  onClick={() => {
-                    setPrepaid(o.value)
-                    resetInputs()
-                  }}
-                >
-                  {o.label}
-                </ChipButton>
-              ))}
-            </div>
-          </div>
+            <input
+              type="range"
+              aria-label="Prepaid fee"
+              min={PREPAID_MIN}
+              max={PREPAID_MAX}
+              step={PREPAID_STEP}
+              value={prepaid}
+              disabled={busy}
+              onChange={event => {
+                setPrepaid(Number(event.target.value))
+                resetInputs()
+              }}
+              className="mt-1.5 block w-full max-w-xs"
+            />
+          </label>
 
           {collateral > 0n ? (
             <p className="text-xs text-smoke-700">

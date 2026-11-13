@@ -80,6 +80,7 @@ import {
 import { netLoanProceeds } from '@/lib/loanFees'
 import { tokenSymbol as readTokenSymbol } from '@/lib/token-symbol'
 import { byChainOrder } from '@/lib/chainDisplay'
+import { holderActionChains } from '@/lib/holder-action-chains'
 import { chainName } from '@/lib/urn'
 import { PERSIST } from '@/lib/query-persist'
 import { ChartNoteTip } from '@/components/project/ChartNoteTip'
@@ -301,6 +302,14 @@ function YouCard({
   })
   const nothingToClaim = !!claimableByChain?.every(claimable => !claimable)
 
+  // Cash out, loan and burn run on one chain. The holder picks among the chains they hold on, starting from the
+  // page's chain when they hold there. An unread balance keeps its chain listed.
+  const [actionChain, setActionChain] = useState<number | null>(null)
+  const actionChains = holderActionChains(chains, heldByChain)
+  const [activeChainId, activeProjectId] =
+    actionChains.find(([cid]) => cid === (actionChain ?? chainId)) ?? actionChains[0] ?? [chainId, projectId]
+  const picksChain = action === 'cashOut' || action === 'burn' || action === 'loan'
+
   // Cash out is the card's one primary action.
   const actionBtn = (id: YouAction, label: string) => (
     <button
@@ -403,23 +412,42 @@ function YouCard({
               onClose={() => setAction(null)}
               maxWidth="max-w-xl"
             >
+              {picksChain && actionChains.length > 1 ? (
+                <label className="mb-4 block">
+                  <span className="field-label">On</span>
+                  <select
+                    value={activeChainId}
+                    onChange={event => setActionChain(Number(event.target.value))}
+                    className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
+                  >
+                    {actionChains.map(([cid]) => (
+                      <option key={cid} value={cid}>
+                        {chainName(cid)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              ) : null}
               {action === 'cashOut' ? (
                 <CashOutPanel
-                  chainId={chainId}
-                  projectId={projectId}
+                  key={activeChainId}
+                  chainId={activeChainId as JBChainId}
+                  projectId={activeProjectId}
                   showHeading={false}
                 />
               ) : action === 'burn' ? (
                 <BurnTokensFlow
-                  chainId={chainId}
-                  projectId={projectId}
+                  key={activeChainId}
+                  chainId={activeChainId as JBChainId}
+                  projectId={activeProjectId}
                   tokenSymbol={collateralSymbol}
                   showHeading={false}
                 />
               ) : action === 'loan' ? (
                 <GetLoanFlow
-                  chainId={chainId}
-                  projectId={projectId}
+                  key={activeChainId}
+                  chainId={activeChainId as JBChainId}
+                  projectId={activeProjectId}
                   collateralSymbol={collateralSymbol}
                 />
               ) : action === 'move' ? (

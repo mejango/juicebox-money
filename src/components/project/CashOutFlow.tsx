@@ -12,6 +12,7 @@ import {
   buildPermit2ApproveTx,
   buildUniswapV4ExactInputSwapTx,
   chooseBestCashOutRoute,
+  getCashOutDelay,
   getHookAwareCashOutQuote,
   getTokenAddress,
   prepareHookAwareCashOut,
@@ -47,7 +48,7 @@ import {
 import { buildErc20ApproveRequest as buildTokenApproval } from '@/lib/transaction-builders'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
-import { etherscanTxUrl, formatTokenAmount } from '@/lib/format'
+import { formatDate, etherscanTxUrl, formatTokenAmount } from '@/lib/format'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { resolveMarket } from '@/components/project/MarketSection'
 import { AllowedDecreaseField } from '@/components/project/AllowedDecreaseField'
@@ -302,6 +303,16 @@ export function CashOutPanel({
         ? chooseBestCashOutRoute({ cashOut: route, cashOutCount })
         : null
   const directSellWins = bestRoute?.kind === 'direct-swap'
+
+  // A revnet's cash out delay makes the terminal quote fail; say why instead of "try again shortly".
+  const { data: cashOutDelay } = useQuery({
+    queryKey: ['cashOutDelay', chainId, projectId],
+    enabled: !!publicClient,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: () => getCashOutDelay(publicClient!, { chainId, revnetId: BigInt(projectId) }),
+  })
+  const delayActive = !!cashOutDelay && cashOutDelay > BigInt(Math.floor(Date.now() / 1000))
   const poolBufferBps = cashOutPoolBufferBps(route)
 
   const swapDeployment = directSellWins
@@ -876,6 +887,8 @@ export function CashOutPanel({
           <span className="text-red-600">That&apos;s more than you hold.</span>
         ) : nothingToReclaim ? (
           'The current cash-out quote returns no funds.'
+        ) : cashOutCount > 0n && quoteFailed && delayActive ? (
+          `Cash outs are locked until this revnet’s cash out delay passes (${formatDate(Number(cashOutDelay))}).`
         ) : cashOutCount > 0n && quoteFailed ? (
           'Couldn’t get a quote right now. Try again shortly.'
         ) : cashOutCount > 0n && route && route.expectedReturn > 0n ? (
