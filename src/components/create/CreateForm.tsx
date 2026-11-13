@@ -3543,7 +3543,7 @@ export function CreateForm() {
                     </button>
                   ) : null}
                   <p className="mt-1.5 text-xs text-smoke-700">
-                    Square works best. Up to 1MB — optional.
+                    Square works best. Up to 25 MB. Optional.
                   </p>
                   {logoError ? (
                     <p className="mt-1 text-xs text-red-600">{logoError}</p>

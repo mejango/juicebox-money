@@ -1826,7 +1826,7 @@ function RulesFields({
         />
         <label className="block">
           <span className="field-label">
-            <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash-out tax</ConceptTerm>
+            <ConceptTerm note={PROTOCOL_CONCEPTS.cashOutTax}>Cash out tax</ConceptTerm>
           </span>
           <TaxValueInput
             pct={rules.cashOutTaxPct}
@@ -2114,7 +2114,7 @@ function describe(s: EditorState): { label: string; value: string }[] {
     },
     { label: "Issuance cut", value: `${Number(s.weightCutPct)}%` },
     { label: "Reserved", value: `${Number(s.reservedPct)}%` },
-    { label: "Cash-out tax", value: cashOutTaxValue(pctToBp(s.cashOutTaxPct)) },
+    { label: "Cash out tax", value: cashOutTaxValue(pctToBp(s.cashOutTaxPct)) },
     { label: "Payments", value: s.pausePay ? "Paused" : "Open" },
     {
       label: "Payouts",

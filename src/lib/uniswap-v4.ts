@@ -145,12 +145,12 @@ export function amountsModeNote(inputs: {
   }
   if (solved.anchor === 'floor') {
     return inputs.floorHint && solved.minPrice === inputs.floorHint
-      ? 'Floor anchored at the cash-out price — below it, cashing out beats selling.'
-      : 'Floor set to half the current price (no cash-out floor available).'
+      ? 'Floor anchored at the cash out price — below it, cashing out beats selling.'
+      : 'Floor set to half the current price (no cash out floor available).'
   }
   return inputs.ceilingHint && solved.maxPrice === inputs.ceilingHint
-    ? `Your ${tokenSymbol} side needs more room than the cash-out floor allows, so the ceiling is anchored at the issuance price instead.`
-    : `Your ${tokenSymbol} side needs more room than the cash-out floor allows, so the ceiling is set to twice the current price.`
+    ? `Your ${tokenSymbol} side needs more room than the cash out floor allows, so the ceiling is anchored at the issuance price instead.`
+    : `Your ${tokenSymbol} side needs more room than the cash out floor allows, so the ceiling is set to twice the current price.`
 }
 
 export function tickUpperOf(positionInfo: bigint): number {

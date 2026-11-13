@@ -17,7 +17,7 @@ import { writeHolds } from '@/lib/write-holds'
 import { DEFIFA_HOLDINGS_QUERY_PREFIX, SHOP_721_QUERY_PREFIX } from '@/hooks/useShop721'
 import { clearDefifaWriteRecovery, defifaWriteNamespace, notifyRecovery, readDefifaWriteRecovery, DEFIFA_RECOVERY_QUERY_PREFIX, DEFIFA_RECOVERY_CHANGE_EVENT, type DefifaWriteAction } from '@/lib/defifa-write-recovery'
 /** How often a shown hold is asked again while this card is open. */
-const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash-out', transfer: 'NFT transfer' }
+const actionLabel = { pay: 'NFT mint', 'cash-out': 'NFT cash out', transfer: 'NFT transfer' }
 const describe = (error: unknown) => error instanceof Error ? error.message : 'The original transaction could not be verified.'
 
 /** Reads the original SDK journal before another quote, including after a closed phase or remount. */

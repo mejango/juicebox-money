@@ -501,7 +501,7 @@ export function CashOutPanel({
       })
       if (prepared.route.expectedReturn <= 0n) {
         throw new Error(
-          'The cash-out quote is no longer available. Review and try again.',
+          'The cash out quote is no longer available. Review and try again.',
         )
       }
       const request = prepared.transaction
@@ -579,7 +579,7 @@ export function CashOutPanel({
           refreshedCashOut.data.expectedReturn <= 0n
         ) {
           throw new Error(
-            'The cash-out quote is no longer available. Review and try again.',
+            'The cash out quote is no longer available. Review and try again.',
           )
         }
         const freshQuote = await quoteUniswapV4ExactInputSingle(publicClient!, {
@@ -598,7 +598,7 @@ export function CashOutPanel({
           slippageBps: BigInt(slippageBps),
         })
         if (refreshedBest.kind !== 'direct-swap') {
-          throw new Error('The pool no longer beats the project cash-out route. Review the refreshed quote.')
+          throw new Error('The pool no longer beats the project cash out route. Review the refreshed quote.')
         }
         const request = buildUniswapV4ExactInputSwapTx({
           chainId,
@@ -746,7 +746,7 @@ export function CashOutPanel({
       steps={[]}
       activeIndex={-1}
       busy
-      status="Getting a fresh cash-out quote…"
+      status="Getting a fresh cash out quote…"
       onClose={closeReview}
     />
   ) : null
@@ -886,7 +886,7 @@ export function CashOutPanel({
         {exceedsBalance ? (
           <span className="text-red-600">That&apos;s more than you hold.</span>
         ) : nothingToReclaim ? (
-          'The current cash-out quote returns no funds.'
+          'The current cash out quote returns no funds.'
         ) : cashOutCount > 0n && quoteFailed && delayActive ? (
           `Cash outs are locked until this revnet’s cash out delay passes (${formatDate(Number(cashOutDelay))}).`
         ) : cashOutCount > 0n && quoteFailed ? (

@@ -86,7 +86,7 @@ export async function generateMetadata({
   if (!resolved) notFound()
   const label = resolved.ensName ?? truncateAddress(resolved.address)
   return {
-    title: `${label} — Account`,
+    title: `${label}, account`,
     description: `Activity, holdings, owned projects, and operator permissions for ${label} on Juicebox.`,
   }
 }

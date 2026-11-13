@@ -240,7 +240,7 @@ export function GetLoanFlow({
       })
       if (fresh.borrowableNow <= 0n) {
         throw new Error(
-          'Loans are locked until this revnet’s cash-out delay passes — nothing was sent.',
+          'Loans are locked until this revnet’s cash out delay passes — nothing was sent.',
         )
       }
       const borrow = reviewedCall(buildBorrowTx({
@@ -301,7 +301,7 @@ export function GetLoanFlow({
       })
       if (fresh.borrowableNow <= 0n) {
         throw new Error(
-          'Loans are locked until this revnet’s cash-out delay passes.',
+          'Loans are locked until this revnet’s cash out delay passes.',
         )
       }
       const hasBurnPermission = await hasPermissions(publicClient, {
@@ -452,7 +452,7 @@ export function GetLoanFlow({
         </p>
       ) : delayActive ? (
         <p className="callout callout-warning mt-3 text-xs">
-          Loans are locked until this revnet’s cash-out delay passes
+          Loans are locked until this revnet’s cash out delay passes
           {cashOutDelay ? ` (${formatDate(Number(cashOutDelay))})` : ''}.
         </p>
       ) : (
@@ -546,7 +546,7 @@ export function GetLoanFlow({
                   ? 'Could not read the live loan quote. Try again shortly.'
                   : borrowableNow > 0n && meta
                     ? `You can receive up to ~${formatTokenAmount(netLoanProceeds(borrowableNow, BigInt(prepaid)), meta.decimals)} ${meta.symbol} after fees.`
-                    : 'Loans are locked until this revnet’s cash-out delay passes.'}
+                    : 'Loans are locked until this revnet’s cash out delay passes.'}
             </p>
           ) : null}
 

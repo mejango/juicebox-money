@@ -38,11 +38,11 @@ describe('amountsModeNote', () => {
     expect(noteFor(0, 0)).toContain('Enter')
   })
 
-  it('explains the cash-out floor anchor', () => {
-    expect(noteFor(1_000, 0.08)).toContain('cash-out')
+  it('explains the cash out floor anchor', () => {
+    expect(noteFor(1_000, 0.08)).toContain('cash out')
   })
 
-  it('explains the fallback floor when no cash-out floor exists', () => {
+  it('explains the fallback floor when no cash out floor exists', () => {
     expect(noteFor(1_000, 0.08, { floorHint: null, ceilingHint: CEILING })).toContain(
       'half the current price',
     )

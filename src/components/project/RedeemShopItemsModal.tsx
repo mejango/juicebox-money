@@ -175,7 +175,7 @@ export function RedeemShopItemsModal({
       if (!inventory || inventory.protocol !== 'jb721' ||
           inventory.hook.toLowerCase() !== target.hook.toLowerCase() ||
           inventory.metadataIdTarget.toLowerCase() !== target.idTarget.toLowerCase()) {
-        throw new Error('The collection changed. Use its native NFT cash-out flow.')
+        throw new Error('The collection changed. Use its native NFT cash out flow.')
       }
 
       // The index is only a candidate set. Verify every selected NFT against
@@ -213,7 +213,7 @@ export function RedeemShopItemsModal({
         token: context.token,
       })
       if (terminal.isRouter) {
-        throw new Error('No project cash-out terminal is available here.')
+        throw new Error('No project cash out terminal is available here.')
       }
 
       const metadata = build721CashOutMetadata({

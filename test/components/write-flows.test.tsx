@@ -590,7 +590,7 @@ describe('auto-issuance write flow', () => {
   })
 })
 
-describe('cash-out write flow', () => {
+describe('cash out write flow', () => {
   it('wallet-action:cash-out-project-tokens debounces the amount and sends the exact freshly rendered quote floor', async () => {
     vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer
@@ -652,7 +652,7 @@ describe('cash-out write flow', () => {
     return options.intent
   }
 
-  it('passes the key the last release built for this cash-out as legacy, so its unresolved attempt still holds the retry', async () => {
+  it('passes the key the last release built for this cash out as legacy, so its unresolved attempt still holds the retry', async () => {
     vi.useFakeTimers()
     let renderer!: TestRenderer.ReactTestRenderer
     await act(async () => {
@@ -669,7 +669,7 @@ describe('cash-out write flow', () => {
     await act(async () => renderer.unmount())
   })
 
-  it("keys a cash-out by its project, never by a token address that loads later", async () => {
+  it("keys a cash out by its project, never by a token address that loads later", async () => {
     // The symbol read failed: the cash-out still proceeds through the terminal.
     mocks.tokenSymbol = undefined
     const before = await cashOutIntentSent()
@@ -842,11 +842,11 @@ describe('cash-out write flow', () => {
     expect(mocks.send).not.toHaveBeenCalled()
     expect(renderedText(renderer.root)).not.toContain('Confirm cash out')
     expect(renderedText(renderer.root)).toContain(
-      'The cash-out quote is no longer available.',
+      'The cash out quote is no longer available.',
     )
   })
 
-  it('signs in before attempting a cash-out and links an empty holder to pay', async () => {
+  it('signs in before attempting a cash out and links an empty holder to pay', async () => {
     mocks.connected = false
     mocks.address = undefined
     let renderer!: TestRenderer.ReactTestRenderer

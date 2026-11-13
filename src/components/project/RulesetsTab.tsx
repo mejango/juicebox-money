@@ -155,7 +155,7 @@ function rulesetSyncFields(entry: JBRulesetWithMetadata): RulesetSyncField[] {
     },
     {
       key: "cashOutTaxRate",
-      label: "Cash-out tax",
+      label: "Cash out tax",
       raw: String(m.cashOutTaxRate),
       value:
         m.cashOutTaxRate >= 10_000

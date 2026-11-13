@@ -343,7 +343,7 @@ describe('activityParts raw amounts', () => {
     expect(parts.amountUsd).toBe('2500000000000000000')
   })
 
-  it('surfaces cash-out reclaim and payout amounts', () => {
+  it('surfaces cash out reclaim and payout amounts', () => {
     const cashOut = activityParts(
       {
         ...base,

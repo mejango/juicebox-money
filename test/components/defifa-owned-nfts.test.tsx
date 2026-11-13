@@ -164,7 +164,7 @@ describe('native owned NFT actions', () => {
     await click('Transfer Defifa NFT')
     expect(m.transfer).toHaveBeenCalledTimes(2); expect(m.transfer.mock.calls[1][1]).toMatchObject({ recipient: OTHER, tokenId: 1000000001n })
   })
-  it.each([0, 3])('does not offer cash-out in phase %s but retains transfers', async phase => {
+  it.each([0, 3])('does not offer cash out in phase %s but retains transfers', async phase => {
     await act(async () => renderer.update(element(1, { ...shop, phase })))
     await gate(1)
     expect(renderer.root.findAllByType('button').find(node => text(node) === 'Cash out Defifa NFTs')).toBeUndefined()

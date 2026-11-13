@@ -273,7 +273,7 @@ export function RevnetPriceCard({
           }
         })().catch(error => {
           if (process.env.NODE_ENV !== 'production') {
-            console.warn('Unable to resolve omnichain cash-out price', error)
+            console.warn('Unable to resolve omnichain cash out price', error)
           }
           return null
         }),
@@ -546,7 +546,7 @@ export function RevnetPriceCard({
   const chartNote =
     [
       references?.converted
-        ? `Market and cash-out prices are converted into ${baseSymbol}, this revnet's issuance currency, at the current exchange rate — so earlier points are approximate. The issuance ceiling is natively denominated in ${baseSymbol} and is exact.`
+        ? `Market and cash out prices are converted into ${baseSymbol}, this revnet's issuance currency, at the current exchange rate — so earlier points are approximate. The issuance ceiling is natively denominated in ${baseSymbol} and is exact.`
         : null,
       history?.sampled
         ? 'Historical series are shape-preserving samples of the complete indexed history. The latest observation is always included.'
@@ -590,7 +590,7 @@ export function RevnetPriceCard({
       ) : null}
       {references?.scaleUnknown ? (
         <p className="mt-2 text-xs text-grey-600">
-          The live cash-out and market prices couldn&apos;t be read just now, so
+          The live cash out and market prices couldn&apos;t be read just now, so
           there is no way to tell what unit they are in — only the issuance
           ceiling is shown.
         </p>
