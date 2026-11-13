@@ -3,6 +3,8 @@
 import { assertShopCallPolicy } from '@/lib/shop-call-policy'
 
 import { queuedSafeReviewCall } from '@/lib/safe-queue-review'
+import { chooseSafeNonce } from '@/lib/safe-nonce-choice'
+import { chainName } from '@/lib/urn'
 
 import { getAccount } from '@wagmi/core'
 import {
@@ -988,6 +990,8 @@ export async function runSafeCalls({
   // would sit as wasted gas reported as "waiting". Hand out sequential
   // provisional nonces per Safe, mirroring what the service path does.
   const provisionalNonce = new Map<string, number>()
+  // Service path: a nonce this run proposed at is not offered to a later call for replacement.
+  const proposedHere = new Set<string>()
   for (let index = 0; index < calls.length; index++) {
     const call = calls[index]
     await call.reverifyAuthority?.()
@@ -1022,7 +1026,6 @@ export async function runSafeCalls({
           `Safe nonce ${call.nonce} is not available. Nothing was proposed; pick ${choices.join(', ')}.`,
         )
       }
-      const proposalNonce = call.nonce ?? choices[choices.length - 1]
       const matching = pending.find(tx =>
         safeTransactionMatchesCall(tx, {
           to: call.target,
@@ -1062,6 +1065,13 @@ export async function runSafeCalls({
         })
         continue
       }
+      const safeKey = `${call.chainId}:${call.safe.toLowerCase()}`
+      // Queued proposals offer their nonces for replacement; an empty queue asks nothing.
+      const proposalNonce = call.nonce ?? await chooseSafeNonce({
+        chainName: chainName(call.chainId),
+        choices: choices.filter(nonce => !proposedHere.has(`${safeKey}:${nonce}`)),
+      })
+      proposedHere.add(`${safeKey}:${proposalNonce}`)
       const proposed = await proposeSafeTx({
         ...call,
         signer,

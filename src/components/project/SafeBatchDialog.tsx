@@ -24,6 +24,7 @@ import {
   type SafeBatchRoute,
 } from '@/lib/safe-batch-submit'
 import { readProposalNonces } from '@/lib/safe'
+import { safeNonceLabel } from '@/lib/safe-nonce-choice'
 import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
 import { chainName } from '@/lib/urn'
 
@@ -215,7 +216,7 @@ export function SafeBatchDialog({
             >
               {nonces.choices.map(nonce => (
                 <option key={nonce} value={nonce}>
-                  {nonce === nonces.next ? `${nonce}, next available` : `${nonce}, replaces what is queued there`}
+                  {safeNonceLabel(nonce, nonces.next)}
                 </option>
               ))}
             </select>

@@ -19,13 +19,16 @@ import {
   ModalDialog,
 } from '@/components/ui/ModalShell'
 import { buildTransactionReviewPrompt } from '@/lib/transaction-review'
+import { safeNonceLabel } from '@/lib/safe-nonce-choice'
 import { chainName } from '@/lib/urn'
 
 import { FeeBuybackNotice } from './FeeBuybackNotice'
 import { useFeeBuybackReview } from '@bananapus/nana-sdk-core/review/react'
 import { feeBuybackContext } from '@/lib/fee-buyback-client'
 
-import type { PendingReview, PendingFundingChainSelection, TransactionReviewDialogProps } from './TransactionReviewProvider'
+import type {
+  PendingReview, PendingFundingChainSelection, PendingSafeNonceSelection, TransactionReviewDialogProps,
+} from './TransactionReviewProvider'
 
 const ARRAY_TYPE = /\[\d*\]$/
 
@@ -787,9 +790,71 @@ function FundingChainSelectionModal({
   )
 }
 
+function SafeNonceSelectionModal({ pending, onFinish }: {
+  pending: PendingSafeNonceSelection
+  onFinish: (nonce: number | null) => void
+}) {
+  const { choices, chainName: chain } = pending.request
+  const next = choices[choices.length - 1]
+  const [selected, setSelected] = useState(next)
+  const titleId = `safe-nonce-title-${pending.id}`
+  const descriptionId = `safe-nonce-description-${pending.id}`
+  const selectId = `safe-nonce-select-${pending.id}`
+
+  return (
+    <ModalDialog
+      onClose={() => onFinish(null)}
+      labelledBy={titleId}
+      describedBy={descriptionId}
+      className="items-start justify-center px-3 py-5 sm:px-6 sm:py-10"
+    >
+      <div className="card w-full max-w-lg overflow-hidden shadow-2xl">
+        <header className="flex items-start justify-between gap-4 border-b border-smoke-200 px-5 py-4 sm:px-6">
+          <h2 id={titleId} className="font-agrandir text-xl font-medium text-ink">
+            Choose the Safe nonce
+          </h2>
+          <ModalCloseButton
+            onClick={() => onFinish(null)}
+            aria-label="Cancel Safe nonce selection"
+            className="-mr-2 -mt-2"
+          />
+        </header>
+        <div className="px-5 py-5 sm:px-6">
+          <p id={descriptionId} className="text-sm leading-relaxed text-smoke-700">
+            The Safe on {chain} has queued proposals. You’ll review the proposal before your wallet signs it.
+          </p>
+          <label htmlFor={selectId} className="mt-5 block text-sm font-medium text-ink">
+            Safe nonce
+          </label>
+          <select
+            id={selectId}
+            value={selected}
+            onChange={event => setSelected(Number(event.target.value))}
+            className="select-caret mt-2 min-h-[44px] w-full rounded-lg border border-smoke-300 bg-white px-3 py-2 pr-9 text-sm text-ink"
+          >
+            {choices.map(nonce => (
+              <option key={nonce} value={nonce}>{safeNonceLabel(nonce, next)}</option>
+            ))}
+          </select>
+        </div>
+        <footer className="flex justify-end gap-2 border-t border-smoke-200 bg-white px-5 py-4 sm:px-6">
+          <button type="button" onClick={() => onFinish(null)} className="btn-secondary min-h-[44px] px-5 text-sm">
+            Cancel
+          </button>
+          <button type="button" onClick={() => onFinish(selected)} className="btn-primary min-h-[44px] px-5 text-sm">
+            Continue to review
+          </button>
+        </footer>
+      </div>
+    </ModalDialog>
+  )
+}
+
 export function TransactionReviewDialog({ pending, onFinish, checkingProject }: TransactionReviewDialogProps) {
   return pending.kind === 'review' ? (
     <ReviewModal key={pending.id} pending={pending} onFinish={onFinish} checkingProject={checkingProject} />
+  ) : pending.kind === 'nonce' ? (
+    <SafeNonceSelectionModal key={pending.id} pending={pending} onFinish={onFinish} />
   ) : (
     <FundingChainSelectionModal key={pending.id} pending={pending} onFinish={onFinish} checkingProject={checkingProject} />
   )

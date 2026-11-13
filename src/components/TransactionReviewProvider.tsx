@@ -17,6 +17,7 @@ import { useAccount } from 'wagmi'
 import { ModalDialog } from '@/components/ui/ModalShell'
 import { useProjectReviewScope } from '@/providers/ProjectRouteContext'
 import { useProjectRouteBlocked } from '@/providers/ProjectRouteBlockedContext'
+import { registerSafeNonceHandler, type SafeNonceRequest } from '@/lib/safe-nonce-choice'
 import {
   registerFundingChainSelectionHandler,
   type FundingChainOption,
@@ -36,9 +37,14 @@ export type PendingFundingChainSelection = {
   initialChainId: number | null
 }
 
-export type PendingDialog = PendingReview | PendingFundingChainSelection
-type Payload = Omit<PendingReview, 'id'> | Omit<PendingFundingChainSelection, 'id'>
-/** True approves a review, a chain ID picks a funding chain, anything else declines. */
+export type PendingSafeNonceSelection = { kind: 'nonce'; id: number; request: SafeNonceRequest }
+
+export type PendingDialog = PendingReview | PendingFundingChainSelection | PendingSafeNonceSelection
+type Payload =
+  | Omit<PendingReview, 'id'>
+  | Omit<PendingFundingChainSelection, 'id'>
+  | Omit<PendingSafeNonceSelection, 'id'>
+/** True approves a review, a number picks a funding chain or a Safe nonce, anything else declines. */
 type DialogResult = boolean | number | null
 
 export type TransactionReviewDialogProps = {
@@ -84,6 +90,16 @@ export function TransactionReviewProvider({ children }: PropsWithChildren) {
     () => registerFundingChainSelectionHandler(async (options, initialChainId) => {
       const chosen = await queue.request(
         { kind: 'funding', options: options.map(option => ({ ...option })), initialChainId },
+        { declined: null, approves: result => typeof result === 'number' },
+      )
+      return typeof chosen === 'number' ? chosen : null
+    }),
+    [queue],
+  )
+  useEffect(
+    () => registerSafeNonceHandler(async request => {
+      const chosen = await queue.request(
+        { kind: 'nonce', request: { ...request, choices: [...request.choices] } },
         { declined: null, approves: result => typeof result === 'number' },
       )
       return typeof chosen === 'number' ? chosen : null

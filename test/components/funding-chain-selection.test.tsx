@@ -16,6 +16,7 @@ import {
   requireFundingChainSelection,
   TransactionReviewCancelledError,
 } from '@/lib/transaction-review'
+import { chooseSafeNonce } from '@/lib/safe-nonce-choice'
 import { requireReview } from '../support/prompt-review'
 
 const OPTIONS = [
@@ -157,5 +158,35 @@ describe('funding chain selection modal', () => {
       expect.objectContaining({ message: expect.stringMatching(/selection cancelled/i) }),
     ])
     await expect(requireFundingChainSelection(OPTIONS)).rejects.toThrow(/selection is unavailable/i)
+  })
+})
+
+describe('Safe nonce selection modal', () => {
+  it('asks only when a queued proposal could be replaced, and returns the pick', async () => {
+    // Nothing queued: the next free nonce, with no prompt.
+    await expect(chooseSafeNonce({ chainName: 'Ethereum', choices: [7] })).resolves.toBe(7)
+    expect(document.querySelector('dialog')).toBeNull()
+
+    let choice!: Promise<number>
+    await act(async () => { choice = chooseSafeNonce({ chainName: 'Ethereum', choices: [7, 8, 9] }) })
+    await act(async () => { await vi.dynamicImportSettled() })
+    const select = document.querySelector<HTMLSelectElement>('dialog select')!
+    expect(select.value).toBe('9')
+    expect(Array.from(select.options, option => option.textContent)).toEqual([
+      '7, replaces what is queued there',
+      '8, replaces what is queued there',
+      '9, next available',
+    ])
+    choose(7)
+    await act(async () => { button('Continue to review').click() })
+    await expect(choice).resolves.toBe(7)
+  })
+
+  it('cancels the action when the prompt is closed', async () => {
+    let choice!: Promise<number | Error>
+    await act(async () => { choice = chooseSafeNonce({ chainName: 'Ethereum', choices: [7, 8] }).catch(error => error) })
+    await act(async () => { await vi.dynamicImportSettled() })
+    await act(async () => { button('Cancel').click() })
+    expect(await choice).toBeInstanceOf(TransactionReviewCancelledError)
   })
 })

@@ -3,23 +3,30 @@
   "sites": [
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 77,
+      "line": 83,
       "api": "registerReviewHandler",
       "boundary": "The app's one review dialog answers core's prompts: core mints the model and the confirmation, and nothing is sent unless the dialog returns it.",
       "test": "test/components/transaction-review-project-scope.test.tsx"
     },
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 78,
+      "line": 84,
       "api": "request",
       "boundary": "The SDK review queue's request: core's prompt waits for the one review dialog, never a wallet RPC.",
       "test": "test/components/transaction-review-project-scope.test.tsx"
     },
     {
       "file": "src/components/TransactionReviewProvider.tsx",
-      "line": 85,
+      "line": 91,
       "api": "request",
       "boundary": "The SDK review queue's request for a funding chain choice, never a wallet RPC.",
+      "test": "test/components/funding-chain-selection.test.tsx"
+    },
+    {
+      "file": "src/components/TransactionReviewProvider.tsx",
+      "line": 101,
+      "api": "request",
+      "boundary": "The SDK review queue's request for a Safe nonce choice, never a wallet RPC.",
       "test": "test/components/funding-chain-selection.test.tsx"
     },
     {
