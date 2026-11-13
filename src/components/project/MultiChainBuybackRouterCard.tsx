@@ -68,6 +68,17 @@ type ActionKind = 'hook' | 'terminal' | 'pool' | 'setPool' | 'twap'
 const MIN_TWAP_WINDOW = 300
 const MAX_TWAP_WINDOW = 172_800
 
+/**
+ * Registering a pool with exactly MAX_TWAP_WINDOW stores the hook's 30-minute
+ * default instead (`JBBuybackHook._setPoolFor`): deployers pass the maximum to
+ * mean "no preference". Refuse it so nobody believes they set 2 days.
+ */
+export function registrationTwapIssue(twapWindow: number | bigint): string | null {
+  return BigInt(twapWindow) === BigInt(MAX_TWAP_WINDOW)
+    ? `A pool registered with exactly ${MAX_TWAP_WINDOW}s stores the hook's 30-minute default instead (it is the "no preference" sentinel). Use ${MAX_TWAP_WINDOW - 1} for the longest real window, or set 1800 deliberately.`
+    : null
+}
+
 type Review = {
   calls: AuthorityCall[]
   rows: TxConfirmRow[]
@@ -615,6 +626,8 @@ export function BuybackActionForm({
             `The hook only accepts a TWAP window between ${MIN_TWAP_WINDOW} and ${MAX_TWAP_WINDOW} seconds.`,
           )
         }
+        const sentinel = registrationTwapIssue(parsed.twapWindow)
+        if (sentinel) throw new Error(sentinel)
         if (kind === 'pool' && (parsed.sqrtPriceX96 <= 0n || parsed.sqrtPriceX96 >= 2n ** 160n)) {
           throw new Error('Initial price must be a positive uint160 value.')
         }
