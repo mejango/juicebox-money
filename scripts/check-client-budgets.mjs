@@ -65,7 +65,8 @@ const routes = [
   // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
   // 537 -> 542: Permit2 pay authorization (plan, typed data, metadata), the SDK's project hook and router resolvers
   // and revnet fee netting in holder values: measured 541.2 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 542, text: 'Browser Fixture Project' },
+  // Configured Safe proxy and monthly-quota handling: measured just above542.0 KiB, rounded up only.
+  { route: '/[urn]', path: '/eth:1', kib: 543, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -95,7 +96,8 @@ const budgets = {
   // Guide code copy buttons and the default payout recipient: measured 2713.5 KiB, rounded up only.
   // Token address prediction when extending a token to a new chain: measured 2716.4 KiB, rounded up only.
   // Permit2 pay authorization, the SDK's project hook and router resolvers, revnet fee netting: measured 2723.1 KiB, rounded up only.
-  allScripts: 2724 * KIB,
+  // Configured Safe proxy and monthly-quota handling: measured2724.3 KiB, rounded up only.
+  allScripts: 2725 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

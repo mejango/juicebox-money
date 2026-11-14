@@ -57,6 +57,11 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - **Evidence and unknowns:** Parent reports main67e4a881 and candidate SHA25691b1f6405530cf81760b28622f572f1b9ced87ea306577078c07cf388087eb41; verify fetched commit and installed graph. Candidate package metadata6.5.0 is temporary verification only, never committed as release6.7.0.
 - **Verification:** Source invariants and first-read tests, full npm check in the granted exclusive slot, then published dependency and lock verification before PR/merge.
 - **Resource budget:** JBM worktree only; hold heavy checks for parent slot; do not disturb other bot branches or non-SDK versions.
-- [ ] Commit façade work and merge latest main.
-- [ ] Verify candidate on merged main, preserving locked dependency graph.
+- [x] Commit façade work and merge latest main.
+- [x] Verify candidate on merged main, preserving locked dependency graph.
 - [ ] Update to published SDK6.7.0 and coordinate reviewed PR/merge.
+
+### JBM integration verification (2026-11-14)
+- Façade commit69f8c5f4, normal merge4d3199f5 includes main67e4a881 (SDK6.6.0 and paired-client corrections).
+- Candidate tarball SHA25691b1f6405530cf81760b28622f572f1b9ced87ea306577078c07cf388087eb41 installed with npm12.0.1 on Node26.13.1. All non-SDK lock records and1110 installed non-SDK package manifests unchanged. Temporary file dependency satisfied dependency validation, then original tracked6.6.0 package/lock restored for example-version fixtures; no fabricated release metadata.
+- Dependency, dead-code, production-audit, container, lint, type, source-invariant, protocol, live-schema, transaction and wallet gates pass. First coverage attempt passed3622 tests and failed only6 example-pin fixtures due to the temporary file dependency; rerun with restored actual6.6.0 manifest passed3628/3628 tests in298 files and all coverage thresholds. Candidate code remained installed throughout. Browser build passed. Budget checks passed after minimal rounded project543KiB and aggregate2725KiB ceilings (measured542.0KiB and2724.3KiB); static-route ceilings and lazy-wallet checks unchanged. Browser tests90/90 passed on isolated appport3198 and original build fixture4399; first browser startup was blocked by another process already occupying3100, with no assertions run.
