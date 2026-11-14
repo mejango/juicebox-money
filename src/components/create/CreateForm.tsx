@@ -47,9 +47,9 @@ import {
   useSafeConnection,
   waitForSafeExecutionHash,
 } from "@/lib/safe-connector";
-import { etherscanTxUrl, formatDateTime, formatTokenAmount } from "@/lib/format";
+import { etherscanTxUrl, exactUnits, formatDateTime, formatTokenAmount, ipfsUrl } from "@/lib/format";
+import { pinnedItemMedia } from "@/lib/store-items";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
-import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
 import { resolvedAddress } from "@/lib/ens";
 import { draftSplitRecipient } from "@/lib/split-recipient";
@@ -66,6 +66,8 @@ import {
   warnOnDraftDrift,
   type CreateDraft,
   type DraftRules,
+  PERMANENTLY_DISABLED_AUTHORITY,
+  storeIdentity,
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
@@ -108,6 +110,7 @@ import {
   projectIdFromReceipt,
   requireFinalizedLaunchFailure,
   routesAllFunds,
+  DEADLINE_LABELS,
   type ApprovalDeadline,
   type LaunchPlan,
   type SplitConfig,
@@ -168,7 +171,7 @@ import {
   environmentForChainIds,
   type ChainEnvironment,
 } from "@/lib/chains";
-import { itemOk, type DraftItem } from "./store-draft";
+import { discountUnits, itemOk, type DraftItem } from "./store-draft";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
@@ -200,8 +203,6 @@ const StageRulesEditor = dynamic(
   { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading rules editor…</p> },
 );
 
-const PERMANENTLY_DISABLED_AUTHORITY =
-  "0xdead000000000000000000000000000000000000";
 
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
 
@@ -256,30 +257,6 @@ type ChainStatus = LaunchChainStatus & {
  * once its event names the project.
  */
 const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
-
-function deriveSymbol(name: string): string {
-  const words = name
-    .toUpperCase()
-    .split(/[^A-Z0-9]+/)
-    .filter(Boolean);
-  const initials = words.map((w) => w[0]).join("");
-  const symbol = (initials.length >= 2 ? initials : (words[0] ?? "")).slice(
-    0,
-    8,
-  );
-  return symbol || "ITEMS";
-}
-
-/** Human labels for the fixed approval-deadline choices. */
-const APPROVAL_LABELS: Record<
-  Exclude<ApprovalDeadline, "none" | "custom">,
-  string
-> = {
-  "3hours": "3 hours",
-  "1day": "1 day",
-  "3days": "3 days",
-  "7days": "7 days",
-};
 
 const TAG_OPTIONS = [
   "AI",
@@ -390,6 +367,13 @@ export function CreateForm() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [coverError, setCoverError] = useState<string | null>(null);
+  /** The pinned logo and cover. A draft carries these, never the files. */
+  const [logoUri, setLogoUri] = useState("");
+  const [coverUri, setCoverUri] = useState("");
+  const chosenImage = useRef<{ logo: File | null; cover: File | null }>({
+    logo: null,
+    cover: null,
+  });
   const [payNotice, setPayNotice] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tosAccepted, setTosAccepted] = useState(false);
@@ -703,16 +687,36 @@ export function CreateForm() {
     [logoPreview, coverPreview],
   );
 
+  /** Pin an image when it is chosen, so an exported draft carries it. A pin
+   *  that fails here is made again at launch. */
+  const pinOnChoose =
+    (
+      slot: "logo" | "cover",
+      setFile: (file: File | null) => void,
+      setUri: (uri: string) => void,
+    ) =>
+    (file: File | null) => {
+      chosenImage.current[slot] = file;
+      setFile(file);
+      setUri("");
+      if (!file) return;
+      void jbCenterIpfs.pinImage(file).then(
+        ({ uri }) => {
+          if (chosenImage.current[slot] === file) setUri(uri);
+        },
+        () => {},
+      );
+    };
   const onLogoChange = makeImageHandler(
     logoPreview,
-    setLogoFile,
+    pinOnChoose("logo", setLogoFile, setLogoUri),
     setLogoPreview,
     setLogoError,
     "Logos",
   );
   const onCoverChange = makeImageHandler(
     coverPreview,
-    setCoverFile,
+    pinOnChoose("cover", setCoverFile, setCoverUri),
     setCoverPreview,
     setCoverError,
     "Cover images",
@@ -1112,7 +1116,7 @@ export function CreateForm() {
     }
     const valid = rows.filter((s) => splitOk(s, "amount", [chainId]));
     const values = valid.map((row) =>
-      parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
+      exactUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
     );
     const total = values.reduce((a, b) => a + b, 0n);
     // A zero total is "fixed amounts, none set yet" — a payout limit of 0, NOT
@@ -1192,7 +1196,7 @@ export function CreateForm() {
       surplusAllowanceOn: surplusOn,
       surplusAllowanceAmount:
         surplusOn && stage.surplusCapOn
-          ? parseUnits(stage.surplusAmount || "0", accountingDecimals)
+          ? exactUnits(stage.surplusAmount || "0", accountingDecimals)
           : null,
       holdFees: stage.payouts !== "none" && stage.holdFees,
       cashOutTaxRate:
@@ -1470,14 +1474,12 @@ export function CreateForm() {
   const pinAll = async (): Promise<
     Omit<NonNullable<typeof pinnedRef.current>, "plans">
   > => {
-    const logoUri = logoFile ? await pinFile(logoFile) : undefined;
-    const coverImageUri = coverFile ? await pinFile(coverFile) : undefined;
     const projectPin = await jbCenterIpfs.pinJson({
       name: name.trim(),
       projectTagline: tagline.trim() || undefined,
       description: description.trim() || undefined,
-      logoUri,
-      coverImageUri,
+      logoUri: logoUri || (logoFile ? await pinFile(logoFile) : undefined),
+      coverImageUri: coverUri || (coverFile ? await pinFile(coverFile) : undefined),
       payDisclosure: payNotice.trim() || undefined,
       tags: tags.length > 0 ? tags : undefined,
       infoUri: links.infoUri.trim() || undefined,
@@ -1493,26 +1495,19 @@ export function CreateForm() {
     for (const item of items.filter(item => itemOk(item, selected))) {
       // Any media type pins as-is; images become `image`, everything else
       // `animation_url` (website/ parity).
-      let imageUri: string | undefined;
-      let animationUri: string | undefined;
-      if (item.mediaFile) {
-        const uri = (await jbCenterIpfs.pinMedia(item.mediaFile)).uri;
-        if (item.mediaFile.type.startsWith("image/")) imageUri = uri;
-        else animationUri = uri;
-      }
+      const media = await pinnedItemMedia(item);
+      const isImage = media?.type.startsWith("image/");
       const itemPin = await jbCenterIpfs.pinJson({
         name: item.name.trim(),
         description: item.description.trim() || undefined,
-        image: imageUri,
-        animation_url: animationUri,
-        mediaType: item.mediaFile?.type || undefined,
+        image: isImage ? media?.uri : undefined,
+        animation_url: isImage ? undefined : media?.uri,
+        mediaType: media?.type || undefined,
         categoryName:
           storeCategories.find((c) => c.id === item.category)?.name ||
           undefined,
       });
-      // parseUnits rounds sub-precision input to 0 — refuse accidental
-      // free items (e.g. a 0.0000001 USD price against 6 decimals).
-      const price = parseUnits(item.price, storePriceDecimals);
+      const price = exactUnits(item.price, storePriceDecimals);
       if (price === 0n) {
         throw new Error(
           `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
@@ -1555,9 +1550,7 @@ export function CreateForm() {
         encodedIpfsUri: cidV0ToBytes32(itemPin.cid),
         splitPercent,
         splits,
-        discountPercent: Math.round(
-          (Number(item.discountPct || "0") * Number(DISCOUNT_DENOMINATOR)) / 100,
-        ),
+        discountPercent: discountUnits(item.discountPct),
         reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
         reserveBeneficiary: reserveOn
           ? resolvedAddress(item.reserveBeneficiary)
@@ -1578,11 +1571,7 @@ export function CreateForm() {
     // The store collection deploys with every launch (even empty) so the
     // project can stock it later without a ruleset change.
     const store: LaunchPlan["store"] = {
-      name: storeConfig.collectionName.trim() || name.trim(),
-      symbol:
-        storeConfig.collectionSymbol.trim() ||
-        (flavor === "revnet" ? ticker.trim() : "") ||
-        deriveSymbol(name),
+      ...storeIdentity({ flavor, name, ticker, storeConfig }),
       currency: effectiveStoreCurrency,
       preventOverspending: storeConfig.preventOverspending,
       noNewTiersWithReserves: storeConfig.noNewTiersWithReserves,
@@ -2270,6 +2259,8 @@ export function CreateForm() {
     description,
     payNotice,
     tags,
+    logoUri,
+    coverUri,
     links,
     owner,
     ownerPerChain,
@@ -2302,6 +2293,14 @@ export function CreateForm() {
     setDescription(draft.description);
     setPayNotice(draft.payNotice);
     setTags(draft.tags);
+    // A draft carries pinned images only; a file chosen before it is dropped.
+    chosenImage.current = { logo: null, cover: null };
+    setLogoFile(null);
+    setLogoPreview(null);
+    setLogoUri(draft.logoUri);
+    setCoverFile(null);
+    setCoverPreview(null);
+    setCoverUri(draft.coverUri);
     setLinks({
       infoUri: draft.links.infoUri ?? "",
       twitter: draft.links.twitter ?? "",
@@ -2371,14 +2370,32 @@ export function CreateForm() {
     if (!file) return;
     setImportError(null);
     try {
-      applyDraft(parseDraft(await file.text()));
+      // The file mapper loads only when a file is used.
+      const { readJbDraftFile } = await import("@/lib/jb-draft");
+      applyDraft(readJbDraftFile(await file.text()));
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Import failed.");
     }
   };
 
-  const exportDraft = () => {
-    const blob = new Blob([JSON.stringify(buildDraft(), null, 2)], {
+  const exportDraft = async () => {
+    setImportError(null);
+    if (
+      (logoFile && !logoUri) ||
+      (coverFile && !coverUri) ||
+      items.some((item) => item.mediaFile && !item.mediaUri)
+    ) {
+      setImportError("An image is still uploading. Export once it finishes.");
+      return;
+    }
+    let text: string;
+    try {
+      text = (await import("@/lib/jb-draft")).writeJbDraftFile(buildDraft());
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Export failed.");
+      return;
+    }
+    const blob = new Blob([text], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -2556,7 +2573,7 @@ export function CreateForm() {
               ? "The project owner, taking effect at once"
               : approvalDeadline === "custom"
                 ? "The project owner, through a custom approval contract"
-                : `The project owner, with ${APPROVAL_LABELS[approvalDeadline]} notice`,
+                : `The project owner, with ${DEADLINE_LABELS[approvalDeadline]} notice`,
     },
   ];
   const stageRows: TxConfirmRow[] = reviewStages.map((stage, i) => ({
@@ -2926,7 +2943,7 @@ export function CreateForm() {
           />
         </label>
         <button
-          onClick={exportDraft}
+          onClick={() => void exportDraft()}
           disabled={busy}
           className="inline-flex min-h-[28px] items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
         >
@@ -3508,10 +3525,10 @@ export function CreateForm() {
             <div className="mt-4">
               <span className="field-label">Logo</span>
               <div className="mt-1.5 flex items-center gap-4">
-                {logoPreview ? (
+                {logoPreview || ipfsUrl(logoUri) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={logoPreview}
+                    src={logoPreview ?? ipfsUrl(logoUri)!}
                     alt="Logo preview"
                     className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
                   />
@@ -3522,7 +3539,7 @@ export function CreateForm() {
                 )}
                 <div>
                   <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-                    {logoFile ? "Change image" : "Upload image"}
+                    {logoFile || logoUri ? "Change image" : "Upload image"}
                     <input
                       type="file"
                       accept="image/*"
@@ -3533,7 +3550,7 @@ export function CreateForm() {
                       }
                     />
                   </label>
-                  {logoFile ? (
+                  {logoFile || logoUri ? (
                     <button
                       onClick={() => onLogoChange(null)}
                       disabled={busy}
@@ -3555,21 +3572,21 @@ export function CreateForm() {
 
           <SubSection
             label="Cover image"
-            summary={coverFile ? "Added" : "None"}
+            summary={coverFile || coverUri ? "Added" : "None"}
             open={!!openSection.cover}
             onToggle={() => toggleSection("cover")}
           >
-            {coverPreview ? (
+            {coverPreview || ipfsUrl(coverUri) ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={coverPreview}
+                src={coverPreview ?? ipfsUrl(coverUri)!}
                 alt="Cover preview"
                 className="h-24 w-full rounded-lg border border-smoke-200 object-cover"
               />
             ) : null}
             <div className="mt-2 flex items-center gap-3">
               <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-                {coverFile ? "Change image" : "Upload image"}
+                {coverFile || coverUri ? "Change image" : "Upload image"}
                 <input
                   type="file"
                   accept="image/*"
@@ -3578,7 +3595,7 @@ export function CreateForm() {
                   onChange={(e) => onCoverChange(e.target.files?.[0] ?? null)}
                 />
               </label>
-              {coverFile ? (
+              {coverFile || coverUri ? (
                 <button
                   onClick={() => onCoverChange(null)}
                   disabled={busy}
@@ -3870,10 +3887,11 @@ export function CreateForm() {
                 disabled={busy}
                 className="input-well select-caret mt-2 min-h-[44px] !w-auto px-3.5 pr-9 text-sm disabled:opacity-60"
               >
-                <option value="3hours">3 hours</option>
-                <option value="1day">1 day</option>
-                <option value="3days">3 days</option>
-                <option value="7days">7 days</option>
+                {Object.entries(DEADLINE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
@@ -3933,8 +3951,8 @@ export function CreateForm() {
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                   Queued changes take effect{" "}
                   {
-                    APPROVAL_LABELS[
-                      approvalDeadline as keyof typeof APPROVAL_LABELS
+                    DEADLINE_LABELS[
+                      approvalDeadline as keyof typeof DEADLINE_LABELS
                     ]
                   }{" "}
                   after they&apos;re proposed.
@@ -4086,8 +4104,12 @@ export function CreateForm() {
                     }
                     disabled={busy}
                     placeholder={
-                      (flavor === "revnet" && ticker.trim()) ||
-                      deriveSymbol(name)
+                      storeIdentity({
+                        flavor,
+                        name,
+                        ticker,
+                        storeConfig: { collectionName: "", collectionSymbol: "" },
+                      }).symbol
                     }
                     className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
                   />

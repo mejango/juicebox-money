@@ -216,6 +216,7 @@ import { BurnTokensFlow } from '@/components/project/BurnTokensFlow'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
 import { GetLoanFlow } from '@/components/project/GetLoanFlow'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
+import { parseDraft } from '@/lib/draft'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
 
@@ -340,7 +341,7 @@ describe('project draft export', () => {
   it('downloads a verified draft with the available chain authority', async () => {
     const download = stubDraftDownload()
     mocks.buildProjectDraftExport.mockResolvedValue({
-      draft: { name: 'Test project', stages: [] },
+      draft: parseDraft(JSON.stringify({ name: 'Test project', chains: [1, 10], stages: [{}] })),
       warnings: [],
     })
     let renderer!: TestRenderer.ReactTestRenderer
@@ -359,6 +360,8 @@ describe('project draft export', () => {
       chains: [1, 10],
       authorityByChain: { 1: ALICE },
     })
+    // The file mapper loads on demand, so the download lands a moment after the click.
+    await act(async () => { await vi.waitFor(() => expect(download.createObjectURL).toHaveBeenCalled()) })
     expect(download.confirm).not.toHaveBeenCalled()
     expect(download.createObjectURL).toHaveBeenCalledWith(expect.any(Blob))
     expect(download.anchor.download).toBe('test-project.jb')
@@ -370,7 +373,7 @@ describe('project draft export', () => {
   it('honors cancellation when reconstructing the draft produces warnings', async () => {
     const download = stubDraftDownload()
     mocks.buildProjectDraftExport.mockResolvedValue({
-      draft: { name: 'Test project', stages: [] },
+      draft: parseDraft(JSON.stringify({ name: 'Test project', chains: [1, 10], stages: [{}] })),
       warnings: ['Review the reconstructed rules.'],
     })
     let renderer!: TestRenderer.ReactTestRenderer
@@ -393,6 +396,8 @@ describe('project draft export', () => {
 
     await act(async () => buttonWith(renderer, 'Export .jb').props.onClick())
     await act(async () => buttonWith(renderer, 'Export anyway').props.onClick())
+    // The file mapper loads on demand, so the download lands a moment after the click.
+    await act(async () => { await vi.waitFor(() => expect(download.createObjectURL).toHaveBeenCalled()) })
     expect(download.anchor.click).toHaveBeenCalledTimes(1)
     expect(renderedText(renderer.root)).toContain('Exported .jb')
   })

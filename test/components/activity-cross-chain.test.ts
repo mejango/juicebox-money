@@ -48,4 +48,12 @@ describe('mergeCrossChainGroups', () => {
     ]
     expect(mergeCrossChainGroups(groups)).toHaveLength(2)
   })
+  it('keeps bridge sends by different callers apart, even from one transaction sender', () => {
+    // One signer executes two Safes' sends of the same amount to the same chain.
+    const send = (chainId: number, caller: string) => [
+      base({ chainId, bridgeToOutboxEvent: { peerChainId: 1, projectTokenCount: '100', sucker: '0xs', caller } } as Partial<BsActivityEvent>),
+    ]
+    expect(mergeCrossChainGroups([send(8453, '0xsafeA'), send(10, '0xsafeB')])).toHaveLength(2)
+    expect(mergeCrossChainGroups([send(8453, '0xsafeA'), send(10, '0xsafeA')])).toHaveLength(1)
+  })
 })

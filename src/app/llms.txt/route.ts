@@ -56,8 +56,9 @@ identifier, description and logo.
   paying, cashing out, loans, and integrations.
 - [Launch with an AI assistant](${siteOrigin}/build#founders-launch-with-an-agent): the MCP or a .jb draft.
 - [Example .jb draft](${siteOrigin}/examples/project.jb): one project on Base that imports at ${siteOrigin}/create.
-  \`issuanceRate\` is tokens per ETH, \`durationValue\` is seconds (\`0\` for no cycles), \`reservedPct\` and
-  \`cutPct\` are 0 to 100, and \`cashOutTax\` is a whole number out of 10,000 (\`1000\` is a 0.1 tax).
+  Only \`v\`, \`kind\` and \`stages\` are required, and an unknown key refuses the file. Numbers are written
+  as text. \`issuance\` is tokens per ETH, \`duration\` is seconds (\`0\` for no cycles), \`cutPercent\` and a
+  split's \`share\` are 0 to 100, and \`cashOutTax\` runs 0 to 1 (\`"0.1"\`, with \`"1"\` for cash outs off).
 - [Juicebox Center for apps](${siteOrigin}/build#apps-juicebox-center): one place for chain data, files, and indexed data.
 - [Audit prompts](${siteOrigin}/audit): review the whole system or one transaction.
 

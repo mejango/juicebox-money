@@ -329,7 +329,17 @@ export type BsActivityEvent = {
     reclaimAmount: string
     reclaimAmountUsd: string | null
     beneficiary: string
+    /** Whose tokens were cashed out. A sucker's own cash out is the inside of a bridge send. */
+    holder?: string
   } & EventToken | null
+  /** Tokens queued on a sucker for another chain (`prepare`). */
+  bridgeToOutboxEvent?: {
+    peerChainId: number
+    projectTokenCount: string
+    sucker: string
+    /** Who called `prepare`: a Safe here, where the activity's `from` is the EOA that executed it. */
+    caller: string
+  } | null
   projectCreateEvent?: {
     from: string
   } | null
@@ -387,11 +397,14 @@ export type BsActivityEvent = {
   repayLoanEvent?: {
     repayBorrowAmount: string
     collateralCountToReturn: string
+    /** Who called the loans contract: a Safe here, where `from` is the account that executed for it. */
+    caller: string
     from: string
   } | null
   liquidateLoanEvent?: {
     borrowAmount: string
     collateral: string
+    caller: string
     from: string
   } | null
   mintNftEvent?: {
@@ -471,8 +484,9 @@ const ACTIVITY_EVENT_FIELDS = `
     amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol
   }
   cashOutTokensEvent {
-    cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol
+    cashOutCount reclaimAmount reclaimAmountUsd beneficiary holder token decimals tokenSymbol
   }
+  bridgeToOutboxEvent { peerChainId projectTokenCount sucker caller }
   projectCreateEvent { from }
   addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent {
@@ -493,9 +507,9 @@ const ACTIVITY_EVENT_FIELDS = `
     borrowAmount collateral beneficiary token from
   }
   repayLoanEvent {
-    repayBorrowAmount collateralCountToReturn from
+    repayBorrowAmount collateralCountToReturn caller from
   }
-  liquidateLoanEvent { borrowAmount collateral from }
+  liquidateLoanEvent { borrowAmount collateral caller from }
   mintNftEvent {
     tierId tokenId beneficiary totalAmountPaid from
   }
@@ -537,6 +551,7 @@ export async function getProjectActivity(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
             { sendReservedTokensToSplitEvent_not: null }
@@ -599,6 +614,7 @@ export async function getProjectActivityByProject(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
             { sendReservedTokensToSplitEvent_not: null }
@@ -673,6 +689,7 @@ export async function getRecentActivity(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { swapEvent_not: null }
             { sendPayoutsEvent_not: null }
             { rulesetQueuedEvent_not: null }

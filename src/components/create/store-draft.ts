@@ -15,6 +15,9 @@ export type DraftItem = {
   mediaFile: File | null;
   /** Object URL preview — images only. */
   mediaPreview: string | null;
+  /** The media once pinned: its URI and MIME type. '' until then. */
+  mediaUri: string;
+  mediaType: string;
   /** Initial discount, 0–100 (%). '' = none. */
   discountPct: string;
   /** Reserve 1 of every N for the beneficiary. '' = off. */
@@ -47,6 +50,8 @@ export function newDraftItem(): DraftItem {
     description: "",
     mediaFile: null,
     mediaPreview: null,
+    mediaUri: "",
+    mediaType: "",
     discountPct: "",
     reserveN: "",
     reserveBeneficiary: "",
@@ -79,6 +84,11 @@ export function itemDiscountOk(discountPct: string): boolean {
   if (discountPct.trim() === "") return true;
   const n = Number(discountPct);
   return Number.isFinite(n) && n >= 0 && n <= 100;
+}
+
+/** A percent off as the hook stores it: out of 200, half a percent each. */
+export function discountUnits(discountPct: string): number {
+  return Math.round(Number(discountPct || "0") * 2);
 }
 
 export function itemReserveOk(item: DraftItem, chainIds?: readonly number[]): boolean {

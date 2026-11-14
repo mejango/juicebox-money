@@ -26,6 +26,9 @@ and the check fails on a missing marker.
 | Add shop tiers | Per-shop `JB721TiersHook.adjustTiers`, exact prices, local inventory/recipients, frozen tier IDs and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Mint shop tiers without payment | `JB721TiersHook.mintFor` | **E** | `contracts/transaction-builders.test.ts`, `components/mint-shop-item-gas.test.tsx` |
 | Replace shop item media | Per-shop `JB721TiersHook.setMetadata`, unchanged original metadata fields, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
+| Edit shop item details | Per-shop `JB721TiersHook.setMetadata` on one item, original metadata with only name and description changed, live item identity and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
+| Set a shop item discount | Per-shop `JB721TiersHook.setDiscountPercentOf`, the 200-point value, lowered-only items and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
+| Remove a shop item | Per-shop `JB721TiersHook.adjustTiers` removing exactly one item, never a locked or already removed one, and batch recovery | **P/E** | `contracts/transaction-builders.test.ts`, `lib/shop-batch.test.ts`, `components/shop-batch-journeys.test.tsx` |
 | Deploy a project payer address | Raw `JBProjectPayerDeployer.deployProjectPayer` calls with explicit admin/beneficiary, linked project IDs, chosen funding chain and exact clone verification | **P/E** | `contracts/transaction-backlog.test.ts`, `transactions/payer-relayr.test.ts`, `components/extras-payer.test.tsx`, `components/write-flows.test.tsx` |
 | Mint Defifa NFTs | SDK native pay metadata + exact terminal `pay` confirmed with its approval in one decoded checkout review (a retried step is reviewed again), live tier prices and delegation, canonical reviewed receipt | **P/E** | `components/defifa-checkout.test.tsx` |
 | Approve Defifa mint payment | Exact native payment-token `approve` (token, spender, amount) confirmed with the mint in one decoded checkout review, frozen amount and verified approval receipt | **P/E** | `components/defifa-checkout.test.tsx` |
@@ -49,6 +52,7 @@ and the check fails on a missing marker.
 | Update project metadata | Per-destination `JBController.setUriOf`, metadata preservation, and frozen recovery | **P/E** | `contracts/manage.test.ts`, `components/metadata-editor.test.tsx` |
 | Deploy project ERC-20 | `JBController.deployERC20For` | **E** | `contracts/manage.test.ts` |
 | Rename project ERC-20 | `setTokenMetadataOf` | **E** | `contracts/transaction-backlog.test.ts` |
+| Connect another chain | `JBSuckerRegistry.deploySuckersFor` on every chain from one owner with one salt, default peers, only tokens every chain accepts | **P/E** | `lib/connect-chain.test.ts`, `components/relayr-discard-flows.test.tsx` |
 | Mint project tokens | active `mintTokensOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Transfer project ownership | `JBProjects.transferFrom` | **E** | `contracts/transaction-backlog.test.ts` |
 | Add or revoke permissions | `JBPermissions.setPermissionsFor` | **E** | `contracts/transaction-builders.test.ts` |

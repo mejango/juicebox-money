@@ -56,7 +56,9 @@ const routes = [
   // 397 -> 399 and /[urn] 517 -> 519: Next 16.4.2.
   // 399 -> 398: SDK 4.0.0 Relayr round plan, measured 397.0.
   // Ordered stage preparation and receipt verification: measured 399.4 KiB.
-  { route: '/create', path: '/create', kib: 409, text: 'Start a project' },
+  // /create 409 -> 411: items pin their media on choose and the shared .jb draft is exported in place; the
+  // draft schema and mapper load only when a file is imported or exported. Measured 410.0.
+  { route: '/create', path: '/create', kib: 411, text: 'Start a project' },
   // 499 -> 502: the pay card decodes why a payment reverted (SDK 3.3.0 decodePayFailure) and offers a looser minimum.
   // 502 -> 503: activity labels amounts with the event's own token symbol and the floor history prices from balanceUsd.
   // 503 -> 504: the pay card and its review say when the pool's price couldn't be read (SDK 3.5.1 quoteFailed).
@@ -66,7 +68,9 @@ const routes = [
   // 537 -> 542: Permit2 pay authorization (plan, typed data, metadata), the SDK's project hook and router resolvers
   // and revnet fee netting in holder values: measured 541.2 KiB.
   // Configured Safe proxy and monthly-quota handling: measured just above542.0 KiB, rounded up only.
-  { route: '/[urn]', path: '/eth:1', kib: 543, text: 'Browser Fixture Project' },
+  // Bridge sends in activity and the unknown contracts card (its readers load on demand): measured 543.4 KiB, rounded up only.
+  // 544 -> 545: the pay card quotes every listed terminal through the SDK's best-route rule: measured 544.1 KiB, rounded up only.
+  { route: '/[urn]', path: '/eth:1', kib: 545, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -99,7 +103,12 @@ const budgets = {
   // Configured Safe proxy and monthly-quota handling: measured2724.3 KiB, rounded up only.
   // Activity chain filter, the empty terminal list rule and ordered direct sends: CI measured 2724.0 KiB and over, rounded up only.
   // Combined ordered-send and Safe proxy changes: measured2725.1 KiB, rounded up only.
-  allScripts: 2726 * KIB,
+  // The shared .jb draft (SDK schema plus this site's mapper, in their own on-demand chunk): measured 2734.8 KiB, rounded up only.
+  // Shop item actions (edit details, set discount, remove) in the on-demand item modal: measured 2737.4 KiB, rounded up only.
+  // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
+  // The project contract check in its own on-demand chunk, and bridge sends in activity: measured 2743.2 KiB, rounded up only.
+  // 2744 -> 2746: the connect-a-chain owner action and the SDK's best-route pay rule: measured 2745.6 KiB.
+  allScripts: 2746 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

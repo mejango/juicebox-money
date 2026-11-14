@@ -447,3 +447,86 @@ describe('reserved distributions', () => {
     )
   })
 })
+
+// A bridge send (`prepare`) cashes the sucker's tokens out inside the same transaction. The feed
+// says where the tokens are going, once, and never "cashed out" by a contract.
+describe('a bridge send and the cash out inside it', () => {
+  const SUCKER = '0x66766F2D20a9f4e8a2c51478b1506c07184286b3'
+  const send = event({
+    id: 'send',
+    bridgeToOutboxEvent: {
+      peerChainId: 1,
+      projectTokenCount: '100130000000000000000',
+      sucker: SUCKER.toLowerCase(),
+      caller: '0xsafe',
+    },
+  })
+  const inner = event({
+    id: 'inner',
+    cashOutTokensEvent: {
+      cashOutCount: '100130000000000000000',
+      reclaimAmount: '2481435124398494',
+      reclaimAmountUsd: null,
+      beneficiary: SUCKER,
+      holder: SUCKER,
+    },
+  } as Partial<BsActivityEvent>)
+
+  it('keeps the send and drops the sucker cash out', () => {
+    expect(projectFeedEvents([inner, send]).map(row => row.id)).toEqual(['send'])
+  })
+
+  it('keeps a holder cash out, in that transaction or another', () => {
+    const own = event({
+      id: 'own',
+      cashOutTokensEvent: { ...inner.cashOutTokensEvent!, holder: '0xholder' },
+    } as Partial<BsActivityEvent>)
+    const elsewhere = event({ ...inner, id: 'elsewhere', txHash: '0xother' })
+    expect(projectFeedEvents([own, elsewhere, send]).map(row => row.id)).toEqual([
+      'own',
+      'elsewhere',
+      'send',
+    ])
+  })
+
+  it('drops the sucker cash out in feeds that group without the project filter, as the account feed does', () => {
+    expect(groupSameTxEvents([inner, send]).map(group => group.map(row => row.id))).toEqual([['send']])
+  })
+
+  it('reads as sending the tokens to the other chain, by whoever called the sucker', () => {
+    const [group] = groupSameTxEvents(projectFeedEvents([inner, send]))
+    const parts = combinedActivityParts(group, 'REV')
+    // A Safe's send is the Safe's, not the signer's who executed it.
+    expect(parts.actor).toBe('0xsafe')
+    expect(renderToStaticMarkup(<>{parts.action}</>)).toMatch(/sending.*100\.13 REV.*to Ethereum/)
+  })
+
+  it('keeps a Safe’s repayment the row, by the Safe, when a deposit shares its transaction', () => {
+    const deposit = event({
+      id: 'deposit',
+      addToBalanceEvent: { amount: '1', amountUsd: '0', memo: '', from: '0xexecutor', token: '0x0', decimals: 18, tokenSymbol: 'ETH' },
+    } as Partial<BsActivityEvent>)
+    const repay = event({
+      id: 'repay',
+      repayLoanEvent: { repayBorrowAmount: '1', collateralCountToReturn: '1', caller: '0xsafe', from: '0xexecutor' },
+    } as Partial<BsActivityEvent>)
+    const [group] = groupSameTxEvents([deposit, repay])
+    expect(combinedActivityParts(group, 'REV').actor).toBe('0xsafe')
+  })
+
+  it('names the account inside a bridge claim’s 32-byte beneficiary', () => {
+    const claim = event({
+      id: 'claim',
+      bridgeClaimEvent: {
+        peerChainId: 1,
+        token: '0x0',
+        beneficiary: `0x${'0'.repeat(24)}${'ab'.repeat(20)}`,
+        projectTokenCount: '1000000000000000000',
+        terminalTokenAmount: '0',
+        caller: '0xcaller',
+        from: '0xcaller',
+      },
+    } as Partial<BsActivityEvent>)
+    expect(combinedActivityParts([claim], 'REV').actor).toBe(`0x${'ab'.repeat(20)}`)
+  })
+})

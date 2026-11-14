@@ -252,11 +252,12 @@
   },
   "authorityCalls": {
     "src/components/project/AuthorityEditsCard.tsx": {
-      "calls": 2,
+      "calls": 3,
       "actions": [
         "Update project metadata",
         "Deploy project ERC-20",
-        "Rename project ERC-20"
+        "Rename project ERC-20",
+        "Connect another chain"
       ]
     },
     "src/components/project/AuthorityOverview.tsx": {
@@ -316,6 +317,9 @@
       "actions": [
         "Add shop tiers",
         "Replace shop item media",
+        "Edit shop item details",
+        "Set a shop item discount",
+        "Remove a shop item",
         "Claim project-token credits",
         "Distribute payouts",
         "Distribute reserved tokens",

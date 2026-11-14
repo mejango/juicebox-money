@@ -7,7 +7,11 @@ import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { combinedActivityParts, feedAmountToken, groupSameTxEvents } from './ActivityList'
+import {
+  combinedActivityParts,
+  feedAmountToken,
+  groupSameTxEvents,
+} from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { LoadMoreRow } from './LoadMoreRow'
 import { ProjectLogo } from './ProjectLogo'

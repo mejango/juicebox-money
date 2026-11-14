@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // Owner actions that show their own error show Discard in its place once their
 // saved Relayr session can only be discarded (ruling R114).
-const mocks = vi.hoisted(() => ({ run: vi.fn(), discard: vi.fn(), read: vi.fn() }))
+const mocks = vi.hoisted(() => ({ run: vi.fn(), discard: vi.fn(), read: vi.fn(), plan: vi.fn() }))
 
 vi.mock('@/providers/Providers', () => ({ wagmiConfig: {}, SUPPORTED_CHAINS: [] }))
 vi.mock('@/hooks/useWallet', () => ({
@@ -18,6 +18,7 @@ vi.mock('@/lib/authority', async original => ({
   safeOutcomeMessage: (_result: unknown, completed: string) => completed,
 }))
 vi.mock('@/lib/relayr', async original => ({ ...await original<typeof import('@/lib/relayr')>(), discardRelayrSession: mocks.discard }))
+vi.mock('@/lib/connect-chain', async original => ({ ...await original<typeof import('@/lib/connect-chain')>(), planChainConnection: mocks.plan }))
 vi.mock('@/components/project/SafeBatchProvider', () => ({ useSafeBatch: () => null }))
 vi.mock('@/components/ui/TxProgress', () => ({
   // Its one button is what the dialog does next: its first start, then its retry.
@@ -43,7 +44,7 @@ vi.mock('@/components/ui/AddressLabel', () => ({ AddressLabel: () => null, Addre
 
 import { BuybackActionForm } from '@/components/project/MultiChainBuybackRouterCard'
 import { PermissionEditor, TransferAuthorityFlow } from '@/components/project/AuthorityOverview'
-import { TokenEditor } from '@/components/project/AuthorityEditsCard'
+import { ConnectChainEditor, TokenEditor } from '@/components/project/AuthorityEditsCard'
 import { RelayrDiscardError } from '@/lib/relayr'
 
 const ALICE = '0x1111111111111111111111111111111111111111' as Address
@@ -158,6 +159,21 @@ describe('owner actions whose saved Relayr session can only be discarded', () =>
     await click('Save token details')
     await click('Confirm dialog')
     expect(mocks.run).toHaveBeenCalledOnce()
+    await discardsInPlaceOfTheError()
+  })
+
+  it('wallet-action:connect-another-chain reviews a chain connection for the typed project and sends exactly the planned calls', async () => {
+    const calls = [{ chainId: 1, authority: ALICE }, { chainId: 8453, authority: ALICE }]
+    mocks.plan.mockResolvedValue({ calls, assets: [0] })
+    const rows = [{ ...PROJECTS[0], authority: ALICE, error: null }]
+    await render(<ConnectChainEditor rows={rows} candidates={[8453, 42161]} onCancel={vi.fn()} />)
+    expect(button('Review connection')!.props.disabled).toBe(true)
+    await act(async () => { renderer!.root.findByProps({ type: 'text' }).props.onChange({ target: { value: '40x' } }) })
+    await click('Review connection')
+    expect(mocks.plan.mock.calls[0][0]).toMatchObject({ members: rows, targetChainId: 8453, targetProjectId: 40n, salt: expect.stringMatching(/^0x[0-9a-f]{64}$/) })
+    expect(text(renderer!.root)).toContain('Connect only projects with the same rules.')
+    await click('Confirm dialog')
+    expect(mocks.run.mock.calls[0][0].calls).toBe(calls)
     await discardsInPlaceOfTheError()
   })
 })

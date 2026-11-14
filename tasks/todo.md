@@ -9,11 +9,12 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - [x] B9 SDK rules (needs SDK 6.6.0, PR Bananapus/juice-sdk-v4#307): ERC-20 pay asks a plain wallet for a free Permit2 signature (after one approval of Permit2), a Safe or contract wallet for the exact approval (`planErc20PayAuthorization`); the buyback card and Market resolve the hook and router terminal through the ruleset's data hook (`resolveProjectBuybackHook`, `resolveProjectRouterTerminal`); a revnet's own cash out fee is netted in the holder value, the market floor and the price charts. Still open from the same rulings: one shared `.jb` format (schema question with jango).
 - [x] B10 Safe pay as one batch: an ERC-20 payment from a Safe app goes as one proposal of the approval and the payment (core's `batch`), settling as the payment (`useStepRun`). A resumed run still proposes step by step.
 - [ ] B11 Relayr first, ordered sends otherwise: not built. A first version (core's sequence journal under `runAuthorityCalls`) was withdrawn after three Codex passes: dropping an unfinished run when the wallet does something else can resend a confirmed call, and keeping it can resume past a call that no longer holds. It needs a journal keyed by the flow, which refuses a changed request until the person finishes or discards the old run, as Juicescan's does: a `scope` from each caller and a Discard exit. Question with jango. revnet.money already sends in order (`runSequentialWrites`).
-- [ ] B3 Shop: remove item, set discount, edit name and description. Not built yet: each needs its own snapshot action, call policy and review modal on the `shop-batch` pattern.
+- [x] B12 The shared `.jb` file, version 2 (rulings of 2026-11-14, needs SDK 6.8.0): `src/lib/jb-draft.ts` maps the SDK's `JbDraft` to and from the create form and refuses a file holding what the form cannot express, each by name; import, export and the Extras export go through it; the browser's saved draft keeps the form's own shape and no longer reads another site's file. Logo, cover and item media pin when chosen, so a file carries their URIs. `/llms.txt` and `public/examples/project.jb` state the new fields. No version 1 import.
+- [x] B3 Shop: remove item, set discount, edit name and description, each from the item detail (see the 2026-11-14 shop item actions section below).
 - [x] B12 Set terminals sends an empty list only with Allow an empty list turned on (it stops payments and cash outs); the card and a queued batch step share the rule (`emptyWith`, `parseAddressList`), and a step saved before the field reads as off. Same field in Juicescan.
 - [x] B11 Owner calls Relayr cannot take (one chain twice, an unsupported chain, a target without the forwarder) are reviewed once and sent in order from the wallet, under core's journal keyed as revnet.money keys its own (account, and each call's chain, target and function): the same calls continue after the last confirmed one, other arguments replace the run, and a run left unfinished stays direct. Relayr is still tried first. jango's ruling of 2026-11-14 (match revnet.money), with its known weakness: set X on two chains, fail on the second, set Y by another route, request X again, and the old run resumes past the first chain.
-- [ ] B4 Rulesets: approval hook, base currency, custom duration; surplus allowance for operators and other chains.
-- [ ] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). An activity chain filter (a native select of the chains in the loaded events, display order; `activityChains`, `activityOnChain`). Inbound bridge claims already read "claimed X from Chain" (`bridgeClaimEvent`). Open: unknown-contracts warning; a sucker's outbound cash out still reads "cashed out" (needs the project's sucker addresses in the feed).
+- [x] B4 Rulesets: Edit rules takes any cycle length, a rule-change notice and the issuance currency; the surplus allowance runs on any chain and for operators (see the 2026-11-14 ruleset section below). Not built, for jango: a field for a new custom approval contract; the allowance for a Safe signer not connected as the Safe.
+- [x] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). An activity chain filter (a native select of the chains in the loaded events, display order; `activityChains`, `activityOnChain`). Inbound bridge claims already read "claimed X from Chain" (`bridgeClaimEvent`). A bridge send reads "sending X to Chain" and the cash out the sucker makes inside it is hidden (`withoutBridgeCashOuts`). The project page warns about contracts it does not recognize (`auditProjectContracts`, `ProjectContractWarning`).
 - [x] B6 Copy: "cash out" written open, chain slugs in display order, logo hint matches the 25 MB check, fees to JBP6, account title without a dash, each client names the other's `.jb` draft. Not changed after checking the recorded rules: there is no blanket em dash rule (only page titles) and no rule against `$` tickers, so both go to the end list.
 - [x] B7 Buyback card: a pool registration at exactly the maximum TWAP window is refused (the hook stores 30 minutes). Held for jango: resolving the current hook and router terminal through the ruleset data hook, as revnet.money does, belongs in the SDK.
 
@@ -75,3 +76,83 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - Examples now pin6.7.0 while retaining the original6.6.0 live-read/simulation attribution. Awaiting exact-head remote CI and paired-client merge coordination.
 
 - Final CI on41dd4518 passed Test/build11m12s and OCI3m23s. MainPR183 then introduced ordered direct owner sends and a budget-comment conflict. Normal mergef917cace preserves both behaviors and the configured authority import;64 authority/routing tests, types and source checks pass. Fresh combined browserbuild passes, with aggregate2725.1KiB requiring only rounded2726 cap; project542.2KiB stays below543 and all static-route caps stay unchanged. Final corrected head receives new full remote CI.
+
+## 2026-11-14: Shop item actions (B3)
+
+- [x] `shop-batch`: one table of shop actions (permission, wording, whether the item's metadata is rewritten); `readShopSnapshot` and `reverifyShopCall` read it. A removed item no longer passes `readShopTier`.
+- [x] Builders: `buildSet721DiscountRequest`; removal through the existing `buildAdjustTiersRequest`; `buildShopItemCalls` for media, details, discount and removal.
+- [x] One item modal with a mode (media, details, discount, remove); the item detail offers each action the viewer may take, a Safe signer included.
+- [x] Tests with `wallet-action:` markers, inventory rows, full `npm run check`, Codex until clean.
+
+### Review
+Built on the reviewed shop batch: `SHOP_ACTIONS` names each action's permission (remove 24, discount 27, details and media 25), its call and whether it rewrites metadata; `reverifyShopCall` holds saved bytes to the reviewed action on the reviewed item. The item detail offers each action to the owner, a signer of the owner Safe (who was not offered Replace media before) or an operator with the permission. Codex, three passes: pass 1 (the new description was missing from the review), pass 2 (older `productName` keys kept the old name on screen; a chain already at the new discount blocked the rest; a locked page chain hid removal for peers), all fixed with tests. Pass 3 set aside, for jango: an item with no IPFS file (metadata from a custom resolver) cannot be removed or discounted here, since linked chains are matched on that file; actions are offered by the viewer's rights on the chain the page shows, so a viewer with rights only on another chain switches to it first. `npm run check` gates pass (3660 unit tests, budgets with all scripts raised 2736 to 2738 on a measured 2737.4, 90 browser tests run on port 3187 because 3100 was held by another process). Not rendered in a browser with an owner wallet.
+
+## Plan refinement
+- **Objective:** A shop owner or operator can remove an item, set its discount and edit its name and description on juicebox.money, on every linked chain that holds the same item, as on Juicescan.
+- **System fit:** These are three more actions on the existing reviewed shop batch (`shop-batch`, `runProjectBatch`), which already owns authority resolution (owner, Safe signer, operator), the per-chain snapshot, freshness re-check and recovery journal. No new send path.
+- **Reuse and simplicity:** The media modal becomes one item modal with a mode, not three copies. Removal uses the existing `adjustTiers` builder. The percent to 200-point conversion gets one home (`discountUnits`) used by launch, add items and this action.
+- **Evidence and unknowns:** Contract facts from `nana-721-hook-v6` (subagent reading, re-read where the code depends on it): removal reverts on `cantBeRemoved`; a discount reverts on a removed item, above 200, or an increase under `cantIncreaseDiscountPercent`; `setMetadata` never checks that an item exists, so the client must. Peer chains are matched on the item's metadata URI, as media does.
+- **Verification:** Unit tests for each call's exact bytes, each permission id, each refusal, and the modal journey per mode; `npm run check`; Codex review until clean.
+- **Resource budget:** One branch stacked on the `.jb` branch, one full gate, review passes as needed.
+
+## 2026-11-14: Ruleset choices and the surplus allowance (B4)
+
+- [x] One cycle length control and model for the create form and Edit rules (`DurationSelect`, `durationFieldsSeconds`, `durationFields`); a custom length is 1 second to uint32 seconds.
+- [x] Edit rules: the rule-change notice as a choice, sent as each chain's own deadline contract (`deadlineHookAddress`); an unknown contract stays unless the notice changes.
+- [x] Edit rules: issuance priced in ETH or USD, behind a live probe of the price pairs the new currency adds on every selected chain (`newBaseFeedPairs`, `probeFeedPairs`).
+- [x] Funds: the surplus allowance on any chain of the project, for the owner or a holder of USE_ALLOWANCE (`canUseAllowance`).
+
+## Plan refinement
+- **Objective:** An owner can queue, from juicebox.money, the same ruleset choices Juicescan offers (cycle length, approval condition, base currency), and the surplus allowance is usable by whoever the contract lets use it, on whichever chain holds it.
+- **System fit:** Edit rules keeps one editor state per stage; the per-chain carry-over copies only changed fields, so chain-neutral values (a notice choice, a currency id) carry and chain-specific addresses are resolved at encoding. The create form already owns these models, so they move to shared homes instead of second copies.
+- **Reuse and simplicity:** The create form's duration control, deadline table and feed probe are reused. No new send path: the queue still goes through `runAuthorityCalls`, the allowance through `useReviewedAction`.
+- **Evidence and unknowns:** `JBRulesets` bounds duration to uint32 and requires an approval hook to pass ERC-165, which a known deadline contract does. A changed base currency needs a JBPrices pair for each accepted token; the probe reads the project's own feeds, then the defaults.
+- **Verification:** Unit tests for the duration model, the per-chain notice address, the base currency carry-over and added pairs, and the allowance rights; `npm run check`; Codex until clean.
+- **Resource budget:** One branch stacked on the shop actions, one full gate, review passes as needed.
+
+### Review
+Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates pass: 3667 unit tests, budgets (all scripts raised 2738 to 2741 on a measured 2740.1), 90 browser tests on port 3187 (3100 held by another process). Not rendered in a browser with an owner wallet.
+
+## 2026-11-14: Bridge sends in activity and the unknown contracts warning (B5)
+
+- [x] Activity: the feed reads `bridgeToOutboxEvent` and shows "sending X TOKEN to Chain"; a cash out whose holder is that event's sucker, in the same transaction, makes no row. Project feed and home rail share the rule.
+- [x] Project page: one audit per chain of the controller, terminals, rule-change hook, data hook, omnichain extra hook and buyback hook against the SDK's known deployments, the address registry's deployer, and the project's verified Defifa game. A failed read says the check did not finish.
+
+## Plan refinement
+- **Objective:** juicebox.money says the same two things Juicescan says: a bridge send is a send, and a project pointing at a contract the app does not know carries a warning. Success is both shown from live data shapes with tests.
+- **System fit:** The feed rule lives beside the other feed filters in `ActivityList`; the audit is a pure reader in `src/lib` that a client card displays, read through the paced browser RPC lanes after the page loads, so page renders and crawlers cost no RPC.
+- **Reuse and simplicity:** SDK `knownAddressName`, `getCurrentRuleset`, `resolveProjectBuybackHook`, `getProjectNftInventory`. Juicescan's extra 721 clone identity reads are skipped: its own fallback accepts any instance from a known deployer, so the result is the same.
+- **Evidence and unknowns:** One live Bendystraw transaction shows the outbox event and the sucker's cash out side by side with matching sucker and holder. The audit run against 17 live Base projects flags one, project 20's extra data hook, which has no registry deployer and is not in Juicescan's table either. Unknown: the SDK table lacks Defifa deployers and old LP split hook generations, which no audited role uses today.
+- **Verification:** Unit tests for the feed rule, the audit and the card; `npm run check`; Codex until clean.
+- **Resource budget:** One branch stacked on the ruleset editor, one full gate, review passes as needed.
+- **Authority and recovery:** Draft PR only, merged on jango's word. Two commits for the feed, one for the warning; each reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+- Activity: a bridge send (`prepare` on a sucker) reads "sending X TOKEN to Chain" by the account that called the sucker; the cash out the sucker makes inside it is dropped in the one grouping function, so the project, account and homepage feeds agree. A bridge claim names the account inside a 32-byte beneficiary.
+- Project page: `auditProjectContracts` checks the controller, terminals, the terminal a known router registry forwards to, the rule-change hook, the data hook, the omnichain deployer's extra hook and the buyback hook for payments and cash outs. A failed read says the check did not finish instead of showing a clean project. Run live against 17 Base projects: only project 20's extra data hook was named.
+- The check's readers and RPC client load on demand. Budgets raised with measured numbers: `/[urn]` 543 to 544 KiB, all scripts 2741 to 2744 KiB.
+- Verification: full `npm run check` green (3687 unit tests, 90 browser tests). Codex `gpt-6.1-sol` six passes: seven findings fixed, one set aside (a send and its inner cash out split across a 250 event page, self-correcting on Load more), pass 6 CLEAN.
+- Not done here: Croptop's deployer is a constant in the audit until the SDK table has it; revnet.money has no such card yet. New copy for jango: "Bridged out", "Bridge sends", "sending X to Chain", the two contract card titles and their sentences, "Router terminal".
+
+## 2026-11-14: Best pay route and connecting a chain (B6)
+
+- [x] Pay: a payment is quoted on every terminal the project lists for the token (its primary terminal and the attached router entries) through the SDK's `prepareBestUserPay`, and goes to the one that gives the payer the most. Item checkout stays on the direct terminal.
+- [x] Owner edits: "Connect another chain" links a custom project to one the same account owns on another chain, with one `JBSuckerRegistry.deploySuckersFor` per chain (`planChainConnection`).
+- [x] The contract audit and the item details edit come from the SDK; the local copies are gone.
+
+## Plan refinement
+- **Objective:** Rulings 1 and 6 of 2026-11-14. A payer gets the best listed route without choosing it, and an owner can connect a project after launch. Success is the pay panel sending to the terminal its quote came from, and a connection that pairs, or a refusal that says why.
+- **System fit:** The pay panel keeps one prepared payment; its terminal now comes from that payment, so the allowance read, authorization, hold and send all follow it. The connection is one more editor in the owner edits card, sent through `useAuthorityRun` like the others.
+- **Reuse and simplicity:** SDK `prepareBestUserPay`, `parseSuckerDeployerConfig`, `getAccountingContexts`, `getCurrentRuleset`. No new send path. CCIP suckers only, and joining two existing groups is refused; both are marked in the code.
+- **Evidence and unknowns:** `JBSuckerRegistry.deploySuckersFor` salts with the caller, so one account must send every call and own the project on the new chain. `JBController.mintTokensOf` lets a sucker mint only through the ruleset's data hook, and only `JBOmnichainDeployer.hasMintPermissionFor` grants it; a project whose rules run through anything else is refused. A single-chain launch from this site uses the 721 deployer, so such a project cannot connect later. That limit is jango's to rule on.
+- **Verification:** Unit tests for the pay panel's candidates and target, the connection plan and its refusals, and the editor; `npm run check` on the packed SDK; Codex until clean.
+- **Resource budget:** One branch on top of the stack, one full gate, review passes as needed.
+- **Authority and recovery:** Draft PR, merged on jango's word after SDK 6.8.0 is published. One commit per change; each reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+- Full `npm run check` steps green on the packed SDK tarball: 3686 unit tests, budgets (`/[urn]` 544 to 545 on a measured 544.1, all scripts 2744 to 2746 on a measured 2745.6), 90 browser tests on port 3187.
+- Codex `gpt-6.1-sol`: CLEAN on the first pass.
+- Not rendered with a wallet: the connect editor and the pay panel's route choice are covered by unit tests only.
+- New copy for jango: "Connect another chain", "Link this project to one you own on another chain, so its tokens can move between them.", "Connect a chain", "Review connection", "Tokens that can move", "Tokens can then move between these projects and be cashed out on either one. Connect only projects with the same rules.", and the refusals in `connect-chain.ts`.

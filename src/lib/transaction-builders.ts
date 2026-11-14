@@ -10,6 +10,7 @@ import {
   jbMultiTerminalAbi,
   jbProjectsAbi,
   jbRouterTerminalRegistryAbi,
+  jbSuckerRegistryAbi,
   revOwnerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -257,6 +258,33 @@ export function buildSet721TierMediaRequest({
   }
 }
 
+/** Set one tier's discount, out of the hook's 200 (half a percent each). */
+export function buildSet721DiscountRequest({
+  chainId,
+  hook,
+  tierId,
+  discountPercent,
+}: {
+  chainId: JBChainId
+  hook: Address
+  tierId: number
+  discountPercent: number
+}) {
+  if (!Number.isSafeInteger(tierId) || tierId < 1 || tierId > 65_535) {
+    throw new Error('The item tier ID must fit uint16 and be greater than zero.')
+  }
+  if (!Number.isInteger(discountPercent) || discountPercent < 0 || discountPercent > 200) {
+    throw new Error('A discount is between 0 and 100%, in half percents.')
+  }
+  return {
+    chainId,
+    address: hook,
+    abi: jb721TiersHookAbi,
+    functionName: 'setDiscountPercentOf' as const,
+    args: [BigInt(tierId), BigInt(discountPercent)] as const,
+  }
+}
+
 export function buildSendPayoutsRequest({
   chainId,
   terminal,
@@ -384,6 +412,34 @@ export function buildTokenMetadataAuthorityCall({
  * `omnichainTokenSalt`). A zero salt would deploy a nonce-keyed clone —
  * a different address per chain, irreversibly.
  */
+/** `deploySuckersFor` on the registry: the caller and salt decide the suckers' addresses. */
+export function buildDeploySuckersAuthorityCall({
+  chainId,
+  authority,
+  registry,
+  projectId,
+  salt,
+  configurations,
+}: {
+  chainId: JBChainId
+  authority: Address
+  registry: Address
+  projectId: bigint
+  salt: Hex
+  configurations: readonly unknown[]
+}): AuthorityCall {
+  return buildAuthorityCall({
+    chainId,
+    authority,
+    target: registry,
+    abi: jbSuckerRegistryAbi,
+    functionName: 'deploySuckersFor',
+    args: [projectId, salt, configurations],
+    contractName: 'JBSuckerRegistry',
+    label: 'Connect chains',
+  })
+}
+
 export function buildDeployTokenAuthorityCall({
   chainId,
   authority,

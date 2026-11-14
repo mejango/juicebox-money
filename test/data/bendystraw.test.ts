@@ -44,7 +44,7 @@ describe('minimal Bendystraw client', () => {
         'borrowLoanEvent', 'repayLoanEvent', 'liquidateLoanEvent', 'mintNftEvent',
         'deployErc20Event', 'setUriEvent', 'projectTransferEvent', 'operatorPermissionsSetEvent',
         'rulesetQueuedEvent', 'addNftTierEvent', 'removeNftTierEvent', 'swapEvent',
-        'buybackPoolEvent', 'bridgeClaimEvent',
+        'buybackPoolEvent', 'bridgeClaimEvent', 'bridgeToOutboxEvent',
       ].map(key => [key, null])),
       project: { name: null, logoUri: null, metadataUri: uri, tokenSymbol: null, decimals: 18 },
     }

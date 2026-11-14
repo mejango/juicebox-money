@@ -21,7 +21,7 @@ vi.mock('@/components/ui/ChainPillButton', () => ({ ChainPillButton: () => null 
 vi.mock('@/components/ChainIcon', () => ({ ChainIcon: () => null }))
 
 import { AddShopItemsModal } from '@/components/project/AddShopItemsModal'
-import { ReplaceTierMediaModal } from '@/components/project/ReplaceTierMediaModal'
+import { ShopItemModal, type ShopItemMode } from '@/components/project/ShopItemModal'
 import { StoreEditor, newDraftItem } from '@/components/create/StoreEditor'
 import { TxProgress } from '@/components/ui/TxProgress'
 import { buildShopAddCalls, buildShopMediaCalls } from '@/lib/shop-batch'
@@ -37,7 +37,7 @@ const targets: ShopWriteTarget[] = [
   { chainId: 8453, projectId: 202, hook: PEER, pricing: { currency: 2, decimals: 6, symbol: 'USD' } },
 ]
 function snapshot(target: ShopWriteTarget, action: ShopAction): ShopSnapshot {
-  return { target: { ...target, hook: target.hook!, pricing: target.pricing! }, isRevnet: false, action, account: ACCOUNT, owner: ACCOUNT, authority: ACCOUNT, store: HOOK, metadataIdTarget: HOOK, state: JSON.stringify({ maxTierId: '20', flags: { noNewTiersWithVotes: false } }), ...(action === 'shop-add-items' ? { maxTierId: '20' } : { tierId: 7, encodedIpfsUri: URI }) }
+  return { target: { ...target, hook: target.hook!, pricing: target.pricing! }, isRevnet: false, action, account: ACCOUNT, owner: ACCOUNT, authority: ACCOUNT, store: HOOK, metadataIdTarget: HOOK, state: JSON.stringify({ maxTierId: '20', flags: { noNewTiersWithVotes: false }, configuration: { discountPercent: 17, flags: { cantIncreaseDiscountPercent: false } } }), ...(action === 'shop-add-items' ? { maxTierId: '20' } : { tierId: 7, encodedIpfsUri: URI }) }
 }
 function journal(action: ShopAction, calls: ProjectBatchCall[]): ProjectBatch {
   return { version: 1, id: 'saved', scope: `${action}:1:101`, action, account: ACCOUNT, title: 'Saved shop update', status: 'pending', calls, completedIds: [calls[0].id], rounds: [calls.map(call => call.id)], submissions: {}, relayrRounds: [0] }
@@ -46,7 +46,7 @@ beforeEach(() => {
   mocks.saved = null; mocks.wallet.address = ACCOUNT
   mocks.snapshot.mockImplementation(async (target, _account, _revnet, action) => snapshot(target, action))
   mocks.reverify.mockResolvedValue(undefined)
-  mocks.tier.mockResolvedValue({ encodedIpfsUri: URI })
+  mocks.tier.mockResolvedValue({ encodedIpfsUri: URI, flags: { cantBeRemoved: false } })
   mocks.metadata.mockResolvedValue({ name: 'Original item', properties: { nested: ['preserve'] }, custom: 123, image: 'ipfs://old' })
   mocks.pinItems.mockImplementation(async (drafts: ReturnType<typeof newDraftItem>[]) => drafts.map(draft => ({ draft, encodedIpfsUri: URI })))
   mocks.pinImage.mockResolvedValue({ uri: 'ipfs://new-media' })
@@ -65,7 +65,12 @@ async function addModal() {
 }
 async function mediaModal() {
   let renderer!: ReactTestRenderer
-  await act(async () => { renderer = create(<ReplaceTierMediaModal chainId={1} hook={HOOK} tierId={7} current={{ name: 'Display item' }} targets={targets} isRevnet={false} onClose={() => {}} />) })
+  await act(async () => { renderer = create(<ShopItemModal mode="media" chainId={1} hook={HOOK} tierId={7} current={{ name: 'Display item' }} targets={targets} isRevnet={false} onClose={() => {}} />) })
+  return renderer
+}
+async function itemModal(mode: ShopItemMode) {
+  let renderer!: ReactTestRenderer
+  await act(async () => { renderer = create(<ShopItemModal mode={mode} chainId={1} hook={HOOK} tierId={7} current={{ name: 'Original item', description: 'Old words' }} discountPercent={17} targets={targets} isRevnet={false} onClose={() => {}} />) })
   return renderer
 }
 async function clickReview(renderer: ReactTestRenderer) {
@@ -139,17 +144,78 @@ describe('shop batch component journeys', () => {
     expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
     await act(async () => renderer.unmount())
   })
+  it('wallet-action:remove-a-shop-item reviews and removes the item on every matching chain with nothing pinned', async () => {
+    const renderer = await itemModal('remove')
+    await clickReview(renderer); await confirm(renderer)
+    const args = mocks.run.mock.calls[0][0]
+    expect(args).toMatchObject({ action: 'shop-remove-item', scope: 'shop-remove-item:1:101', title: 'Remove shop item' })
+    expect(args.calls.map((call: ProjectBatchCall) => [call.chainId, call.target, call.functionName, call.args])).toEqual([[1, HOOK, 'adjustTiers', [[], [7n]]], [8453, PEER, 'adjustTiers', [[], [7n]]]])
+    expect(mocks.snapshot).toHaveBeenCalledWith(targets[0], ACCOUNT, false, 'shop-remove-item', 7)
+    expect(mocks.reverify).toHaveBeenCalledWith(expect.anything(), ACCOUNT, true)
+    expect(mocks.metadata).not.toHaveBeenCalled(); expect(mocks.pinJson).not.toHaveBeenCalled()
+    expect(renderer.root.findByType(TxProgress).props).toMatchObject({ complete: true, title: 'Item removed' })
+    await act(async () => renderer.unmount())
+  })
+  it('leaves a chain where the item is locked out of a removal', async () => {
+    mocks.tier.mockImplementation(async (_client, hook) => ({ encodedIpfsUri: URI, flags: { cantBeRemoved: hook === PEER } }))
+    const renderer = await itemModal('remove')
+    await clickReview(renderer); await confirm(renderer)
+    expect(mocks.run.mock.calls[0][0].calls.map((call: ProjectBatchCall) => call.chainId)).toEqual([1])
+    await act(async () => renderer.unmount())
+  })
+  it('wallet-action:set-a-shop-item-discount sends the typed percent as the 200-point value and offers nothing for an unchanged or malformed one', async () => {
+    const renderer = await itemModal('discount')
+    const input = () => renderer.root.findByProps({ type: 'number' })
+    const review = () => renderer.root.findAllByType('button').find(button => button.props.className.includes('btn-primary'))!
+    // 17 of 200 is 8.5%: the field opens on it, and review waits for a half percent.
+    expect(input().props.value).toBe('8.5')
+    for (const bad of ['', '12.3', '101', '-1']) {
+      await act(async () => input().props.onChange({ target: { value: bad } }))
+      expect(review().props.disabled).toBe(true)
+    }
+    await act(async () => input().props.onChange({ target: { value: '12.5' } }))
+    await clickReview(renderer)
+    expect(renderer.root.findByType(TxProgress).props.rows).toContainEqual({ label: 'Discount', value: '12.5% off' })
+    await confirm(renderer)
+    const args = mocks.run.mock.calls[0][0]
+    expect(args.action).toBe('shop-set-discount')
+    expect(args.calls.map((call: ProjectBatchCall) => [call.chainId, call.functionName, call.args])).toEqual([[1, 'setDiscountPercentOf', [7n, 25n]], [8453, 'setDiscountPercentOf', [7n, 25n]]])
+    expect(mocks.pinJson).not.toHaveBeenCalled()
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
+    await act(async () => renderer.unmount())
+  })
+  it('wallet-action:edit-shop-item-details pins the original JSON with only the name and description changed', async () => {
+    mocks.metadata.mockResolvedValue({ name: 'Original item', description: 'Old words', properties: { nested: ['preserve'] }, custom: 123, image: 'ipfs://old' })
+    const renderer = await itemModal('details')
+    expect(renderer.root.findByProps({ type: 'text' }).props.value).toBe('Original item')
+    // Nothing changed yet: the review refuses before anything is pinned.
+    await clickReview(renderer)
+    expect(renderer.root.findAllByType(TxProgress)).toHaveLength(0)
+    await act(async () => renderer.root.findByProps({ type: 'text' }).props.onChange({ target: { value: 'Renamed item' } }))
+    await act(async () => renderer.root.findByType('textarea').props.onChange({ target: { value: 'New words' } }))
+    await clickReview(renderer)
+    expect(renderer.root.findByType(TxProgress).props.rows).toEqual(expect.arrayContaining([{ label: 'New name', value: 'Renamed item' }, { label: 'New description', value: 'New words' }]))
+    await confirm(renderer)
+    expect(mocks.pinJson).toHaveBeenCalledWith({ name: 'Renamed item', description: 'New words', properties: { nested: ['preserve'] }, custom: 123, image: 'ipfs://old' })
+    expect(mocks.pinImage).not.toHaveBeenCalled()
+    const args = mocks.run.mock.calls[0][0]
+    expect(args.action).toBe('shop-edit-details')
+    expect(args.calls.map((call: ProjectBatchCall) => [call.chainId, call.functionName, call.args])).toEqual([[1, 'setMetadata', ['', '', '', '', HOOK, 7n, URI]], [8453, 'setMetadata', ['', '', '', '', PEER, 7n, URI]]])
+    expect(args.calls[0].context).toMatchObject({ summary: 'Renamed item', description: 'New words', items: [{ name: 'Original item' }] })
+    expect(renderer.root.findByType(TxProgress).props.complete).toBe(true)
+    await act(async () => renderer.unmount())
+  })
   it('resumes saved media without the upload file and rejects another connected account', async () => {
     const calls = buildShopMediaCalls(targets.map(target => snapshot(target, 'shop-replace-media')), ACCOUNT, URI, 'saved.png', 'Saved item')
     mocks.saved = journal('shop-replace-media', calls)
     const renderer = await mediaModal()
     mocks.wallet.address = PEER
-    await act(async () => renderer.update(<ReplaceTierMediaModal chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
+    await act(async () => renderer.update(<ShopItemModal mode="media" chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
     await confirm(renderer)
     expect(mocks.run).not.toHaveBeenCalled()
     expect(renderer.root.findByType(TxProgress).props.error).toContain('Reconnect')
     mocks.wallet.address = ACCOUNT
-    await act(async () => renderer.update(<ReplaceTierMediaModal chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
+    await act(async () => renderer.update(<ShopItemModal mode="media" chainId={1} hook={HOOK} tierId={7} current={undefined} targets={targets} isRevnet={false} onClose={() => {}} />))
     await confirm(renderer)
     expect(mocks.run.mock.calls[0][0]).toMatchObject({ calls: mocks.saved.calls, scope: mocks.saved.scope, expectedBatchId: mocks.saved.id })
     expect(mocks.pinImage).not.toHaveBeenCalled(); expect(mocks.pinJson).not.toHaveBeenCalled()

@@ -1079,7 +1079,7 @@ describe('launch helper invariants', () => {
     expect(tiers.map(tier => tier.initialSupply)).toEqual([9, TIER_UNLIMITED_SUPPLY])
     expect(tiers[0].flags).toEqual(
       expect.objectContaining({
-        useReserveBeneficiaryAsDefault: true,
+        useReserveBeneficiaryAsDefault: false,
         useVotingUnits: false,
         cantIncreaseDiscountPercent: false,
         cantBuyWithCredits: false,

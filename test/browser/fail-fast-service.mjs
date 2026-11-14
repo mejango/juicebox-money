@@ -122,7 +122,8 @@ const projectFields = `
 const activityEventFields = `
   id chainId projectId timestamp from txHash
   payEvent { amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol }
-  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol }
+  cashOutTokensEvent { cashOutCount reclaimAmount reclaimAmountUsd beneficiary holder token decimals tokenSymbol }
+  bridgeToOutboxEvent { peerChainId projectTokenCount sucker caller }
   projectCreateEvent { from }
   addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent { beneficiary beneficiaryTokenCount caller from }
@@ -132,8 +133,8 @@ const activityEventFields = `
   sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
-  repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
-  liquidateLoanEvent { borrowAmount collateral from }
+  repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from }
+  liquidateLoanEvent { borrowAmount collateral caller from }
   mintNftEvent { tierId tokenId beneficiary totalAmountPaid from }
   deployErc20Event { symbol name token from }
   setUriEvent { uri caller from }
@@ -642,6 +643,7 @@ const graphqlFixtures = [
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
             { sendReservedTokensToSplitEvent_not: null }
@@ -952,6 +954,7 @@ const graphqlFixtures = [
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { swapEvent_not: null }
             { sendPayoutsEvent_not: null }
             { rulesetQueuedEvent_not: null }
@@ -1003,6 +1006,7 @@ const graphqlFixtures = [
               tokenSymbol: 'USDC',
             },
             cashOutTokensEvent: null,
+            bridgeToOutboxEvent: null,
             projectCreateEvent: null,
             addToBalanceEvent: null,
             mintTokensEvent: null,

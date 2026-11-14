@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { DurationSelect } from "./DurationSelect";
 import {
   CASH_OUTS_OFF_REVNET,
   FOREVER_SECONDS,
@@ -25,6 +26,7 @@ import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 import {
   MIN_START_LEAD_SECONDS,
   numOk,
+  CASH_OUT_TAXES,
   routedModePatch,
   scheduledStartOk,
   secondsLabel,
@@ -42,24 +44,6 @@ export {
   stageStartOk,
   type DraftStage,
 } from "./stage-draft";
-
-const DURATION_PRESETS: [number, string][] = [
-  [86_400, "1 day"],
-  [3 * 86_400, "3 days"],
-  [7 * 86_400, "7 days"],
-  [14 * 86_400, "14 days"],
-  [28 * 86_400, "28 days"],
-  [30 * 86_400, "30 days"],
-  [90 * 86_400, "90 days"],
-  [365 * 86_400, "365 days"],
-];
-
-const CASH_OUT_TAXES = [
-  { rate: 0, label: "No tax" },
-  { rate: 1000, label: "0.1" },
-  { rate: 3000, label: "0.3" },
-  { rate: 5000, label: "0.5" },
-] as const;
 
 /** Off/On cash-out choice plus the tax picker shown while cash outs are on. */
 function TaxPicker({
@@ -416,58 +400,7 @@ export function StageRulesEditor({
               Flexible lasts until the owner changes it. A fixed duration locks
               the rules until it ends.
             </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2.5">
-              <select
-                value={stage.durationValue}
-                onChange={(e) => set({ durationValue: e.target.value })}
-                disabled={disabled}
-                className="input-well select-caret min-h-[44px] w-44 px-3.5 pr-9 text-sm disabled:opacity-60"
-              >
-                <option value="0">Flexible</option>
-                {DURATION_PRESETS.map(([seconds, label]) => (
-                  <option key={seconds} value={String(seconds)}>
-                    {label}
-                  </option>
-                ))}
-                <option value={String(FOREVER_SECONDS)}>Forever</option>
-                <option value="custom">Custom…</option>
-              </select>
-              {stage.durationValue === "custom" ? (
-                <>
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    value={stage.customDuration}
-                    onChange={(e) =>
-                      set({ customDuration: e.target.value.slice(0, 6) })
-                    }
-                    disabled={disabled}
-                    placeholder="30"
-                    className={`input-well min-h-[44px] w-20 px-3 text-sm tabular-nums disabled:opacity-60 ${
-                      stageDurationSeconds(stage) > 0 ? "" : "!border-red-400"
-                    }`}
-                  />
-                  <select
-                    value={stage.customUnit}
-                    onChange={(e) =>
-                      set({
-                        customUnit: e.target.value as DraftStage["customUnit"],
-                      })
-                    }
-                    disabled={disabled}
-                    className="input-well select-caret min-h-[44px] w-28 px-3 pr-9 text-sm disabled:opacity-60"
-                  >
-                    {(["hours", "days", "weeks", "years"] as const).map(
-                      (unit) => (
-                        <option key={unit} value={unit}>
-                          {unit}
-                        </option>
-                      ),
-                    )}
-                  </select>
-                </>
-              ) : null}
-            </div>
+            <DurationSelect fields={stage} onChange={set} disabled={disabled} />
             {!isLast && duration === 0 ? (
               <p className="mt-2 text-xs text-red-600">
                 Give this ruleset a duration — the next ruleset needs to know

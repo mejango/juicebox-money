@@ -4,10 +4,9 @@ import type { DraftStage } from '@/components/create/stage-draft'
 import type { ApprovalDeadline, TreasuryCurrency } from '@/lib/launch'
 
 /**
- * .jb draft files + localStorage persistence (website/ parity: the draft is
- * the sanitized wizard state; import whitelists known fields and caps array
- * sizes — it's the security boundary for untrusted files). Uploaded files
- * (logo/cover/item media) can't serialize; they're dropped with a note.
+ * This form's own draft: the wizard state saved in the browser. Reading it
+ * whitelists known fields and caps array sizes. Files are the shared `.jb`
+ * format, written and read in `jb-draft.ts`; images travel as pinned URIs.
  */
 
 export const DRAFT_KEY = 'jbm-create-draft'
@@ -23,6 +22,9 @@ export type CreateDraft = {
   description: string
   payNotice: string
   tags: string[]
+  /** Pinned when chosen, so a draft carries its images. '' = none. */
+  logoUri: string
+  coverUri: string
   links: Record<string, string>
   owner: string
   ownerPerChain: Record<number, string>
@@ -240,6 +242,8 @@ function sanitizeItem(raw: unknown): Omit<DraftItem, 'mediaFile' | 'mediaPreview
     price: numStr(s.price, 20),
     supply: numStr(s.supply, 9),
     description: str(s.description, 1000),
+    mediaUri: str(s.mediaUri, 500),
+    mediaType: str(s.mediaType, 100),
     discountPct: numStr(s.discountPct, 5),
     reserveN: numStr(s.reserveN, 5),
     reserveBeneficiary: str(s.reserveBeneficiary, 64),
@@ -309,8 +313,8 @@ function sanitizeSavedRules(source: unknown): CreateDraft['savedRules'] {
     : undefined
 }
 
-/** Parse untrusted .jb JSON into a sanitized draft, or throw a friendly
- *  error. Every field is whitelisted; arrays are capped. */
+/** Parse a saved draft into a sanitized one, or throw a friendly error.
+ *  Every field is whitelisted; arrays are capped. */
 export function parseDraft(text: string): CreateDraft {
   if (text.length > 2_000_000) throw new Error('That file is too large.')
   let raw: unknown
@@ -323,12 +327,6 @@ export function parseDraft(text: string): CreateDraft {
     throw new Error("That doesn't look like a .jb file.")
   }
   const d = raw as Record<string, unknown>
-  // Juicescan saves a different draft shape (projectType, details, chainIds).
-  // Its rules do not map one to one onto this form, so the file is named
-  // instead of being half read.
-  if (typeof d.projectType === 'string' && d.details && typeof d.details === 'object' && Array.isArray(d.chainIds)) {
-    throw new Error('This draft was saved on Juicescan. Open it there.')
-  }
   if (!Array.isArray(d.stages) || typeof d.name !== 'string') {
     throw new Error('No Juicebox draft found in that file.')
   }
@@ -365,6 +363,8 @@ export function parseDraft(text: string): CreateDraft {
       .filter((t): t is string => typeof t === 'string')
       .map(t => t.slice(0, 30))
       .slice(0, 3),
+    logoUri: str(d.logoUri, 500),
+    coverUri: str(d.coverUri, 500),
     links,
     owner: str(d.owner, 64),
     ownerPerChain: sanitizeChainMap(d.ownerPerChain),
@@ -486,5 +486,34 @@ export function warnOnDraftDrift(draft: CreateDraft) {
     }
   } catch (error) {
     console.warn('.jb draft drift: the built draft fails parseDraft.', error)
+  }
+}
+
+/** The owner address that means "no one can change this project". */
+export const PERMANENTLY_DISABLED_AUTHORITY = '0xdead000000000000000000000000000000000000'
+
+function deriveSymbol(name: string): string {
+  const words = name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean)
+  const initials = words.map((w) => w[0]).join('')
+  const symbol = (initials.length >= 2 ? initials : (words[0] ?? '')).slice(0, 8)
+  return symbol || 'ITEMS'
+}
+
+/** The shop collection's name and symbol as launched: what was typed, else taken from the project. */
+export function storeIdentity(from: {
+  flavor: CreateDraft['flavor']
+  name: string
+  ticker: string
+  storeConfig: Pick<CreateDraft['storeConfig'], 'collectionName' | 'collectionSymbol'>
+}): { name: string; symbol: string } {
+  return {
+    name: from.storeConfig.collectionName.trim() || from.name.trim(),
+    symbol:
+      from.storeConfig.collectionSymbol.trim() ||
+      (from.flavor === 'revnet' ? from.ticker.trim() : '') ||
+      deriveSymbol(from.name),
   }
 }

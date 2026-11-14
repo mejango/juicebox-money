@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { PERMANENTLY_DISABLED_AUTHORITY } from '@/lib/draft'
 
 const source = readFileSync('src/components/create/CreateForm.tsx', 'utf8')
 
@@ -11,7 +12,7 @@ const source = readFileSync('src/components/create/CreateForm.tsx', 'utf8')
  */
 describe('create flow draft levers', () => {
   it('uses the requested 0xdead address when retained authority is disabled', () => {
-    expect(source).toContain('0xdead000000000000000000000000000000000000')
+    expect(PERMANENTLY_DISABLED_AUTHORITY).toBe('0xdead000000000000000000000000000000000000')
     expect(source).toContain(
       'useState(PERMANENTLY_DISABLED_AUTHORITY)',
     )

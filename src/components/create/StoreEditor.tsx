@@ -1,11 +1,13 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { AddressField } from "./AddressField";
 import { SplitsEditor } from "./SplitsEditor";
 import { AddButton, CheckMark, CheckRow } from "./ui";
 import { ChainIcon } from "@/components/ChainIcon";
 import { chainName } from "@/lib/urn";
+import { ipfsUrl } from "@/lib/format";
+import { pinItemMedia } from "@/lib/store-items";
 import { JBCENTER_MAX_MEDIA_BYTES } from "@/lib/jbcenter-ipfs";
 import {
   newDraftItem,
@@ -122,6 +124,9 @@ export function StoreEditor({
       existingCategoryIds.includes(cat.id) ||
       items.some((item) => item.category === cat.id),
   );
+  /** The latest rows, for a pin that lands after other edits. */
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const update = (id: string, patch: Partial<DraftItem>) => {
     onChange(
       items.map((item) => (item.id === id ? { ...item, ...patch } : item)),
@@ -138,7 +143,7 @@ export function StoreEditor({
     const item = items.find((i) => i.id === id);
     if (item?.mediaPreview) URL.revokeObjectURL(item.mediaPreview);
     if (!file || !mediaAllowed(file) || file.size > MAX_MEDIA_BYTES) {
-      update(id, { mediaFile: null, mediaPreview: null });
+      update(id, { mediaFile: null, mediaPreview: null, mediaUri: "", mediaType: "" });
       return;
     }
     update(id, {
@@ -146,7 +151,22 @@ export function StoreEditor({
       mediaPreview: file.type.startsWith("image/")
         ? URL.createObjectURL(file)
         : null,
+      mediaUri: "",
+      mediaType: "",
     });
+    // Pinned when chosen, so an exported draft carries it. A pin that fails
+    // here is made again when the items are sent.
+    void pinItemMedia(file).then(
+      (pin) =>
+        onChange(
+          itemsRef.current.map((entry) =>
+            entry.id === id && entry.mediaFile === file
+              ? { ...entry, mediaUri: pin.uri, mediaType: pin.type }
+              : entry,
+          ),
+        ),
+      () => {},
+    );
   };
 
   return (
@@ -188,13 +208,24 @@ export function StoreEditor({
                     {item.mediaFile.name}
                   </span>
                 </span>
+              ) : item.mediaUri && item.mediaType.startsWith("image/") ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={ipfsUrl(item.mediaUri) ?? undefined}
+                  alt=""
+                  className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
+                />
+              ) : item.mediaUri ? (
+                <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-smoke-200 bg-white text-2xl">
+                  {mediaEmoji(item.mediaType)}
+                </span>
               ) : (
                 <span className="flex h-20 w-20 items-center justify-center rounded-lg border border-dashed border-smoke-300 text-2xl">
                   🖼️
                 </span>
               )}
               <label className="btn-secondary min-h-[32px] cursor-pointer px-2.5 text-[11px]">
-                {item.mediaFile ? "Change media" : "Upload media"}
+                {item.mediaFile || item.mediaUri ? "Change media" : "Upload media"}
                 <input
                   type="file"
                   accept="image/*,video/*,audio/*,application/pdf,text/*,.md,.markdown"

@@ -17,7 +17,7 @@ import { TxError } from '@/components/ui/TxError'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
-import { draftFileName } from '@/lib/draft'
+import { draftFileName, type CreateDraft } from '@/lib/draft'
 import { truncateAddress } from '@/lib/format'
 import { getProjectPayers, type BsProjectPayer } from '@/lib/bendystraw'
 import {
@@ -84,11 +84,18 @@ function ProjectDraftExportCard({
     text: string
   }>({ kind: 'idle', text: '' })
   /** A reconstructed draft whose warnings wait for a second, explicit confirmation. */
-  const [pending, setPending] = useState<{ warnings: string[]; draft: unknown } | null>(null)
+  const [pending, setPending] = useState<{ warnings: string[]; draft: CreateDraft } | null>(null)
 
-  const save = (draft: unknown) => {
+  const save = async (draft: CreateDraft) => {
+    let text: string
+    try {
+      text = (await import('@/lib/jb-draft')).writeJbDraftFile(draft)
+    } catch (e) {
+      setStatus({ kind: 'error', text: e instanceof Error ? e.message : 'Export failed.' })
+      return
+    }
     const url = URL.createObjectURL(
-      new Blob([JSON.stringify(draft, null, 2)], {
+      new Blob([text], {
         type: 'application/json',
       }),
     )
@@ -127,7 +134,7 @@ function ProjectDraftExportCard({
         setStatus({ kind: 'idle', text: '' })
         return
       }
-      save(result.draft)
+      await save(result.draft)
     } catch (error) {
       setStatus({
         kind: 'error',
@@ -170,7 +177,7 @@ function ProjectDraftExportCard({
           <div className="mt-3 flex flex-wrap gap-2">
             <button
               type="button"
-              onClick={() => { save(pending.draft); setPending(null) }}
+              onClick={() => { void save(pending.draft); setPending(null) }}
               className="btn-secondary min-h-[40px] px-4 text-sm"
             >
               Export anyway

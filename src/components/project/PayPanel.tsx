@@ -34,9 +34,11 @@ import {
   PERMIT2_ADDRESS,
   permit2PayAuthorizationReusable,
   planErc20PayAuthorization,
+  prepareBestUserPay,
   prepareUserPay,
   tokenCurrencyId,
   type Erc20PayAuthorizationPlan,
+  type PayRouteCandidate,
 } from "@bananapus/nana-sdk-core/v6";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { recoveringRead } from "@/lib/read-recovery";
@@ -102,7 +104,7 @@ import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField";
 import dynamic from 'next/dynamic'
 import { explorerTxUrl } from '@/lib/chainDisplay'
-import { knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
+import { attachedPaymentRouterEntries, knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 import { useLinkedPair } from '@/lib/sucker-group'
 
 // The loading line is the chunk's own boundary; without it a first load falls
@@ -955,11 +957,26 @@ export function PayPanel({
   // ---- Terminal + preview ----
   // Preview, allowance, approval, and pay target the exact attached entry that
   // supplied this token's route, including a directly attached gateway.
-  const terminalAddress = context?.terminal;
+  const entryTerminal = context?.terminal;
+  // A payment is quoted on every terminal the project lists that can take this token, and goes to
+  // the one that gives the payer the most. A token only a router takes has that one entry. Item
+  // checkout stays on the direct terminal: the hook only sees what a swap leaves.
+  const listedTerminals = surface?.terminals;
+  const hasTiers = !!tiers;
+  const payCandidates = useMemo((): PayRouteCandidate[] => {
+    if (!context) return [];
+    if (context.viaRouter) return [{ terminal: context.terminal, type: "router" }];
+    const routers = hasTiers ? [] : attachedPaymentRouterEntries(chainId, listedTerminals ?? []);
+    return [
+      { terminal: context.terminal, type: "multi" },
+      ...routers.map((terminal) => ({ terminal, type: "router" as const })),
+    ];
+  }, [context, hasTiers, chainId, listedTerminals]);
+  const candidatesKey = payCandidates.map((candidate) => candidate.terminal.toLowerCase()).join(",");
 
   // The tolerance prepareUserPay floors its quote by: the SDK default, or the
   // one the payer loosened after this same payment fell short.
-  const paymentInputs = `${address ?? ""}:${chainId}:${projectId}:${terminalAddress}:${context?.token}:${amountRaw}:${tierIds.join(",")}`;
+  const paymentInputs = `${address ?? ""}:${chainId}:${projectId}:${entryTerminal}:${context?.token}:${amountRaw}:${tierIds.join(",")}`;
   const slippageBps = payerSlippage?.payment === paymentInputs ? payerSlippage.bps : undefined;
   // Another payment drops it, so coming back to this one starts from the default again.
   useEffect(() => {
@@ -983,7 +1000,7 @@ export function PayPanel({
       projectId,
       context?.token,
       context?.viaRouter,
-      terminalAddress,
+      candidatesKey,
       amountRaw.toString(),
       address ?? null,
       tiers?.metadataIdTarget ?? null,
@@ -993,7 +1010,7 @@ export function PayPanel({
     enabled:
       !!publicClient &&
       !!context &&
-      !!terminalAddress &&
+      payCandidates.length > 0 &&
       (amountRaw > 0n || cartCount > 0) &&
       !amountIsDollars &&
       mode === "pay" && !nativeMarket && identity.isSuccess,
@@ -1007,19 +1024,30 @@ export function PayPanel({
         ? previous
         : undefined,
     retry: false,
-    queryFn: () =>
-      prepareUserPay(publicClient!, {
+    queryFn: async () => {
+      const payment = {
         chainId,
-        terminal: terminalAddress!,
         projectId: BigInt(projectId),
         token: context!.token,
         amount: amountRaw,
         beneficiary: address ?? zeroAddress,
         tiers,
         ...(slippageBps !== undefined ? { slippageBps: BigInt(slippageBps) } : {}),
-      }),
+      };
+      // One entry keeps its own failure, which says why the payment cannot be prepared.
+      if (payCandidates.length === 1) {
+        const [only] = payCandidates;
+        return { ...only, ...(await prepareUserPay(publicClient!, { ...payment, terminal: only.terminal })) };
+      }
+      const best = await prepareBestUserPay(publicClient!, { ...payment, candidates: payCandidates });
+      if (!best) throw new Error("No terminal this project lists can take this payment.");
+      return best;
+    },
   });
   const preview = prepared?.preview;
+  // Where this payment goes: the terminal its quote came from. Adding to the balance, and a
+  // payment not quoted yet, use the token's own entry.
+  const terminalAddress = (mode === "pay" ? prepared?.terminal : undefined) ?? entryTerminal;
 
   // ---- What the amount is worth in dollars ----
   // Display only: nothing sends these. Paying with dollars buys the token first, and the payment
@@ -1046,18 +1074,18 @@ export function PayPanel({
       projectId,
       context?.token,
       context?.viaRouter,
-      terminalAddress,
+      entryTerminal,
       dollarsInToken.toString(),
       address ?? null,
     ],
     enabled:
-      !!publicClient && !!context && !!terminalAddress && mode === "pay" &&
+      !!publicClient && !!context && !!entryTerminal && mode === "pay" &&
       dollarsInToken > 0n && !nativeMarket && identity.isSuccess,
     retry: false,
     queryFn: () =>
       prepareUserPay(publicClient!, {
         chainId,
-        terminal: terminalAddress!,
+        terminal: entryTerminal!,
         projectId: BigInt(projectId),
         token: context!.token,
         amount: dollarsInToken,

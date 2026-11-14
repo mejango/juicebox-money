@@ -183,7 +183,27 @@ export function newSimpleProjectDraftStage(): DraftStage {
   };
 }
 
-const UNIT_SECONDS = {
+/** The cycle lengths the duration select offers; any other length is "custom". */
+export const DURATION_PRESETS: [number, string][] = [
+  [86_400, "1 day"],
+  [3 * 86_400, "3 days"],
+  [7 * 86_400, "7 days"],
+  [14 * 86_400, "14 days"],
+  [28 * 86_400, "28 days"],
+  [30 * 86_400, "30 days"],
+  [90 * 86_400, "90 days"],
+  [365 * 86_400, "365 days"],
+];
+
+/** The cash out taxes offered as chips, out of 10,000; any other rate is "custom". */
+export const CASH_OUT_TAXES = [
+  { rate: 0, label: "No tax" },
+  { rate: 1000, label: "0.1" },
+  { rate: 3000, label: "0.3" },
+  { rate: 5000, label: "0.5" },
+] as const;
+
+export const DURATION_UNIT_SECONDS = {
   hours: 3_600,
   days: 86_400,
   weeks: 604_800,
@@ -215,14 +235,50 @@ export function stageStartOk(stage: DraftStage): boolean {
   return Number.isInteger(n) && n >= 1;
 }
 
+/** A cycle length as the duration control holds it. */
+export type DurationFields = Pick<
+  DraftStage,
+  "durationValue" | "customDuration" | "customUnit"
+>;
+
+/** The seconds a duration control states (0 = flexible), or null while a
+ *  custom length is not one a ruleset can hold (1 second to uint32). */
+export function durationFieldsSeconds(fields: DurationFields): number | null {
+  if (fields.durationValue !== "custom") return Number(fields.durationValue) || 0;
+  const seconds = Math.round(
+    Number(fields.customDuration) * DURATION_UNIT_SECONDS[fields.customUnit],
+  );
+  return fields.customDuration.trim() !== "" &&
+    seconds >= 1 &&
+    seconds <= FOREVER_SECONDS
+    ? seconds
+    : null;
+}
+
+/** The control's fields for a length in seconds: a preset, else the largest
+ *  unit that divides it. Null for a length the control cannot show. */
+export function durationFields(seconds: number): DurationFields | null {
+  const preset =
+    seconds === 0 ||
+    seconds === FOREVER_SECONDS ||
+    DURATION_PRESETS.some(([value]) => value === seconds);
+  if (preset)
+    return { durationValue: String(seconds), customDuration: "", customUnit: "days" };
+  const unit =
+    (["years", "weeks", "days"] as const).find(
+      (each) => seconds % DURATION_UNIT_SECONDS[each] === 0,
+    ) ?? "hours";
+  const fields: DurationFields = {
+    durationValue: "custom",
+    customDuration: String(seconds / DURATION_UNIT_SECONDS[unit]),
+    customUnit: unit,
+  };
+  return durationFieldsSeconds(fields) === seconds ? fields : null;
+}
+
 /** The stage's duration in seconds (0 = flexible). */
 export function stageDurationSeconds(stage: DraftStage): number {
-  if (stage.durationValue === "custom") {
-    const n = Number(stage.customDuration);
-    if (!Number.isFinite(n) || n <= 0) return 0;
-    return Math.round(n * UNIT_SECONDS[stage.customUnit]);
-  }
-  return Number(stage.durationValue) || 0;
+  return durationFieldsSeconds(stage) ?? 0;
 }
 
 export function secondsLabel(seconds: number): string {
