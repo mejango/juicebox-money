@@ -176,9 +176,9 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - [x] R1 Funding chart Balance is holdings at today's price: each token's indexed balance history times today's price (`holdingsEvents`, live `JBPrices` read, newest indexed rate as the fallback).
 - [x] R2 Single-chain launches go through the omnichain deployer, so the project can connect a chain later.
 - [x] R3 Payment notice: chains whose notice differs show a notice with a toggle; a failed read shows a notice with a quiet retry and still lets the payment go.
-- [ ] R4 Pay route: say when a route's quote is an estimate.
+- [x] R4 Pay route: the card already says "You get about" with an "At least" floor whenever a market price sets part of the amount; Juicescan now does the same. Choosing between routes on an exact figure needs a simulated payment per route, which belongs in the SDK: asked of jango.
 - [x] R5 A bridge send and the cash out inside it read as one feed item, also across a page boundary.
-- [ ] R6 Earlier open questions, decided the way jango has been ruling.
+- [x] R6 Earlier open questions, decided the way jango has been ruling: a `.jb` file the editor cannot express is refused, as built (two-token capped allowance, an item split to a multi-chain project); item cash out rule, collection name defaults and the reserve beneficiary on added items stay as built; shop items with no IPFS file stay read-only and rights held only on another chain are not offered here; a new custom approval contract is not a field in Edit rules (an existing one is kept); the surplus allowance for a Safe signer not connected as the Safe is not built. The copy listed in the earlier sections stands as approved.
 
 ## Plan refinement
 - **Objective:** Close the items jango answered on 2026-11-14 so the three clients behave the same and state only what is true.
@@ -189,3 +189,8 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Resource budget:** One branch and one pull request per client.
 - **Authority and recovery:** Pull requests, merged on jango's word. One commit per item; each reverts alone.
 - **Agent-system impact:** None.
+
+### Review
+- R2 also fixes a live gap: Edit rules sent `JBController.queueRulesetsOf` for a project run through `JBOmnichainDeployer`, which keys the shop and the project's own data hook by ruleset, so a ruleset queued that way would start with neither. It now queues through the deployer with the stored hook (`extraDataHookOf`) restored.
+- Not rendered with a wallet; not launched or queued on a live chain from this branch.
+- New copy for jango: "The project’s notice could not be loaded." with "Retry", "The notice differs on {chains}.", "No notice.", and the chart label "What the project held over time at today’s prices, shown as bars."
