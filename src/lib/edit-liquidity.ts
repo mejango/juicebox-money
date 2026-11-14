@@ -116,6 +116,39 @@ export interface EditOperations {
   /** The maxima in currency order an increase or move is held to; 0 otherwise. */
   amount0Max: bigint
   amount1Max: bigint
+  /**
+   * A move only: the band it burns, and the most each currency may pull from
+   * the wallet once the burn's return is netted against the mint.
+   */
+  burned?: { tickLower: number; tickUpper: number; funding0: bigint; funding1: bigint }
+}
+
+/**
+ * Whether a move's mint, at the live price, still costs the wallet no more
+ * than reviewed once the burn's return is counted. The mint's own maxima bound
+ * what it takes in, not the difference the wallet pays.
+ */
+export function moveStillCovered(
+  move: Pick<EditOperations, 'tickLower' | 'tickUpper' | 'liquidity' | 'liquidityBefore' | 'burned'>,
+  sqrtP: bigint,
+): boolean {
+  if (!move.burned) return true
+  const minted = getAmountsForLiquidity(
+    sqrtP,
+    sqrtAtTick(move.tickLower),
+    sqrtAtTick(move.tickUpper),
+    move.liquidity,
+  )
+  const returned = getAmountsForLiquidity(
+    sqrtP,
+    sqrtAtTick(move.burned.tickLower),
+    sqrtAtTick(move.burned.tickUpper),
+    move.liquidityBefore,
+  )
+  return (
+    minted.amount0 - returned.amount0 <= move.burned.funding0 &&
+    minted.amount1 - returned.amount1 <= move.burned.funding1
+  )
 }
 
 export interface EditLiquidityPlan extends EditOperations {
@@ -403,6 +436,7 @@ export function editOperations({
     mint,
     amount0Max: mint.amount0Max,
     amount1Max: mint.amount1Max,
+    burned: { tickLower: position.tickLower, tickUpper: position.tickUpper, funding0, funding1 },
   }
 }
 
@@ -425,7 +459,11 @@ export function editLiquidityStillFits(
     sqrtAtTick(plan.tickUpper),
     plan.kind === 'move' ? plan.liquidity : plan.liquidityDelta,
   )
-  if (required.amount0 > plan.amount0Max || required.amount1 > plan.amount1Max) {
+  if (
+    required.amount0 > plan.amount0Max ||
+    required.amount1 > plan.amount1Max ||
+    !moveStillCovered(plan, live.sqrtP)
+  ) {
     return 'The pool price moved beyond the reviewed range. Review fresh amounts.'
   }
   return null

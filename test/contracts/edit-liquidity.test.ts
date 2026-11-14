@@ -252,6 +252,30 @@ describe('LP edit plan', () => {
     expect(params).toHaveLength(4)
   })
 
+  it('refuses a reviewed move once the burn no longer covers the mint', () => {
+    const move = buildEditLiquidityPlan({
+      pool,
+      position,
+      target: { pairAmount: held.amount0, tokenAmount: held.amount1 },
+      range: { pa: 0.5, pb: 2 },
+      account: ALICE,
+    })
+    expect(move.pairFunding + move.tokenFunding).toBe(0n)
+    expect(editLiquidityStillFits(move, { sqrtP, liquidity })).toBeNull()
+    // A 0.2% price move: the wide new band still fits its own maxima, but the narrow old band
+    // returns less of one currency than the mint takes, which the wallet would pay unreviewed.
+    const moved = uniswapV4SqrtPriceX96AtTick(20)
+    const minted = uniswapV4AmountsForLiquidity(
+      moved,
+      uniswapV4SqrtPriceX96AtTick(move.tickLower),
+      uniswapV4SqrtPriceX96AtTick(move.tickUpper),
+      move.liquidity,
+    )
+    expect(minted.amount0).toBeLessThanOrEqual(move.amount0Max)
+    expect(minted.amount1).toBeLessThanOrEqual(move.amount1Max)
+    expect(editLiquidityStillFits(move, { sqrtP: moved, liquidity })).toMatch(/price moved/)
+  })
+
   it('rechecks a reviewed plan against the live position and price', () => {
     const increase = buildEditLiquidityPlan({
       pool,
