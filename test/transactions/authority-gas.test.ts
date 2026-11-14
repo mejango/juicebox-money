@@ -94,7 +94,7 @@ import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/saf
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { listedHeld } from '../support/held-chain'
 import { modelNode } from '../support/chain-node'
-import { runAuthorityCalls, type AuthorityCall, type AuthorityProgress } from '@/lib/authority'
+import { orderedCallsScope, runAuthorityCalls, type AuthorityCall, type AuthorityProgress } from '@/lib/authority'
 import { loadReviewEngine } from '@/lib/preload-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
@@ -321,24 +321,89 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
   it.each([
     [1, 11155111],
     [1, 1],
-  ] as const)('rejects direct batches on chains %s and %s before sending their first call', async (first, second) => {
-    await expect(runAuthorityCalls({ signal: flow, calls: [
+  ] as const)('sends calls Relayr cannot take on chains %s and %s in order after one review, with no signature or payment', async (first, second) => {
+    const result = await runAuthorityCalls({ signal: flow, calls: [
       { chainId: first, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: second, authority: ALICE, target: TARGET, data: '0x5678' },
-    ] })).rejects.toThrow(/Select one chain and one action at a time/)
+    ] })
+    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234', '0x5678'])
+    expect(result.directResultDetails?.map(detail => detail.chainId)).toEqual([first, second])
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.chooseFunding).not.toHaveBeenCalled()
-    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('rejects an untrusted-forwarder batch before any direct write can be replayed', async () => {
+  it('sends an untrusted-forwarder batch in order from the wallet', async () => {
     mocks.client.request.mockResolvedValue('0x')
-    await expect(runAuthorityCalls({ signal: flow, calls: [
+    await runAuthorityCalls({ signal: flow, calls: [
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
-    ] })).rejects.toThrow(/Select one chain and one action at a time/)
+    ] })
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
-    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234', '0x5678'])
+  })
+
+  describe('the journal of ordered direct calls', () => {
+    const SET_X = '0xaabbccdd01' as const
+    const SET_Y = '0xaabbccdd02' as const
+    const pair = (data: Hex = SET_X, second: 1 | 10 = 1) => [
+      { chainId: 1 as const, authority: ALICE, target: TARGET, data },
+      { chainId: second, authority: ALICE, target: TARGET, data: `${data}ff` as Hex },
+    ]
+    const savedRun = (data: Hex, second: 1 | 10 = 1) => ({
+      scope: orderedCallsScope(ALICE, pair(data, second)), account: ALICE,
+      calls: pair(data, second).map(call => ({ chainId: call.chainId, to: call.target, data: call.data, value: 0n })),
+    }) as never
+    const LATER = `0x${'9a'.repeat(32)}` as Hex
+
+    it('keys a run by account, chain, target and function, and gives a lone call no journal', async () => {
+      const engine = await loadReviewEngine()
+      const send = vi.spyOn(engine, 'sendReviewed')
+      try {
+        await runAuthorityCalls({ signal: flow, calls: pair() })
+        expect(send.mock.calls[0][0]).toMatchObject({ scope: orderedCallsScope(ALICE, pair()) })
+        expect(orderedCallsScope(ALICE, pair(SET_Y))).toBe(orderedCallsScope(ALICE, pair()))
+        expect(orderedCallsScope(ALICE, pair(SET_X, 10))).not.toBe(orderedCallsScope(ALICE, pair()))
+        expect(orderedCallsScope(TARGET, pair())).not.toBe(orderedCallsScope(ALICE, pair()))
+        await runAuthorityCalls({ signal: flow, calls: [pair(SET_Y)[0]] })
+        expect(send.mock.calls[1][0].scope).toBeUndefined()
+      } finally { send.mockRestore() }
+    })
+
+    it('continues a saved run of the same calls through core, direct even where Relayr could take them now', async () => {
+      const engine = await loadReviewEngine()
+      const saved = savedRun(SET_X, 10)
+      const find = vi.spyOn(engine, 'findReviewedSequence').mockReturnValue(saved)
+      const resume = vi.spyOn(engine, 'resumeReviewed').mockResolvedValue({ status: 'done', hashes: [HASH, LATER], receipts: [] })
+      const send = vi.spyOn(engine, 'sendReviewed')
+      try {
+        const result = await runAuthorityCalls({ signal: flow, calls: pair(SET_X, 10) })
+        expect(resume).toHaveBeenCalledExactlyOnceWith(saved, expect.objectContaining({ title: 'Review transactions' }), expect.anything())
+        expect(send).not.toHaveBeenCalled()
+        expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+        expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
+        expect(result.directResultDetails).toEqual([{ chainId: 1, hash: HASH }, { chainId: 10, hash: LATER }])
+      } finally { find.mockRestore(); resume.mockRestore(); send.mockRestore() }
+    })
+
+    it('replaces a saved run of the same action with other arguments, and refuses while core will not drop it', async () => {
+      const engine = await loadReviewEngine()
+      const saved = savedRun(SET_X)
+      const find = vi.spyOn(engine, 'findReviewedSequence').mockReturnValue(saved)
+      const discard = vi.spyOn(engine, 'discardReviewedSequence').mockResolvedValue(undefined as never)
+      const resume = vi.spyOn(engine, 'resumeReviewed')
+      try {
+        await runAuthorityCalls({ signal: flow, calls: pair(SET_Y) })
+        expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
+        expect(resume).not.toHaveBeenCalled()
+        expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual([SET_Y, `${SET_Y}ff`])
+
+        mocks.wallet.sendTransaction.mockClear()
+        discard.mockRejectedValue(new Error('A step of this action is still pending.'))
+        await expect(runAuthorityCalls({ signal: flow, calls: pair(SET_Y) })).rejects.toThrow('A step of this action is still pending.')
+        expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
+      } finally { find.mockRestore(); discard.mockRestore(); resume.mockRestore() }
+    })
   })
 
   it('preserves a single direct testnet call from the real authority', async () => {
