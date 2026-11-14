@@ -11,7 +11,6 @@ import {
   combinedActivityParts,
   feedAmountToken,
   groupSameTxEvents,
-  withoutBridgeCashOuts,
 } from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { LoadMoreRow } from './LoadMoreRow'
@@ -57,7 +56,7 @@ export function FreshActivity({
         </li>
       ) : (
         <>
-          {groupSameTxEvents(withoutBridgeCashOuts(events)).map((group, index) => (
+          {groupSameTxEvents(events).map((group, index) => (
             <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
           {(feed.more || feed.loading) && (

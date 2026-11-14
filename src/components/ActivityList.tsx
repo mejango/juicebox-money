@@ -227,7 +227,7 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
  * A sucker cashes out its own tokens inside a bridge send (`prepare`); the send's row says what
  * happened, so that cash out never makes a row or a fragment.
  */
-export function withoutBridgeCashOuts<T extends BsActivityEvent>(events: T[]): T[] {
+function withoutBridgeCashOuts<T extends BsActivityEvent>(events: T[]): T[] {
   const sends = new Set(
     events.flatMap(event =>
       event.bridgeToOutboxEvent
@@ -303,7 +303,8 @@ function splitTokenCount(event: BsActivityEvent): bigint {
 export function groupSameTxEvents<T extends BsActivityEvent>(events: T[]): T[][] {
   const groups = new Map<string, T[]>()
   const order: T[][] = []
-  for (const event of events) {
+  // Every feed groups through here, so none of them shows a bridge send's inner cash out.
+  for (const event of withoutBridgeCashOuts(events)) {
     const key = sameTxKey(event)
     const group = groups.get(key)
     if (group) group.push(event)

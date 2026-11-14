@@ -68,7 +68,8 @@ const routes = [
   // 537 -> 542: Permit2 pay authorization (plan, typed data, metadata), the SDK's project hook and router resolvers
   // and revnet fee netting in holder values: measured 541.2 KiB.
   // Configured Safe proxy and monthly-quota handling: measured just above542.0 KiB, rounded up only.
-  { route: '/[urn]', path: '/eth:1', kib: 543, text: 'Browser Fixture Project' },
+  // Bridge sends in activity and the unknown contracts card (its readers load on demand): measured 543.4 KiB, rounded up only.
+  { route: '/[urn]', path: '/eth:1', kib: 544, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -104,7 +105,8 @@ const budgets = {
   // The shared .jb draft (SDK schema plus this site's mapper, in their own on-demand chunk): measured 2734.8 KiB, rounded up only.
   // Shop item actions (edit details, set discount, remove) in the on-demand item modal: measured 2737.4 KiB, rounded up only.
   // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
-  allScripts: 2741 * KIB,
+  // The project contract check in its own on-demand chunk, and bridge sends in activity: measured 2743.2 KiB, rounded up only.
+  allScripts: 2744 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

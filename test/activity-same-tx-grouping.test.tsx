@@ -489,6 +489,10 @@ describe('a bridge send and the cash out inside it', () => {
     ])
   })
 
+  it('drops the sucker cash out in feeds that group without the project filter, as the account feed does', () => {
+    expect(groupSameTxEvents([inner, send]).map(group => group.map(row => row.id))).toEqual([['send']])
+  })
+
   it('reads as sending the tokens to the other chain, by whoever called the sucker', () => {
     const [group] = groupSameTxEvents(projectFeedEvents([inner, send]))
     const parts = combinedActivityParts(group, 'REV')

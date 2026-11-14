@@ -4,9 +4,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery } from '@tanstack/react-query'
 import { ChainIcon } from '@/components/ChainIcon'
 import { AddressLink } from '@/components/ui/AddressLink'
-import { clientFor } from '@/lib/authority'
 import { displayChainName } from '@/lib/chainDisplay'
-import { auditProjectContracts } from '@/lib/project-contract-audit'
 
 /**
  * Says so when a project points at a contract this app does not recognize, or when the check
@@ -22,8 +20,13 @@ export function ProjectContractWarning({
 }) {
   const { data, isError } = useQuery({
     queryKey: ['project-contract-audit', chains, isRevnet],
-    queryFn: () =>
-      Promise.all(
+    queryFn: async () => {
+      // Loaded on demand: the check's readers stay out of the page's first load.
+      const [{ auditProjectContracts }, { clientFor }] = await Promise.all([
+        import('@/lib/project-contract-audit'),
+        import('@/lib/authority'),
+      ])
+      return Promise.all(
         chains.map(([chainId, projectId]) =>
           auditProjectContracts(clientFor(chainId as JBChainId), {
             chainId: chainId as JBChainId,
@@ -31,7 +34,8 @@ export function ProjectContractWarning({
             isRevnet,
           }),
         ),
-      ),
+      )
+    },
     staleTime: 5 * 60_000,
   })
   if (!data && !isError) return null
