@@ -55,13 +55,15 @@ function usd(value: number) {
  * stretches so the bars read as a continuous history like the homepage chart.
  *
  * Volume is cumulative INTAKE — indexed payment volume plus funds added
- * straight to the terminal — so it can only rise. Balance is the actual
- * terminal balance, so payouts and cash outs pull it down. Volume sums each
- * payment and addition at its own time's USD value (volumeUsd, amountUsd);
- * balance is every token held at its latest USD rate (balanceUsd), so both
- * stay honest when a project accepts several tokens.
+ * straight to the terminal — so it can only rise. Volume sums each payment
+ * and addition at its own time's USD value (volumeUsd, amountUsd). Balance is
+ * the indexer's flow-accrued USD balance (balanceUsd): every inflow and
+ * outflow at its own time's rate, so payouts and cash outs pull it down. It
+ * is not holdings at today's price, and price moves between an inflow and its
+ * outflow can push the sum below zero. A balance is never negative, so it
+ * floors at 0.
  */
-function bucketize(
+export function bucketize(
   moments: BsPriceMoment[],
   adds: BsAddToBalance[],
   metric: Metric,
@@ -119,7 +121,7 @@ function bucketize(
     consume(end)
     points.push({
       timestamp: Math.floor(end),
-      valueUsd: lastBase + cumulativeAdds,
+      valueUsd: Math.max(0, lastBase + cumulativeAdds),
     })
   }
   return points
