@@ -98,8 +98,6 @@ type EditChainState = AuthorityDeployment & {
   token: Address | null
   tokenName: string | null
   tokenSymbol: string | null
-  /** `JBTokens.TOKEN()`: the implementation every project token clones. */
-  tokenImplementation?: Address | null
   error: string | null
 }
 
@@ -133,7 +131,7 @@ async function readEditState(
     })
     .catch(() => null)) as Address | null
 
-  const [uri, token, tokenImplementation] = await Promise.all([
+  const [uri, token] = await Promise.all([
     controller && controller !== zeroAddress
       ? client
           .readContract({
@@ -148,13 +146,6 @@ async function readEditState(
       chainId: deployment.chainId,
       projectId: BigInt(deployment.projectId),
     }).catch(() => null),
-    client
-      .readContract({
-        address: jbV6ContractAddress[JBCoreContracts.JBTokens][deployment.chainId],
-        abi: TOKEN_IMPLEMENTATION_ABI,
-        functionName: 'TOKEN',
-      })
-      .catch(() => null),
   ])
 
   const [tokenName, tokenSymbol] = token
@@ -177,7 +168,6 @@ async function readEditState(
     token,
     tokenName: typeof tokenName === 'string' ? tokenName : null,
     tokenSymbol: typeof tokenSymbol === 'string' ? tokenSymbol : null,
-    tokenImplementation,
     error:
       !authority || !controller || controller === zeroAddress
         ? 'Could not resolve this chain’s controller and authority.'
@@ -1251,7 +1241,7 @@ export function TokenEditor({
     setError(null)
   }
 
-  const buildReview = () => {
+  const buildReview = async () => {
     setError(null)
     const chosen = rows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
@@ -1267,13 +1257,37 @@ export function TokenEditor({
       return
     }
     try {
+      const deploys = chosen.some(row => !row.token)
+      // Extending an existing token: each new chain's implementation decides the address it would get.
+      const extending = deploys && rows.some(row => row.token)
+      const planRows = extending
+        ? await Promise.all(
+            rows.map(async row =>
+              row.token || !selected.has(row.chainId)
+                ? row
+                : {
+                    ...row,
+                    tokenImplementation: await clientFor(row.chainId)
+                      .readContract({
+                        address: jbV6ContractAddress[JBCoreContracts.JBTokens][row.chainId],
+                        abi: TOKEN_IMPLEMENTATION_ABI,
+                        functionName: 'TOKEN',
+                      })
+                      .catch(() => {
+                        throw new Error(
+                          `Could not check the token's address on ${row.name}. Try again.`,
+                        )
+                      }),
+                  },
+            ),
+          )
+        : rows
       const { salt, anchor, sameAddress } = tokenDeployPlan(
-        rows,
+        planRows,
         name,
         symbol,
         selected,
       )
-      const deploys = chosen.some(row => !row.token)
       tokenRun.review({
         addressNote: !deploys
           ? ''
@@ -1383,7 +1397,7 @@ export function TokenEditor({
 
       <button
         type="button"
-        onClick={buildReview}
+        onClick={() => void buildReview()}
         disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
