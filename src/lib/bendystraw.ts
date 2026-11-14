@@ -1361,6 +1361,33 @@ export function suckerGroupAccountingToken(
     : null
 }
 
+/**
+ * What each deployment raised: USD always, and the raw amount with its symbol
+ * only for a deployment that accepts one token. The indexer adds every payment
+ * to one `volume`, so above one token that sum has no unit.
+ */
+export function raisedByChainRows(
+  deployments: readonly Pick<
+    BsProject,
+    | 'chainId'
+    | 'volumeUsd'
+    | 'volume'
+    | 'tokenSymbol'
+    | 'decimals'
+    | 'accountingTokenCount'
+  >[],
+) {
+  return deployments.map(row => ({
+    chainId: row.chainId,
+    usd: row.volumeUsd || '0',
+    ...((row.accountingTokenCount ?? 1) <= 1 && {
+      volume: row.volume || '0',
+      symbol: row.tokenSymbol,
+      decimals: row.decimals,
+    }),
+  }))
+}
+
 export type BsPriceMoment = {
   timestamp: number
   balance: string
