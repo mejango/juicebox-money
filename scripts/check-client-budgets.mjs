@@ -98,7 +98,8 @@ const budgets = {
   // Permit2 pay authorization, the SDK's project hook and router resolvers, revnet fee netting: measured 2723.1 KiB, rounded up only.
   // Configured Safe proxy and monthly-quota handling: measured2724.3 KiB, rounded up only.
   // Activity chain filter, the empty terminal list rule and ordered direct sends: CI measured 2724.0 KiB and over, rounded up only.
-  allScripts: 2725 * KIB,
+  // Combined ordered-send and Safe proxy changes: measured2725.1 KiB, rounded up only.
+  allScripts: 2726 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
