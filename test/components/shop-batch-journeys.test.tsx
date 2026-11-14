@@ -46,7 +46,7 @@ beforeEach(() => {
   mocks.saved = null; mocks.wallet.address = ACCOUNT
   mocks.snapshot.mockImplementation(async (target, _account, _revnet, action) => snapshot(target, action))
   mocks.reverify.mockResolvedValue(undefined)
-  mocks.tier.mockResolvedValue({ encodedIpfsUri: URI })
+  mocks.tier.mockResolvedValue({ encodedIpfsUri: URI, flags: { cantBeRemoved: false } })
   mocks.metadata.mockResolvedValue({ name: 'Original item', properties: { nested: ['preserve'] }, custom: 123, image: 'ipfs://old' })
   mocks.pinItems.mockImplementation(async (drafts: ReturnType<typeof newDraftItem>[]) => drafts.map(draft => ({ draft, encodedIpfsUri: URI })))
   mocks.pinImage.mockResolvedValue({ uri: 'ipfs://new-media' })
@@ -156,13 +156,19 @@ describe('shop batch component journeys', () => {
     expect(renderer.root.findByType(TxProgress).props).toMatchObject({ complete: true, title: 'Item removed' })
     await act(async () => renderer.unmount())
   })
+  it('leaves a chain where the item is locked out of a removal', async () => {
+    mocks.tier.mockImplementation(async (_client, hook) => ({ encodedIpfsUri: URI, flags: { cantBeRemoved: hook === PEER } }))
+    const renderer = await itemModal('remove')
+    await clickReview(renderer); await confirm(renderer)
+    expect(mocks.run.mock.calls[0][0].calls.map((call: ProjectBatchCall) => call.chainId)).toEqual([1])
+    await act(async () => renderer.unmount())
+  })
   it('wallet-action:set-a-shop-item-discount sends the typed percent as the 200-point value and offers nothing for an unchanged or malformed one', async () => {
     const renderer = await itemModal('discount')
     const input = () => renderer.root.findByProps({ type: 'number' })
     const review = () => renderer.root.findAllByType('button').find(button => button.props.className.includes('btn-primary'))!
-    // 17 of 200 is 8.5%: the field opens on it, and review waits for a different half percent.
+    // 17 of 200 is 8.5%: the field opens on it, and review waits for a half percent.
     expect(input().props.value).toBe('8.5')
-    expect(review().props.disabled).toBe(true)
     for (const bad of ['', '12.3', '101', '-1']) {
       await act(async () => input().props.onChange({ target: { value: bad } }))
       expect(review().props.disabled).toBe(true)

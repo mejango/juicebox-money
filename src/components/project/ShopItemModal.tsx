@@ -77,7 +77,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
   const itemName = savedContext?.items[0]?.name ?? freshPlan?.itemName ?? current?.name ?? `Item #${tierId}`
   const plan = batch ? { account: batch.account, chainIds: batch.calls.map(call => call.chainId), summary: savedContext?.mediaName ?? savedContext?.summary ?? (mode === 'media' ? 'Saved media' : ''), description: savedContext?.description } : freshPlan ? { account: freshPlan.account, chainIds: freshPlan.snapshots.map(snapshot => snapshot.target.chainId), summary: freshPlan.summary, description: freshPlan.description } : null
   const units = itemDiscountOk(discount) && discount.trim() !== '' && Number.isInteger(Number(discount) * 2) ? discountUnits(discount) : null
-  const ready = mode === 'media' ? !!file : mode === 'details' ? !!name.trim() : mode === 'discount' ? units !== null && units !== discountPercent : true
+  const ready = mode === 'media' ? !!file : mode === 'details' ? !!name.trim() : mode === 'discount' ? units !== null : true
   const statuses = Object.fromEntries((batch?.calls ?? []).map(call => [call.chainId, { phase: batch!.completedIds.includes(call.id) ? 'done' : 'pending', error: undefined }]))
 
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview) }, [preview])
@@ -98,7 +98,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
         const rows = await Promise.all(unique.map(async target => {
           try {
             const peer = await readShopTier(clientFor(target.chainId), target.hook!, tierId)
-            return [target.chainId, peer.encodedIpfsUri.toLowerCase() === home.encodedIpfsUri.toLowerCase() ? null : 'A different item has this number here'] as const
+            return [target.chainId, peer.encodedIpfsUri.toLowerCase() !== home.encodedIpfsUri.toLowerCase() ? 'A different item has this number here' : mode === 'remove' && peer.flags.cantBeRemoved ? 'This item cannot be removed here' : null] as const
           } catch { return [target.chainId, 'Could not verify this item'] as const }
         }))
         if (cancelled) return
@@ -107,7 +107,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
       } catch (error) { if (!cancelled) { setEligible({}); setSelected([]); setMessage(shortError(error, 'Could not resolve linked shops.')) } }
     })()
     return () => { cancelled = true }
-  }, [targets, chainTargets, chainId, hook, tierId, batch, freshPlan])
+  }, [targets, chainTargets, chainId, hook, tierId, batch, freshPlan, mode])
 
   const pick = (next: File | null) => {
     if (batch || freshPlan || busy) return
@@ -317,7 +317,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
           )}
           {eligible && usableTargets.length < chainTargets.length ? (
             <p className="mt-2 text-xs text-smoke-700">
-              Couldn&rsquo;t match this item on{' '}
+              {mode === 'remove' ? 'Can\u2019t remove this item on' : 'Couldn\u2019t match this item on'}{' '}
               {chainTargets.filter(target => !usableTargets.includes(target)).map(target => chainName(target.chainId)).join(', ')}, so {copy.stays}.
             </p>
           ) : null}

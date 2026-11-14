@@ -190,6 +190,8 @@ const ITEM_CALLS = {
 
 /** One call per reviewed chain for a change to one existing item. */
 export function buildShopItemCalls(snapshots: ShopSnapshot[], account: Address, change: ShopItemChange, itemName: string): ProjectBatchCall[] {
+  // A chain already at the new discount may ride along with one that is not.
+  if (change.action === 'shop-set-discount' && snapshots.every(snapshot => (JSON.parse(snapshot.state) as { configuration?: { discountPercent: number } }).configuration?.discountPercent === change.discountPercent)) throw new Error('The selected chains already have this discount.')
   return snapshots.map(snapshot => {
     if (snapshot.account.toLowerCase() !== account.toLowerCase()) throw new Error('The shop review belongs to another wallet.')
     const { target, tierId } = snapshot
@@ -199,7 +201,6 @@ export function buildShopItemCalls(snapshots: ShopSnapshot[], account: Address, 
     if (change.action === 'shop-remove-item') request = buildAdjustTiersRequest({ ...place, tiers: [], tierIdsToRemove: [BigInt(tierId)] })
     else if (change.action === 'shop-set-discount') {
       const { configuration } = JSON.parse(snapshot.state) as { configuration: { discountPercent: number; flags: { cantIncreaseDiscountPercent: boolean } } }
-      if (change.discountPercent === configuration.discountPercent) throw new Error(`${chainName(target.chainId)} already has this discount.`)
       if (configuration.flags.cantIncreaseDiscountPercent && change.discountPercent > configuration.discountPercent) throw new Error(`This item's discount can only be lowered on ${chainName(target.chainId)}.`)
       request = buildSet721DiscountRequest({ ...place, tierId, discountPercent: change.discountPercent })
     } else request = buildSet721TierMediaRequest({ ...place, tierId, encodedIpfsUri: change.encodedIpfsUri })
@@ -241,10 +242,13 @@ export const SHOP_ITEM_DESCRIPTION_MAX = 20_000
 
 /** Rename or redescribe an item, keeping every other field of its original JSON. */
 export function editShopMetadataDetails(original: Record<string, unknown>, name: string, description: string): Record<string, unknown> {
-  const next = { ...original, name: name.trim(), description: description.trim() }
+  const next: Record<string, unknown> & { name: string; description: string } = { ...original, name: name.trim(), description: description.trim() }
+  // Readers prefer these older keys where a file has them.
+  if ('productName' in original) next.productName = next.name
+  if ('productDescription' in original) next.productDescription = next.description
   if (!next.name) throw new Error('Name the item.')
   if (next.name.length > SHOP_ITEM_NAME_MAX) throw new Error(`Keep the name within ${SHOP_ITEM_NAME_MAX} characters.`)
   if (next.description.length > SHOP_ITEM_DESCRIPTION_MAX) throw new Error(`Keep the description within ${SHOP_ITEM_DESCRIPTION_MAX.toLocaleString('en-US')} characters.`)
-  if (next.name === original.name && next.description === (original.description ?? '')) throw new Error('Change the name or the description first.')
+  if (Object.keys(next).every(key => next[key] === (original[key] ?? ''))) throw new Error('Change the name or the description first.')
   return next
 }

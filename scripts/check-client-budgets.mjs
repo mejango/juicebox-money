@@ -102,7 +102,8 @@ const budgets = {
   // Activity chain filter, the empty terminal list rule and ordered direct sends: CI measured 2724.0 KiB and over, rounded up only.
   // Combined ordered-send and Safe proxy changes: measured2725.1 KiB, rounded up only.
   // The shared .jb draft (SDK schema plus this site's mapper, in their own on-demand chunk): measured 2734.8 KiB, rounded up only.
-  allScripts: 2736 * KIB,
+  // Shop item actions (edit details, set discount, remove) in the on-demand item modal: measured 2737.4 KiB, rounded up only.
+  allScripts: 2738 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

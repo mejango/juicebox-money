@@ -186,6 +186,11 @@ describe('shop batch destination review', () => {
     const other = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'setDiscountPercentOf', args: [8n, 25n] })
     await expect(reverifyShopCall({ ...call, data: other }, ACCOUNT, true)).rejects.toThrow('not the reviewed action')
     expect(() => buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-set-discount', discountPercent: 201, summary: '' }, 'Item')).toThrow('between 0 and 100%')
+    // 17 everywhere is no change; a peer off 17 lets the matching chain ride along.
+    const same = { action: 'shop-set-discount', discountPercent: 17, summary: '' } as const
+    expect(() => buildShopItemCalls([snapshot], ACCOUNT, same, 'Item')).toThrow('already have this discount')
+    const peer = { ...snapshot, state: snapshot.state.replace('"discountPercent":17', '"discountPercent":3') }
+    expect(buildShopItemCalls([snapshot, peer], ACCOUNT, same, 'Item')).toHaveLength(2)
     // The item's discount is 17 of 200: a locked item goes down, never up.
     state.get(1)!.flags = { cantIncreaseDiscountPercent: true }
     const locked = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-set-discount', 7)
@@ -238,6 +243,8 @@ describe('original item metadata', () => {
     expect(() => editShopMetadataDetails(original, 'x', 'x'.repeat(20_001))).toThrow('20,000 characters')
     expect(() => editShopMetadataDetails(original, 'Original', 'Keep')).toThrow('Change the name or the description')
     expect(() => editShopMetadataDetails({ name: 'Only' }, 'Only', '')).toThrow('Change the name or the description')
+    // The shop reads these older keys first, so they follow the edit, a cleared description included.
+    expect(editShopMetadataDetails({ name: 'A', productName: 'Old', productDescription: 'Old words' }, 'A', '')).toEqual({ name: 'A', description: '', productName: 'A', productDescription: '' })
   })
   it('fails closed on an unavailable or invalid original JSON', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false } as Response)

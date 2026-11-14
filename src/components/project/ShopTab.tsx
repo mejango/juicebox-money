@@ -501,7 +501,7 @@ export function ShopTab({
                 }
               : undefined
           }
-          itemModes={itemModes.filter(mode => mode !== 'remove' || !detailTier.flags?.cantBeRemoved)}
+          itemModes={itemModes.filter(mode => mode !== 'remove' || !detailTier.flags?.cantBeRemoved || chains.length > 1)}
           onEdit={mode => {
             setDetailTierId(null)
             setItemEdit({ tierId: detailTier.id, mode })
