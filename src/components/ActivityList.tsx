@@ -808,6 +808,7 @@ export function activityParts(
     loan?.beneficiary ??
     event.mintNftEvent?.beneficiary ??
     event.bridgeClaimEvent?.beneficiary ??
+    event.bridgeToOutboxEvent?.caller ??
     event.sendPayoutToSplitEvent?.beneficiary ??
     event.sendReservedTokensToSplitEvent?.beneficiary ??
     event.projectCreateEvent?.from ??

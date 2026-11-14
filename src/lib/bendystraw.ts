@@ -337,6 +337,8 @@ export type BsActivityEvent = {
     peerChainId: number
     projectTokenCount: string
     sucker: string
+    /** Who called `prepare`: a Safe here, where the activity's `from` is the EOA that executed it. */
+    caller: string
   } | null
   projectCreateEvent?: {
     from: string
@@ -481,7 +483,7 @@ const ACTIVITY_EVENT_FIELDS = `
   cashOutTokensEvent {
     cashOutCount reclaimAmount reclaimAmountUsd beneficiary holder token decimals tokenSymbol
   }
-  bridgeToOutboxEvent { peerChainId projectTokenCount sucker }
+  bridgeToOutboxEvent { peerChainId projectTokenCount sucker caller }
   projectCreateEvent { from }
   addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent {

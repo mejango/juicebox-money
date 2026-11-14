@@ -37,6 +37,7 @@ vi.mock('@/components/TreasuryCard', () => ({ TreasuryCard: ({ payDisclosure }: 
 vi.mock('@/components/project/ProjectStats', () => ({ ProjectStats: () => null }))
 vi.mock('@/components/project/ProjectHandleCardLazy', () => ({ ProjectHandleCard: () => null }))
 vi.mock('@/components/project/ProjectDataStatus', () => ({ ProjectDataStatus: () => <p>Some project details are unavailable</p> }))
+vi.mock('@/components/project/ProjectContractWarning', () => ({ ProjectContractWarning: () => null }))
 vi.mock('@/components/project/PendingPaymentsGate', () => ({ PendingPaymentsGate: () => null }))
 vi.mock('@/components/project/OverviewTab', () => ({ OverviewTab: () => <p>Overview ready</p> }))
 vi.mock('@/components/project/LazyProjectTabs', () => ({

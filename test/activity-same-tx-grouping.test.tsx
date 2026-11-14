@@ -458,6 +458,7 @@ describe('a bridge send and the cash out inside it', () => {
       peerChainId: 1,
       projectTokenCount: '100130000000000000000',
       sucker: SUCKER.toLowerCase(),
+      caller: '0xsafe',
     },
   })
   const inner = event({
@@ -488,10 +489,11 @@ describe('a bridge send and the cash out inside it', () => {
     ])
   })
 
-  it('reads as sending the tokens to the other chain, by the sender', () => {
+  it('reads as sending the tokens to the other chain, by whoever called the sucker', () => {
     const [group] = groupSameTxEvents(projectFeedEvents([inner, send]))
     const parts = combinedActivityParts(group, 'REV')
-    expect(parts.actor).toBe('0xfrom')
+    // A Safe's send is the Safe's, not the signer's who executed it.
+    expect(parts.actor).toBe('0xsafe')
     expect(renderToStaticMarkup(<>{parts.action}</>)).toMatch(/sending.*100\.13 REV.*to Ethereum/)
   })
 })
