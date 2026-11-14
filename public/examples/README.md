@@ -21,7 +21,7 @@ wallet client. The Build guide has the four lines at
 Use Node.js 22 or newer and the pinned package versions:
 
 ```sh
-npm install --save-exact @bananapus/nana-sdk-core@6.6.0 viem@2.55.19
+npm install --save-exact @bananapus/nana-sdk-core@6.7.0 viem@2.55.19
 node read-project.mjs
 JB_PAYER=0xYourPublicWalletAddress node preview-payment.mjs
 JB_OWNER=0xYourPublicWalletAddress node launch-project.mjs
