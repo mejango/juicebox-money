@@ -284,9 +284,14 @@ export function AuthorityEditsCard({
 
           <EditRow
             title="Set splits"
-            description="Edit reserved-token recipients. Payout splits are edited per accounting token from the Rulesets tab."
+            description={
+              // A revnet has no payouts, and its issuance share is its split.
+              isRevnet
+                ? 'Edit split recipients.'
+                : 'Edit reserved-token recipients. Payout splits are edited per accounting token from the Rulesets tab.'
+            }
             differs={false}
-            actionLabel="Edit reserved splits"
+            actionLabel={isRevnet ? 'Edit splits' : 'Edit reserved splits'}
             open={false}
             onToggle={() => pushProjectTabHash(editReservedSplitsHash(isRevnet))}
           >
