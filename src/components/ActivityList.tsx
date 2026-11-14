@@ -357,7 +357,7 @@ function eventDisplaySignature(event: BsActivityEvent): string {
   if (event.bridgeClaimEvent)
     return `bridgeClaim:${event.bridgeClaimEvent.peerChainId}:${event.bridgeClaimEvent.projectTokenCount}`
   if (event.bridgeToOutboxEvent)
-    return `bridgeSend:${event.bridgeToOutboxEvent.peerChainId}:${event.bridgeToOutboxEvent.projectTokenCount}`
+    return `bridgeSend:${event.bridgeToOutboxEvent.caller}:${event.bridgeToOutboxEvent.peerChainId}:${event.bridgeToOutboxEvent.projectTokenCount}`
   return 'other'
 }
 

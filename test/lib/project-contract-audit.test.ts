@@ -94,6 +94,11 @@ describe('the contracts a project points at', () => {
     expect((await audit()).unknown.map(row => row.address)).toEqual([CLONE])
   })
 
+  it('knows Croptop\'s deployer as a data hook', async () => {
+    mocks.ruleset.mockResolvedValue(rules(zeroAddress, '0xF21b8717Cb50E497E90f375ec532557dD9022655'))
+    expect(await audit()).toEqual({ chainId: CHAIN, unknown: [], failed: false })
+  })
+
   it('checks the hook the omnichain deployer delegates to', async () => {
     mocks.ruleset.mockResolvedValue(rules(zeroAddress, known('JBOmnichainDeployer')))
     chain.extra = STRANGER

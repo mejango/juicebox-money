@@ -16,7 +16,7 @@ import {
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 
-export type UnknownContract = {
+type UnknownContract = {
   chainId: JBChainId
   role: string
   address: Address
@@ -35,6 +35,12 @@ export type ContractAudit = {
 
 const same = (a: string, b: string | undefined) => !!b && a.toLowerCase() === b.toLowerCase()
 
+// ponytail: Croptop's deployer, the data hook of every project it launches, has one address on
+// every chain and is not in the SDK's address table yet. Move it there with the next SDK release.
+const CROPTOP_DEPLOYER = '0xf21b8717cb50e497e90f375ec532557dd9022655'
+const isKnown = (chainId: JBChainId, address: string) =>
+  !!knownAddressName(chainId, address) || same(address, CROPTOP_DEPLOYER)
+
 /**
  * The contracts one project points at on one chain, checked against the deployments this app
  * knows: the controller, every terminal, the rule-change hook, the data hook, the hook the
@@ -52,18 +58,18 @@ export async function auditProjectContracts(
   const omnichain = jbV6ContractAddress[JBOmnichainDeployerContracts.JBOmnichainDeployer][chainId]
 
   const check = async (role: string, address: Address | undefined, note: string) => {
-    if (!address || address === zeroAddress || knownAddressName(chainId, address)) return
+    if (!address || address === zeroAddress || isKnown(chainId, address)) return
     const deployer = await client.readContract({
       address: registry,
       abi: jbAddressRegistryAbi,
       functionName: 'deployerOf',
       args: [address],
     })
-    if (deployer !== zeroAddress && knownAddressName(chainId, deployer)) return
+    if (deployer !== zeroAddress && isKnown(chainId, deployer)) return
     unknown.push({ chainId, role, address, note })
   }
   const checkDataHook = async (role: string, hook: Address | undefined, note: string) => {
-    if (!hook || hook === zeroAddress || knownAddressName(chainId, hook)) return
+    if (!hook || hook === zeroAddress || isKnown(chainId, hook)) return
     const inventory = await getProjectNftInventory(client, { chainId, projectId, isRevnet, tierLimit: 1 })
     if (inventory?.protocol === 'defifa' && same(inventory.hook, hook)) return
     await check(role, hook, note)
