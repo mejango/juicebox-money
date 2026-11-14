@@ -460,6 +460,7 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
       const rate = taxIn(stage.cashOutTax)
       if (rate > CASH_OUTS_OFF_REVNET) refuse('a revnet cash out tax of 1')
       const off = rate === CASH_OUTS_OFF_REVNET
+      if (stage.cutDays && !(Number(stage.cutPercent) > 0)) refuse('a cut interval without a cut')
       return {
         ...common,
         daysAfter: first ? common.daysAfter : stage.startAfterDays,
