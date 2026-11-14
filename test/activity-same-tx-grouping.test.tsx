@@ -447,3 +447,51 @@ describe('reserved distributions', () => {
     )
   })
 })
+
+// A bridge send (`prepare`) cashes the sucker's tokens out inside the same transaction. The feed
+// says where the tokens are going, once, and never "cashed out" by a contract.
+describe('a bridge send and the cash out inside it', () => {
+  const SUCKER = '0x66766F2D20a9f4e8a2c51478b1506c07184286b3'
+  const send = event({
+    id: 'send',
+    bridgeToOutboxEvent: {
+      peerChainId: 1,
+      projectTokenCount: '100130000000000000000',
+      sucker: SUCKER.toLowerCase(),
+    },
+  })
+  const inner = event({
+    id: 'inner',
+    cashOutTokensEvent: {
+      cashOutCount: '100130000000000000000',
+      reclaimAmount: '2481435124398494',
+      reclaimAmountUsd: null,
+      beneficiary: SUCKER,
+      holder: SUCKER,
+    },
+  } as Partial<BsActivityEvent>)
+
+  it('keeps the send and drops the sucker cash out', () => {
+    expect(projectFeedEvents([inner, send]).map(row => row.id)).toEqual(['send'])
+  })
+
+  it('keeps a holder cash out, in that transaction or another', () => {
+    const own = event({
+      id: 'own',
+      cashOutTokensEvent: { ...inner.cashOutTokensEvent!, holder: '0xholder' },
+    } as Partial<BsActivityEvent>)
+    const elsewhere = event({ ...inner, id: 'elsewhere', txHash: '0xother' })
+    expect(projectFeedEvents([own, elsewhere, send]).map(row => row.id)).toEqual([
+      'own',
+      'elsewhere',
+      'send',
+    ])
+  })
+
+  it('reads as sending the tokens to the other chain, by the sender', () => {
+    const [group] = groupSameTxEvents(projectFeedEvents([inner, send]))
+    const parts = combinedActivityParts(group, 'REV')
+    expect(parts.actor).toBe('0xfrom')
+    expect(renderToStaticMarkup(<>{parts.action}</>)).toMatch(/sending.*100\.13 REV.*to Ethereum/)
+  })
+})

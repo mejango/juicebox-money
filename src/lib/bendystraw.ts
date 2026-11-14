@@ -329,7 +329,15 @@ export type BsActivityEvent = {
     reclaimAmount: string
     reclaimAmountUsd: string | null
     beneficiary: string
+    /** Whose tokens were cashed out. A sucker's own cash out is the inside of a bridge send. */
+    holder?: string
   } & EventToken | null
+  /** Tokens queued on a sucker for another chain (`prepare`). */
+  bridgeToOutboxEvent?: {
+    peerChainId: number
+    projectTokenCount: string
+    sucker: string
+  } | null
   projectCreateEvent?: {
     from: string
   } | null
@@ -471,8 +479,9 @@ const ACTIVITY_EVENT_FIELDS = `
     amount amountUsd beneficiary memo newlyIssuedTokenCount token decimals tokenSymbol
   }
   cashOutTokensEvent {
-    cashOutCount reclaimAmount reclaimAmountUsd beneficiary token decimals tokenSymbol
+    cashOutCount reclaimAmount reclaimAmountUsd beneficiary holder token decimals tokenSymbol
   }
+  bridgeToOutboxEvent { peerChainId projectTokenCount sucker }
   projectCreateEvent { from }
   addToBalanceEvent { amount amountUsd memo from token decimals tokenSymbol }
   mintTokensEvent {
@@ -537,6 +546,7 @@ export async function getProjectActivity(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
             { sendReservedTokensToSplitEvent_not: null }
@@ -599,6 +609,7 @@ export async function getProjectActivityByProject(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { sendPayoutsEvent_not: null }
             { sendReservedTokensToSplitsEvent_not: null }
             { sendReservedTokensToSplitEvent_not: null }
@@ -673,6 +684,7 @@ export async function getRecentActivity(
           OR: [
             { payEvent_not: null }
             { cashOutTokensEvent_not: null }
+            { bridgeToOutboxEvent_not: null }
             { swapEvent_not: null }
             { sendPayoutsEvent_not: null }
             { rulesetQueuedEvent_not: null }

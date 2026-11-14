@@ -68,6 +68,7 @@ export type ActivityCategory =
   | 'buybackSwap'
   | 'buybackPool'
   | 'bridgeClaim'
+  | 'bridgeSend'
 
 const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
   pay: 'Payments',
@@ -91,6 +92,7 @@ const ACTIVITY_CATEGORY_LABELS: Record<ActivityCategory, string> = {
   buybackSwap: 'Buyback swaps',
   buybackPool: 'Buyback pools',
   bridgeClaim: 'Bridge claims',
+  bridgeSend: 'Bridge sends',
 }
 
 export function activityCategory(event: BsActivityEvent): ActivityCategory | null {
@@ -116,6 +118,7 @@ export function activityCategory(event: BsActivityEvent): ActivityCategory | nul
   if (event.swapEvent) return 'buybackSwap'
   if (event.buybackPoolEvent) return 'buybackPool'
   if (event.bridgeClaimEvent) return 'bridgeClaim'
+  if (event.bridgeToOutboxEvent) return 'bridgeSend'
   return null
 }
 
@@ -214,7 +217,8 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
       event.removeNftTierEvent ||
       event.swapEvent ||
       event.buybackPoolEvent ||
-      event.bridgeClaimEvent
+      event.bridgeClaimEvent ||
+      event.bridgeToOutboxEvent
     )
   )
 }
@@ -228,10 +232,22 @@ export function projectFeedEvents<T extends BsActivityEvent>(events: T[]): T[] {
   const distributions = new Set(
     events.filter(event => event.sendReservedTokensToSplitsEvent).map(sameTxKey),
   )
+  // A sucker cashes out its own tokens inside a bridge send; the send's row says what happened.
+  const bridgeSends = new Set(
+    events.flatMap(event =>
+      event.bridgeToOutboxEvent
+        ? [`${sameTxKey(event)}:${event.bridgeToOutboxEvent.sucker.toLowerCase()}`]
+        : [],
+    ),
+  )
   return events.filter(event =>
     event.sendReservedTokensToSplitEvent
       ? distributions.has(sameTxKey(event))
-      : isProjectFeedActivity(event),
+      : isProjectFeedActivity(event) &&
+        !(
+          event.cashOutTokensEvent?.holder &&
+          bridgeSends.has(`${sameTxKey(event)}:${event.cashOutTokensEvent.holder.toLowerCase()}`)
+        ),
   )
 }
 
@@ -251,6 +267,7 @@ const GROUP_ORDER: ActivityCategory[] = [
   'tokenMint',
   'autoIssue',
   'bridgeClaim',
+  'bridgeSend',
 ]
 
 function groupRank(event: BsActivityEvent): number {
@@ -330,6 +347,8 @@ function eventDisplaySignature(event: BsActivityEvent): string {
   if (event.buybackPoolEvent) return 'buybackPool'
   if (event.bridgeClaimEvent)
     return `bridgeClaim:${event.bridgeClaimEvent.peerChainId}:${event.bridgeClaimEvent.projectTokenCount}`
+  if (event.bridgeToOutboxEvent)
+    return `bridgeSend:${event.bridgeToOutboxEvent.peerChainId}:${event.bridgeToOutboxEvent.projectTokenCount}`
   return 'other'
 }
 
@@ -811,6 +830,7 @@ export function activityParts(
     event.sendReservedTokensToSplitEvent?.tokenCount ??
     event.swapEvent?.projectTokenAmount ??
     event.bridgeClaimEvent?.projectTokenCount ??
+    event.bridgeToOutboxEvent?.projectTokenCount ??
     '0'
   const tokenCount = formatCompactTokenAmount(rawTokenCount)
   const issuedTokens = (() => {
@@ -826,7 +846,8 @@ export function activityParts(
       : cashOut ||
           event.sendPayoutsEvent ||
           event.borrowLoanEvent ||
-          event.liquidateLoanEvent
+          event.liquidateLoanEvent ||
+          event.bridgeToOutboxEvent
         ? 'out'
         : event.repayLoanEvent ||
             event.mintNftEvent ||
@@ -943,6 +964,14 @@ export function activityParts(
         {tokenCount} {tokenUnit}
       </span>{' '}
       from {chainName(event.bridgeClaimEvent.peerChainId)}
+    </>
+  ) : event.bridgeToOutboxEvent ? (
+    <>
+      sending{' '}
+      <span className="font-medium">
+        {tokenCount} {tokenUnit}
+      </span>{' '}
+      to {chainName(event.bridgeToOutboxEvent.peerChainId)}
     </>
   ) : event.sendPayoutToSplitEvent ? (
     <>received a payout split</>
