@@ -4,6 +4,8 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 
 - [x] B1 Holder actions: cash out, loan and burn run on any chain the holder holds on; the cash out delay is named in the cash out flow; the prepaid fee range reaches the protocol maximum. Held for jango: claim credits and the credits line for revnets.
 - [x] B2 Pay: a failed credit read blocks checkout with a retry (`shopCheckoutBlocked`). Not changed after re-reading: Pay stays enabled on a short balance because the button offers the card or bank purchase; the unread credit flag already fails closed here (the gap was Juicescan's).
+- [x] B8 Tickers read without a dollar sign (jango, 2026-11-13).
+- [ ] B9 From jango's rulings of 2026-11-13, not built yet: buyback hook and router terminal resolved through the ruleset data hook, and the revnet fee netted in cash out values, both moved into the SDK; one `.jb` format shared with Juicescan and revnet.money; a Safe pays with approval and payment in one batch; Relayr first, ordered sends as the fallback; a token extended to a new chain keeps the salt that reproduces its address.
 - [ ] B3 Shop: remove item, set discount, edit name and description. Not built yet: each needs its own snapshot action, call policy and review modal on the `shop-batch` pattern.
 - [ ] B4 Rulesets: approval hook, base currency, custom duration; surplus allowance for operators and other chains.
 - [ ] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). Open: unknown-contracts warning, bridge moves labelled in activity, activity chain filter.
