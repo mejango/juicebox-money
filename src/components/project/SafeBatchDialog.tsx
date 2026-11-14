@@ -184,6 +184,8 @@ export function SafeBatchDialog({
     queryFn: () => readProposalNonces(chainId, proposalSafe!),
   })
   const nonces = proposalSafe ? noncesQuery.data : undefined
+  // The row is there from the start, so the choice cannot appear unnoticed after a slow read.
+  const noncesLoading = preparing || (!!proposalSafe && noncesQuery.isLoading)
   const [pickedNonce, setPickedNonce] = useState<number | null>(null)
   const proposalNonce =
     nonces && pickedNonce !== null && nonces.choices.includes(pickedNonce) ? pickedNonce : nonces?.next
@@ -222,7 +224,9 @@ export function SafeBatchDialog({
             </select>
           ),
         }]
-      : []),
+      : noncesLoading
+        ? [{ label: 'Safe nonce', value: 'Loading…' }]
+        : []),
   ]
 
   const onchainApproval = route?.kind === 'safe-owner' && !hasSafeService(chainId)
@@ -327,7 +331,7 @@ export function SafeBatchDialog({
       busy={locked}
       complete={complete}
       onClose={close}
-      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count }}
+      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count || noncesLoading }}
     >
       {count ? (
         <ol className="space-y-2" aria-label="Batch steps">
