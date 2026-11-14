@@ -13,7 +13,7 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - [x] B3 Shop: remove item, set discount, edit name and description, each from the item detail (see the 2026-11-14 shop item actions section below).
 - [x] B12 Set terminals sends an empty list only with Allow an empty list turned on (it stops payments and cash outs); the card and a queued batch step share the rule (`emptyWith`, `parseAddressList`), and a step saved before the field reads as off. Same field in Juicescan.
 - [x] B11 Owner calls Relayr cannot take (one chain twice, an unsupported chain, a target without the forwarder) are reviewed once and sent in order from the wallet, under core's journal keyed as revnet.money keys its own (account, and each call's chain, target and function): the same calls continue after the last confirmed one, other arguments replace the run, and a run left unfinished stays direct. Relayr is still tried first. jango's ruling of 2026-11-14 (match revnet.money), with its known weakness: set X on two chains, fail on the second, set Y by another route, request X again, and the old run resumes past the first chain.
-- [ ] B4 Rulesets: approval hook, base currency, custom duration; surplus allowance for operators and other chains.
+- [x] B4 Rulesets: Edit rules takes any cycle length, a rule-change notice and the issuance currency; the surplus allowance runs on any chain and for operators (see the 2026-11-14 ruleset section below). Not built, for jango: a field for a new custom approval contract; the allowance for a Safe signer not connected as the Safe.
 - [ ] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). An activity chain filter (a native select of the chains in the loaded events, display order; `activityChains`, `activityOnChain`). Inbound bridge claims already read "claimed X from Chain" (`bridgeClaimEvent`). Open: unknown-contracts warning; a sucker's outbound cash out still reads "cashed out" (needs the project's sucker addresses in the feed).
 - [x] B6 Copy: "cash out" written open, chain slugs in display order, logo hint matches the 25 MB check, fees to JBP6, account title without a dash, each client names the other's `.jb` draft. Not changed after checking the recorded rules: there is no blanket em dash rule (only page titles) and no rule against `$` tickers, so both go to the end list.
 - [x] B7 Buyback card: a pool registration at exactly the maximum TWAP window is refused (the hook stores 30 minutes). Held for jango: resolving the current hook and router terminal through the ruleset data hook, as revnet.money does, belongs in the SDK.
@@ -94,3 +94,21 @@ Built on the reviewed shop batch: `SHOP_ACTIONS` names each action's permission 
 - **Evidence and unknowns:** Contract facts from `nana-721-hook-v6` (subagent reading, re-read where the code depends on it): removal reverts on `cantBeRemoved`; a discount reverts on a removed item, above 200, or an increase under `cantIncreaseDiscountPercent`; `setMetadata` never checks that an item exists, so the client must. Peer chains are matched on the item's metadata URI, as media does.
 - **Verification:** Unit tests for each call's exact bytes, each permission id, each refusal, and the modal journey per mode; `npm run check`; Codex review until clean.
 - **Resource budget:** One branch stacked on the `.jb` branch, one full gate, review passes as needed.
+
+## 2026-11-14: Ruleset choices and the surplus allowance (B4)
+
+- [x] One cycle length control and model for the create form and Edit rules (`DurationSelect`, `durationFieldsSeconds`, `durationFields`); a custom length is 1 second to uint32 seconds.
+- [x] Edit rules: the rule-change notice as a choice, sent as each chain's own deadline contract (`deadlineHookAddress`); an unknown contract stays unless the notice changes.
+- [x] Edit rules: issuance priced in ETH or USD, behind a live probe of the price pairs the new currency adds on every selected chain (`newBaseFeedPairs`, `probeFeedPairs`).
+- [x] Funds: the surplus allowance on any chain of the project, for the owner or a holder of USE_ALLOWANCE (`canUseAllowance`).
+
+## Plan refinement
+- **Objective:** An owner can queue, from juicebox.money, the same ruleset choices Juicescan offers (cycle length, approval condition, base currency), and the surplus allowance is usable by whoever the contract lets use it, on whichever chain holds it.
+- **System fit:** Edit rules keeps one editor state per stage; the per-chain carry-over copies only changed fields, so chain-neutral values (a notice choice, a currency id) carry and chain-specific addresses are resolved at encoding. The create form already owns these models, so they move to shared homes instead of second copies.
+- **Reuse and simplicity:** The create form's duration control, deadline table and feed probe are reused. No new send path: the queue still goes through `runAuthorityCalls`, the allowance through `useReviewedAction`.
+- **Evidence and unknowns:** `JBRulesets` bounds duration to uint32 and requires an approval hook to pass ERC-165, which a known deadline contract does. A changed base currency needs a JBPrices pair for each accepted token; the probe reads the project's own feeds, then the defaults.
+- **Verification:** Unit tests for the duration model, the per-chain notice address, the base currency carry-over and added pairs, and the allowance rights; `npm run check`; Codex until clean.
+- **Resource budget:** One branch stacked on the shop actions, one full gate, review passes as needed.
+
+### Review
+Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates pass: 3667 unit tests, budgets (all scripts raised 2738 to 2741 on a measured 2740.1), 90 browser tests on port 3187 (3100 held by another process). Not rendered in a browser with an owner wallet.

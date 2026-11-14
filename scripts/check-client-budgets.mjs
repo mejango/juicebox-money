@@ -103,7 +103,8 @@ const budgets = {
   // Combined ordered-send and Safe proxy changes: measured2725.1 KiB, rounded up only.
   // The shared .jb draft (SDK schema plus this site's mapper, in their own on-demand chunk): measured 2734.8 KiB, rounded up only.
   // Shop item actions (edit details, set discount, remove) in the on-demand item modal: measured 2737.4 KiB, rounded up only.
-  allScripts: 2738 * KIB,
+  // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
+  allScripts: 2741 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
