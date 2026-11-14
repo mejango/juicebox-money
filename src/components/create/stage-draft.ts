@@ -399,7 +399,7 @@ export function stageRoutesEverything(
 }
 
 /** Does any stage leave funds holders can cash out: cash outs on, and not everything routed to payouts? */
-export function anyStageCashesOut(stages: DraftStage[], multiToken: boolean): boolean {
+function anyStageCashesOut(stages: DraftStage[], multiToken: boolean): boolean {
   return stages.some(
     (stage) => stage.cashOuts && !routesAllFunds(stage.payouts, stageRoutesEverything(stage, multiToken)),
   );
