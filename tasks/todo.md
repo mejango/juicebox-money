@@ -196,3 +196,23 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - Codex (`gpt-6.1-sol`, read-only) five passes: findings fixed, pass 5 CLEAN. From them: a queue copied from a ruleset whose shop `JBOmnichainDeployer` would not carry is refused; recovery recognizes a launch sent through the former launcher, and an unpaid Relayr launch signed for it is signed again at the same nonces; Balance waits for today's prices and says when some are recent or missing; a feed page that shares one moment shows nothing and reads on.
 - Full check green on the head: 3699 unit tests, 90 browser tests (browser stage on `PLAYWRIGHT_APP_PORT=3147`, another session's server held 3100). Budgets raised with measured numbers: `/[urn]` 548 KiB, all scripts 2747 KiB.
 - New copy for jango: "The project’s notice could not be loaded." with "Retry", "The notice differs on {chains}.", "No notice.", and the chart label "What the project held over time at today’s prices, shown as bars."
+
+## 2026-11-14: Round 10, items cash out under the stage's rules
+
+- [x] I1 "Items cash out" launches under each stage's own cash out tax. It was launched at 100% tax, where an item redeems for nothing while the form promised a share.
+- [x] I2 The option is offered only when a stage has cash outs on and funds left after payouts; a `.jb` file asking for it with cash outs off is refused.
+
+## Plan refinement
+- **Objective:** An item cash out returns what the form says it returns, the same as on Juicescan.
+- **System fit:** The rule stays in the create form's launch mapping and the `.jb` mapper; nothing new.
+- **Reuse and simplicity:** Reuses the stage's cash out tax. No new field.
+- **Evidence and unknowns:** `JB721Hook.beforeCashOutRecordedWith` reverts token cash outs under the item hook and prices an item with the ruleset's `cashOutTaxRate`; `JBCashOuts.cashOutFrom` returns 0 at the maximum tax.
+- **Verification:** Unit tests on the mapper; `npm run check`.
+- **Resource budget:** One commit, one pull request.
+- **Authority and recovery:** Pull request, merged on jango's word. Reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+- Full check green: 3699 unit tests, 90 browser tests.
+- Not launched on a live chain from this branch.
+- New copy for jango: "Items can cash out where the rules allow cash outs. Turn cash outs on in the rules to offer this." and "Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules. Tokens can no longer be cashed out."
