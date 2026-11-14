@@ -18,7 +18,7 @@ const field = setTerminals.fields[0]
 
 describe('set terminals power', () => {
   it('takes the full list and encodes every entry', () => {
-    expect(setTerminals.fields).toHaveLength(1)
+    expect(setTerminals.fields).toHaveLength(2)
     expect(field.kind).toBe('addressList')
     expect(setTerminals.buildArgs(45n, { terminals: [TERMINAL, ROUTER] })).toEqual([
       45n,
@@ -50,6 +50,24 @@ describe('set terminals power', () => {
         undefined,
       ),
     ).toBe('')
+  })
+})
+
+describe('an empty terminal list', () => {
+  it('is taken only with the acknowledgement on', () => {
+    expect(field.emptyWith).toBe('allowEmpty')
+    expect(setTerminals.fields[1]).toMatchObject({
+      name: 'allowEmpty',
+      kind: 'bool',
+      help: 'An empty list stops payments and cash outs.',
+    })
+    expect(parseAddressList(' \n ')).toBeNull()
+    expect(parseAddressList(' \n ', true)).toEqual([])
+    expect(parseAddressList('not an address', true)).toBeNull()
+    expect(setTerminals.buildArgs(45n, { terminals: [], allowEmpty: true })).toEqual([
+      45n,
+      [],
+    ])
   })
 })
 

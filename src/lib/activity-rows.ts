@@ -1,4 +1,5 @@
 import type { BsActivityEvent } from '@/lib/bendystraw'
+import { byChainOrder } from '@/lib/chainDisplay'
 
 /** Events sharing this key are one feed row: the same transaction on the same project. */
 export function sameTxKey(event: BsActivityEvent): string {
@@ -34,4 +35,15 @@ export async function readActivityRows<T extends BsActivityEvent>(
     if (page.length < chunk) return { events, hasMore: false }
   }
   return { events, hasMore: true }
+}
+
+/** The chains the events happened on, in display order: the activity chain filter's choices. */
+export function activityChains(events: readonly BsActivityEvent[]): number[] {
+  return [...new Set(events.map(event => event.chainId))].sort(byChainOrder)
+}
+
+/** The events on `chainId`, or all of them when no chain is chosen or the chosen one has none loaded. */
+export function activityOnChain<T extends BsActivityEvent>(events: readonly T[], chainId: number | null): readonly T[] {
+  if (chainId === null || !events.some(event => event.chainId === chainId)) return events
+  return events.filter(event => event.chainId === chainId)
 }

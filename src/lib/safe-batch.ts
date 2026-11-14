@@ -206,14 +206,20 @@ function powerFieldValues(values: BatchStepValues): ResolvedValues {
       const list = values[field.name]
       if (
         !Array.isArray(list) ||
-        !list.length ||
+        (!list.length &&
+          !(field.emptyWith && values[field.emptyWith] === true)) ||
         list.some(entry => typeof entry !== 'string' || !isAddress(entry))
       ) {
         throw new Error(`Batch step field ${field.name} must list valid addresses.`)
       }
       resolved[field.name] = list.map(entry => getAddress(entry))
     } else if (field.kind === 'bool') {
-      const value = values[field.name]
+      // A step saved before an acknowledgement field existed reads as off.
+      const value =
+        values[field.name] ??
+        (power.fields.some(other => other.emptyWith === field.name)
+          ? false
+          : undefined)
       if (typeof value !== 'boolean') {
         throw new Error(`Batch step field ${field.name} must be a boolean.`)
       }

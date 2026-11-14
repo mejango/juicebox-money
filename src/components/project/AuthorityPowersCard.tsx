@@ -403,7 +403,10 @@ export function PowerActionForm({
           }
           const raw = addresses[field.name]?.[row.chainId] ?? ''
           if (field.kind === 'addressList') {
-            const list = parseAddressList(raw)
+            const list = parseAddressList(
+              raw,
+              !!field.emptyWith && !!bools[field.emptyWith],
+            )
             if (!list) {
               throw new Error(
                 `${row.name}: list at least one valid address for “${field.label}”.`,
@@ -411,7 +414,7 @@ export function PowerActionForm({
             }
             values[field.name] = list
             display.push(
-              `${field.label} ${list.map(truncateAddress).join(', ')}`,
+              `${field.label} ${list.map(truncateAddress).join(', ') || 'none'}`,
             )
             continue
           }
