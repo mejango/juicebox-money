@@ -134,3 +134,25 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - The check's readers and RPC client load on demand. Budgets raised with measured numbers: `/[urn]` 543 to 544 KiB, all scripts 2741 to 2744 KiB.
 - Verification: full `npm run check` green (3687 unit tests, 90 browser tests). Codex `gpt-6.1-sol` six passes: seven findings fixed, one set aside (a send and its inner cash out split across a 250 event page, self-correcting on Load more), pass 6 CLEAN.
 - Not done here: Croptop's deployer is a constant in the audit until the SDK table has it; revnet.money has no such card yet. New copy for jango: "Bridged out", "Bridge sends", "sending X to Chain", the two contract card titles and their sentences, "Router terminal".
+
+## 2026-11-14: Best pay route and connecting a chain (B6)
+
+- [x] Pay: a payment is quoted on every terminal the project lists for the token (its primary terminal and the attached router entries) through the SDK's `prepareBestUserPay`, and goes to the one that gives the payer the most. Item checkout stays on the direct terminal.
+- [x] Owner edits: "Connect another chain" links a custom project to one the same account owns on another chain, with one `JBSuckerRegistry.deploySuckersFor` per chain (`planChainConnection`).
+- [x] The contract audit and the item details edit come from the SDK; the local copies are gone.
+
+## Plan refinement
+- **Objective:** Rulings 1 and 6 of 2026-11-14. A payer gets the best listed route without choosing it, and an owner can connect a project after launch. Success is the pay panel sending to the terminal its quote came from, and a connection that pairs, or a refusal that says why.
+- **System fit:** The pay panel keeps one prepared payment; its terminal now comes from that payment, so the allowance read, authorization, hold and send all follow it. The connection is one more editor in the owner edits card, sent through `useAuthorityRun` like the others.
+- **Reuse and simplicity:** SDK `prepareBestUserPay`, `parseSuckerDeployerConfig`, `getAccountingContexts`, `getCurrentRuleset`. No new send path. CCIP suckers only, and joining two existing groups is refused; both are marked in the code.
+- **Evidence and unknowns:** `JBSuckerRegistry.deploySuckersFor` salts with the caller, so one account must send every call and own the project on the new chain. `JBController.mintTokensOf` lets a sucker mint only through the ruleset's data hook, and only `JBOmnichainDeployer.hasMintPermissionFor` grants it; a project whose rules run through anything else is refused. A single-chain launch from this site uses the 721 deployer, so such a project cannot connect later. That limit is jango's to rule on.
+- **Verification:** Unit tests for the pay panel's candidates and target, the connection plan and its refusals, and the editor; `npm run check` on the packed SDK; Codex until clean.
+- **Resource budget:** One branch on top of the stack, one full gate, review passes as needed.
+- **Authority and recovery:** Draft PR, merged on jango's word after SDK 6.8.0 is published. One commit per change; each reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+- Full `npm run check` steps green on the packed SDK tarball: 3686 unit tests, budgets (`/[urn]` 544 to 545 on a measured 544.1, all scripts 2744 to 2746 on a measured 2745.6), 90 browser tests on port 3187.
+- Codex `gpt-6.1-sol`: CLEAN on the first pass.
+- Not rendered with a wallet: the connect editor and the pay panel's route choice are covered by unit tests only.
+- New copy for jango: "Connect another chain", "Link this project to one you own on another chain, so its tokens can move between them.", "Connect a chain", "Review connection", "Tokens that can move", "Tokens can then move between these projects and be cashed out on either one. Connect only projects with the same rules.", and the refusals in `connect-chain.ts`.
