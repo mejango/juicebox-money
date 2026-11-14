@@ -875,7 +875,7 @@ export function activityParts(
     <>
       deployed token{' '}
       {event.deployErc20Event.symbol
-        ? `$${event.deployErc20Event.symbol}`
+        ? event.deployErc20Event.symbol
         : ''}
     </>
   ) : event.sendPayoutsEvent ? (

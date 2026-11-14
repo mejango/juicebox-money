@@ -279,7 +279,7 @@ describe('AccountActivity', () => {
       offset: 2,
       signal: expect.any(AbortSignal),
     })
-    expect(renderedText(renderer.root)).toContain('deployed token $JBX')
+    expect(renderedText(renderer.root)).toContain('deployed token JBX')
     // All three rows are present; the load-more affordance is gone.
     expect(
       renderer.root.findAllByType('button').filter(button =>

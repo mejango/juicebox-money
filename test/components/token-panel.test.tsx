@@ -60,7 +60,7 @@ describe('project token and credit availability', () => {
   it('keeps deployed ERC-20 metadata and disables credit-only supply reads', () => {
     m.token.data = '0x1111111111111111111111111111111111111111'
     const html = panel()
-    expect(html).toContain('$TEST')
+    expect(html).toContain('>TEST<')
     expect(html).toContain('ERC-20')
     expect(html).not.toContain('>Name<')
     expect(html).not.toContain('>On<')
