@@ -1,5 +1,5 @@
 // Build and simulate a project launch on Base Sepolia. This script never signs or sends.
-// npm install --save-exact @bananapus/nana-sdk-core@6.7.0 viem@2.55.19
+// npm install --save-exact @bananapus/nana-sdk-core@6.8.0 viem@2.55.19
 // JB_OWNER=0xYourPublicWalletAddress node launch-project.mjs
 import { createPublicClient, decodeFunctionData, encodeFunctionData, http, isAddress, parseEther, zeroAddress } from 'viem'
 import { baseSepolia } from 'viem/chains'
