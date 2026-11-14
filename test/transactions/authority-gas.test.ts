@@ -94,7 +94,7 @@ import { canonicalSafeTxHash, SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/saf
 import { buildRulesetConfiguration } from '@bananapus/nana-sdk-core/v6'
 import { listedHeld } from '../support/held-chain'
 import { modelNode } from '../support/chain-node'
-import { directSequenceScope, runAuthorityCalls, type AuthorityCall, type AuthorityProgress } from '@/lib/authority'
+import { runAuthorityCalls, type AuthorityCall, type AuthorityProgress } from '@/lib/authority'
 import { loadReviewEngine } from '@/lib/preload-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
@@ -321,88 +321,24 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
   it.each([
     [1, 11155111],
     [1, 1],
-  ] as const)('sends calls Relayr cannot take on chains %s and %s in order after one review, with no signature or payment', async (first, second) => {
-    const result = await runAuthorityCalls({ signal: flow, calls: [
+  ] as const)('rejects direct batches on chains %s and %s before sending their first call', async (first, second) => {
+    await expect(runAuthorityCalls({ signal: flow, calls: [
       { chainId: first, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: second, authority: ALICE, target: TARGET, data: '0x5678' },
-    ] })
-    expect(mocks.requireReview).toHaveBeenCalledTimes(1)
-    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234', '0x5678'])
-    expect(result.directResultDetails?.map(detail => detail.chainId)).toEqual([first, second])
+    ] })).rejects.toThrow(/Select one chain and one action at a time/)
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
     expect(mocks.chooseFunding).not.toHaveBeenCalled()
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
-  it('sends an untrusted-forwarder batch in order from the wallet', async () => {
+  it('rejects an untrusted-forwarder batch before any direct write can be replayed', async () => {
     mocks.client.request.mockResolvedValue('0x')
-    await runAuthorityCalls({ signal: flow, calls: [
+    await expect(runAuthorityCalls({ signal: flow, calls: [
       { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
       { chainId: 10, authority: ALICE, target: TARGET, data: '0x5678' },
-    ] })
+    ] })).rejects.toThrow(/Select one chain and one action at a time/)
     expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
-    expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234', '0x5678'])
-  })
-
-  it("journals ordered direct calls under the wallet's one run, and continues a saved run of the same calls through core before any stale check of its confirmed call", async () => {
-    const engine = await loadReviewEngine()
-    const send = vi.spyOn(engine, 'sendReviewed')
-    const scope = directSequenceScope(ALICE)
-    await runAuthorityCalls({ signal: flow, calls: [
-      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
-      { chainId: 1, authority: ALICE, target: TARGET, data: '0x5678' },
-    ] })
-    expect(send.mock.calls[0][0]).toMatchObject({ scope })
-    // One call needs no journal.
-    await runAuthorityCalls({ signal: flow, calls: [{ chainId: 10, authority: ALICE, target: TARGET, data: '0x9999' }] })
-    expect(send.mock.calls[1][0].scope).toBeUndefined()
-
-    // A run saved after its first call confirmed, on a pair of chains Relayr would take.
-    const LATER = `0x${'9a'.repeat(32)}` as Hex
-    const confirmedCheck = vi.fn(async () => { throw new Error('The first call already changed this.') })
-    const unsentCheck = vi.fn(async () => {})
-    const relayable = [
-      { chainId: 1 as const, authority: ALICE, target: TARGET, data: '0x1234' as const, reverifyAuthority: confirmedCheck },
-      { chainId: 10 as const, authority: ALICE, target: TARGET, data: '0x5678' as const, reverifyAuthority: unsentCheck },
-    ]
-    const saved = { scope, account: ALICE, completed: [HASH],
-      calls: relayable.map(call => ({ chainId: call.chainId, to: call.target, data: call.data, value: 0n })) } as never
-    const find = vi.spyOn(engine, 'findReviewedSequence').mockReturnValue(saved)
-    const resume = vi.spyOn(engine, 'resumeReviewed').mockResolvedValue({ status: 'done', hashes: [HASH, LATER], receipts: [] })
-    const discard = vi.spyOn(engine, 'discardReviewedSequence').mockResolvedValue()
-    send.mockClear()
-    mocks.wallet.sendTransaction.mockClear()
-    try {
-      const result = await runAuthorityCalls({ signal: flow, calls: relayable })
-      expect(resume).toHaveBeenCalledExactlyOnceWith(saved, expect.objectContaining({ title: 'Review transactions' }), expect.anything())
-      expect(send).not.toHaveBeenCalled()
-      expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
-      expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
-      expect(result.directResultDetails).toEqual([{ chainId: 1, hash: HASH }, { chainId: 10, hash: LATER }])
-      // The confirmed call is never checked or simulated again; the unsent one is.
-      expect(confirmedCheck).not.toHaveBeenCalled()
-      expect(unsentCheck).toHaveBeenCalled()
-      expect(discard).not.toHaveBeenCalled()
-
-      // Other calls from the same wallet replace the unfinished run and are sent fresh.
-      resume.mockClear()
-      await runAuthorityCalls({ signal: flow, calls: [
-        { chainId: 1, authority: ALICE, target: TARGET, data: '0xaaaa' },
-        { chainId: 1, authority: ALICE, target: TARGET, data: '0xbbbb' },
-      ] })
-      expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
-      expect(resume).not.toHaveBeenCalled()
-      expect(send.mock.calls[0][0]).toMatchObject({ scope })
-
-      // So does a single call: the old run never answers for a later request that repeats its calls.
-      discard.mockClear()
-      await runAuthorityCalls({ signal: flow, calls: [{ chainId: 10, authority: ALICE, target: TARGET, data: '0xcccc' }] })
-      expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
-    } finally {
-      find.mockRestore()
-      resume.mockRestore()
-      discard.mockRestore()
-      send.mockRestore()
-    }
+    expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
   })
 
   it('preserves a single direct testnet call from the real authority', async () => {
