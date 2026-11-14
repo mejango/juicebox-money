@@ -1018,6 +1018,24 @@ export type OmnichainExtraHook = {
 }
 
 /**
+ * The ruleset whose shop `JBOmnichainDeployer.queueRulesetsOf` carries into a
+ * newly queued one (`_queueRulesetsOf`): the latest queued ruleset when it is
+ * approved (or needs no approval) and has a shop, else the current ruleset.
+ * The caller cannot choose it, so a queue copied from any other ruleset would
+ * start with a different shop than the one reviewed.
+ */
+export function omnichainCarriedRulesetId(queue: {
+  currentId: bigint
+  latestId: bigint
+  /** `JBApprovalStatus` of the latest queued ruleset. */
+  latestStatus: number
+  latestHasShop: boolean
+}): bigint {
+  const settled = queue.latestStatus === 4 || queue.latestStatus === 0 // Approved or Empty
+  return queue.latestId !== 0n && settled && queue.latestHasShop ? queue.latestId : queue.currentId
+}
+
+/**
  * The ruleset as `JBOmnichainDeployer.queueRulesetsOf` takes it. The deployer
  * puts itself in as the data hook and refuses its own address there, so each
  * configuration carries the project's own hook (or none) instead.

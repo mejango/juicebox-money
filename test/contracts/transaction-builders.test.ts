@@ -36,6 +36,7 @@ import {
   buildErc20ApproveRequest,
   buildPermissionsAuthorityCall,
   buildQueueRulesetsAuthorityCall,
+  omnichainCarriedRulesetId,
   buildQueueRulesetsRequest,
   buildSendPayoutsRequest,
   buildSplitGroupsAuthorityCall,
@@ -527,6 +528,18 @@ describe("local transaction builders", () => {
     expect((decoded.args as unknown as [bigint, { metadata: Record<string, unknown> }[]])[1][0].metadata).toMatchObject({
       dataHook: HOOK, useDataHookForPay: true, useDataHookForCashOut: false,
     });
+  });
+
+  it("names the ruleset whose shop the omnichain deployer carries into a queue", () => {
+    const queue = { currentId: 10n, latestId: 20n, latestHasShop: true };
+    // JBApprovalStatus: Empty 0, Upcoming 1, Active 2, ApprovalExpected 3, Approved 4, Failed 5.
+    expect(omnichainCarriedRulesetId({ ...queue, latestStatus: 4 })).toBe(20n);
+    expect(omnichainCarriedRulesetId({ ...queue, latestStatus: 0 })).toBe(20n);
+    // Rules still waiting for approval, or rejected, do not lend their shop: the current rules do.
+    expect(omnichainCarriedRulesetId({ ...queue, latestStatus: 3 })).toBe(10n);
+    expect(omnichainCarriedRulesetId({ ...queue, latestStatus: 5 })).toBe(10n);
+    expect(omnichainCarriedRulesetId({ ...queue, latestStatus: 4, latestHasShop: false })).toBe(10n);
+    expect(omnichainCarriedRulesetId({ ...queue, latestId: 0n, latestStatus: 0 })).toBe(10n);
   });
 
   it("wallet-action:edit-split-groups wraps the exact SDK split calldata for authority routing", () => {

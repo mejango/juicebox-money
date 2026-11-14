@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bucketize, holdingsEvents, rateKey, volumeEvents } from '@/components/project/FundingChart'
+import { bucketize, holdingsEvents, holdingsNote, rateKey, volumeEvents } from '@/components/project/FundingChart'
 import type { BsPriceMoment, BsTokenBalanceMoment } from '@/lib/bendystraw'
 
 const usd = (n: number) => String(BigInt(n) * 10n ** 18n)
@@ -23,6 +23,11 @@ describe('funding chart series', () => {
     expect(live.at(-1)?.valueUsd).toBe(3000 + 500)
     // With no live price at all, the newest indexed rate prices the whole history.
     expect(bucketize(holdingsEvents(moments, new Map()), 0)[0].valueUsd).toBe(8000)
+    // The figure says when it is not all live prices.
+    expect(holdingsNote(moments, new Map([[rateKey(8453, ETH), 3000], [rateKey(8453, USDC), 1]]))).toBeNull()
+    expect(holdingsNote(moments, new Map([[rateKey(8453, ETH), 3000]]))).toBe('Some prices are recent, not live.')
+    const unpriced = [...moments, { ...moments[0], token: '0x' + '9'.repeat(40), tokenUsdRate: null }] as BsTokenBalanceMoment[]
+    expect(holdingsNote(unpriced, new Map([[rateKey(8453, ETH), 3000]]))).toBe('Leaves out tokens with no dollar price.')
   })
 
   it('adds direct additions to indexed volume', () => {

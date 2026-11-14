@@ -73,7 +73,7 @@ import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
-import { buildQueueRulesetsAuthorityCall, type OmnichainExtraHook } from "@/lib/transaction-builders";
+import { buildQueueRulesetsAuthorityCall, omnichainCarriedRulesetId, type OmnichainExtraHook } from "@/lib/transaction-builders";
 import { assertRulesetReceiptOrder } from "@/lib/ruleset-receipt";
 import { chainName } from "@/lib/urn";
 import { requireLinkedPairs } from "@/lib/sucker-group";
@@ -560,6 +560,8 @@ type PrefillSource = {
   payoutSplits: { token: Address; splits: readonly RawSplit[] }[];
   /** Set when this ruleset runs through JBOmnichainDeployer: the project's own data hook stored beside it. */
   omnichain?: OmnichainExtraHook;
+  /** False when the deployer would carry another ruleset's shop into the queue than this source's. */
+  shopCarries?: boolean;
 };
 
 /** The live queue and every safe source the owner may choose between. */
@@ -674,6 +676,19 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
         const omnichain = omnichainDeployer && String(entry.metadata.dataHook).toLowerCase() === omnichainDeployer.toLowerCase()
           ? await publicClient.readContract({ address: omnichainDeployer, abi: jbOmnichainDeployerAbi, functionName: "extraDataHookOf", args: [pid, rid] })
           : undefined;
+        // The deployer picks the shop it carries forward itself. Refuse a source whose shop it would not carry.
+        let shopCarries: boolean | undefined;
+        if (omnichain && omnichainDeployer) {
+          const shopOf = (rulesetId: bigint) => publicClient.readContract({ address: omnichainDeployer, abi: jbOmnichainDeployerAbi, functionName: "tiered721HookOf", args: [pid, rulesetId] });
+          const latestId = BigInt(latest.ruleset.id);
+          const [mine, latestShop] = await Promise.all([shopOf(rid), latestId === 0n ? null : shopOf(latestId)]);
+          const carriedId = omnichainCarriedRulesetId({
+            currentId: BigInt(current.ruleset.id), latestId, latestStatus: latestApprovalStatus,
+            latestHasShop: !!latestShop && latestShop[0] !== zeroAddress,
+          });
+          const carried = carriedId === rid ? mine : await shopOf(carriedId);
+          shopCarries = carried[0].toLowerCase() === mine[0].toLowerCase() && carried[1] === mine[1];
+        }
         return {
           action: option.action,
           option,
@@ -681,7 +696,7 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
           rulesetId: rid,
           terminal,
           access,
-          ...(omnichain ? { omnichain: { dataHook: omnichain.dataHook, useDataHookForPay: omnichain.useDataHookForPay, useDataHookForCashOut: omnichain.useDataHookForCashOut } } : {}),
+          ...(omnichain ? { omnichain: { dataHook: omnichain.dataHook, useDataHookForPay: omnichain.useDataHookForPay, useDataHookForCashOut: omnichain.useDataHookForCashOut }, shopCarries } : {}),
           reservedSplits,
           payoutSplits: contexts.map((ctx, i) => ({
             token: ctx.token as Address,
@@ -1341,6 +1356,7 @@ function RulesetEditorForm({
       const selectedSources = live.map(destination => {
         const peerSource = destination.data.sources[action];
         if (!peerSource) throw new Error(`${chainName(destination.chainId)} cannot use this queue position. Edit its queue separately.`);
+        if (peerSource.shopCarries === false) throw new Error(`${chainName(destination.chainId)}: new rules would start with a different shop than the rules you copied. Copy the latest approved rules, or wait for approval.`);
         return { destination, source: peerSource };
       });
       if (action === "replace" && selectedSources.some(item => item.source.option.mustStartAtOrAfter !== source.option.mustStartAtOrAfter)) {

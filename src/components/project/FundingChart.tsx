@@ -161,6 +161,25 @@ export function holdingsEvents(
   return events
 }
 
+/**
+ * What to say beside the Balance figure when it is not every holding at a
+ * live price: a token with no price at all is left out of the dollars, and a
+ * token priced from the indexer's newest rate is recent, not live.
+ */
+export function holdingsNote(
+  moments: BsTokenBalanceMoment[],
+  todayRates: ReadonlyMap<string, number>,
+): string | null {
+  const indexed = new Set<string>()
+  for (const moment of moments) {
+    if (moment.tokenUsdRate) indexed.add(rateKey(moment.chainId, moment.token))
+  }
+  const keys = [...new Set(moments.map(moment => rateKey(moment.chainId, moment.token)))]
+  if (keys.some(key => !todayRates.has(key) && !indexed.has(key))) return 'Leaves out tokens with no dollar price.'
+  if (keys.some(key => !todayRates.has(key))) return 'Some prices are recent, not live.'
+  return null
+}
+
 /** Today's USD price of each token the deployments accept. A failed read leaves the token out. */
 async function readTodayRates(
   config: ReturnType<typeof useConfig>,
@@ -269,6 +288,8 @@ export function FundingChart({
   if (moments !== null && moments.length === 0 && held.length === 0) return null
 
   const selected = METRICS.find(item => item.value === metric)!
+  // Until the live prices answer, nothing is said about them.
+  const note = metric === 'balance' && todayRates ? holdingsNote(held, todayRates) : null
   const totalUsd = points.length ? points[points.length - 1].valueUsd : null
 
   return (
@@ -311,6 +332,7 @@ export function FundingChart({
       <div className="mt-3">
         <SecuredReserveChart points={points} ariaLabel={selected.chartLabel} />
       </div>
+      {note ? <p className="mt-2 text-xs text-smoke-500">{note}</p> : null}
     </div>
   )
 }
