@@ -18,6 +18,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DEFIFA_RECOVERY_QUERY_PREFIX, defifaWriteNamespace, readDefifaWriteRecovery } from '@/lib/defifa-write-recovery'
 import {
+  addPermit2PayMetadata,
   buildDefifaPayMetadata,
   buildPayTx,
   PAY_QUOTE_FAILED_MESSAGE,
@@ -141,6 +142,12 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => {
     prepareDefifaPay: (...args: Parameters<typeof actual.prepareDefifaPay>) => m.nativePrepared ? Promise.resolve(m.nativePrepared) : actual.prepareDefifaPay(...args),
   }
 })
+const permit = vi.hoisted(() => ({ sign: (async () => { throw new Error('unset') }) as (...args: unknown[]) => Promise<unknown> }))
+// Core shows and signs the allowance; the panel's part is when it asks and what it sends.
+vi.mock('@/lib/pay-authorization', async original => ({
+  ...(await original<typeof import('@/lib/pay-authorization')>()),
+  signPayAuthorization: (...args: unknown[]) => permit.sign(...args),
+}))
 vi.mock('@/hooks/useProjectTokenSymbol', () => ({
   useProjectTokenSymbol: () => ({ data: { symbol: 'TKN' } }),
 }))
@@ -195,8 +202,9 @@ function query(key: string) {
         data: { contexts: [contextFor(m.token)], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
         isError: false,
       }
-    case 'payAllowance':
-      return { data: 0n, refetch: vi.fn(async () => ({ data: 0n })) }
+    // No plan read: the panel asks for the exact approval, as it does for a contract wallet.
+    case 'payAuthorization':
+      return { data: undefined, refetch: vi.fn(async () => ({ data: undefined })) }
     case 'payShopCredits':
       return { data: 0n, isLoading: false }
     default:
@@ -680,7 +688,7 @@ describe('an approval whose receipt watch gives up', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
     // The approval lands after the watch ended; the hold's follower sees it as the page regains focus.
     await act(async () => wallet.confirm(sentHash(1)))
-    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+    m.queries.payAuthorization = { data: { kind: 'none' }, refetch: vi.fn(async () => ({ data: { kind: 'none' } })) }
     await act(async () => { window.dispatchEvent(new Event('focus')) })
     // Trying again reads the allowance the approval set, and reviews only the payment.
     await confirmReview()
@@ -706,7 +714,7 @@ describe('a payment sequence the page reloads in the middle of', () => {
     await act(async () => wallet.confirm(sentHash(1)))
     await waitUntil(() => wallet.writeContract.mock.calls.length === 2)
     await reload()
-    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+    m.queries.payAuthorization = { data: { kind: 'none' }, refetch: vi.fn(async () => ({ data: { kind: 'none' } })) }
 
     await reviewPayment()
     await confirmReview()
@@ -730,7 +738,7 @@ describe('a payment sequence the page reloads in the middle of', () => {
     await reload()
     await act(async () => wallet.confirm(sentHash(2)))
     await act(async () => { window.dispatchEvent(new Event('focus')) })
-    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+    m.queries.payAuthorization = { data: { kind: 'none' }, refetch: vi.fn(async () => ({ data: { kind: 'none' } })) }
 
     await enterAmount()
     // The restored sequence offers its review again; the payer confirms it.
@@ -754,7 +762,7 @@ describe('a held payment whose token the app switched', () => {
     await click('Dismiss')
     // The ETH route went away: the panel falls back to USDC (6 decimals) on its own.
     m.token = 'erc20'
-    m.queries.payAllowance = { data: 10n ** 30n, refetch: vi.fn(async () => ({ data: 10n ** 30n })) }
+    m.queries.payAuthorization = { data: { kind: 'none' }, refetch: vi.fn(async () => ({ data: { kind: 'none' } })) }
     await reviewPayment('7')
     await confirmReview()
     await waitUntil(() => wallet.writeContract.mock.calls.length > 1 || (host.textContent?.includes(UNPROVEN) ?? false))
@@ -1237,26 +1245,38 @@ describe('a payment from a Safe', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
   })
 
-  it("ends an approval whose result can't be proven on Done, freeing the panel, and keeps the call held", async () => {
+  it("proposes an ERC-20 payment's approval and payment as one batch, and keeps a batch that can't be proven held", async () => {
     m.safe = true
     m.token = 'erc20'
     await reviewPayment()
     await confirmReview()
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
-    // Safe's service is lost before the approval's execution can be read.
+    // One proposal for the Safe's signers, and no call of its own.
+    expect(wallet.batches()).toEqual([['approve', 'pay']])
+    expect(wallet.writes()).toEqual([])
+    expect(dialogStatus()).toBe(AWAITING)
+    // Safe's service is lost before the batch's execution can be read.
     await loseService()
     await waitUntil(() => panelSays(UNPROVEN))
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
 
     await click(button('Done', false) ? 'Done' : 'Close review')
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // The write hold still holds the same approval: it is not proposed again.
+    // The write hold still holds the same batch: it is not proposed again.
     await click('Pay')
     await confirmReview()
     await waitUntil(() => panelSays(UNPROVEN))
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(wallet.batches()).toEqual([['approve', 'pay']])
+    expect(wallet.writes()).toEqual([])
+
+    // The batch is held under the payment's own key: any other payment to the project, an ETH one too, waits on it.
+    const { writeHolds } = await import('@/lib/write-holds')
+    const { payIntent } = await import('@bananapus/nana-sdk-core/review')
+    const another = writeHolds.open({ chainId: 1, account: ALICE, safe: true,
+      namespace: payIntent({ chainId: 1, project: 42, beneficiary: ALICE }),
+      call: { to: TERMINAL, data: '0x1234', value: 10n ** 18n } })
+    expect(another.peek().status).not.toBe('clear')
   })
 })
 
@@ -1891,5 +1911,59 @@ describe("paying another chain's deployment", () => {
     await typeAmount('1'); await settle()
     await waitUntil(() => button('Pay', false)?.disabled === false)
     expect(button('Pay').disabled).toBe(false)
+  })
+})
+
+describe('an ERC-20 payment authorized through Permit2', () => {
+  const PERMIT2 = '0x000000000022D473030F116dDEE9F6B43aC78BA3' as Address
+  const SIGNATURE = `0x${'cd'.repeat(65)}` as const
+  const authorization = {
+    chainId: 1 as const, token: USDC, spender: TERMINAL, amount: 1_000_000n,
+    expiration: 2_000_000_000, nonce: 3, sigDeadline: 2_000_000_000n,
+  }
+  const plan = (needsTokenApproval: boolean) => {
+    const data = { kind: 'permit2', needsTokenApproval, authorization }
+    m.queries.payAuthorization = { data, refetch: vi.fn(async () => ({ data })) }
+  }
+  const sent = (index: number) => (wallet.writeContract.mock.calls[index] as unknown[])[0] as { address: Address; functionName: string; args: readonly unknown[] }
+
+  beforeEach(() => {
+    m.token = 'erc20'
+    m.prepareUserPay = vi.fn(async () => ({ ...PREPARED, metadata: '0x' }))
+    permit.sign = vi.fn(async () => ({ owner: ALICE, authorization, signature: SIGNATURE }))
+  })
+
+  it('signs first, approves Permit2 once, then pays with the signed allowance in its metadata', async () => {
+    plan(true)
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => wallet.awaits(sentHash(1)))
+    // Nothing reached the wallet before the signature.
+    expect(permit.sign).toHaveBeenCalledWith(authorization, ALICE)
+    expect(sent(0)).toMatchObject({ address: USDC, functionName: 'approve', args: [PERMIT2, 2n ** 256n - 1n] })
+    await act(async () => wallet.confirm(sentHash(1)))
+    await waitUntil(() => wallet.writes().length === 2)
+    expect(sent(1).functionName).toBe('pay')
+    expect(sent(1).args.at(-1)).toBe(addPermit2PayMetadata({ authorization, signature: SIGNATURE }))
+  })
+
+  it('needs no approval once Permit2 is approved: one signature, one payment', async () => {
+    plan(false)
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => wallet.writes().length === 1)
+    expect(permit.sign).toHaveBeenCalledTimes(1)
+    expect(sent(0).functionName).toBe('pay')
+    expect(String(sent(0).args.at(-1))).toContain('cd'.repeat(65))
+  })
+
+  it('sends nothing when the payer declines the signature', async () => {
+    plan(true)
+    permit.sign = vi.fn(async () => { throw Object.assign(new Error('User rejected the request.'), { code: 4001 }) })
+    await reviewPayment()
+    await confirmReview()
+    await waitUntil(() => vi.mocked(permit.sign).mock.calls.length === 1)
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)) })
+    expect(wallet.writes()).toEqual([])
   })
 })

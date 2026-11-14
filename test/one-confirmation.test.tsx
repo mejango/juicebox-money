@@ -25,8 +25,8 @@ const NATIVE = '0x000000000000000000000000000000000000EEEe' as Address
 const m = vi.hoisted(() => ({
   borrowable: vi.fn(),
   hasPermissions: vi.fn(),
-  /** The pay entry's allowance the chain shows. */
-  payAllowance: 0n,
+  /** The chain shows the pay entry already approved. */
+  payApproved: false,
   /** The chain shows the cash-out approvals. */
   cashOutApproved: false,
 }))
@@ -163,8 +163,11 @@ vi.mock('@tanstack/react-query', async importOriginal => {
           data: { contexts: [{ token: USDC, decimals: 6, currency: 909516616, symbol: 'USDC', terminal: TERMINAL, viaRouter: false }], rulesetStart: 0, pausePay: false, terminals: [TERMINAL], unknown: [] },
           isError: false,
         }
-      case 'payAllowance':
-        return { data: m.payAllowance, refetch: vi.fn(async () => ({ data: m.payAllowance })) }
+      case 'payAuthorization': {
+        // Unapproved, the panel asks for the exact approval, as it does for a contract wallet.
+        const plan = () => (m.payApproved ? { kind: 'none' } : undefined)
+        return { data: plan(), refetch: vi.fn(async () => ({ data: plan() })) }
+      }
       case 'payShopCredits':
         return { data: 0n, isLoading: false }
       case 'projectTokenSymbol':
@@ -250,7 +253,7 @@ beforeEach(() => {
   wallet.connect(ALICE)
   m.borrowable.mockResolvedValue({ borrowableNow: 10n ** 18n })
   m.hasPermissions.mockResolvedValue(false)
-  m.payAllowance = 0n
+  m.payApproved = false
   m.cashOutApproved = false
   displayQueries.removeQueries({ predicate: query => String(query.queryKey[0]).startsWith('cashOut') })
   wallet.client.readContract.mockImplementation(async ({ functionName, args }) => {
@@ -339,7 +342,7 @@ describe('one confirmation per action', () => {
     expect(document.querySelector('[data-tx-confirm]')?.textContent).toContain(REVIEW_STOPPED_LINE)
 
     // Trying again sends the payment alone: the chain now shows the confirmed approval, which is never asked for again.
-    m.payAllowance = 10n ** 30n
+    m.payApproved = true
     await act(async () => again!.click())
     await confirmEveryReview(() => wallet.writes().length >= 2 && !wallet.awaits(sentHash(2)), { each: mine })
     expect(wallet.writes().map(write => write.functionName)).toEqual(['approve', 'pay'])

@@ -45,6 +45,8 @@ beforeEach(() => {
     if (functionName === 'controllerOf') return controller
     if (functionName === 'currentRulesetOf') return [{ id: 1n, weight: 1n }, {
       dataHook: addrOf(JBBuybackHookContracts.JBBuybackHook, 1), baseCurrency: 1,
+      // The ruleset calls its data hook when paid: without the flag there is no market.
+      useDataHookForPay: true, useDataHookForCashOut: true,
     }]
     throw new Error(`Unexpected contract read: ${functionName}`)
   })
