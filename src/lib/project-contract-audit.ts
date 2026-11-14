@@ -13,6 +13,7 @@ import {
   getCurrentRuleset,
   getProjectNftInventory,
   resolveProjectBuybackHook,
+  resolveProjectRouterTerminal,
 } from '@bananapus/nana-sdk-core/v6'
 import { zeroAddress, type Address, type PublicClient } from 'viem'
 
@@ -83,6 +84,16 @@ export async function auditProjectContracts(
     await check('Controller', controller, 'Rulesets and token actions are governed by this contract.')
     for (const terminal of terminals) {
       await check('Payment terminal', terminal, 'Payments, payouts, cash outs, and balances depend on terminal behavior.')
+    }
+    // The registry is known, but it forwards payments to a terminal it picks per project.
+    const route = await resolveProjectRouterTerminal(client, { chainId, projectId })
+    if (route.via === 'registry' && route.status === 'unknown') {
+      unknown.push({
+        chainId,
+        role: 'Router terminal',
+        address: route.terminal,
+        note: 'The router registry forwards this project’s routed payments to this contract.',
+      })
     }
     // A project with no controller has no rules to read.
     if (controller === zeroAddress) return { chainId, unknown, failed: false }

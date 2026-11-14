@@ -500,4 +500,20 @@ describe('a bridge send and the cash out inside it', () => {
     expect(parts.actor).toBe('0xsafe')
     expect(renderToStaticMarkup(<>{parts.action}</>)).toMatch(/sending.*100\.13 REV.*to Ethereum/)
   })
+
+  it('names the account inside a bridge claim’s 32-byte beneficiary', () => {
+    const claim = event({
+      id: 'claim',
+      bridgeClaimEvent: {
+        peerChainId: 1,
+        token: '0x0',
+        beneficiary: `0x${'0'.repeat(24)}${'ab'.repeat(20)}`,
+        projectTokenCount: '1000000000000000000',
+        terminalTokenAmount: '0',
+        caller: '0xcaller',
+        from: '0xcaller',
+      },
+    } as Partial<BsActivityEvent>)
+    expect(combinedActivityParts([claim], 'REV').actor).toBe(`0x${'ab'.repeat(20)}`)
+  })
 })

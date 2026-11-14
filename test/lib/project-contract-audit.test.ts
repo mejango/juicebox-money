@@ -13,12 +13,14 @@ const mocks = vi.hoisted(() => ({
   ruleset: vi.fn(),
   inventory: vi.fn(),
   buyback: vi.fn(),
+  route: vi.fn(),
 }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({
   ...(await original<typeof import('@bananapus/nana-sdk-core/v6')>()),
   getCurrentRuleset: mocks.ruleset,
   getProjectNftInventory: mocks.inventory,
   resolveProjectBuybackHook: mocks.buyback,
+  resolveProjectRouterTerminal: mocks.route,
 }))
 
 /** What the chain answers; a function throws to stand for a failed read. */
@@ -54,9 +56,22 @@ beforeEach(() => {
   mocks.ruleset.mockResolvedValue(rules(known('JBDeadline3Days'), known('JBBuybackHookRegistry')))
   mocks.inventory.mockResolvedValue(null)
   mocks.buyback.mockResolvedValue({ hook: known('JBBuybackHook') })
+  mocks.route.mockResolvedValue({ via: 'registry', status: 'direct', terminal: known('JBRouterTerminal') })
 })
 
 describe('the contracts a project points at', () => {
+  it('names the terminal a known router registry forwards to when it is not a known router', async () => {
+    mocks.route.mockResolvedValue({ via: 'registry', status: 'unknown', terminal: STRANGER })
+    const result = await audit()
+    expect(result.failed).toBe(false)
+    expect(result.unknown.map(row => [row.role, row.address])).toEqual([['Router terminal', STRANGER]])
+  })
+
+  it('reports an unfinished check when the registry route cannot be read', async () => {
+    mocks.route.mockRejectedValue(new Error('rpc'))
+    expect((await audit()).failed).toBe(true)
+  })
+
   it('finds nothing in a project made of known deployments', async () => {
     expect(await audit()).toEqual({ chainId: CHAIN, unknown: [], failed: false })
   })

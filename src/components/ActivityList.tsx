@@ -808,7 +808,8 @@ export function activityParts(
     event.autoIssueEvent?.beneficiary ??
     loan?.beneficiary ??
     event.mintNftEvent?.beneficiary ??
-    event.bridgeClaimEvent?.beneficiary ??
+    // The index can hold the sucker leaf's 32-byte beneficiary: its last 20 bytes are the account.
+    (event.bridgeClaimEvent ? `0x${event.bridgeClaimEvent.beneficiary.slice(-40)}` : undefined) ??
     event.bridgeToOutboxEvent?.caller ??
     event.sendPayoutToSplitEvent?.beneficiary ??
     event.sendReservedTokensToSplitEvent?.beneficiary ??
