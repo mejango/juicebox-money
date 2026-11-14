@@ -343,42 +343,59 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
     expect(mocks.wallet.sendTransaction.mock.calls.map(([tx]) => tx.data)).toEqual(['0x1234', '0x5678'])
   })
 
-  it('journals ordered direct calls under their exact calls, and continues a saved run through core instead of sending or relaying it again', async () => {
+  it("journals ordered direct calls under the wallet's one run, and continues a saved run of the same calls through core before any stale check of its confirmed call", async () => {
     const engine = await loadReviewEngine()
     const send = vi.spyOn(engine, 'sendReviewed')
-    // The trusted-forwarder pair Relayr takes when nothing is saved.
-    const calls = () => [
-      { chainId: 1 as const, authority: ALICE, target: TARGET, data: '0x1234' as const },
-      { chainId: 1 as const, authority: ALICE, target: TARGET, data: '0x5678' as const },
-    ]
-    const scope = directSequenceScope(relayrCallsScope(calls().map(call => ({ ...call, value: 0n }))))
-    await runAuthorityCalls({ signal: flow, calls: calls() })
+    const scope = directSequenceScope(ALICE)
+    await runAuthorityCalls({ signal: flow, calls: [
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x1234' },
+      { chainId: 1, authority: ALICE, target: TARGET, data: '0x5678' },
+    ] })
     expect(send.mock.calls[0][0]).toMatchObject({ scope })
     // One call needs no journal.
     await runAuthorityCalls({ signal: flow, calls: [{ chainId: 10, authority: ALICE, target: TARGET, data: '0x9999' }] })
     expect(send.mock.calls[1][0].scope).toBeUndefined()
 
-    // A run saved after its first call confirmed: core continues it, on any pair of chains.
+    // A run saved after its first call confirmed, on a pair of chains Relayr would take.
     const LATER = `0x${'9a'.repeat(32)}` as Hex
-    const saved = { scope, account: ALICE } as never
+    const confirmedCheck = vi.fn(async () => { throw new Error('The first call already changed this.') })
+    const unsentCheck = vi.fn(async () => {})
+    const relayable = [
+      { chainId: 1 as const, authority: ALICE, target: TARGET, data: '0x1234' as const, reverifyAuthority: confirmedCheck },
+      { chainId: 10 as const, authority: ALICE, target: TARGET, data: '0x5678' as const, reverifyAuthority: unsentCheck },
+    ]
+    const saved = { scope, account: ALICE, completed: [HASH],
+      calls: relayable.map(call => ({ chainId: call.chainId, to: call.target, data: call.data, value: 0n })) } as never
     const find = vi.spyOn(engine, 'findReviewedSequence').mockReturnValue(saved)
     const resume = vi.spyOn(engine, 'resumeReviewed').mockResolvedValue({ status: 'done', hashes: [HASH, LATER], receipts: [] })
+    const discard = vi.spyOn(engine, 'discardReviewedSequence').mockResolvedValue()
     send.mockClear()
     mocks.wallet.sendTransaction.mockClear()
     try {
-      const relayable = [
-        { chainId: 1 as const, authority: ALICE, target: TARGET, data: '0x1234' as const },
-        { chainId: 10 as const, authority: ALICE, target: TARGET, data: '0x5678' as const },
-      ]
       const result = await runAuthorityCalls({ signal: flow, calls: relayable })
       expect(resume).toHaveBeenCalledExactlyOnceWith(saved, expect.objectContaining({ title: 'Review transactions' }), expect.anything())
       expect(send).not.toHaveBeenCalled()
       expect(mocks.wallet.sendTransaction).not.toHaveBeenCalled()
       expect(mocks.wallet.signTypedData).not.toHaveBeenCalled()
       expect(result.directResultDetails).toEqual([{ chainId: 1, hash: HASH }, { chainId: 10, hash: LATER }])
+      // The confirmed call is never checked or simulated again; the unsent one is.
+      expect(confirmedCheck).not.toHaveBeenCalled()
+      expect(unsentCheck).toHaveBeenCalled()
+      expect(discard).not.toHaveBeenCalled()
+
+      // Other calls from the same wallet replace the unfinished run and are sent fresh.
+      resume.mockClear()
+      await runAuthorityCalls({ signal: flow, calls: [
+        { chainId: 1, authority: ALICE, target: TARGET, data: '0xaaaa' },
+        { chainId: 1, authority: ALICE, target: TARGET, data: '0xbbbb' },
+      ] })
+      expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
+      expect(resume).not.toHaveBeenCalled()
+      expect(send.mock.calls[0][0]).toMatchObject({ scope })
     } finally {
       find.mockRestore()
       resume.mockRestore()
+      discard.mockRestore()
       send.mockRestore()
     }
   })

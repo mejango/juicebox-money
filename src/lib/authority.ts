@@ -292,9 +292,28 @@ function toRelayrCalls(calls: AuthorityCall[]): RelayrCall[] {
  * multi-chain EOA action signs ERC-2771 requests and pays Relayr once. A Safe
  * signer queues or approves the exact call through that chain's Safe path.
  */
-/** The journal key of a wallet's ordered direct calls: these exact calls, by Relayr's own key for them. */
-export function directSequenceScope(callsScope: string): string {
-  return `jbm:direct:${callsScope}`
+/**
+ * The journal key of a wallet's ordered direct calls: one unfinished run per
+ * wallet. The same calls continue it; other calls replace it, so an old run
+ * never answers for a later action that happens to repeat its calls.
+ */
+export function directSequenceScope(authority: Address): string {
+  return `jbm:direct:${authority.toLowerCase()}`
+}
+
+/** The saved run under `scope` when it is of exactly these calls, in order. */
+function savedDirectRun(
+  engine: Awaited<ReturnType<typeof loadReviewEngine>>,
+  scope: string,
+  group: readonly AuthorityCall[],
+) {
+  const saved = engine.findReviewedSequence(scope, group[0].authority)
+  const same = !!saved && saved.calls.length === group.length && saved.calls.every((call, step) =>
+    call.chainId === group[step].chainId &&
+    call.to.toLowerCase() === group[step].target.toLowerCase() &&
+    call.data.toLowerCase() === group[step].data.toLowerCase() &&
+    (call.value ?? 0n) === (group[step].value ?? 0n))
+  return { saved, same }
 }
 
 export async function runAuthorityCalls({
@@ -343,6 +362,8 @@ export async function runAuthorityCalls({
     pendingScope?: string
     /** The journal several direct calls are sent under. */
     directScope?: string
+    /** A continued direct run's calls still to send: only these are checked before it. */
+    unsent?: AuthorityCall[]
     recovered?: boolean
   }
 
@@ -358,6 +379,18 @@ export async function runAuthorityCalls({
       continue
     }
     const authority = group[0].authority
+    // A wallet's ordered direct run left unfinished continues before anything
+    // is checked against the chain: its confirmed calls changed what their own
+    // checks read. Only its unsent calls are checked, here and at each send.
+    if (group.length > 1 && connected.toLowerCase() === authority.toLowerCase() && !isSafeConnection(wagmiConfig)) {
+      const { saved: run, same } = savedDirectRun(await loadReviewEngine(), directSequenceScope(authority), group)
+      if (run && same) {
+        const unsent = group.slice(run.completed.length + (run.sending ? 1 : 0))
+        await Promise.all(unsent.map(call => call.reverifyAuthority?.()))
+        reviewedGroups.push({ calls: group, mode: 'direct', directScope: directSequenceScope(authority), unsent })
+        continue
+      }
+    }
     // A saved session's action rechecks only after the requests it published
     // are classified (ruling R114), in runRelayrCalls: a request that ran
     // would make the recheck refuse first.
@@ -513,14 +546,10 @@ export async function runAuthorityCalls({
     const uniqueChains = new Set(group.map(call => call.chainId))
     const pendingScope = relayrCallsScope(toRelayrCalls(group))
     // One Relayr payment is tried first. Calls it cannot take are sent in order
-    // from the wallet, journaled under these exact calls: a retry continues after
-    // the last confirmed call and never sends one again. A journal left
-    // unfinished keeps its calls direct, whatever Relayr could take now.
-    const directScope = group.length > 1 ? directSequenceScope(pendingScope) : undefined
-    const savedDirect = directScope
-      ? (await loadReviewEngine()).findReviewedSequence(directScope, group[0].authority)
-      : undefined
-    if (savedDirect || (!loadRelayrPendingSession(pendingScope) && (
+    // from the wallet under a journal: a retry of the same calls continues
+    // after the last confirmed one and never sends one again (above).
+    const directScope = group.length > 1 ? directSequenceScope(authority) : undefined
+    if ((!loadRelayrPendingSession(pendingScope) && (
       uniqueChains.size <= 1 || uniqueChains.size !== group.length ||
       !relayrSupportsChains(group.map(call => call.chainId)) ||
       !(await Promise.all(toRelayrCalls(group).map(relayrTargetSupportsForwarder))).every(Boolean)
@@ -625,7 +654,7 @@ export async function runAuthorityCalls({
   // state. Recovered bundles are deliberately excluded above.
   const callsToSimulate = reviewedGroups
     .filter(reviewed => !reviewed.recovered)
-    .flatMap(reviewed => reviewed.calls)
+    .flatMap(reviewed => reviewed.unsent ?? reviewed.calls)
   for (let index = 0; index < callsToSimulate.length; index++) {
     const call = callsToSimulate[index]
     const client = getPublicClient(wagmiConfig, {
@@ -820,7 +849,8 @@ export async function runAuthorityCalls({
     if (reviewed.mode === 'direct') {
       // Core reviews the group once (or spends the parent plan), then sends,
       // simulates, holds and waits on each call in order.
-      const { sendReviewed, resumeReviewed, findReviewedSequence, HELD_CONFIRMING_LINE } = await loadReviewEngine()
+      const engine = await loadReviewEngine()
+      const { sendReviewed, resumeReviewed, HELD_CONFIRMING_LINE } = engine
       const exactOf = (call: AuthorityCall) => ({ to: call.target, data: call.data, value: call.value ?? 0n })
       /** The call core is sending now, for the final gate. */
       let current = group[0]
@@ -851,8 +881,10 @@ export async function runAuthorityCalls({
         // A step still confirming is followed in the run, which then goes on to the next call.
         follow: { onConfirming: (step: number) => onProgress?.({ kind: 'direct', message: HELD_CONFIRMING_LINE, index: calls.indexOf(group[step]) }) },
       }
-      const saved = reviewed.directScope ? findReviewedSequence(reviewed.directScope, group[0].authority) : undefined
-      const result = saved ? await resumeReviewed(saved, steps, reviewedSendDeps) : await sendReviewed({
+      const run = reviewed.directScope ? savedDirectRun(engine, reviewed.directScope, group) : undefined
+      // Another action's unfinished run gives way to this one; a step of it still with the wallet keeps it, and core refuses.
+      if (run?.saved && !run.same) await engine.discardReviewedSequence(run.saved).catch(() => {})
+      const result = run?.saved && run.same ? await resumeReviewed(run.saved, steps, reviewedSendDeps) : await sendReviewed({
         account: group[0].authority,
         ...steps,
         ...(reviewed.directScope ? { scope: reviewed.directScope } : {}),

@@ -1269,6 +1269,14 @@ describe('a payment from a Safe', () => {
     await waitUntil(() => panelSays(UNPROVEN))
     expect(wallet.batches()).toEqual([['approve', 'pay']])
     expect(wallet.writes()).toEqual([])
+
+    // The batch is held under the payment's own key: any other payment to the project, an ETH one too, waits on it.
+    const { writeHolds } = await import('@/lib/write-holds')
+    const { payIntent } = await import('@bananapus/nana-sdk-core/review')
+    const another = writeHolds.open({ chainId: 1, account: ALICE, safe: true,
+      namespace: payIntent({ chainId: 1, project: 42, beneficiary: ALICE }),
+      call: { to: TERMINAL, data: '0x1234', value: 10n ** 18n } })
+    expect(another.peek().status).not.toBe('clear')
   })
 })
 

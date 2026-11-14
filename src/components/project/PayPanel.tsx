@@ -1525,14 +1525,17 @@ export function PayPanel({
         }
       }
       const steps = [...(tokenApproval ? [tokenApproval] : []), payment];
+      const batchedBySafe = steps.length > 1 && isSafeConnection(wagmiConfig);
       await nextUiPaint();
       patchSequence({ status: mode === "pay" ? "Review the payment." : "Review adding to the balance." });
       runCalls.current = {
         account,
         // The approval and the payment are one review: the payment simulates on the approval's receipt block.
+        // Core holds a Safe batch under its first call's key: the whole batch is the payment, held by the
+        // payment's own key, so paying again another way waits on it.
         calls: steps.map((action, index) => reviewedCall(action.request, {
-          intent: action.intent,
-          legacy: action.legacy,
+          intent: (batchedBySafe ? payment : action).intent,
+          legacy: (batchedBySafe ? payment : action).legacy,
           ...(index > 0 ? {} : { simulationBlockNumber: approvalBlock }),
         })),
         context: sequenceContext,
