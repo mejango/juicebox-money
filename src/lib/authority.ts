@@ -713,6 +713,14 @@ export async function runAuthorityCalls({
   for (const reviewed of reviewedGroups) {
     if (reviewed.recovered) continue
     const group = reviewed.calls
+    // Whatever this wallet sends next, of one call or several, by any route, replaces its unfinished
+    // ordered run of other calls: that run must never answer for a later request that repeats its
+    // calls. A step of it still with the wallet keeps it, and core refuses a new ordered run.
+    if (connected.toLowerCase() === group[0].authority.toLowerCase() && !isSafeConnection(wagmiConfig)) {
+      const engine = await loadReviewEngine()
+      const run = savedDirectRun(engine, directSequenceScope(group[0].authority), group)
+      if (run.saved && !run.same) await engine.discardReviewedSequence(run.saved).catch(() => {})
+    }
     if (reviewed.mode === 'safe-connector') {
       const call = group[0]
       await call.reverifyAuthority?.()
@@ -882,8 +890,6 @@ export async function runAuthorityCalls({
         follow: { onConfirming: (step: number) => onProgress?.({ kind: 'direct', message: HELD_CONFIRMING_LINE, index: calls.indexOf(group[step]) }) },
       }
       const run = reviewed.directScope ? savedDirectRun(engine, reviewed.directScope, group) : undefined
-      // Another action's unfinished run gives way to this one; a step of it still with the wallet keeps it, and core refuses.
-      if (run?.saved && !run.same) await engine.discardReviewedSequence(run.saved).catch(() => {})
       const result = run?.saved && run.same ? await resumeReviewed(run.saved, steps, reviewedSendDeps) : await sendReviewed({
         account: group[0].authority,
         ...steps,

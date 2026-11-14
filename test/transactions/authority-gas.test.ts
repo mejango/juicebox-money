@@ -392,6 +392,11 @@ describe('Authority gas estimation reaches the signed Relayr request', () => {
       expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
       expect(resume).not.toHaveBeenCalled()
       expect(send.mock.calls[0][0]).toMatchObject({ scope })
+
+      // So does a single call: the old run never answers for a later request that repeats its calls.
+      discard.mockClear()
+      await runAuthorityCalls({ signal: flow, calls: [{ chainId: 10, authority: ALICE, target: TARGET, data: '0xcccc' }] })
+      expect(discard).toHaveBeenCalledExactlyOnceWith(saved)
     } finally {
       find.mockRestore()
       resume.mockRestore()
