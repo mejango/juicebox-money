@@ -29,6 +29,7 @@ import {
   effectiveTierPrice,
   getProjectNftInventory,
   PAY_QUOTE_FAILED_MESSAGE,
+  payNoticeView,
   PAY_SWAP_QUOTE_FAILED_MESSAGE,
   PaySwapQuoteFailedError,
   PERMIT2_ADDRESS,
@@ -89,7 +90,6 @@ import {
 } from "@/lib/pay-authorization";
 import { isSafeConnection } from "@/lib/safe-connector";
 import { chainName } from "@/lib/urn";
-import { payNoticeView } from "@/lib/pay-notice";
 import { getProjectPayNotice } from "@/lib/bendystraw";
 import { PayNoticeNote } from "@/components/project/PayNoticeNote";
 import { assertReviewedAccountConnected } from "@/lib/wallet-context";
@@ -106,7 +106,7 @@ import { shopCartTotal, shopCheckoutBlocked } from "@/lib/shop-cart-total";
 import { NftCheckoutCard } from "@/components/project/NftCheckoutCard";
 import { AllowedDecreaseField } from "@/components/project/AllowedDecreaseField";
 import dynamic from 'next/dynamic'
-import { explorerTxUrl } from '@/lib/chainDisplay'
+import { byChainOrder, explorerTxUrl } from '@/lib/chainDisplay'
 import { attachedPaymentRouterEntries, knownPaymentRouterEntries, readPaymentRouterEntry } from '@/lib/payment-router-entry'
 import { useLinkedPair } from '@/lib/sucker-group'
 
@@ -348,10 +348,14 @@ export function PayPanel({
         [cid, await getProjectPayNotice(cid, pid, { signal }).catch(() => null)] as const),
     )),
   });
-  const noticeView = payNoticeView(chainId, {
-    ...noticeRead.data,
-    ...(payDisclosure !== undefined ? { [initialChainId]: payDisclosure.trim() } : {}),
-  });
+  const noticeView = payNoticeView(
+    chainId,
+    {
+      ...noticeRead.data,
+      ...(payDisclosure !== undefined ? { [initialChainId]: payDisclosure.trim() } : {}),
+    },
+    byChainOrder,
+  );
   // Still reading is not a failed read.
   if (noticeRead.isFetching) noticeView.failed = false;
   const {
@@ -1059,7 +1063,13 @@ export function PayPanel({
         const [only] = payCandidates;
         return { ...only, ...(await prepareUserPay(publicClient!, { ...payment, terminal: only.terminal })) };
       }
-      const best = await prepareBestUserPay(publicClient!, { ...payment, candidates: payCandidates });
+      // With a wallet connected, each native-token route is run as that account and the one that
+      // delivers the most tokens wins; otherwise the terminals' previews decide.
+      const best = await prepareBestUserPay(publicClient!, {
+        ...payment,
+        candidates: payCandidates,
+        ...(address ? { simulateFrom: address } : {}),
+      });
       if (!best) throw new Error("No terminal this project lists can take this payment.");
       return best;
     },

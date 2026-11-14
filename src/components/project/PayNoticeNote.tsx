@@ -1,6 +1,6 @@
 'use client'
 
-import type { PayNoticeView } from '@/lib/pay-notice'
+import type { PayNoticeView } from '@bananapus/nana-sdk-core/v6'
 import { chainName } from '@/lib/urn'
 
 /**
