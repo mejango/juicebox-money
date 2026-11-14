@@ -21,7 +21,7 @@ export type ShopWriteTarget = {
 }
 /** Every shop action: the permission an operator needs, the words for a refusal,
  * the call it sends, and whether it rewrites the item's metadata. */
-export const SHOP_ACTIONS = {
+const SHOP_ACTIONS = {
   'shop-add-items': { permission: JBPermissionIdsV6.ADJUST_721_TIERS, verb: 'add items', functionName: 'adjustTiers', metadata: false },
   'shop-replace-media': { permission: JBPermissionIdsV6.SET_721_METADATA, verb: 'replace media', functionName: 'setMetadata', metadata: true },
   'shop-edit-details': { permission: JBPermissionIdsV6.SET_721_METADATA, verb: 'edit item details', functionName: 'setMetadata', metadata: true },
@@ -29,7 +29,6 @@ export const SHOP_ACTIONS = {
   'shop-remove-item': { permission: JBPermissionIdsV6.ADJUST_721_TIERS, verb: 'remove items', functionName: 'adjustTiers', metadata: false },
 } as const
 export type ShopAction = keyof typeof SHOP_ACTIONS
-export type ShopItemAction = Exclude<ShopAction, 'shop-add-items'>
 export type ShopSnapshot = {
   target: ShopWriteTarget & { hook: Address; pricing: NonNullable<ShopWriteTarget['pricing']> }
   isRevnet: boolean
@@ -50,6 +49,8 @@ export type ShopCallContext = {
   mediaName?: string
   /** What a discount or details update sets, as the review shows it. */
   summary?: string
+  /** A details update's description; empty when it clears one. */
+  description?: string
 }
 
 function fingerprint(value: unknown): string {
@@ -176,7 +177,7 @@ export function buildShopAddCalls(snapshots: ShopSnapshot[], account: Address, p
 
 export type ShopItemChange =
   | { action: 'shop-replace-media'; encodedIpfsUri: Hex; mediaName: string }
-  | { action: 'shop-edit-details'; encodedIpfsUri: Hex; summary: string }
+  | { action: 'shop-edit-details'; encodedIpfsUri: Hex; summary: string; description: string }
   /** `discountPercent` is out of the hook's 200. */
   | { action: 'shop-set-discount'; discountPercent: number; summary: string }
   | { action: 'shop-remove-item' }
@@ -203,7 +204,7 @@ export function buildShopItemCalls(snapshots: ShopSnapshot[], account: Address, 
       request = buildSet721DiscountRequest({ ...place, tierId, discountPercent: change.discountPercent })
     } else request = buildSet721TierMediaRequest({ ...place, tierId, encodedIpfsUri: change.encodedIpfsUri })
     const [suffix, label] = ITEM_CALLS[change.action]
-    const context: ShopCallContext = { snapshot, items: [{ name: itemName, price: '', supply: '' }], ...('mediaName' in change ? { mediaName: change.mediaName } : {}), ...('summary' in change ? { summary: change.summary } : {}) }
+    const context: ShopCallContext = { snapshot, items: [{ name: itemName, price: '', supply: '' }], ...('mediaName' in change ? { mediaName: change.mediaName } : {}), ...('summary' in change ? { summary: change.summary } : {}), ...('description' in change ? { description: change.description } : {}) }
     return { id: `${target.chainId}:${target.hook}:${tierId}:${suffix}`, projectId: target.projectId, chainId: target.chainId, authority: snapshot.authority, target: target.hook, data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]), abi: request.abi, functionName: request.functionName, args: request.args, contractName: 'JB721TiersHook', label, context }
   })
 }

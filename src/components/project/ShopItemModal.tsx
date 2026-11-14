@@ -23,7 +23,7 @@ import { chainName } from '@/lib/urn'
 
 export type ShopItemMode = 'media' | 'details' | 'discount' | 'remove'
 /** `metadata` is the JSON to pin: the original for media, the edited one for details. */
-type ItemPlan = { account: Address; snapshots: ShopSnapshot[]; metadata?: Record<string, unknown>; file?: File; itemName: string; summary: string; units?: number }
+type ItemPlan = { account: Address; snapshots: ShopSnapshot[]; metadata?: Record<string, unknown>; file?: File; itemName: string; summary: string; description?: string; units?: number }
 const MODES = {
   media: { action: 'shop-replace-media', title: 'Replace media', noun: 'media update', button: 'Replace media', subtitle: 'Everything else about the item stays the same.', row: 'New media', stays: 'its media stays as is there', step: 'Update', chainDone: 'Updated', runTitle: 'Replace item media', confirm: 'Confirm media update', doneTitle: 'Media replaced', done: 'now points at the new media. Already-minted items update too. Indexers can take a few minutes to catch up.', fail: 'Could not update the media.' },
   details: { action: 'shop-edit-details', title: 'Edit details', noun: 'details update', button: 'Save details', subtitle: 'Everything else about the item stays the same.', row: 'New name', stays: 'it stays as is there', step: 'Update', chainDone: 'Updated', runTitle: 'Edit item details', confirm: 'Confirm details update', doneTitle: 'Details saved', done: 'has its new details. Already-minted items update too. Indexers can take a few minutes to catch up.', fail: 'Could not update the details.' },
@@ -75,7 +75,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
   const usableTargets = chainTargets.filter(target => eligible?.[target.chainId] === null)
   const savedContext = batch?.calls[0]?.context as ShopCallContext | undefined
   const itemName = savedContext?.items[0]?.name ?? freshPlan?.itemName ?? current?.name ?? `Item #${tierId}`
-  const plan = batch ? { account: batch.account, chainIds: batch.calls.map(call => call.chainId), summary: savedContext?.mediaName ?? savedContext?.summary ?? (mode === 'media' ? 'Saved media' : '') } : freshPlan ? { account: freshPlan.account, chainIds: freshPlan.snapshots.map(snapshot => snapshot.target.chainId), summary: freshPlan.summary } : null
+  const plan = batch ? { account: batch.account, chainIds: batch.calls.map(call => call.chainId), summary: savedContext?.mediaName ?? savedContext?.summary ?? (mode === 'media' ? 'Saved media' : ''), description: savedContext?.description } : freshPlan ? { account: freshPlan.account, chainIds: freshPlan.snapshots.map(snapshot => snapshot.target.chainId), summary: freshPlan.summary, description: freshPlan.description } : null
   const units = itemDiscountOk(discount) && discount.trim() !== '' && Number.isInteger(Number(discount) * 2) ? discountUnits(discount) : null
   const ready = mode === 'media' ? !!file : mode === 'details' ? !!name.trim() : mode === 'discount' ? units !== null && units !== discountPercent : true
   const statuses = Object.fromEntries((batch?.calls ?? []).map(call => [call.chainId, { phase: batch!.completedIds.includes(call.id) ? 'done' : 'pending', error: undefined }]))
@@ -121,7 +121,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
   }
   const changeOf = (item: ItemPlan, uri: Hex): ShopItemChange =>
     mode === 'media' ? { action: 'shop-replace-media', encodedIpfsUri: uri, mediaName: item.summary }
-      : mode === 'details' ? { action: 'shop-edit-details', encodedIpfsUri: uri, summary: item.summary }
+      : mode === 'details' ? { action: 'shop-edit-details', encodedIpfsUri: uri, summary: item.summary, description: item.description ?? '' }
         : mode === 'discount' ? { action: 'shop-set-discount', discountPercent: item.units!, summary: item.summary }
           : { action: 'shop-remove-item' }
   const handleReview = async () => {
@@ -145,7 +145,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
         if (typeof original.name === 'string') next.itemName = original.name
         next = mode === 'media'
           ? { ...next, metadata: original, file: file!, summary: file!.name }
-          : { ...next, metadata: editShopMetadataDetails(original, name, description), summary: name.trim() }
+          : { ...next, metadata: editShopMetadataDetails(original, name, description), summary: name.trim(), description: description.trim() }
       } else if (mode === 'discount') next = { ...next, units: units!, summary: percentOff(units!) }
       // Each chain's own refusal (a discount that can only be lowered) shows here, before any pin.
       buildShopItemCalls(snapshots, address, changeOf(next, PROBE_URI), next.itemName)
@@ -338,6 +338,7 @@ export function ShopItemModal({ mode, chainId, hook, tierId, current, discountPe
               ? [
                   { label: 'Item', value: itemName },
                   ...(copy.row && plan.summary ? [{ label: copy.row, value: plan.summary }] : []),
+                  ...(plan.description === undefined ? [] : [{ label: 'New description', value: plan.description || 'None' }]),
                   ...((batch?.calls.map(call => (call.context as ShopCallContext).snapshot) ?? freshPlan?.snapshots) ?? []).map(snapshot => ({ label: chainName(snapshot.target.chainId), value: `Project #${snapshot.target.projectId}, item #${snapshot.tierId}` })),
                 ]
               : []

@@ -196,9 +196,9 @@ describe('shop batch destination review', () => {
   })
   it('wallet-action:edit-shop-item-details writes the new metadata to the reviewed item only', async () => {
     const snapshot = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-edit-details', 7)
-    const call = buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-edit-details', encodedIpfsUri: NEW_URI, summary: 'New name' }, 'Old name')[0]
+    const call = buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-edit-details', encodedIpfsUri: NEW_URI, summary: 'New name', description: '' }, 'Old name')[0]
     expect(decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })).toEqual({ functionName: 'setMetadata', args: ['', '', '', '', HOOK, 7n, NEW_URI] })
-    expect(call).toMatchObject({ id: `1:${HOOK}:7:details`, label: 'Edit item details', context: { summary: 'New name', items: [{ name: 'Old name' }] } })
+    expect(call).toMatchObject({ id: `1:${HOOK}:7:details`, label: 'Edit item details', context: { summary: 'New name', description: '', items: [{ name: 'Old name' }] } })
     await expect(reverifyShopCall(call, ACCOUNT, true)).resolves.toBeUndefined()
     const renamesCollection = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'setMetadata', args: ['Other', '', '', '', HOOK, 7n, NEW_URI] })
     await expect(reverifyShopCall({ ...call, data: renamesCollection }, ACCOUNT, true)).rejects.toThrow('not the reviewed action')
