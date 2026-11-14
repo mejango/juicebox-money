@@ -39,7 +39,13 @@ import {
   type AuthorityCall,
 } from '@/lib/authority'
 import { projectLogoUrl } from '@/lib/format'
-import { TOKEN_SYMBOL_RE, omnichainTokenSalt } from '@/lib/manage'
+import {
+  TOKEN_SAME_ADDRESS_NOTE,
+  TOKEN_SYMBOL_RE,
+  legacyTokenSalt,
+  omnichainTokenSalt,
+  predictTokenAddress,
+} from '@/lib/manage'
 import {
   customPropertiesText,
   customMetadataProperties,
@@ -94,6 +100,16 @@ type EditChainState = AuthorityDeployment & {
   tokenSymbol: string | null
   error: string | null
 }
+
+const TOKEN_IMPLEMENTATION_ABI = [
+  {
+    type: 'function',
+    name: 'TOKEN',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'address' }],
+  },
+] as const
 
 async function readEditState(
   deployment: AuthorityDeployment,
@@ -1111,27 +1127,85 @@ export function MetadataEditor({
   )
 }
 
+const TOKEN_SAME_ADDRESS_EVERY_CHAIN =
+  'The token gets the same address on every chain you sign from this account.'
+
+type TokenSaltRow = {
+  chainId?: number
+  projectId?: number
+  name?: string
+  authority?: Address | null
+  controller?: Address | null
+  tokenImplementation?: Address | null
+  token: Address | null
+  tokenName: string | null
+  tokenSymbol: string | null
+}
+
 /**
  * The one CREATE2 salt every `deployERC20For` in a review shares, so all the
  * chains of a project land the token on the SAME address (the ecosystem's
  * omnichain ERC-20 convention). It anchors on the metadata of a token the
  * project already holds on some chain when there is one, so extending onto a
- * new chain reproduces the original address even after a rename.
+ * new chain reproduces the original address even after a rename. A token first
+ * deployed with Juicescan's older salt keeps that salt when it is the one that
+ * reproduces the address.
+ *
+ * `sameAddress` is null when there is no existing token to match or the match
+ * could not be checked, and false when this account cannot reproduce it.
  */
+export function tokenDeployPlan(
+  rows: readonly TokenSaltRow[],
+  name: string,
+  symbol: string,
+  chosen?: ReadonlySet<number>,
+): { salt: Hex; anchor: TokenSaltRow | null; sameAddress: boolean | null } {
+  const anchor =
+    rows.find(row => row.token && row.tokenName && row.tokenSymbol) ?? null
+  const shared = omnichainTokenSalt(
+    anchor?.tokenName ?? name,
+    anchor?.tokenSymbol ?? symbol,
+  )
+  if (!anchor?.token) return { salt: shared, anchor: null, sameAddress: null }
+  const existing = anchor.token.toLowerCase()
+  const lands = (salt: Hex, row: TokenSaltRow) =>
+    predictTokenAddress({
+      sender: row.authority!,
+      controller: row.controller!,
+      tokens: jbV6ContractAddress[JBCoreContracts.JBTokens][row.chainId as JBChainId],
+      implementation: row.tokenImplementation!,
+      salt,
+    }).toLowerCase() === existing
+  const missing = rows.filter(
+    row => !row.token && (!chosen || chosen.has(row.chainId!)),
+  )
+  if (
+    !missing.length ||
+    missing.some(
+      row =>
+        !row.chainId || !row.authority || !row.controller || !row.tokenImplementation,
+    )
+  ) {
+    return { salt: shared, anchor, sameAddress: null }
+  }
+  const candidates = [
+    shared,
+    ...rows
+      .filter(row => row.projectId !== undefined)
+      .map(row => legacyTokenSalt(BigInt(row.projectId!), anchor.tokenSymbol!)),
+  ]
+  const salt = candidates.find(candidate =>
+    missing.every(row => lands(candidate, row)),
+  )
+  return { salt: salt ?? shared, anchor, sameAddress: Boolean(salt) }
+}
+
 export function tokenDeploySalt(
-  rows: readonly {
-    token: Address | null
-    tokenName: string | null
-    tokenSymbol: string | null
-  }[],
+  rows: readonly TokenSaltRow[],
   name: string,
   symbol: string,
 ): Hex {
-  const deployed = rows.find(row => row.token && row.tokenName && row.tokenSymbol)
-  return omnichainTokenSalt(
-    deployed?.tokenName ?? name,
-    deployed?.tokenSymbol ?? symbol,
-  )
+  return tokenDeployPlan(rows, name, symbol).salt
 }
 
 export function TokenEditor({
@@ -1155,7 +1229,10 @@ export function TokenEditor({
   const [symbol, setSymbol] = useState(commonSymbol)
   const [error, setError] = useState<string | null>(null)
   // The token calls have no recheck of their own: after Discard they go out only after a fresh review (ruling R114 (f)).
-  const tokenRun = useAuthorityRun<{ calls: AuthorityCall[] }>()
+  const tokenRun = useAuthorityRun<{
+    calls: AuthorityCall[]
+    addressNote: string
+  }>()
   const review = tokenRun.plan?.calls ?? null
   const { busy, done } = tokenRun
 
@@ -1164,7 +1241,7 @@ export function TokenEditor({
     setError(null)
   }
 
-  const buildReview = () => {
+  const buildReview = async () => {
     setError(null)
     const chosen = rows.filter(row => selected.has(row.chainId))
     if (!chosen.length) {
@@ -1180,8 +1257,47 @@ export function TokenEditor({
       return
     }
     try {
-      const salt = tokenDeploySalt(rows, name, symbol)
+      const deploys = chosen.some(row => !row.token)
+      // Extending an existing token: each new chain's implementation decides the address it would get.
+      const extending = deploys && rows.some(row => row.token)
+      const planRows = extending
+        ? await Promise.all(
+            rows.map(async row =>
+              row.token || !selected.has(row.chainId)
+                ? row
+                : {
+                    ...row,
+                    tokenImplementation: await clientFor(row.chainId)
+                      .readContract({
+                        address: jbV6ContractAddress[JBCoreContracts.JBTokens][row.chainId],
+                        abi: TOKEN_IMPLEMENTATION_ABI,
+                        functionName: 'TOKEN',
+                      })
+                      .catch(() => {
+                        throw new Error(
+                          `Could not check the token's address on ${row.name}. Try again.`,
+                        )
+                      }),
+                  },
+            ),
+          )
+        : rows
+      const { salt, anchor, sameAddress } = tokenDeployPlan(
+        planRows,
+        name,
+        symbol,
+        selected,
+      )
       tokenRun.review({
+        addressNote: !deploys
+          ? ''
+          : !anchor
+            ? ` ${TOKEN_SAME_ADDRESS_EVERY_CHAIN} ${TOKEN_SAME_ADDRESS_NOTE}`
+            : sameAddress
+              ? ` The token gets the same address as on ${anchor.name}.`
+              : sameAddress === false
+                ? ` The token's address will differ from ${anchor.name}: this account did not deploy it there with a salt.`
+                : ` ${TOKEN_SAME_ADDRESS_EVERY_CHAIN}`,
         calls: chosen.map(row => {
           if (!row.authority || !row.controller) {
             throw new Error(`${row.name}: owner/operator or controller is unknown.`)
@@ -1281,7 +1397,7 @@ export function TokenEditor({
 
       <button
         type="button"
-        onClick={buildReview}
+        onClick={() => void buildReview()}
         disabled={busy || !name.trim() || !TOKEN_SYMBOL_RE.test(symbol) || !selected.size}
         className="btn-primary mt-4 min-h-[44px] w-full text-sm"
       >
@@ -1328,9 +1444,7 @@ export function TokenEditor({
           {tokenRun.discard.element}
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
-            {review.some(call => call.functionName === 'deployERC20For')
-              ? ' The token gets the same address on every chain you sign from this account.'
-              : ''}
+            {tokenRun.plan?.addressNote}
           </p>
         </TxProgress>
       ) : null}
