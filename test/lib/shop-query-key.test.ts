@@ -25,7 +25,7 @@ describe('shop inventory invalidation', () => {
   it('keeps every successful mint and management caller on the owned key', () => {
     const mint = readFileSync('src/components/project/MintShopItemModal.tsx', 'utf8')
     expect(mint).toContain('queryKey: shop721QueryKey(chainId, projectId, isRevnet)')
-    for (const name of ['AddShopItemsModal', 'ReplaceTierMediaModal']) {
+    for (const name of ['AddShopItemsModal', 'ShopItemModal']) {
       const source = readFileSync(`src/components/project/${name}.tsx`, 'utf8')
       expect(source).toContain('invalidateQueries({ queryKey: SHOP_721_QUERY_PREFIX })')
       expect(source).not.toContain("queryKey: ['shop721']")

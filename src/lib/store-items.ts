@@ -4,11 +4,11 @@ import type {
   DraftItem,
   StoreCategory,
 } from '@/components/create/StoreEditor'
+import { discountUnits } from '@/components/create/store-draft'
 import { splitOk } from '@/components/create/SplitsEditor'
 import { resolvedAddress } from '@/lib/ens'
 import { draftSplitRecipient } from '@/lib/split-recipient'
 import { cidV0ToBytes32 } from '@bananapus/nana-sdk-core'
-import { DISCOUNT_DENOMINATOR } from '@bananapus/nana-sdk-core/v6'
 import {
   type SplitConfig,
   type StoreItem,
@@ -144,9 +144,7 @@ export function storeItemsForChain(
       encodedIpfsUri,
       splitPercent,
       splits,
-      discountPercent: Math.round(
-        (Number(item.discountPct || '0') * Number(DISCOUNT_DENOMINATOR)) / 100,
-      ),
+      discountPercent: discountUnits(item.discountPct),
       reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
       reserveBeneficiary: reserveOn
         ? resolvedAddress(item.reserveBeneficiary)

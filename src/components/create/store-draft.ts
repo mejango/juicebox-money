@@ -86,6 +86,11 @@ export function itemDiscountOk(discountPct: string): boolean {
   return Number.isFinite(n) && n >= 0 && n <= 100;
 }
 
+/** A percent off as the hook stores it: out of 200, half a percent each. */
+export function discountUnits(discountPct: string): number {
+  return Math.round(Number(discountPct || "0") * 2);
+}
+
 export function itemReserveOk(item: DraftItem, chainIds?: readonly number[]): boolean {
   if (item.reserveN.trim() === "") return true;
   const n = Number(item.reserveN);

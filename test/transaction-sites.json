@@ -316,6 +316,9 @@
       "actions": [
         "Add shop tiers",
         "Replace shop item media",
+        "Edit shop item details",
+        "Set a shop item discount",
+        "Remove a shop item",
         "Claim project-token credits",
         "Distribute payouts",
         "Distribute reserved tokens",

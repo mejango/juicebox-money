@@ -50,7 +50,6 @@ import {
 import { etherscanTxUrl, exactUnits, formatDateTime, formatTokenAmount, ipfsUrl } from "@/lib/format";
 import { pinnedItemMedia } from "@/lib/store-items";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
-import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
 import { resolvedAddress } from "@/lib/ens";
 import { draftSplitRecipient } from "@/lib/split-recipient";
@@ -171,7 +170,7 @@ import {
   environmentForChainIds,
   type ChainEnvironment,
 } from "@/lib/chains";
-import { itemOk, type DraftItem } from "./store-draft";
+import { discountUnits, itemOk, type DraftItem } from "./store-draft";
 import {
   JBCENTER_MAX_IMAGE_BYTES,
   jbCenterIpfs,
@@ -1561,9 +1560,7 @@ export function CreateForm() {
         encodedIpfsUri: cidV0ToBytes32(itemPin.cid),
         splitPercent,
         splits,
-        discountPercent: Math.round(
-          (Number(item.discountPct || "0") * Number(DISCOUNT_DENOMINATOR)) / 100,
-        ),
+        discountPercent: discountUnits(item.discountPct),
         reserveFrequency: reserveOn ? Number(item.reserveN) : 0,
         reserveBeneficiary: reserveOn
           ? resolvedAddress(item.reserveBeneficiary)

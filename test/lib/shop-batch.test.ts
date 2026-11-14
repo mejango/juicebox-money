@@ -13,7 +13,7 @@ vi.mock('@/lib/project-batch', () => ({ loadProjectBatch: mocks.load, projectBat
 
 import { newDraftSplit } from '@/components/create/SplitsEditor'
 import { newDraftItem } from '@/components/create/StoreEditor'
-import { buildShopAddCalls, buildShopMediaCalls, distinctShopTargets, pendingShopBatch, readOriginalShopMetadata, readShopSnapshot, replaceShopMetadataMedia, reverifyShopCall, type ShopWriteTarget } from '@/lib/shop-batch'
+import { buildShopAddCalls, buildShopItemCalls, buildShopMediaCalls, editShopMetadataDetails, distinctShopTargets, pendingShopBatch, readOriginalShopMetadata, readShopSnapshot, replaceShopMetadataMedia, reverifyShopCall, type ShopWriteTarget } from '@/lib/shop-batch'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as Address
 const HOOK = '0x2222222222222222222222222222222222222222' as Address
@@ -27,7 +27,7 @@ const targets: ShopWriteTarget[] = [
   { chainId: 8453, projectId: 202, hook: PEER_HOOK, pricing: { currency: 2, decimals: 6, symbol: 'USD' } },
 ]
 const flags = { allowOwnerMint: true, transfersPausable: true, cantBeRemoved: false, cantIncreaseDiscountPercent: false, cantBuyWithCredits: false }
-const state = new Map<number, { owner: Address; projectId: bigint; max: bigint; uri: Hex; remaining: number; price: bigint; resolver: Address; baseURI: string; denied?: boolean }>()
+const state = new Map<number, { owner: Address; projectId: bigint; max: bigint; uri: Hex; remaining: number; price: bigint; resolver: Address; baseURI: string; denied?: boolean; removed?: boolean; flags?: Partial<typeof flags> }>()
 beforeEach(() => {
   for (const target of targets) state.set(target.chainId, { owner: ACCOUNT, projectId: BigInt(target.projectId), max: target.chainId === 1 ? 19n : 38n, uri: URI, remaining: 15, price: 987654321123456789n, resolver: zeroAddress, baseURI: 'ipfs://' })
   mocks.identity.mockResolvedValue({ kind: 'eoa' })
@@ -46,7 +46,8 @@ beforeEach(() => {
       case 'baseURI': return value.baseURI
       case 'flagsOf': return { noNewTiersWithReserves: false, noNewTiersWithVotes: false, noNewTiersWithOwnerMinting: false, preventOverspending: false }
       case 'maxTierIdOf': return value.max
-      case 'tierOf': return { id: Number(request.args[1]), price: value.price, remainingSupply: value.remaining, initialSupply: 40, votingUnits: 100000000000000000000n, reserveFrequency: 2, reserveBeneficiary: PEER_RECIPIENT, encodedIpfsUri: value.uri, category: 8, discountPercent: 17, flags, splitPercent: 123456789, resolvedUri: '' }
+      case 'isTierRemoved': return !!value.removed
+      case 'tierOf': return { id: Number(request.args[1]), price: value.price, remainingSupply: value.remaining, initialSupply: 40, votingUnits: 100000000000000000000n, reserveFrequency: 2, reserveBeneficiary: PEER_RECIPIENT, encodedIpfsUri: value.uri, category: 8, discountPercent: 17, flags: { ...flags, ...value.flags }, splitPercent: 123456789, resolvedUri: '' }
       default: throw new Error(`Unexpected ${request.functionName}`)
     }
   }) }))
@@ -157,6 +158,59 @@ describe('shop batch destination review', () => {
     state.get(1)!.denied = true
     await expect(reverifyShopCall(call, ACCOUNT)).rejects.toThrow('This wallet cannot')
   })
+  it('wallet-action:remove-a-shop-item removes exactly the reviewed item on each chain and refuses a locked or already removed one', async () => {
+    const snapshots = await Promise.all(targets.map(target => readShopSnapshot(target, ACCOUNT, false, 'shop-remove-item', 7)))
+    const calls = buildShopItemCalls(snapshots, ACCOUNT, { action: 'shop-remove-item' }, 'Item')
+    expect(calls.map(call => [call.id, call.label])).toEqual([[`1:${HOOK}:7:remove`, 'Remove shop item'], [`8453:${PEER_HOOK}:7:remove`, 'Remove shop item']])
+    expect(decodeFunctionData({ abi: jb721TiersHookAbi, data: calls[0].data })).toEqual({ functionName: 'adjustTiers', args: [[], [7n]] })
+    await expect(reverifyShopCall(calls[0], ACCOUNT, true)).resolves.toBeUndefined()
+    // A custom resolver owns the item's metadata, not whether it is for sale.
+    state.get(1)!.resolver = PEER_HOOK
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-remove-item', 7)).resolves.toMatchObject({ tierId: 7 })
+    state.get(1)!.resolver = zeroAddress
+    // Saved bytes that remove another item, or add one, are not this action.
+    const wider = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'adjustTiers', args: [[], [7n, 8n]] })
+    await expect(reverifyShopCall({ ...calls[0], data: wider }, ACCOUNT, true)).rejects.toThrow('not the reviewed action')
+    state.get(1)!.flags = { cantBeRemoved: true }
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-remove-item', 7)).rejects.toThrow('cannot be removed on')
+    state.get(1)!.flags = {}; state.get(1)!.removed = true
+    await expect(reverifyShopCall(calls[0], ACCOUNT, true)).rejects.toThrow('no longer has the selected item')
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-replace-media', 7)).rejects.toThrow('no longer has the selected item')
+  })
+  it('wallet-action:set-a-shop-item-discount sets the 200-point value on the reviewed item and refuses a raise on a lowered-only item', async () => {
+    const snapshot = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-set-discount', 7)
+    const call = buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-set-discount', discountPercent: 25, summary: '12.5% off' }, 'Item')[0]
+    expect(decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })).toEqual({ functionName: 'setDiscountPercentOf', args: [7n, 25n] })
+    expect(call).toMatchObject({ id: `1:${HOOK}:7:discount`, label: 'Set item discount', context: { summary: '12.5% off' } })
+    await expect(reverifyShopCall(call, ACCOUNT, true)).resolves.toBeUndefined()
+    const other = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'setDiscountPercentOf', args: [8n, 25n] })
+    await expect(reverifyShopCall({ ...call, data: other }, ACCOUNT, true)).rejects.toThrow('not the reviewed action')
+    expect(() => buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-set-discount', discountPercent: 201, summary: '' }, 'Item')).toThrow('between 0 and 100%')
+    // The item's discount is 17 of 200: a locked item goes down, never up.
+    state.get(1)!.flags = { cantIncreaseDiscountPercent: true }
+    const locked = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-set-discount', 7)
+    expect(() => buildShopItemCalls([locked], ACCOUNT, { action: 'shop-set-discount', discountPercent: 18, summary: '' }, 'Item')).toThrow('can only be lowered')
+    expect(buildShopItemCalls([locked], ACCOUNT, { action: 'shop-set-discount', discountPercent: 16, summary: '' }, 'Item')).toHaveLength(1)
+    // An item locked since review stops the saved call.
+    await expect(reverifyShopCall(call, ACCOUNT, true)).rejects.toThrow('changed since review')
+  })
+  it('wallet-action:edit-shop-item-details writes the new metadata to the reviewed item only', async () => {
+    const snapshot = await readShopSnapshot(targets[0], ACCOUNT, false, 'shop-edit-details', 7)
+    const call = buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-edit-details', encodedIpfsUri: NEW_URI, summary: 'New name' }, 'Old name')[0]
+    expect(decodeFunctionData({ abi: jb721TiersHookAbi, data: call.data })).toEqual({ functionName: 'setMetadata', args: ['', '', '', '', HOOK, 7n, NEW_URI] })
+    expect(call).toMatchObject({ id: `1:${HOOK}:7:details`, label: 'Edit item details', context: { summary: 'New name', items: [{ name: 'Old name' }] } })
+    await expect(reverifyShopCall(call, ACCOUNT, true)).resolves.toBeUndefined()
+    const renamesCollection = encodeFunctionData({ abi: jb721TiersHookAbi, functionName: 'setMetadata', args: ['Other', '', '', '', HOOK, 7n, NEW_URI] })
+    await expect(reverifyShopCall({ ...call, data: renamesCollection }, ACCOUNT, true)).rejects.toThrow('not the reviewed action')
+    expect(() => buildShopItemCalls([snapshot], ACCOUNT, { action: 'shop-remove-item' }, 'Item')).toThrow('reviewed item is missing')
+    state.get(1)!.resolver = PEER_HOOK
+    await expect(readShopSnapshot(targets[0], ACCOUNT, false, 'shop-edit-details', 7)).rejects.toThrow('custom URI resolver')
+  })
+  it.each([['shop-remove-item', 24], ['shop-set-discount', 27], ['shop-edit-details', 25], ['shop-replace-media', 25], ['shop-add-items', 24]] as const)('asks an operator for the permission %s needs (%i)', async (action, permission) => {
+    state.get(1)!.owner = PEER_RECIPIENT
+    await readShopSnapshot(targets[0], ACCOUNT, false, action, 7)
+    expect(mocks.permissions).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ permissionIds: [permission] }))
+  })
   it('blocks ambiguous same-chain project or hook identity', () => {
     expect(() => distinctShopTargets([targets[0], { ...targets[0], projectId: 404 }])).toThrow('separate rounds')
     expect(distinctShopTargets([targets[0], { ...targets[0] }])).toEqual([targets[0]])
@@ -174,6 +228,16 @@ describe('original item metadata', () => {
     expect(replaceShopMetadataMedia(original, 'ipfs://new', 'audio/wav')).toEqual({ name: 'Original', description: 'Keep', categoryName: 'Rare', animation_url: 'ipfs://new', mediaType: 'audio/wav', attributes: original.attributes, properties: original.properties, external_url: original.external_url, custom: 123 })
     expect(original.image).toBe('old.png')
     expect(replaceShopMetadataMedia(original, 'ipfs://new', 'image/png')).not.toHaveProperty('animation_url')
+  })
+  it('renames and redescribes an item, keeping every other field, and refuses an empty, oversized or unchanged edit', () => {
+    const original = { name: 'Original', description: 'Keep', image: 'old.png', attributes: [{ trait_type: 'color', value: 'blue' }], custom: 123 }
+    expect(editShopMetadataDetails(original, ' Renamed ', ' New words ')).toEqual({ ...original, name: 'Renamed', description: 'New words' })
+    expect(original.name).toBe('Original')
+    expect(() => editShopMetadataDetails(original, ' ', 'x')).toThrow('Name the item')
+    expect(() => editShopMetadataDetails(original, 'x'.repeat(201), 'x')).toThrow('200 characters')
+    expect(() => editShopMetadataDetails(original, 'x', 'x'.repeat(20_001))).toThrow('20,000 characters')
+    expect(() => editShopMetadataDetails(original, 'Original', 'Keep')).toThrow('Change the name or the description')
+    expect(() => editShopMetadataDetails({ name: 'Only' }, 'Only', '')).toThrow('Change the name or the description')
   })
   it('fails closed on an unavailable or invalid original JSON', async () => {
     vi.mocked(fetch).mockResolvedValueOnce({ ok: false } as Response)

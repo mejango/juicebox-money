@@ -43,7 +43,8 @@ import {
   type RedeemableShopTarget,
 } from '@/components/project/RedeemShopItemsModal'
 import { MintShopItemModal } from '@/components/project/MintShopItemModal'
-import { ReplaceTierMediaModal } from '@/components/project/ReplaceTierMediaModal'
+import { ShopItemModal, type ShopItemMode } from '@/components/project/ShopItemModal'
+import { readAuthorityIdentity } from '@bananapus/nana-sdk-core/safe'
 import { SubTabs } from '@/components/project/Tabs'
 import { useShopCart } from '@/components/project/ShopCartProvider'
 import {
@@ -177,7 +178,7 @@ export function ShopTab({
   const [addItemsOpen, setAddItemsOpen] = useState(false)
   const [detailTierId, setDetailTierId] = useState<number | null>(null)
   const [mintTierId, setMintTierId] = useState<number | null>(null)
-  const [replaceTierId, setReplaceTierId] = useState<number | null>(null)
+  const [itemEdit, setItemEdit] = useState<{ tierId: number; mode: ShopItemMode } | null>(null)
 
   const { data: shop, isLoading, isError, isFetching, refetch } = useShop721(chainId, projectId, isRevnet)
 
@@ -249,27 +250,29 @@ export function ShopTab({
       ? null
       : shop?.tiers.find(tier => tier.id === mintTierId) ?? null
 
-  // Whether the viewer may edit item metadata here: the hook owner, or an
-  // address holding SET_721_METADATA for the project.
-  const { data: canEditMetadata = false } = useQuery({
-    queryKey: ['shop721CanEditMetadata', chainId, shop?.hook, address],
+  // Which item actions the viewer may take here: all of them for the hook's
+  // owner or a signer of its Safe, otherwise one per permission held.
+  const { data: itemModes = NO_ITEM_MODES } = useQuery({
+    queryKey: ['shop721ItemModes', chainId, shop?.hook, address],
     enabled: !!publicClient && !!shop && shop.protocol !== 'defifa' && !!address,
     staleTime: 60_000,
-    queryFn: async () => {
-      if (!publicClient || !shop || shop.protocol === 'defifa' || !address) return false
+    queryFn: async (): Promise<ShopItemMode[]> => {
+      if (!publicClient || !shop || shop.protocol === 'defifa' || !address) return NO_ITEM_MODES
       const owner = await publicClient.readContract({
         address: shop.hook,
         abi: jb721TiersHookAbi,
         functionName: 'owner',
       })
-      if (owner.toLowerCase() === address.toLowerCase()) return true
-      return hasPermissions(publicClient, {
-        chainId,
-        operator: address,
-        account: owner,
-        projectId: BigInt(projectId),
-        permissionIds: [JBPermissionIdsV6.SET_721_METADATA],
-      })
+      const all: ShopItemMode[] = ['details', 'media', 'discount', 'remove']
+      if (owner.toLowerCase() === address.toLowerCase()) return all
+      const identity = await readAuthorityIdentity(publicClient, owner)
+      if (identity?.kind === 'safe' && identity.owners.some(signer => signer.toLowerCase() === address.toLowerCase())) return all
+      const held = await Promise.all(
+        ([JBPermissionIdsV6.SET_721_METADATA, JBPermissionIdsV6.SET_721_DISCOUNT_PERCENT, JBPermissionIdsV6.ADJUST_721_TIERS] as const).map(permissionId =>
+          hasPermissions(publicClient, { chainId, operator: address, account: owner, projectId: BigInt(projectId), permissionIds: [permissionId] }),
+        ),
+      )
+      return all.filter(mode => held[mode === 'discount' ? 1 : mode === 'remove' ? 2 : 0])
     },
   })
 
@@ -282,7 +285,7 @@ export function ShopTab({
   } = useKeptQuery({
     queryKey: ['shop721WriteTargets', chainId, projectId, chains, isRevnet],
     meta: PERSIST,
-    enabled: (addItemsOpen || replaceTierId != null) && !!shop && shop.protocol !== 'defifa',
+    enabled: (addItemsOpen || itemEdit != null) && !!shop && shop.protocol !== 'defifa',
     staleTime: 30_000,
     retry: false,
     queryFn: async (): Promise<ShopWriteTarget[]> =>
@@ -498,27 +501,26 @@ export function ShopTab({
                 }
               : undefined
           }
-          onReplaceMedia={
-            canEditMetadata
-              ? () => {
-                  setDetailTierId(null)
-                  setReplaceTierId(detailTier.id)
-                }
-              : undefined
-          }
+          itemModes={itemModes.filter(mode => mode !== 'remove' || !detailTier.flags?.cantBeRemoved)}
+          onEdit={mode => {
+            setDetailTierId(null)
+            setItemEdit({ tierId: detailTier.id, mode })
+          }}
           onClose={() => setDetailTierId(null)}
         />
       ) : null}
 
-      {replaceTierId != null && shop ? (
-        <ReplaceTierMediaModal
+      {itemEdit && shop ? (
+        <ShopItemModal
+          mode={itemEdit.mode}
           chainId={chainId}
           hook={shop.hook}
-          tierId={replaceTierId}
-          current={mediaById?.[replaceTierId]}
+          tierId={itemEdit.tierId}
+          current={mediaById?.[itemEdit.tierId]}
+          discountPercent={shop.tiers.find(tier => tier.id === itemEdit.tierId)?.discountPercent}
           targets={writeTargets ?? null}
           isRevnet={isRevnet}
-          onClose={() => setReplaceTierId(null)}
+          onClose={() => setItemEdit(null)}
         />
       ) : null}
 
@@ -1525,7 +1527,8 @@ function TierDetailModal({
   transfersPaused,
   transferPauseByStage,
   onMint,
-  onReplaceMedia,
+  itemModes,
+  onEdit,
   onClose,
 }: {
   isRevnet: boolean
@@ -1541,7 +1544,8 @@ function TierDetailModal({
   transfersPaused: boolean | null
   transferPauseByStage: Shop['transferPauseByStage']
   onMint?: () => void
-  onReplaceMedia?: () => void
+  itemModes: ShopItemMode[]
+  onEdit: (mode: ShopItemMode) => void
   onClose: () => void
 }) {
   const {
@@ -1821,14 +1825,19 @@ function TierDetailModal({
               </div>
             ) : null}
 
-            {onReplaceMedia ? (
-              <button
-                type="button"
-                onClick={onReplaceMedia}
-                className="mt-5 text-xs font-medium text-smoke-600 underline decoration-smoke-300 underline-offset-4 hover:text-ink"
-              >
-                Replace media
-              </button>
+            {itemModes.length ? (
+              <div className="mt-5 flex flex-wrap gap-x-4 gap-y-2">
+                {itemModes.map(mode => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => onEdit(mode)}
+                    className="text-xs font-medium text-smoke-600 underline decoration-smoke-300 underline-offset-4 hover:text-ink"
+                  >
+                    {ITEM_MODE_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
             ) : null}
           </div>
         </div>
@@ -1958,6 +1967,9 @@ function plainText(value: string): string {
     ).body.textContent ?? ''
   ).trim()
 }
+
+const NO_ITEM_MODES: ShopItemMode[] = []
+const ITEM_MODE_LABELS: Record<ShopItemMode, string> = { details: 'Edit details', media: 'Replace media', discount: 'Set discount', remove: 'Remove item' }
 
 /** Shopper-facing "X% off" — the stored value is out of the SDK's denominator. */
 function discountLabel(discountPercent: number): string {

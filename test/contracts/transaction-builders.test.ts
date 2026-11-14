@@ -31,6 +31,7 @@ import {
   buildAddToBalanceRequest,
   buildAdjustTiersRequest,
   buildMint721TierRequest,
+  buildSet721DiscountRequest,
   buildSet721TierMediaRequest,
   buildErc20ApproveRequest,
   buildPermissionsAuthorityCall,
@@ -275,6 +276,37 @@ describe("local transaction builders", () => {
     expect(decodeFunctionData({ abi: request.abi, data })).toEqual({
       functionName: "adjustTiers",
       args: [tiers, [3n, 9n]],
+    });
+  });
+
+  it("wallet-action:remove-a-shop-item removes tiers through adjustTiers with nothing added", () => {
+    const request = buildAdjustTiersRequest({ chainId: CHAIN_ID, hook: HOOK, tiers: [], tierIdsToRemove: [7n] });
+    expect(decodeFunctionData({ abi: request.abi, data: encode(request) })).toEqual({
+      functionName: "adjustTiers",
+      args: [[], [7n]],
+    });
+  });
+
+  it("wallet-action:set-a-shop-item-discount sets one tier's discount out of 200 and refuses anything else", () => {
+    const request = buildSet721DiscountRequest({ chainId: CHAIN_ID, hook: HOOK, tierId: 7, discountPercent: 25 });
+    expect(request).toMatchObject({ chainId: CHAIN_ID, address: HOOK, functionName: "setDiscountPercentOf", args: [7n, 25n] });
+    expect(request).not.toHaveProperty("value");
+    expect(decodeFunctionData({ abi: request.abi, data: encode(request) })).toEqual({
+      functionName: "setDiscountPercentOf",
+      args: [7n, 25n],
+    });
+    for (const discountPercent of [-1, 201, 12.5]) {
+      expect(() => buildSet721DiscountRequest({ chainId: CHAIN_ID, hook: HOOK, tierId: 7, discountPercent })).toThrow("between 0 and 100%");
+    }
+    expect(() => buildSet721DiscountRequest({ chainId: CHAIN_ID, hook: HOOK, tierId: 0, discountPercent: 1 })).toThrow("tier ID");
+  });
+
+  it("wallet-action:edit-shop-item-details leaves the collection's own metadata untouched", () => {
+    const uri = "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd";
+    const request = buildSet721TierMediaRequest({ chainId: CHAIN_ID, hook: HOOK, tierId: 9, encodedIpfsUri: uri });
+    expect(decodeFunctionData({ abi: request.abi, data: encode(request) })).toEqual({
+      functionName: "setMetadata",
+      args: ["", "", "", "", HOOK, 9n, uri],
     });
   });
 
