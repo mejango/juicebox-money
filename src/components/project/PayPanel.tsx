@@ -32,6 +32,7 @@ import {
   PAY_SWAP_QUOTE_FAILED_MESSAGE,
   PaySwapQuoteFailedError,
   PERMIT2_ADDRESS,
+  permit2PayAuthorizationReusable,
   planErc20PayAuthorization,
   prepareUserPay,
   tokenCurrencyId,
@@ -45,7 +46,6 @@ import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  erc20Abi,
   formatUnits,
   maxUint256,
   parseUnits,
@@ -81,7 +81,6 @@ import {
 import { approvalIntent, payIntent, ReviewLineError } from "@bananapus/nana-sdk-core/review";
 import { legacyPayKeys } from "@/lib/legacy-intents";
 import {
-  payAuthorizationReusable,
   signPayAuthorization,
   withPayAuthorization,
   type SignedPayAuthorization,
@@ -1506,7 +1505,7 @@ export function PayPanel({
           if (current?.kind !== "permit2") throw new ReviewLineError(PAYMENT_CHANGED);
           if (!current.needsTokenApproval) tokenApproval = undefined;
           const kept = signedAuthorization.current;
-          let signed = kept?.reviewed === reviewed && payAuthorizationReusable(kept.signed, current.authorization)
+          let signed = kept?.reviewed === reviewed && permit2PayAuthorizationReusable(kept.signed, current.authorization)
             ? kept.signed
             : null;
           if (!signed) {
