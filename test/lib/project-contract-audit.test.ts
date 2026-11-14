@@ -99,6 +99,12 @@ describe('the contracts a project points at', () => {
     expect(await audit()).toEqual({ chainId: CHAIN, unknown: [], failed: false })
   })
 
+  it('checks the buyback hook used for cash outs when payments use none', async () => {
+    mocks.buyback.mockImplementation(async (_client: unknown, { direction }: { direction: string }) =>
+      ({ hook: direction === 'cashOut' ? STRANGER : null }))
+    expect((await audit()).unknown.map(row => [row.role, row.address])).toEqual([['Buyback hook', STRANGER]])
+  })
+
   it('checks the hook the omnichain deployer delegates to', async () => {
     mocks.ruleset.mockResolvedValue(rules(zeroAddress, known('JBOmnichainDeployer')))
     chain.extra = STRANGER

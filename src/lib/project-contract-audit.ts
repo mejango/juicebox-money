@@ -100,8 +100,14 @@ export async function auditProjectContracts(
       })
       await checkDataHook('Extra data hook', extra.dataHook, 'The omnichain deployer delegates project hook behavior here.')
     }
-    const buyback = await resolveProjectBuybackHook(client, { chainId, projectId })
-    await check('Buyback hook', buyback.hook ?? undefined, 'Buyback swap behavior is delegated to this hook.')
+    // A ruleset can use its hook for payments, cash outs or both, and each resolves on its own.
+    const seen = new Set<string>()
+    for (const direction of ['pay', 'cashOut'] as const) {
+      const { hook } = await resolveProjectBuybackHook(client, { chainId, projectId, direction })
+      if (!hook || seen.has(hook.toLowerCase())) continue
+      seen.add(hook.toLowerCase())
+      await check('Buyback hook', hook, 'Buyback swap behavior is delegated to this hook.')
+    }
     return { chainId, unknown, failed: false }
   } catch {
     return { chainId, unknown, failed: true }
