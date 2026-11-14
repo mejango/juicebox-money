@@ -27,10 +27,12 @@ import {
   BASE_CURRENCY_ETH,
   BASE_CURRENCY_USD,
   getCurrentRuleset,
+  hasPermissions,
+  JBPermissionIdsV6,
   payoutSplitGroupId,
   type JBAccountingContext,
 } from '@bananapus/nana-sdk-core/v6'
-import { explorerTxUrl } from '@/lib/chainDisplay'
+import { byChainOrder, explorerTxUrl } from '@/lib/chainDisplay'
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import {
@@ -39,7 +41,7 @@ import {
   type Address,
   type PublicClient,
 } from 'viem'
-import { useConfig, usePublicClient, useReadContract } from 'wagmi'
+import { useConfig, usePublicClient } from 'wagmi'
 import { FundsTabSkeleton } from '@/components/LoadingSkeletons'
 import { readTreasuryUsdPrice, treasuryTotal } from '@/components/project/ProjectStats'
 import { DistributionBatchFlow } from '@/components/project/DistributionBatchFlow'
@@ -375,7 +377,6 @@ export function FundsTab({
 }) {
   const queryClient = useQueryClient()
   const config = useConfig()
-  const { address } = useViewedAccount()
   const [selectedKey, setSelectedKey] = useState('')
   const chainPairs = useMemo<readonly [number, number][]>(() => {
     const homePair: [number, number] = [chainId, projectId]
@@ -435,17 +436,6 @@ export function FundsTab({
     }
   }, [matrix, selectedKey])
 
-  const { data: owner } = useReadContract({
-    abi: jbProjectsAbi,
-    address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
-    functionName: 'ownerOf',
-    args: [BigInt(projectId)],
-    chainId,
-    query: { staleTime: 60_000 },
-  })
-  const isOwner =
-    !!address && !!owner && owner.toLowerCase() === address.toLowerCase()
-
   if (isLoading) {
     return <FundsTabSkeleton />
   }
@@ -482,8 +472,6 @@ export function FundsTab({
     : null
   const hasPayoutLimit =
     home?.payoutLines.some(line => line.amount > 0n) ?? false
-  const hasAllowance =
-    home?.allowanceLines.some(line => line.amount > 0n) ?? false
   const activePayoutLine =
     home?.payoutLines.find(line => line.remaining > 0n) ??
     home?.payoutLines[0]
@@ -634,43 +622,12 @@ export function FundsTab({
             </div>
           </section>
 
-          <section className="min-w-0">
-            <p className="flex items-center gap-1.5 text-sm text-smoke-700">
-              <ChainIcon chainId={chainId} size={16} />
-              Current surplus allowance remaining
-            </p>
-            <p className="mt-1 text-lg font-medium text-ink">
-              {remainingLabel(
-                home.allowanceLines,
-                home.ctx,
-                home.tokenSymbol,
-              )}
-            </p>
-            <div className="mt-5">
-              {isOwner && hasAllowance ? (
-                <FundsTxFlow
-                  chainId={chainId}
-                  projectId={projectId}
-                  ctx={home.ctx}
-                  terminal={home.terminal}
-                  store={home.store}
-                  limitsAddress={home.limitsAddress}
-                  lines={home.allowanceLines.filter(line => line.amount > 0n)}
-                  balance={home.balance}
-                  tokenSymbol={home.tokenSymbol}
-                  onDone={() => void refetch()}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="btn-secondary min-h-[40px] px-4 text-sm"
-                  disabled
-                >
-                  Use surplus allowance
-                </button>
-              )}
-            </div>
-          </section>
+          <SurplusAllowance
+            key={selected.key}
+            chainId={chainId}
+            results={selected.snapshots}
+            onDone={() => void refetch()}
+          />
         </div>
       ) : null}
     </div>
@@ -776,6 +733,88 @@ type ReviewedTx = {
   intent: string
   /** The keys the last release built for this payout (legacy-intents). */
   legacy: string[]
+}
+
+/** Whether the account may spend a project's surplus allowance on a chain:
+ *  its owner, or an operator the owner gave USE_ALLOWANCE. */
+export async function canUseAllowance(client: PublicClient, chainId: JBChainId, projectId: number, account: Address): Promise<boolean> {
+  const owner = await client.readContract({
+    abi: jbProjectsAbi,
+    address: jbV6ContractAddress[JBCoreContracts.JBProjects][chainId],
+    functionName: 'ownerOf',
+    args: [BigInt(projectId)],
+  })
+  if (owner.toLowerCase() === account.toLowerCase()) return true
+  return hasPermissions(client, { chainId, operator: account, account: owner, projectId: BigInt(projectId), permissionIds: [JBPermissionIdsV6.USE_ALLOWANCE] })
+}
+
+/** The selected token's surplus allowance on one of the project's chains,
+ *  the page's chain first; each chain has its own allowance and its own rights. */
+function SurplusAllowance({ chainId, results, onDone }: {
+  chainId: JBChainId
+  results: ChainFundsResult[]
+  onDone: () => void
+}) {
+  const { address } = useViewedAccount()
+  const options = results.filter(result => result.snapshot).sort((a, b) => byChainOrder(a.chainId, b.chainId))
+  const [picked, setPicked] = useState<number>(chainId)
+  const result = options.find(option => option.chainId === picked) ?? options.find(option => option.chainId === chainId) ?? options[0]
+  const home = result?.snapshot
+  const client = usePublicClient({ chainId: result?.chainId }) as PublicClient | undefined
+  const { data: allowed = false } = useQuery({
+    queryKey: ['canUseAllowance', result?.chainId, result?.projectId, address],
+    enabled: !!client && !!result && !!address,
+    staleTime: 60_000,
+    queryFn: () => canUseAllowance(client!, result!.chainId, result!.projectId, address!),
+  })
+  if (!result || !home) return null
+  const hasAllowance = home.allowanceLines.some(line => line.amount > 0n)
+  return (
+    <section className="min-w-0">
+      <p className="flex flex-wrap items-center gap-1.5 text-sm text-smoke-700">
+        <ChainIcon chainId={result.chainId} size={16} />
+        Current surplus allowance remaining
+        {options.length > 1 ? (
+          <select
+            aria-label="Surplus allowance chain"
+            value={result.chainId}
+            onChange={event => setPicked(Number(event.target.value))}
+            className="input-well select-caret ml-auto min-h-[32px] !w-auto px-2.5 pr-8 text-xs"
+          >
+            {options.map(option => (
+              <option key={option.chainId} value={option.chainId}>
+                {chainName(option.chainId)}
+              </option>
+            ))}
+          </select>
+        ) : null}
+      </p>
+      <p className="mt-1 text-lg font-medium text-ink">
+        {remainingLabel(home.allowanceLines, home.ctx, home.tokenSymbol)}
+      </p>
+      <div className="mt-5">
+        {allowed && hasAllowance ? (
+          <FundsTxFlow
+            key={result.chainId}
+            chainId={result.chainId}
+            projectId={result.projectId}
+            ctx={home.ctx}
+            terminal={home.terminal}
+            store={home.store}
+            limitsAddress={home.limitsAddress}
+            lines={home.allowanceLines.filter(line => line.amount > 0n)}
+            balance={home.balance}
+            tokenSymbol={home.tokenSymbol}
+            onDone={onDone}
+          />
+        ) : (
+          <button type="button" className="btn-secondary min-h-[40px] px-4 text-sm" disabled>
+            Use surplus allowance
+          </button>
+        )}
+      </div>
+    </section>
+  )
 }
 
 function FundsTxFlow({
