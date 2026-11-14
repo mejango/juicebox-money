@@ -23,6 +23,23 @@ export type PinnedStoreItemDraft = {
 
 type PinStatus = (message: string) => void
 
+/** Pin one media file: an image within the image limit as an image, anything else as media. */
+export async function pinItemMedia(file: File): Promise<{ uri: string; type: string }> {
+  const pin =
+    file.type.startsWith('image/') && file.size <= JBCENTER_MAX_IMAGE_BYTES
+      ? await jbCenterIpfs.pinImage(file)
+      : await jbCenterIpfs.pinMedia(file)
+  return { uri: pin.uri, type: file.type }
+}
+
+/** An item's media as pinned: the pin made when it was chosen, else a pin made now. */
+export async function pinnedItemMedia(
+  item: Pick<DraftItem, 'mediaFile' | 'mediaUri' | 'mediaType'>,
+): Promise<{ uri: string; type: string } | null> {
+  if (item.mediaUri) return { uri: item.mediaUri, type: item.mediaType }
+  return item.mediaFile ? pinItemMedia(item.mediaFile) : null
+}
+
 /** Pin each draft's media and metadata exactly once. The returned drafts can
  * then be encoded independently for every selected chain. */
 export async function pinStoreItemDrafts(
@@ -35,28 +52,17 @@ export async function pinStoreItemDrafts(
   for (let index = 0; index < items.length; index++) {
     const item = items[index]
     const label = items.length > 1 ? `Item ${index + 1}: ` : ''
-    let image: string | undefined
-    let animationUrl: string | undefined
-
-    if (item.mediaFile) {
-      onStatus(`${label}pinning media…`)
-      const isImage = item.mediaFile.type.startsWith('image/')
-      const uri = (
-        isImage && item.mediaFile.size <= JBCENTER_MAX_IMAGE_BYTES
-          ? await jbCenterIpfs.pinImage(item.mediaFile)
-          : await jbCenterIpfs.pinMedia(item.mediaFile)
-      ).uri
-      if (isImage) image = uri
-      else animationUrl = uri
-    }
+    if (item.mediaFile && !item.mediaUri) onStatus(`${label}pinning media…`)
+    const media = await pinnedItemMedia(item)
+    const isImage = media?.type.startsWith('image/')
 
     onStatus(`${label}pinning metadata…`)
     const itemPin = await jbCenterIpfs.pinJson({
       name: item.name.trim(),
       description: item.description.trim() || undefined,
-      image,
-      animation_url: animationUrl,
-      mediaType: item.mediaFile?.type || undefined,
+      image: isImage ? media?.uri : undefined,
+      animation_url: isImage ? undefined : media?.uri,
+      mediaType: media?.type || undefined,
       categoryName:
         categories.find(category => category.id === item.category)?.name ||
         undefined,

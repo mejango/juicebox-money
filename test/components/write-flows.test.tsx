@@ -216,6 +216,7 @@ import { BurnTokensFlow } from '@/components/project/BurnTokensFlow'
 import { CashOutPanel } from '@/components/project/CashOutFlow'
 import { GetLoanFlow } from '@/components/project/GetLoanFlow'
 import { clearViewAs, setViewAs } from '@/lib/viewAs'
+import { parseDraft } from '@/lib/draft'
 import { approvalIntent, cashOutIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyCashOutKeys } from '@/lib/legacy-intents'
 
@@ -340,7 +341,7 @@ describe('project draft export', () => {
   it('downloads a verified draft with the available chain authority', async () => {
     const download = stubDraftDownload()
     mocks.buildProjectDraftExport.mockResolvedValue({
-      draft: { name: 'Test project', stages: [] },
+      draft: parseDraft(JSON.stringify({ name: 'Test project', chains: [1, 10], stages: [{}] })),
       warnings: [],
     })
     let renderer!: TestRenderer.ReactTestRenderer
@@ -370,7 +371,7 @@ describe('project draft export', () => {
   it('honors cancellation when reconstructing the draft produces warnings', async () => {
     const download = stubDraftDownload()
     mocks.buildProjectDraftExport.mockResolvedValue({
-      draft: { name: 'Test project', stages: [] },
+      draft: parseDraft(JSON.stringify({ name: 'Test project', chains: [1, 10], stages: [{}] })),
       warnings: ['Review the reconstructed rules.'],
     })
     let renderer!: TestRenderer.ReactTestRenderer

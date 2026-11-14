@@ -47,7 +47,9 @@ import {
   useSafeConnection,
   waitForSafeExecutionHash,
 } from "@/lib/safe-connector";
-import { etherscanTxUrl, formatDateTime, formatTokenAmount } from "@/lib/format";
+import { etherscanTxUrl, formatDateTime, formatTokenAmount, ipfsUrl } from "@/lib/format";
+import { readJbDraftFile, writeJbDraftFile } from "@/lib/jb-draft";
+import { pinnedItemMedia } from "@/lib/store-items";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
 import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
 import { randomSalt } from "@/lib/manage";
@@ -390,6 +392,13 @@ export function CreateForm() {
   const [coverFile, setCoverFile] = useState<File | null>(null);
   const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [coverError, setCoverError] = useState<string | null>(null);
+  /** The pinned logo and cover. A draft carries these, never the files. */
+  const [logoUri, setLogoUri] = useState("");
+  const [coverUri, setCoverUri] = useState("");
+  const chosenImage = useRef<{ logo: File | null; cover: File | null }>({
+    logo: null,
+    cover: null,
+  });
   const [payNotice, setPayNotice] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tosAccepted, setTosAccepted] = useState(false);
@@ -703,16 +712,36 @@ export function CreateForm() {
     [logoPreview, coverPreview],
   );
 
+  /** Pin an image when it is chosen, so an exported draft carries it. A pin
+   *  that fails here is made again at launch. */
+  const pinOnChoose =
+    (
+      slot: "logo" | "cover",
+      setFile: (file: File | null) => void,
+      setUri: (uri: string) => void,
+    ) =>
+    (file: File | null) => {
+      chosenImage.current[slot] = file;
+      setFile(file);
+      setUri("");
+      if (!file) return;
+      void jbCenterIpfs.pinImage(file).then(
+        ({ uri }) => {
+          if (chosenImage.current[slot] === file) setUri(uri);
+        },
+        () => {},
+      );
+    };
   const onLogoChange = makeImageHandler(
     logoPreview,
-    setLogoFile,
+    pinOnChoose("logo", setLogoFile, setLogoUri),
     setLogoPreview,
     setLogoError,
     "Logos",
   );
   const onCoverChange = makeImageHandler(
     coverPreview,
-    setCoverFile,
+    pinOnChoose("cover", setCoverFile, setCoverUri),
     setCoverPreview,
     setCoverError,
     "Cover images",
@@ -1470,14 +1499,12 @@ export function CreateForm() {
   const pinAll = async (): Promise<
     Omit<NonNullable<typeof pinnedRef.current>, "plans">
   > => {
-    const logoUri = logoFile ? await pinFile(logoFile) : undefined;
-    const coverImageUri = coverFile ? await pinFile(coverFile) : undefined;
     const projectPin = await jbCenterIpfs.pinJson({
       name: name.trim(),
       projectTagline: tagline.trim() || undefined,
       description: description.trim() || undefined,
-      logoUri,
-      coverImageUri,
+      logoUri: logoUri || (logoFile ? await pinFile(logoFile) : undefined),
+      coverImageUri: coverUri || (coverFile ? await pinFile(coverFile) : undefined),
       payDisclosure: payNotice.trim() || undefined,
       tags: tags.length > 0 ? tags : undefined,
       infoUri: links.infoUri.trim() || undefined,
@@ -1493,19 +1520,14 @@ export function CreateForm() {
     for (const item of items.filter(item => itemOk(item, selected))) {
       // Any media type pins as-is; images become `image`, everything else
       // `animation_url` (website/ parity).
-      let imageUri: string | undefined;
-      let animationUri: string | undefined;
-      if (item.mediaFile) {
-        const uri = (await jbCenterIpfs.pinMedia(item.mediaFile)).uri;
-        if (item.mediaFile.type.startsWith("image/")) imageUri = uri;
-        else animationUri = uri;
-      }
+      const media = await pinnedItemMedia(item);
+      const isImage = media?.type.startsWith("image/");
       const itemPin = await jbCenterIpfs.pinJson({
         name: item.name.trim(),
         description: item.description.trim() || undefined,
-        image: imageUri,
-        animation_url: animationUri,
-        mediaType: item.mediaFile?.type || undefined,
+        image: isImage ? media?.uri : undefined,
+        animation_url: isImage ? undefined : media?.uri,
+        mediaType: media?.type || undefined,
         categoryName:
           storeCategories.find((c) => c.id === item.category)?.name ||
           undefined,
@@ -2270,6 +2292,8 @@ export function CreateForm() {
     description,
     payNotice,
     tags,
+    logoUri,
+    coverUri,
     links,
     owner,
     ownerPerChain,
@@ -2302,6 +2326,14 @@ export function CreateForm() {
     setDescription(draft.description);
     setPayNotice(draft.payNotice);
     setTags(draft.tags);
+    // A draft carries pinned images only; a file chosen before it is dropped.
+    chosenImage.current = { logo: null, cover: null };
+    setLogoFile(null);
+    setLogoPreview(null);
+    setLogoUri(draft.logoUri);
+    setCoverFile(null);
+    setCoverPreview(null);
+    setCoverUri(draft.coverUri);
     setLinks({
       infoUri: draft.links.infoUri ?? "",
       twitter: draft.links.twitter ?? "",
@@ -2371,14 +2403,14 @@ export function CreateForm() {
     if (!file) return;
     setImportError(null);
     try {
-      applyDraft(parseDraft(await file.text()));
+      applyDraft(readJbDraftFile(await file.text()));
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Import failed.");
     }
   };
 
   const exportDraft = () => {
-    const blob = new Blob([JSON.stringify(buildDraft(), null, 2)], {
+    const blob = new Blob([writeJbDraftFile(buildDraft())], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -3508,10 +3540,10 @@ export function CreateForm() {
             <div className="mt-4">
               <span className="field-label">Logo</span>
               <div className="mt-1.5 flex items-center gap-4">
-                {logoPreview ? (
+                {logoPreview || ipfsUrl(logoUri) ? (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={logoPreview}
+                    src={logoPreview ?? ipfsUrl(logoUri)!}
                     alt="Logo preview"
                     className="h-20 w-20 rounded-lg border border-smoke-200 object-cover"
                   />
@@ -3522,7 +3554,7 @@ export function CreateForm() {
                 )}
                 <div>
                   <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-                    {logoFile ? "Change image" : "Upload image"}
+                    {logoFile || logoUri ? "Change image" : "Upload image"}
                     <input
                       type="file"
                       accept="image/*"
@@ -3533,7 +3565,7 @@ export function CreateForm() {
                       }
                     />
                   </label>
-                  {logoFile ? (
+                  {logoFile || logoUri ? (
                     <button
                       onClick={() => onLogoChange(null)}
                       disabled={busy}
@@ -3555,21 +3587,21 @@ export function CreateForm() {
 
           <SubSection
             label="Cover image"
-            summary={coverFile ? "Added" : "None"}
+            summary={coverFile || coverUri ? "Added" : "None"}
             open={!!openSection.cover}
             onToggle={() => toggleSection("cover")}
           >
-            {coverPreview ? (
+            {coverPreview || ipfsUrl(coverUri) ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={coverPreview}
+                src={coverPreview ?? ipfsUrl(coverUri)!}
                 alt="Cover preview"
                 className="h-24 w-full rounded-lg border border-smoke-200 object-cover"
               />
             ) : null}
             <div className="mt-2 flex items-center gap-3">
               <label className="btn-secondary min-h-[40px] cursor-pointer px-4 text-xs">
-                {coverFile ? "Change image" : "Upload image"}
+                {coverFile || coverUri ? "Change image" : "Upload image"}
                 <input
                   type="file"
                   accept="image/*"
@@ -3578,7 +3610,7 @@ export function CreateForm() {
                   onChange={(e) => onCoverChange(e.target.files?.[0] ?? null)}
                 />
               </label>
-              {coverFile ? (
+              {coverFile || coverUri ? (
                 <button
                   onClick={() => onCoverChange(null)}
                   disabled={busy}

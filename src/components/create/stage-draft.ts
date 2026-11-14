@@ -183,6 +183,26 @@ export function newSimpleProjectDraftStage(): DraftStage {
   };
 }
 
+/** The cycle lengths the duration select offers; any other length is "custom". */
+export const DURATION_PRESETS: [number, string][] = [
+  [86_400, "1 day"],
+  [3 * 86_400, "3 days"],
+  [7 * 86_400, "7 days"],
+  [14 * 86_400, "14 days"],
+  [28 * 86_400, "28 days"],
+  [30 * 86_400, "30 days"],
+  [90 * 86_400, "90 days"],
+  [365 * 86_400, "365 days"],
+];
+
+/** The cash out taxes offered as chips, out of 10,000; any other rate is "custom". */
+export const CASH_OUT_TAXES = [
+  { rate: 0, label: "No tax" },
+  { rate: 1000, label: "0.1" },
+  { rate: 3000, label: "0.3" },
+  { rate: 5000, label: "0.5" },
+] as const;
+
 const UNIT_SECONDS = {
   hours: 3_600,
   days: 86_400,

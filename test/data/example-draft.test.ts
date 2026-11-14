@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { GET as llms } from '@/app/llms.txt/route'
 import { GET as skill } from '@/app/skill.md/route'
 import { stageCashOutTax, stageOk } from '@/components/create/stage-draft'
-import { parseDraft } from '@/lib/draft'
+import { readJbDraftFile, toJbDraft } from '@/lib/jb-draft'
 import { cashOutTaxValue } from '@/lib/format'
 
 describe('the published example draft', () => {
@@ -12,10 +12,13 @@ describe('the published example draft', () => {
 
   it('imports every value it states into a stage the launch form accepts', () => {
     const file = JSON.parse(source)
-    const draft = parseDraft(source)
-    expect(draft).toMatchObject(file)
+    const draft = readJbDraftFile(source)
+    // Read and written back, the file still says everything the example states.
+    const { stages, ...top } = file
+    expect(toJbDraft(draft)).toMatchObject({ ...top, stages: [stages[0]] })
     expect(stageOk(draft.stages[0], true, 'project', false, draft.chains)).toBe(true)
     // The unit /llms.txt states beside the link.
+    expect(file.stages[0].cashOutTax).toBe(cashOutTaxValue(stageCashOutTax(draft.stages[0])))
     expect(cashOutTaxValue(stageCashOutTax(draft.stages[0]))).toBe('0.1')
   })
 

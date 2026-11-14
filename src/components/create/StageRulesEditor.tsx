@@ -25,6 +25,8 @@ import { STICKY_RESERVED_NEEDS_ERC20 } from "@/lib/sticky";
 import {
   MIN_START_LEAD_SECONDS,
   numOk,
+  CASH_OUT_TAXES,
+  DURATION_PRESETS,
   routedModePatch,
   scheduledStartOk,
   secondsLabel,
@@ -42,24 +44,6 @@ export {
   stageStartOk,
   type DraftStage,
 } from "./stage-draft";
-
-const DURATION_PRESETS: [number, string][] = [
-  [86_400, "1 day"],
-  [3 * 86_400, "3 days"],
-  [7 * 86_400, "7 days"],
-  [14 * 86_400, "14 days"],
-  [28 * 86_400, "28 days"],
-  [30 * 86_400, "30 days"],
-  [90 * 86_400, "90 days"],
-  [365 * 86_400, "365 days"],
-];
-
-const CASH_OUT_TAXES = [
-  { rate: 0, label: "No tax" },
-  { rate: 1000, label: "0.1" },
-  { rate: 3000, label: "0.3" },
-  { rate: 5000, label: "0.5" },
-] as const;
 
 /** Off/On cash-out choice plus the tax picker shown while cash outs are on. */
 function TaxPicker({

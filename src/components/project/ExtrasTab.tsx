@@ -17,7 +17,8 @@ import { TxError } from '@/components/ui/TxError'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
 import { resolvedAddress } from '@/lib/ens'
-import { draftFileName } from '@/lib/draft'
+import { draftFileName, type CreateDraft } from '@/lib/draft'
+import { writeJbDraftFile } from '@/lib/jb-draft'
 import { truncateAddress } from '@/lib/format'
 import { getProjectPayers, type BsProjectPayer } from '@/lib/bendystraw'
 import {
@@ -84,11 +85,11 @@ function ProjectDraftExportCard({
     text: string
   }>({ kind: 'idle', text: '' })
   /** A reconstructed draft whose warnings wait for a second, explicit confirmation. */
-  const [pending, setPending] = useState<{ warnings: string[]; draft: unknown } | null>(null)
+  const [pending, setPending] = useState<{ warnings: string[]; draft: CreateDraft } | null>(null)
 
-  const save = (draft: unknown) => {
+  const save = (draft: CreateDraft) => {
     const url = URL.createObjectURL(
-      new Blob([JSON.stringify(draft, null, 2)], {
+      new Blob([writeJbDraftFile(draft)], {
         type: 'application/json',
       }),
     )
