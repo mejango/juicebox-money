@@ -6,7 +6,9 @@ import { durationFields, durationFieldsSeconds, type DurationFields } from "@/co
 import { destinationJournal } from "@/lib/destination-journal";
 import {
   JBCoreContracts,
+  JBOmnichainDeployerContracts,
   JBRouterTerminalContracts,
+  jbOmnichainDeployerAbi,
   SPLITS_TOTAL_PERCENT,
   USDC_ADDRESSES,
   NATIVE_TOKEN,
@@ -71,7 +73,7 @@ import { safeAccountQueryOptions } from "@/lib/safe-account-query";
 import { invalidateConfirmedPreparation, invalidateProjectPreparation } from "@/lib/preparation-query";
 import type { RawSplit } from "@/lib/splits-types";
 import { tokenSymbol } from "@/lib/token-symbol";
-import { buildQueueRulesetsAuthorityCall } from "@/lib/transaction-builders";
+import { buildQueueRulesetsAuthorityCall, type OmnichainExtraHook } from "@/lib/transaction-builders";
 import { assertRulesetReceiptOrder } from "@/lib/ruleset-receipt";
 import { chainName } from "@/lib/urn";
 import { requireLinkedPairs } from "@/lib/sucker-group";
@@ -556,6 +558,8 @@ type PrefillSource = {
   access: TokenAccess[];
   reservedSplits: readonly RawSplit[];
   payoutSplits: { token: Address; splits: readonly RawSplit[] }[];
+  /** Set when this ruleset runs through JBOmnichainDeployer: the project's own data hook stored beside it. */
+  omnichain?: OmnichainExtraHook;
 };
 
 /** The live queue and every safe source the owner may choose between. */
@@ -666,6 +670,10 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
               }) as Promise<readonly RawSplit[]>,
           ),
         );
+        const omnichainDeployer = jbV6ContractAddress[JBOmnichainDeployerContracts.JBOmnichainDeployer][chainId] as Address | undefined;
+        const omnichain = omnichainDeployer && String(entry.metadata.dataHook).toLowerCase() === omnichainDeployer.toLowerCase()
+          ? await publicClient.readContract({ address: omnichainDeployer, abi: jbOmnichainDeployerAbi, functionName: "extraDataHookOf", args: [pid, rid] })
+          : undefined;
         return {
           action: option.action,
           option,
@@ -673,6 +681,7 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
           rulesetId: rid,
           terminal,
           access,
+          ...(omnichain ? { omnichain: { dataHook: omnichain.dataHook, useDataHookForPay: omnichain.useDataHookForPay, useDataHookForCashOut: omnichain.useDataHookForCashOut } } : {}),
           reservedSplits,
           payoutSplits: contexts.map((ctx, i) => ({
             token: ctx.token as Address,
@@ -1075,7 +1084,7 @@ export function buildQueueDestinationConfig(
 export function reviewedQueueCalls(review: Reviewed, action: QueueAction): AuthorityCall[] {
   return review.destinations.map(destination => ({
         ...buildQueueRulesetsAuthorityCall({
-          chainId: destination.chainId, authority: destination.authority, controller: destination.controller,
+          chainId: destination.chainId, authority: destination.authority, controller: destination.controller, omnichain: destination.source.omnichain,
           projectId: BigInt(destination.projectId), rulesetConfigurations: destination.configs, memo: "", label: "Queue new rules",
         }),
         ...(destination.validUntil !== undefined ? { deadline: destination.validUntil } : {}),

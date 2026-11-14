@@ -16,7 +16,9 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   UNISWAP_PERMIT2_ADDRESS,
+  buildOmnichainQueueRulesetsTx,
   buildQueueRulesetsTx,
+  type JBRulesetConfig,
   buildSetPermissionsTx,
   buildSetSplitGroupsTx,
 } from '@bananapus/nana-sdk-core/v6'
@@ -1008,33 +1010,63 @@ export function buildQueueRulesetsRequest({
   return { ...buildQueueRulesetsTx(args), address: controller }
 }
 
-/** SDK-derived queue request wrapped for Safe/Relayr authority routing, so a
- *  Safe-owned project's signer (or a QUEUE_RULESETS operator) can queue. */
+/** What `JBOmnichainDeployer` stored beside a ruleset it wrapped: the project's own data hook, if any. */
+export type OmnichainExtraHook = {
+  dataHook: Address
+  useDataHookForPay: boolean
+  useDataHookForCashOut: boolean
+}
+
+/**
+ * The ruleset as `JBOmnichainDeployer.queueRulesetsOf` takes it. The deployer
+ * puts itself in as the data hook and refuses its own address there, so each
+ * configuration carries the project's own hook (or none) instead.
+ */
+export function omnichainQueueConfigs(
+  configs: readonly JBRulesetConfig[],
+  extra: OmnichainExtraHook,
+): JBRulesetConfig[] {
+  return configs.map(config => ({ ...config, metadata: { ...config.metadata, ...extra } }))
+}
+
+/**
+ * SDK-derived queue request wrapped for Safe/Relayr authority routing, so a
+ * Safe-owned project's signer (or a QUEUE_RULESETS operator) can queue.
+ *
+ * A project whose rules run through `JBOmnichainDeployer` (`omnichain` set)
+ * queues through it: the deployer keys the shop and the project's own data
+ * hook by ruleset, and a ruleset queued straight on the controller would
+ * start with neither.
+ */
 export function buildQueueRulesetsAuthorityCall({
   authority,
   controller,
+  omnichain,
   gas = 1_500_000n,
   label,
   ...args
 }: Parameters<typeof buildQueueRulesetsTx>[0] & {
   authority: Address
   controller: Address
+  omnichain?: OmnichainExtraHook
   gas?: bigint
   label: string
 }): AuthorityCall {
-  const request = {
-    ...buildQueueRulesetsTx(args),
-    address: controller,
-  }
+  const request = omnichain
+    ? buildOmnichainQueueRulesetsTx({
+        ...args,
+        rulesetConfigurations: omnichainQueueConfigs(args.rulesetConfigurations, omnichain),
+      })
+    : { ...buildQueueRulesetsTx(args), address: controller }
   return {
     chainId: request.chainId,
     authority,
     target: request.address,
-    data: encodeFunctionData(request),
+    data: encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]),
     abi: request.abi,
     functionName: request.functionName,
     args: request.args,
-    contractName: 'JBController',
+    contractName: omnichain ? 'JBOmnichainDeployer' : 'JBController',
     gas,
     label,
   }
