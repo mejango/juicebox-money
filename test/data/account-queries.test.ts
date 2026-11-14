@@ -76,6 +76,7 @@ function completeActivityRow(
     swapEvent: null,
     buybackPoolEvent: null,
     bridgeClaimEvent: null,
+    bridgeToOutboxEvent: null,
     ...overrides,
   }
 }

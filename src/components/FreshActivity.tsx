@@ -7,7 +7,12 @@ import type { BsFreshActivityEvent } from '@/lib/bendystraw'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
-import { combinedActivityParts, feedAmountToken, groupSameTxEvents } from './ActivityList'
+import {
+  combinedActivityParts,
+  feedAmountToken,
+  groupSameTxEvents,
+  withoutBridgeCashOuts,
+} from './ActivityList'
 import { ActivityMeta } from './ActivityMeta'
 import { LoadMoreRow } from './LoadMoreRow'
 import { ProjectLogo } from './ProjectLogo'
@@ -52,7 +57,7 @@ export function FreshActivity({
         </li>
       ) : (
         <>
-          {groupSameTxEvents(events).map((group, index) => (
+          {groupSameTxEvents(withoutBridgeCashOuts(events)).map((group, index) => (
             <Row key={group[0].id} group={group} eagerLogo={index < 4} />
           ))}
           {(feed.more || feed.loading) && (

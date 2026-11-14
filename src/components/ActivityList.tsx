@@ -224,6 +224,27 @@ export function isProjectFeedActivity(event: BsActivityEvent): boolean {
 }
 
 /**
+ * A sucker cashes out its own tokens inside a bridge send (`prepare`); the send's row says what
+ * happened, so that cash out never makes a row or a fragment.
+ */
+export function withoutBridgeCashOuts<T extends BsActivityEvent>(events: T[]): T[] {
+  const sends = new Set(
+    events.flatMap(event =>
+      event.bridgeToOutboxEvent
+        ? [`${sameTxKey(event)}:${event.bridgeToOutboxEvent.sucker.toLowerCase()}`]
+        : [],
+    ),
+  )
+  return events.filter(
+    event =>
+      !(
+        event.cashOutTokensEvent?.holder &&
+        sends.has(`${sameTxKey(event)}:${event.cashOutTokensEvent.holder.toLowerCase()}`)
+      ),
+  )
+}
+
+/**
  * The project feed's rows: feed events plus the reserved-split receipts whose
  * distribution is loaded — they become that row's bullets. A receipt on its
  * own never makes a row here.
@@ -232,22 +253,10 @@ export function projectFeedEvents<T extends BsActivityEvent>(events: T[]): T[] {
   const distributions = new Set(
     events.filter(event => event.sendReservedTokensToSplitsEvent).map(sameTxKey),
   )
-  // A sucker cashes out its own tokens inside a bridge send; the send's row says what happened.
-  const bridgeSends = new Set(
-    events.flatMap(event =>
-      event.bridgeToOutboxEvent
-        ? [`${sameTxKey(event)}:${event.bridgeToOutboxEvent.sucker.toLowerCase()}`]
-        : [],
-    ),
-  )
-  return events.filter(event =>
+  return withoutBridgeCashOuts(events).filter(event =>
     event.sendReservedTokensToSplitEvent
       ? distributions.has(sameTxKey(event))
-      : isProjectFeedActivity(event) &&
-        !(
-          event.cashOutTokensEvent?.holder &&
-          bridgeSends.has(`${sameTxKey(event)}:${event.cashOutTokensEvent.holder.toLowerCase()}`)
-        ),
+      : isProjectFeedActivity(event),
   )
 }
 
