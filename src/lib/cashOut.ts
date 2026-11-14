@@ -156,6 +156,7 @@ export function getContextCashOutQuote(
     context,
     cashOutTaxRate,
     feeFreeSurplus,
+    revnetFeeApplies,
   }: {
     chainId: JBChainId
     projectId: bigint
@@ -164,6 +165,8 @@ export function getContextCashOutQuote(
     context: JBAccountingContext
     cashOutTaxRate?: bigint
     feeFreeSurplus?: bigint
+    /** The project is a revnet whose own cash out fee applies to this cash out. */
+    revnetFeeApplies?: boolean
   },
 ): Promise<CashOutQuote> {
   return getCashOutQuote(client, {
@@ -174,6 +177,7 @@ export function getContextCashOutQuote(
     currency: BigInt(context.currency),
     cashOutTaxRate,
     feeFreeSurplus,
+    revnetFeeApplies,
   })
 }
 
@@ -280,12 +284,15 @@ export function minimumCashOutPriceAtIssuancePrice(
 export function netCashOutDisplayValue(
   value: number | null | undefined,
   cashOutTaxRate: number | undefined,
+  /** A revnet first cashes out a fortieth of the tokens for the fee revnet, unless its tax is zero. */
+  revnet = false,
 ): number | null {
   if (value === null || value === undefined || !Number.isFinite(value)) return null
-  // A zero-tax project is fee-free up to feeFreeSurplusOf; without that counter the fee
-  // still cannot be ruled out, so it is applied either way.
-  void cashOutTaxRate
-  return value - value / 40
+  // An unread tax rate cannot rule the revnet's fee out, so it is applied.
+  const reclaimed = revnet && cashOutTaxRate !== 0 ? value - value / 40 : value
+  // A zero-tax project is fee-free up to feeFreeSurplusOf; without that counter the protocol
+  // fee still cannot be ruled out, so it is applied either way.
+  return reclaimed - reclaimed / 40
 }
 
 /** Show the payment asymptote only when paid issuance can pull the live quote down toward it. */

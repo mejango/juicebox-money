@@ -63,6 +63,8 @@ function createFakeWallet() {
     sendTransaction: vi.fn(async (tx: { to: Address; data: Hex; value?: bigint }) =>
       writeContract({ address: tx.to, data: tx.data, value: tx.value ?? 0n, ...decoded(tx.data), account }),
     ),
+    /** A Safe app's wallet_sendCalls: the calls become one proposal, named by its safeTxHash. */
+    sendCalls: vi.fn(async (_batch: { calls: readonly { to: Address; data: Hex; value?: bigint }[] }) => ({ id: sentHash((sentCount += 1)) })),
   }
   /** Reviews left open for the test to answer, once `holdReviews` is called; otherwise each is confirmed at once. */
   let openReviews: ((confirmed: boolean) => void)[] | null = null
@@ -75,6 +77,8 @@ function createFakeWallet() {
   const client = {
     simulateContract: vi.fn(async (request: Record<string, unknown>) => ({ request: { ...request } })),
     estimateContractGas: vi.fn(async () => 50_000n),
+    /** A Safe batch's calls simulated in order: each passes. */
+    simulateCalls: vi.fn(async ({ calls }: { calls: readonly unknown[] }) => ({ results: calls.map(() => ({ status: 'success' as const })) })),
     getTransactionReceipt: vi.fn(async ({ hash }: { hash: Hex }) => {
       const receipt = receipts.get(hash.toLowerCase())
       if (!receipt) throw new TransactionReceiptNotFoundError({ hash })
@@ -165,6 +169,10 @@ function createFakeWallet() {
         return { functionName: request.functionName, account: request.account }
       })
     },
+    /** Each batch a Safe app took as one proposal: its calls' functions, in order. */
+    batches() {
+      return walletClient.sendCalls.mock.calls.map(([batch]) => batch.calls.map(call => decoded(call.data).functionName))
+    },
     /** Leave each review open until the test answers it, as a person reading it would. */
     holdReviews() {
       openReviews = []
@@ -193,6 +201,7 @@ function createFakeWallet() {
       receipts.clear()
       awaiting.clear()
       writeContract.mockClear()
+      walletClient.sendCalls.mockClear()
       requestReview.mockClear()
       // A review an earlier test left open is cancelled, so its run ends with nothing sent.
       for (const answer of openReviews?.splice(0) ?? []) answer(false)
@@ -250,7 +259,7 @@ export const walletActions = {
   getWalletClient: async () => {
     // The wallet's chain is the connected account's, as the test's own `getAccount` reports it.
     const { getAccount } = await import('@wagmi/core')
-    return (await import('./viem-wallet')).viemWallet(tx => wallet.walletClient.sendTransaction(tx), () => getAccount({} as never).chainId)
+    return (await import('./viem-wallet')).viemWallet(tx => wallet.walletClient.sendTransaction(tx), () => getAccount({} as never).chainId, batch => wallet.walletClient.sendCalls(batch))
   },
   getPublicClient: () => wallet.client,
   switchChain: (_config: unknown, args: { chainId: number }) => wallet.switchChain(args),

@@ -63,7 +63,9 @@ const routes = [
   // 519 -> 521: every project write runs through core's useReviewedRun (its send engine stays lazy), the SDK 4.0.0 Relayr round plan and late-settle handling.
   // 521 -> 523: SDK 5.0.0 (in-place follow, one ending for a sent step) measures 521.01 KiB.
   // 523 -> 526: buyback 2.0.0 rollout (move preset, LP move to the new pool) measures 525.0 KiB.
-  { route: '/[urn]', path: '/eth:1', kib: 537, text: 'Browser Fixture Project' },
+  // 537 -> 542: Permit2 pay authorization (plan, typed data, metadata), the SDK's project hook and router resolvers
+  // and revnet fee netting in holder values: measured 541.2 KiB.
+  { route: '/[urn]', path: '/eth:1', kib: 542, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -92,7 +94,8 @@ const budgets = {
   // Create-form phone pass (Market maker on payouts, optional shop settings, inline category): measured 2711.0 KiB, rounded up only.
   // Guide code copy buttons and the default payout recipient: measured 2713.5 KiB, rounded up only.
   // Token address prediction when extending a token to a new chain: measured 2716.4 KiB, rounded up only.
-  allScripts: 2717 * KIB,
+  // Permit2 pay authorization, the SDK's project hook and router resolvers, revnet fee netting: measured 2723.1 KiB, rounded up only.
+  allScripts: 2724 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

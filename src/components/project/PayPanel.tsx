@@ -31,8 +31,12 @@ import {
   PAY_QUOTE_FAILED_MESSAGE,
   PAY_SWAP_QUOTE_FAILED_MESSAGE,
   PaySwapQuoteFailedError,
+  PERMIT2_ADDRESS,
+  permit2PayAuthorizationReusable,
+  planErc20PayAuthorization,
   prepareUserPay,
   tokenCurrencyId,
+  type Erc20PayAuthorizationPlan,
 } from "@bananapus/nana-sdk-core/v6";
 import { useProjectNftProtocol } from "@/hooks/useProjectNftProtocol";
 import { recoveringRead } from "@/lib/read-recovery";
@@ -42,8 +46,8 @@ import { ProjectPayPanelSkeleton } from "@/components/LoadingSkeletons";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
-  erc20Abi,
   formatUnits,
+  maxUint256,
   parseUnits,
   zeroAddress,
   type Address,
@@ -76,6 +80,12 @@ import {
 } from "@/lib/transaction-builders";
 import { approvalIntent, payIntent, ReviewLineError } from "@bananapus/nana-sdk-core/review";
 import { legacyPayKeys } from "@/lib/legacy-intents";
+import {
+  signPayAuthorization,
+  withPayAuthorization,
+  type SignedPayAuthorization,
+} from "@/lib/pay-authorization";
+import { isSafeConnection } from "@/lib/safe-connector";
 import { chainName } from "@/lib/urn";
 import { assertReviewedAccountConnected } from "@/lib/wallet-context";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
@@ -122,7 +132,12 @@ type PayContext = {
   viaRouter: boolean;
 };
 
-type PaymentSequenceAction = {
+type PaymentSequenceAction =
+  /** A free signature: the payer's exact, expiring Permit2 allowance for this payment. */
+  | { kind: "payment-authorization"; label: string }
+  | PaymentSequenceCall;
+
+type PaymentSequenceCall = {
   kind: "token-approval" | "payment";
   label: string;
   request: TxRequest;
@@ -343,6 +358,8 @@ export function PayPanel({
   // balanced, so an unpinned `latest` call can otherwise land on a sibling
   // backend that still sees the old allowance.
   const [approvalBlock, setApprovalBlock] = useState<bigint | undefined>(undefined);
+  /** The signature a reviewed payment's earlier attempt left, reused while it still authorizes it. */
+  const signedAuthorization = useRef<{ reviewed: ReviewedPayment; signed: SignedPayAuthorization } | null>(null);
   /** The payment's run: its approval when one is needed, then the payment. */
   const runCalls = useRef<StepRunAction | null>(null);
   const run = useStepRun<PaymentSequenceAction>({ tx, send: tx.run, action: () => runCalls.current, onFinish: () => {} });
@@ -1085,14 +1102,19 @@ export function PayPanel({
   // ERC-20 pays approve the attached entry that received the preview: the
   // multi terminal, registry, gateway, or direct router. Each accepts a direct
   // ERC-20 allowance, so approve(entry, amount) also preserves gateway custody.
+  //
+  // How the payer authorizes it is one SDK rule: nothing when the entry is
+  // already approved, a free Permit2 signature for an EOA (after one approval of
+  // Permit2 itself), an exact approval of the entry for a Safe or other contract wallet.
   const approvalSpender = terminalAddress;
-  const { data: allowance, refetch: refetchAllowance } = useQuery({
+  const { data: authorizationPlan, refetch: refetchAuthorization } = useQuery({
     queryKey: [
-      "payAllowance",
+      "payAuthorization",
       chainId,
       context?.token,
       approvalSpender,
       address,
+      amountRaw.toString(),
       approvalBlock?.toString(),
     ],
     enabled:
@@ -1104,15 +1126,16 @@ export function PayPanel({
       amountRaw > 0n,
     staleTime: 15_000,
     queryFn: () =>
-      publicClient!.readContract({
-        address: context!.token,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [address!, approvalSpender!],
+      planErc20PayAuthorization(publicClient!, {
+        chainId,
+        owner: address!,
+        token: context!.token,
+        entry: approvalSpender!,
+        amount: amountRaw,
         blockNumber: approvalBlock,
+        isSafe: isSafeConnection(wagmiConfig),
       }),
   });
-  const needsApproval = !isNative && (allowance ?? 0n) < amountRaw;
 
   // ---- Terminal-surface safety (website/ renderTerminalNotice parity) ----
   // Fail closed: the target terminal MUST be listed among the project's
@@ -1172,12 +1195,13 @@ export function PayPanel({
     }
     // An approval a Safe ran after its run ended settles as the run's earlier step.
     if (sequenceSafePhase !== "done" && sequenceSafeTx.settledStep == null) return;
-    dispatchSequence({ type: "completed", kinds: [sequenceSafeStage] });
+    // The payment is the last step: once it ran, so did an approval batched with it.
+    dispatchSequence({ type: "completed", kinds: sequenceSafeStage === "payment" ? sequenceActions.map(action => action.kind) : [sequenceSafeStage] });
     if (sequenceSafeStage === "payment") {
       patchSequence({ safeStage: null, complete: true, status: mode === "pay" ? "Payment confirmed." : "Added to the balance." });
     } else {
       patchSequence({ status: "Safe action confirmed. Refreshing approvals…" });
-      void refetchAllowance()
+      void refetchAuthorization()
         .then(() => {
           patchSequence({ safeStage: null, status: "Safe action confirmed. Continue to the next payment action." });
         })
@@ -1187,7 +1211,8 @@ export function PayPanel({
     }
   }, [
     mode,
-    refetchAllowance,
+    refetchAuthorization,
+    sequenceActions,
     sequenceSafeError,
     sequenceSafePhase,
     sequenceSafeTx.stopped,
@@ -1223,18 +1248,24 @@ export function PayPanel({
       mode, chainId, projectId, hook: shop?.hook, amount: debouncedAmount, token: context.token,
       cart, checkoutReady: !!tiers, beneficiary: address, memo: memo.trim(),
     });
-    if (needsApproval && approvalSpender) {
-      actions.push({
-        kind: "token-approval",
-        label: `Approve ${symbol} access`,
-        request: buildErc20ApproveRequest({
-          chainId,
-          token: context.token,
-          spender: approvalSpender,
-          amount: amountRaw,
-        }),
-        intent: approvalIntent(paymentKey, { step: "token-approval", token: context.token, spender: approvalSpender }),
-      });
+    const approval = (spender: Address, approved: bigint, label: string): PaymentSequenceCall => ({
+      kind: "token-approval",
+      label,
+      request: buildErc20ApproveRequest({ chainId, token: context.token, spender, amount: approved }),
+      intent: approvalIntent(paymentKey, { step: "token-approval", token: context.token, spender }),
+    });
+    // An unread plan is not assumed away: the exact approval works for every wallet.
+    const plan: Erc20PayAuthorizationPlan | null = isNative
+      ? null
+      : authorizationPlan ?? { kind: "approve", spender: approvalSpender!, amount: amountRaw };
+    if (plan?.kind === "permit2") {
+      // The signature comes first: declining it costs nothing and leaves no approval behind.
+      actions.push({ kind: "payment-authorization", label: "Authorize the payment (free signature)" });
+      if (plan.needsTokenApproval) {
+        actions.push(approval(PERMIT2_ADDRESS, maxUint256, `Let Permit2 move your ${symbol} (one time)`));
+      }
+    } else if (plan?.kind === "approve") {
+      actions.push(approval(plan.spender, plan.amount, `Approve ${symbol} access`));
     }
     let paymentRequest: TxRequest;
     if (mode === "pay") {
@@ -1462,25 +1493,56 @@ export function PayPanel({
         throw new ReviewLineError("The reviewed payment action is unavailable.");
       }
       // An approval that confirmed after its run ended is not asked for again.
-      let tokenApproval = actionOf("token-approval");
-      if (tokenApproval) {
-        const { data: current } = await refetchAllowance();
-        if (current !== undefined && current >= reviewed.amountRaw) tokenApproval = undefined;
+      const reviewedApproval = actionOf("token-approval");
+      let tokenApproval = reviewedApproval?.kind === "token-approval" ? reviewedApproval : undefined;
+      let payment: PaymentSequenceCall = paymentAction;
+      const signs = sequenceActions.some(action => action.kind === "payment-authorization");
+      if (tokenApproval || signs) {
+        const { data: current } = await refetchAuthorization();
+        if (current?.kind === "none") {
+          // The entry is approved already: the payment goes as reviewed, with nothing to sign.
+          tokenApproval = undefined;
+        } else if (signs) {
+          // A wallet that turned out to be a contract cannot sign this: the payment is reviewed again.
+          if (current?.kind !== "permit2") throw new ReviewLineError(PAYMENT_CHANGED);
+          if (!current.needsTokenApproval) tokenApproval = undefined;
+          const kept = signedAuthorization.current;
+          let signed = kept?.reviewed === reviewed && permit2PayAuthorizationReusable(kept.signed, current.authorization, account)
+            ? kept.signed
+            : null;
+          if (!signed) {
+            patchSequence({ status: "Sign the payment authorization in your wallet. It is free." });
+            signed = await signPayAuthorization(current.authorization, account);
+            signedAuthorization.current = { reviewed, signed };
+          }
+          stillReviewed();
+          writeState.current(reviewed);
+          dispatchSequence({ type: "completed", kinds: ["payment-authorization"] });
+          // The payment carries the signed allowance in its metadata, its last argument.
+          const args = [...(paymentAction.request.args as readonly unknown[])];
+          args[args.length - 1] = withPayAuthorization(args.at(-1) as Hex | undefined, signed);
+          payment = { ...paymentAction, request: { ...paymentAction.request, args } };
+        }
       }
-      const steps = [...(tokenApproval ? [tokenApproval] : []), paymentAction];
+      const steps = [...(tokenApproval ? [tokenApproval] : []), payment];
+      const batchedBySafe = steps.length > 1 && isSafeConnection(wagmiConfig);
       await nextUiPaint();
       patchSequence({ status: mode === "pay" ? "Review the payment." : "Review adding to the balance." });
       runCalls.current = {
         account,
         // The approval and the payment are one review: the payment simulates on the approval's receipt block.
+        // Core holds a Safe batch under its first call's key: the whole batch is the payment, held by the
+        // payment's own key, so paying again another way waits on it.
         calls: steps.map((action, index) => reviewedCall(action.request, {
-          intent: action.intent,
-          legacy: action.legacy,
+          intent: (batchedBySafe ? payment : action).intent,
+          legacy: (batchedBySafe ? payment : action).legacy,
           ...(index > 0 ? {} : { simulationBlockNumber: approvalBlock }),
         })),
         context: sequenceContext,
         // An approval and its payment resume as one action after a reload.
         scope: `jbm:pay:${chainId}:${projectId}:${reviewed.terminal}:${reviewed.token}`,
+        // A Safe takes the approval and the payment as one proposal, signed once and run together.
+        batch: true,
         assertWriteState: () => writeState.current(reviewed),
       };
       // The payment is the run's last step, so a run of fewer calls is the payment alone.
@@ -1494,11 +1556,14 @@ export function PayPanel({
         return;
       }
       if (paid.status === "proposed") {
-        // A Safe executes each step as its own proposal: an approval first, then the payment.
-        const stage = kinds[paid.step] ?? "payment";
-        patchSequence({ safeStage: stage, status: stage === "token-approval"
-          ? "Approval proposed to your Safe. Execute it there before continuing."
-          : "Payment proposed to your Safe. Execute it there to finish." });
+        // A Safe takes every step as one proposal: it settles as the payment. A resumed run proposes its steps one by one.
+        const { batched } = paid;
+        const stage = batched ? "payment" : kinds[paid.step] ?? "payment";
+        patchSequence({ safeStage: stage, status: batched
+          ? "Approval and payment proposed to your Safe as one batch. Execute it there to finish."
+          : stage === "token-approval"
+            ? "Approval proposed to your Safe. Execute it there before continuing."
+            : "Payment proposed to your Safe. Execute it there to finish." });
         return;
       }
       if (kinds.length > 1 && paid.receipts.length > 1) setApprovalBlock(paid.receipts[0]?.blockNumber);
@@ -1551,8 +1616,8 @@ export function PayPanel({
     if (!paymentRunEnded || tx.settledStep == null || tx.lastStepSent) return;
     dispatchSequence({ type: "completed", kinds: ["token-approval"] });
     patchSequence({ runEnded: false, status: "Approval confirmed. Continue to the payment." });
-    void refetchAllowance();
-  }, [paymentRunEnded, tx.settledStep, tx.lastStepSent, refetchAllowance]);
+    void refetchAuthorization();
+  }, [paymentRunEnded, tx.settledStep, tx.lastStepSent, refetchAuthorization]);
 
   // ---- Success view ----
   if (paid) {

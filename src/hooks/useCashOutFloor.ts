@@ -3,7 +3,7 @@
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { jbMultiTerminalAbi, type JBChainId } from '@bananapus/nana-sdk-core'
-import { v6Address } from '@bananapus/nana-sdk-core/v6'
+import { isV6Deployment, revnetCashOutFeeApplies, revnetCashOutFeeTerminalExists, v6Address } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
 import { formatUnits, type PublicClient } from 'viem'
 import { usePublicClient } from 'wagmi'
@@ -66,6 +66,13 @@ export function useCashOutFloor(
         if (feeFreeSurplus === undefined) return null
       }
 
+      // A revnet takes its own fee first. An unreadable fee terminal assumes the fee, never overstating the floor.
+      const revnetFeeApplies =
+        isV6Deployment(ruleset.metadata.dataHook, 'REVOwner', chainId) &&
+        revnetCashOutFeeApplies({
+          cashOutTaxRate,
+          feeTerminalExists: await revnetCashOutFeeTerminalExists(client, { chainId, token: context.token }).catch(() => true),
+        }) === true
       const quote = await getContextCashOutQuote(client, {
         chainId,
         projectId: BigInt(projectId),
@@ -73,6 +80,7 @@ export function useCashOutFloor(
         context,
         cashOutTaxRate,
         feeFreeSurplus,
+        revnetFeeApplies,
       })
       const net = quote.reclaimAmountAfterFee
       if (net === undefined) return null

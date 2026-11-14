@@ -24,9 +24,12 @@ import {
 } from '@bananapus/nana-sdk-core'
 import {
   RESERVED_TOKEN_SPLIT_GROUP_ID,
+  cashOutCountAfterRevnetFee,
   getBorrowableAmount,
   getCreditBalance,
   getTokenAddress,
+  revnetCashOutFeeApplies,
+  revnetCashOutFeeTerminalExists,
   type JBRulesetWithMetadata,
 } from '@bananapus/nana-sdk-core/v6'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -580,6 +583,25 @@ function YourChainRow({
         cashOutSymbol = await readTokenSymbol(client, primary.token, {
           chainId,
         })
+        // Unreadable ruleset or fee-free surplus assume the full fee, so
+        // the shown value never overstates what a cash out would pay.
+        const cashOutTaxRate = ruleset
+          ? BigInt(ruleset.metadata.cashOutTaxRate)
+          : null
+        // A revnet first cashes out a fortieth of the tokens for the fee revnet;
+        // an unreadable fee terminal assumes that fee too.
+        const reclaimCount = cashOutCountAfterRevnetFee(
+          balance,
+          isRevnet &&
+            balance > 0n &&
+            revnetCashOutFeeApplies({
+              cashOutTaxRate: cashOutTaxRate ?? 1n,
+              feeTerminalExists: await revnetCashOutFeeTerminalExists(client, {
+                chainId,
+                token: primary.token,
+              }).catch(() => true),
+            }) === true,
+        )
         const gross =
           balance > 0n
             ? ((await client.readContract({
@@ -588,7 +610,7 @@ function YourChainRow({
                 functionName: 'currentReclaimableSurplusOf',
                 args: [
                   BigInt(projectId),
-                  balance,
+                  reclaimCount,
                   // Empty arrays mean ALL terminals / ALL accounting contexts
                   // (JBTerminalStore.sol:860-885). Naming only the canonical
                   // terminal underreports every project holding a balance in
@@ -600,11 +622,6 @@ function YourChainRow({
                 ],
               })) as bigint)
             : 0n
-        // Unreadable ruleset or fee-free surplus assume the full fee, so
-        // the shown value never overstates what a cash out would pay.
-        const cashOutTaxRate = ruleset
-          ? BigInt(ruleset.metadata.cashOutTaxRate)
-          : null
         const feeFreeSurplus =
           gross > 0n && cashOutTaxRate === 0n
             ? await client

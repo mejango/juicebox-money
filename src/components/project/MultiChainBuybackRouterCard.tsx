@@ -11,6 +11,10 @@ import {
   jbRouterTerminalRegistryAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
+import {
+  resolveProjectBuybackHook,
+  resolveProjectRouterTerminal,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useMemo, useState } from 'react'
 import { zeroAddress, type Address } from 'viem'
@@ -182,14 +186,13 @@ async function readChainState(
           })
           .catch(() => null)
       : null,
+    // The hook the project's ruleset really calls, not the registry's answer for every project.
     buybackRegistry
-      ? client
-          .readContract({
-            address: buybackRegistry,
-            abi: jbBuybackHookRegistryAbi,
-            functionName: 'hookOf',
-            args: [BigInt(deployment.projectId)],
-          })
+      ? resolveProjectBuybackHook(client, {
+          chainId: deployment.chainId,
+          projectId: BigInt(deployment.projectId),
+        })
+          .then(resolved => resolved.hook ?? zeroAddress)
           .catch(() => null)
       : null,
     routerRegistry
@@ -201,14 +204,13 @@ async function readChainState(
           })
           .catch(() => null)
       : null,
+    // The router route among the project's own terminals.
     routerRegistry
-      ? client
-          .readContract({
-            address: routerRegistry,
-            abi: jbRouterTerminalRegistryAbi,
-            functionName: 'terminalOf',
-            args: [BigInt(deployment.projectId)],
-          })
+      ? resolveProjectRouterTerminal(client, {
+          chainId: deployment.chainId,
+          projectId: BigInt(deployment.projectId),
+        })
+          .then(resolved => resolved.terminal ?? zeroAddress)
           .catch(() => null)
       : null,
   ])
@@ -226,7 +228,7 @@ async function readChainState(
     !!defaultTerminal &&
     (defaultTerminal as Address) !== zeroAddress
 
-  let poolSummary = resolvedHook ? 'Not initialized' : 'Set the hook first'
+  let poolSummary = resolvedHook ? 'Not initialized' : 'No hook resolved'
   let pools: BuybackChainState['pools'] = []
   if (resolvedHook) {
     const probes: { label: string; token: Address }[] = [

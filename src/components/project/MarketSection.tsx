@@ -4,20 +4,17 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import {
   JB_CHAINS,
-  JBBuybackHookContracts,
   JBCoreContracts,
-  JBOmnichainDeployerContracts,
   NATIVE_TOKEN,
-  RevnetCoreContracts,
   jbBuybackHookAbi,
-  jbBuybackHookRegistryAbi,
-  jbControllerAbi,
-  jbDirectoryAbi,
-  jbOmnichainDeployerAbi,
   jbPricesAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
-import { getAccountingContexts } from '@bananapus/nana-sdk-core/v6'
+import {
+  getAccountingContexts,
+  getCurrentRuleset,
+  resolveProjectBuybackHook,
+} from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import {
@@ -41,7 +38,7 @@ import {
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { cachedQuery, PERSIST } from '@/lib/query-persist'
-import { accountingContextsQuery, projectDisplayQuery } from '@/lib/project-display-queries'
+import { accountingContextsQuery, currentRulesetQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
 import { migratedPoolKey, poolSqrtPriceX96, retiredPoolHooks } from '@/lib/buyback-pool-migration'
@@ -249,66 +246,12 @@ export async function resolveMarket(
   const directory = addrOf(JBCoreContracts.JBDirectory, chainId)
   if (!directory) return { status: 'none' }
 
-  // The controller is resolved PER-PROJECT from the Directory (never assumed) —
-  // reading currentRulesetOf off the wrong controller would misfire.
-  const controller = (await client.readContract({
-    address: directory,
-    abi: jbDirectoryAbi,
-    functionName: 'controllerOf',
-    args: [pid],
-  })) as Address
-  if (!controller || lc(controller) === ZERO_ADDRESS) return { status: 'none' }
-
-  const [ruleset, metadata] = await client.readContract({
-    address: controller,
-    abi: jbControllerAbi,
-    functionName: 'currentRulesetOf',
-    args: [pid],
-  })
-  let dataHook = metadata.dataHook as Address
-  if (!dataHook || lc(dataHook) === ZERO_ADDRESS) return { status: 'none' }
-
-  const registry = addrOf(
-    JBBuybackHookContracts.JBBuybackHookRegistry,
+  // The hook the current ruleset calls when paid, through its data hook: the
+  // registry's own answer names a default for projects that never use it.
+  const { hook } = await resolveProjectBuybackHook(client, {
     chainId,
-  )
-  const concrete = addrOf(JBBuybackHookContracts.JBBuybackHook, chainId)
-  const revOwner = addrOf(RevnetCoreContracts.REVOwner, chainId)
-  const omni = addrOf(JBOmnichainDeployerContracts.JBOmnichainDeployer, chainId)
-
-  // The omnichain deployer inserts ITSELF as the dataHook and stores the real
-  // hook as an "extra hook" — unwrap it (website ~line 2867).
-  if (omni && lc(dataHook) === lc(omni)) {
-    const cfg = await client.readContract({
-      address: omni as Address,
-      abi: jbOmnichainDeployerAbi,
-      functionName: 'extraDataHookOf',
-      args: [pid, BigInt(ruleset.id)],
-    })
-    dataHook = cfg.dataHook as Address
-    if (!dataHook || lc(dataHook) === ZERO_ADDRESS) return { status: 'none' }
-  }
-
-  // Recognize the (unwrapped) data hook against the known singletons. hookOf /
-  // the default hook must NOT be trusted for a project that doesn't route
-  // through the registry (website ~line 2853).
-  let hook: Address | null = null
-  const d = lc(dataHook)
-  // The registry is what gets READ, so it has to be present for BOTH arms of
-  // this match: a chain with a revOwner but no buyback registry satisfied the
-  // revOwner arm alone and then read `hookOf` from `undefined`, throwing the
-  // whole tab into its generic error card instead of "no market pool yet".
-  if (registry && (d === lc(registry) || (revOwner && d === lc(revOwner)))) {
-    const h = (await client.readContract({
-      address: registry as Address,
-      abi: jbBuybackHookRegistryAbi,
-      functionName: 'hookOf',
-      args: [pid],
-    })) as Address
-    hook = h && lc(h) !== ZERO_ADDRESS ? h : null
-  } else if (concrete && d === lc(concrete)) {
-    hook = dataHook
-  }
+    projectId: pid,
+  })
   if (!hook) return { status: 'none' }
 
   // The pool's pair (terminal) token = the project's primary accounting token
@@ -360,11 +303,15 @@ export async function resolveMarket(
 
   // The ceiling must land on the pair-token axis: convert the weight's
   // base-currency denomination through JBPrices exactly like the terminal.
+  const current = queryClient
+    ? await queryClient.fetchQuery(currentRulesetQuery(client, args))
+    : await getCurrentRuleset(client, args)
+  if (!current) return { status: 'none' }
   const issuance = await issuanceCeilingOf(client, {
     chainId,
     projectId: pid,
-    weight: ruleset.weight as bigint,
-    baseCurrency: Number(metadata.baseCurrency),
+    weight: BigInt(current.ruleset.weight),
+    baseCurrency: Number(current.metadata.baseCurrency),
     pairCurrency: Number(primary.currency),
   })
 

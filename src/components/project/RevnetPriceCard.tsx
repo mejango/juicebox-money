@@ -266,6 +266,7 @@ export function RevnetPriceCard({
             price: netCashOutDisplayValue(
               cashOutPriceFromTotals(totals),
               current.cashOutTaxRate,
+              true,
             ),
             cashOutTaxRate: current.cashOutTaxRate,
             currency: current.currency,

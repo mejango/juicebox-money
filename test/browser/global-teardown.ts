@@ -49,10 +49,10 @@ export default async function globalTeardown() {
     'REVOwner.tiered721HookOf',
     'JBProjectHandles.ensNamePartsOf',
     'JBProjectHandles.handleOf',
+    // The registries' hookOf and terminalOf are asked only for a project that routes through them,
+    // which the fixture project does not: the directory and ruleset reads above decide that.
     'JBBuybackHookRegistry.defaultHook',
-    'JBBuybackHookRegistry.hookOf',
     'JBRouterTerminalRegistry.defaultTerminal',
-    'JBRouterTerminalRegistry.terminalOf',
     'JBProjects.creationFee',
   ])
   const failures = [

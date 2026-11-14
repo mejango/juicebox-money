@@ -324,7 +324,7 @@ export function PriceChart({
       // line above it; both are ambient displays of what a holder would receive.
       const value =
         rate > 0 && tax !== undefined
-          ? netCashOutDisplayValue(minimumCashOutPriceAtIssuancePrice(1 / rate, tax), tax)
+          ? netCashOutDisplayValue(minimumCashOutPriceAtIssuancePrice(1 / rate, tax), tax, true)
           : null
       return value && value > 0 ? [{ timestamp, value }] : []
     },
