@@ -1,7 +1,8 @@
 import { decodeFunctionData, zeroHash, type Abi, type Address } from 'viem'
+import { JBCoreContracts, jbV6ContractAddress } from '@bananapus/nana-sdk-core'
 import { describe, expect, it } from 'vitest'
-import { tokenDeploySalt } from '@/components/project/AuthorityEditsCard'
-import { omnichainTokenSalt } from '@/lib/manage'
+import { tokenDeployPlan, tokenDeploySalt } from '@/components/project/AuthorityEditsCard'
+import { legacyTokenSalt, omnichainTokenSalt, predictTokenAddress } from '@/lib/manage'
 import { buildDeployTokenAuthorityCall } from '@/lib/transaction-builders'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
@@ -104,5 +105,69 @@ describe('tokenDeploySalt', () => {
       'Example Token',
       'EXAM',
     ])
+  })
+
+  describe('extending an existing token', () => {
+    const live = {
+      sender: '0x5a6d1c0e1e6b0c9d2e2e5b6c5d7e8f9a0b1c2d3e' as Address,
+      controller: CONTROLLER,
+      implementation: '0x4444444444444444444444444444444444444444' as Address,
+    }
+    const row = (chainId: number, projectId: number, token: Address | null) => ({
+      chainId,
+      projectId,
+      name: `chain ${chainId}`,
+      authority: live.sender,
+      controller: live.controller,
+      tokenImplementation: live.implementation,
+      token,
+      tokenName: token ? 'Original' : null,
+      tokenSymbol: token ? 'ORIG' : null,
+    })
+    const tokensOn = (chainId: number) =>
+      jbV6ContractAddress[JBCoreContracts.JBTokens][chainId as 1]
+
+    it('keeps the shared salt when it reproduces the existing address', () => {
+      const salt = omnichainTokenSalt('Original', 'ORIG')
+      const token = predictTokenAddress({ ...live, tokens: tokensOn(8453), salt })
+      const plan = tokenDeployPlan([row(1, 5, token), row(8453, 12, null)], 'New', 'NEW')
+      expect(plan).toMatchObject({ salt, sameAddress: true })
+    })
+
+    it('falls back to the older Juicescan salt when that is the one that matches', () => {
+      const salt = legacyTokenSalt(5n, 'ORIG')
+      const token = predictTokenAddress({ ...live, tokens: tokensOn(8453), salt })
+      const plan = tokenDeployPlan([row(1, 5, token), row(8453, 12, null)], 'New', 'NEW')
+      expect(plan).toMatchObject({ salt, sameAddress: true })
+    })
+
+    it('says so when this account cannot reproduce the address', () => {
+      const plan = tokenDeployPlan([row(1, 5, TOKEN), row(8453, 12, null)], 'New', 'NEW')
+      expect(plan).toMatchObject({
+        salt: omnichainTokenSalt('Original', 'ORIG'),
+        sameAddress: false,
+      })
+    })
+
+    it('only checks the chains being deployed to', () => {
+      const salt = omnichainTokenSalt('Original', 'ORIG')
+      const token = predictTokenAddress({ ...live, tokens: tokensOn(8453), salt })
+      const other = { ...row(10, 7, null), authority: OWNER }
+      const rows = [row(1, 5, token), row(8453, 12, null), other]
+      expect(tokenDeployPlan(rows, 'New', 'NEW', new Set([8453])).sameAddress).toBe(true)
+      expect(tokenDeployPlan(rows, 'New', 'NEW').sameAddress).toBe(false)
+    })
+  })
+
+  it('predicts the address of a live token (GLORY on Base)', () => {
+    expect(
+      predictTokenAddress({
+        sender: '0x19ce092bc3f9662e40c4670c68ff03c8322d0e76',
+        salt: '0x5d47b2cdb7e79169820a6610386dbb301fad7dc98980fac0c7286d08d984a111',
+        controller: '0x3fcec3572e84b624477bcff4e2cf1f7deab648f1',
+        tokens: '0x1f80d8f057eE36b4C2656D107E4e4558B71bA7D9',
+        implementation: '0x6DB9Cf17222D8DE2012Fe13B9FA5bB7981fa0b17',
+      }).toLowerCase(),
+    ).toBe('0xe940dd603fa8cf3f67d4e465d785fb261c41f1db')
   })
 })

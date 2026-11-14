@@ -8,7 +8,15 @@ import {
   buildDeployErc20Tx,
   type V6DeployErc20TxRequest,
 } from '@bananapus/nana-sdk-core/v6'
-import { keccak256, toHex, type Address, type Hex } from 'viem'
+import {
+  encodeAbiParameters,
+  encodePacked,
+  getContractAddress,
+  keccak256,
+  toHex,
+  type Address,
+  type Hex,
+} from 'viem'
 
 /**
  * Pure owner-management plumbing shared by the OwnerPanel client island and
@@ -106,6 +114,43 @@ export function randomSalt(): Hex {
  */
 export function omnichainTokenSalt(name: string, symbol: string): Hex {
   return keccak256(toHex(`jb-erc20:${name.trim()}:${symbol.trim()}`))
+}
+
+/** Shown before a first token deploy: the address depends on the sender and the salt, which is the name and symbol. */
+export const TOKEN_SAME_ADDRESS_NOTE =
+  'To add this token on another chain later at the same address, deploy it there from this same account with the same name and symbol.'
+
+/** The salt Juicescan used before it shared this one: a chain's project ID and the symbol. */
+export function legacyTokenSalt(projectId: bigint, symbol: string): Hex {
+  return keccak256(
+    encodeAbiParameters([{ type: 'uint256' }, { type: 'string' }], [projectId, symbol]),
+  )
+}
+
+/**
+ * Where `deployERC20For` puts a token: JBController hashes the sender into the
+ * salt, JBTokens hashes the controller in, then clones its TOKEN implementation
+ * with CREATE2 (an ERC-1167 minimal proxy).
+ */
+export function predictTokenAddress(o: {
+  sender: Address
+  controller: Address
+  tokens: Address
+  implementation: Address
+  salt: Hex
+}): Address {
+  const saltHash = keccak256(encodePacked(['address', 'bytes32'], [o.sender, o.salt]))
+  const cloneSalt = keccak256(
+    encodeAbiParameters([{ type: 'address' }, { type: 'bytes32' }], [o.controller, saltHash]),
+  )
+  const initCode =
+    `0x3d602d80600a3d3981f3363d3d373d3d3d363d73${o.implementation.slice(2).toLowerCase()}5af43d82803e903d91602b57fd5bf3` as Hex
+  return getContractAddress({
+    opcode: 'CREATE2',
+    from: o.tokens,
+    salt: cloneSalt,
+    bytecodeHash: keccak256(initCode),
+  })
 }
 
 /**
