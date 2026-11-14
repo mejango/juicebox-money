@@ -277,7 +277,10 @@ export function FundingChart({
         ? bucketize(
             metric === 'volume'
               ? volumeEvents(moments, adds)
-              : holdingsEvents(held, todayRates ?? new Map()),
+              : // Until today's prices answer there is no figure: a fallback price would pass as today's.
+                todayRates
+                ? holdingsEvents(held, todayRates)
+                : [],
             rangeSeconds,
           )
         : [],

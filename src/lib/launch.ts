@@ -4,6 +4,7 @@ import {
   MappableAsset,
   NATIVE_TOKEN,
   USDC_ADDRESSES,
+  jb721TiersHookProjectDeployerAbi,
   jbV6ContractAddress,
   parseSuckerDeployerConfig,
   type JBChainId,
@@ -859,17 +860,20 @@ export function launchCallForRecovery(
   transaction: { from: Address; to: Address | null; chainId?: number; input: Hex; value: bigint },
 ): { to: Address; data: Hex; value: bigint } {
   const original = { ...args, creationFee: transaction.value }
-  const historical = buildHistoricalLaunchRequest(original)
-  const encode = (request: ReturnType<typeof buildLaunchRequest>) => encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]).toLowerCase()
-  if (transaction.chainId !== args.chainId || transaction.from.toLowerCase() !== args.owner.toLowerCase() ||
-      transaction.to?.toLowerCase() !== historical.address.toLowerCase() ||
-      (transaction.input.toLowerCase() !== encode(historical) && transaction.input.toLowerCase() !== encode(buildLaunchRequest(original)))) {
-    throw new Error('Launch differs from saved plan; keep recovery data.')
-  }
-  return { to: historical.address, data: transaction.input, value: transaction.value }
+  // Every encoding this site has sent for the plan: today's, the earlier store shape, and the launcher
+  // that single-chain and unlinked launches used before they moved to JBOmnichainDeployer.
+  const sent = ([[false, false], [true, false], [false, true], [true, true]] as const).flatMap(([historicalStore, formerLauncher]) => {
+    try { return [compileLaunchRequest(original, historicalStore, formerLauncher)] } catch { return [] }
+  })
+  const match = transaction.chainId === args.chainId && transaction.from.toLowerCase() === args.owner.toLowerCase()
+    ? sent.find(request => transaction.to?.toLowerCase() === request.address.toLowerCase() &&
+        transaction.input.toLowerCase() === encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]).toLowerCase())
+    : undefined
+  if (!match) throw new Error('Launch differs from saved plan; keep recovery data.')
+  return { to: match.address, data: transaction.input, value: transaction.value }
 }
 
-function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean) {
+function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean, formerLauncher = false) {
   const { chainId, plan } = args
   const { accounting } = plan
   // The plan is the authority: its owner was frozen when the run was pinned.
@@ -1095,6 +1099,23 @@ function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean)
   // unlinked launch deploys none, and stays able to connect a chain later:
   // a sucker can mint bridged tokens only through this deployer's data hook.
   const linked = plan.linkChains && plan.chains.length > 1
+  // Recovery only: the bytes a single-chain or unlinked launch carried before this.
+  if (formerLauncher && !linked) {
+    return {
+      chainId,
+      address: v6Address('JB721TiersHookProjectDeployer', chainId),
+      abi: jb721TiersHookProjectDeployerAbi,
+      functionName: 'launchProjectFor' as const,
+      args: [
+        owner,
+        build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore),
+        { projectUri: args.projectUri, rulesetConfigurations, terminalConfigurations, memo: '' },
+        v6Address('JBController', chainId),
+        args.salt,
+      ],
+      value: args.creationFee,
+    } as const
+  }
   return buildOmnichainLaunchProjectTx({
     chainId,
     chainIds: linked ? (plan.chains as JBChainId[]) : [chainId],
