@@ -1022,7 +1022,7 @@ export type OmnichainExtraHook = {
  * puts itself in as the data hook and refuses its own address there, so each
  * configuration carries the project's own hook (or none) instead.
  */
-export function omnichainQueueConfigs(
+function omnichainQueueConfigs(
   configs: readonly JBRulesetConfig[],
   extra: OmnichainExtraHook,
 ): JBRulesetConfig[] {
