@@ -110,6 +110,7 @@ import {
   projectIdFromReceipt,
   requireFinalizedLaunchFailure,
   routesAllFunds,
+  DEADLINE_LABELS,
   type ApprovalDeadline,
   type LaunchPlan,
   type SplitConfig,
@@ -256,17 +257,6 @@ type ChainStatus = LaunchChainStatus & {
  * once its event names the project.
  */
 const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
-
-/** Human labels for the fixed approval-deadline choices. */
-const APPROVAL_LABELS: Record<
-  Exclude<ApprovalDeadline, "none" | "custom">,
-  string
-> = {
-  "3hours": "3 hours",
-  "1day": "1 day",
-  "3days": "3 days",
-  "7days": "7 days",
-};
 
 const TAG_OPTIONS = [
   "AI",
@@ -2583,7 +2573,7 @@ export function CreateForm() {
               ? "The project owner, taking effect at once"
               : approvalDeadline === "custom"
                 ? "The project owner, through a custom approval contract"
-                : `The project owner, with ${APPROVAL_LABELS[approvalDeadline]} notice`,
+                : `The project owner, with ${DEADLINE_LABELS[approvalDeadline]} notice`,
     },
   ];
   const stageRows: TxConfirmRow[] = reviewStages.map((stage, i) => ({
@@ -3897,10 +3887,11 @@ export function CreateForm() {
                 disabled={busy}
                 className="input-well select-caret mt-2 min-h-[44px] !w-auto px-3.5 pr-9 text-sm disabled:opacity-60"
               >
-                <option value="3hours">3 hours</option>
-                <option value="1day">1 day</option>
-                <option value="3days">3 days</option>
-                <option value="7days">7 days</option>
+                {Object.entries(DEADLINE_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
                 <option value="none">No notice</option>
                 <option value="custom">Custom contract…</option>
               </select>
@@ -3960,8 +3951,8 @@ export function CreateForm() {
                 <p className="mt-2 text-xs leading-relaxed text-smoke-700">
                   Queued changes take effect{" "}
                   {
-                    APPROVAL_LABELS[
-                      approvalDeadline as keyof typeof APPROVAL_LABELS
+                    DEADLINE_LABELS[
+                      approvalDeadline as keyof typeof DEADLINE_LABELS
                     ]
                   }{" "}
                   after they&apos;re proposed.

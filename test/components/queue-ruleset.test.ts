@@ -246,6 +246,7 @@ describe('queueStageStarts', () => {
 
 describe('expandAfterwards', () => {
   const rules = {
+    notice: 'none' as const,
     duration: day,
     weight: '100',
     weightCutPct: '0',

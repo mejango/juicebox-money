@@ -240,6 +240,32 @@ const DEADLINE_SECONDS: Record<
   '7days': 7 * 86_400,
 }
 
+/** What each fixed notice is called. */
+export const DEADLINE_LABELS: Record<keyof typeof DEADLINE_SECONDS, string> = {
+  '3hours': '3 hours',
+  '1day': '1 day',
+  '3days': '3 days',
+  '7days': '7 days',
+}
+
+/** The approval hook a notice choice names on `chainId`: the zero address for
+ *  none, the given contract for custom, else that chain's deadline contract. */
+export function deadlineHookAddress(deadline: ApprovalDeadline, chainId: JBChainId, custom?: Address | null): Address {
+  if (deadline === 'none') return zeroAddress
+  if (deadline === 'custom') return custom ?? zeroAddress
+  return v6Address(DEADLINE_CONTRACT[deadline], chainId)
+}
+
+/** The notice choice a ruleset's approval hook is on `chainId`. */
+export function deadlineForHook(hook: Address | undefined, chainId: number): ApprovalDeadline {
+  if (!hook || hook === zeroAddress) return 'none'
+  for (const key of Object.keys(DEADLINE_SECONDS) as (keyof typeof DEADLINE_SECONDS)[]) {
+    const addr = v6Address(DEADLINE_CONTRACT[key], chainId as JBChainId)
+    if (addr && addr.toLowerCase() === hook.toLowerCase()) return key
+  }
+  return 'custom'
+}
+
 /** JBRulesets.deriveStartFrom: the start a ruleset queued on `base` gets —
  *  the first cycle boundary of the base at or after `mustStartAtOrAfter`. */
 export function deriveStartFrom(
@@ -280,12 +306,8 @@ export function deadlineSecondsForHook(hook: Address | undefined, chainId: numbe
 
 /** A known approval delay, or null when a custom hook's policy cannot be predicted. */
 export function knownDeadlineSeconds(hook: Address | undefined, chainId: number): number | null {
-  if (!hook || hook === zeroAddress) return 0
-  for (const key of Object.keys(DEADLINE_SECONDS) as (keyof typeof DEADLINE_SECONDS)[]) {
-    const addr = v6Address(DEADLINE_CONTRACT[key], chainId as JBChainId)
-    if (addr && addr.toLowerCase() === hook.toLowerCase()) return DEADLINE_SECONDS[key]
-  }
-  return null
+  const deadline = deadlineForHook(hook, chainId)
+  return deadline === 'none' ? 0 : deadline === 'custom' ? null : DEADLINE_SECONDS[deadline]
 }
 
 /** Time to prepare a staged launch before its automatic first start. */
@@ -956,12 +978,7 @@ function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean)
 
   // Each stage's hook protects its successor, including a final Terminate
   // stage. A later long-duration stage must not erase earlier notice periods.
-  const approvalHook =
-    plan.approvalDeadline === 'none'
-      ? zeroAddress
-      : plan.approvalDeadline === 'custom'
-        ? (plan.approvalCustomAddress ?? zeroAddress)
-        : v6Address(DEADLINE_CONTRACT[plan.approvalDeadline], chainId)
+  const approvalHook = deadlineHookAddress(plan.approvalDeadline, chainId, plan.approvalCustomAddress)
 
   const rulesetConfigurations = stages.map((stage) =>
     buildRulesetConfiguration({

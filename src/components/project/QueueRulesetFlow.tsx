@@ -87,7 +87,11 @@ import {
   FOREVER_SECONDS,
   deadlineSecondsForHook,
   deriveQueuedStartFrom,
+  DEADLINE_LABELS,
+  deadlineForHook,
+  deadlineHookAddress,
   knownDeadlineSeconds,
+  type ApprovalDeadline,
   orderedRulesetSchedule,
   SCHEDULE_PREPARATION_SECONDS,
   LAUNCH_START_DELAY_SECONDS,
@@ -142,6 +146,8 @@ type EditorState = {
   reservedPct: string;
   /** Cash-out tax, as a 0-100 percent string. */
   cashOutTaxPct: string;
+  /** The notice a later rule change must give; "custom" keeps the chain's own contract. */
+  notice: ApprovalDeadline;
   pausePay: boolean;
   pauseCreditTransfers: boolean;
   pause721Transfers: boolean;
@@ -683,7 +689,7 @@ async function readQueuePrefill(publicClient: PublicClient, chainId: JBChainId, 
       };
 }
 
-function rulesFromSource(source: PrefillSource): EditorState {
+function rulesFromSource(source: PrefillSource, chainId: number): EditorState {
   const { ruleset: r, metadata: m } = source.entry;
   const { access } = source;
   return {
@@ -692,6 +698,7 @@ function rulesFromSource(source: PrefillSource): EditorState {
       weightCutPct: billionthsToPct(r.weightCutPercent, 7),
       reservedPct: bpToPct(m.reservedPercent),
       cashOutTaxPct: bpToPct(m.cashOutTaxRate),
+      notice: deadlineForHook(r.approvalHook as Address, chainId),
       pausePay: m.pausePay,
       pauseCreditTransfers: m.pauseCreditTransfers,
       pause721Transfers: decode721RulesetMetadata(
@@ -979,6 +986,7 @@ export function buildQueueDestinationConfig(
     rules: EditorState,
     stageMustStart: number,
     configSource: PrefillSource,
+    chainId: JBChainId,
   ): JBRulesetConfig {
     const { terminal, reservedSplits, payoutSplits } = configSource;
     const { ruleset: r, metadata: m } = configSource.entry;
@@ -1030,9 +1038,8 @@ export function buildQueueDestinationConfig(
       duration: rules.duration,
       weight: parseUnits(rules.weight.trim() || "0", 18),
       weightCutPercent: pctTo1e9(rules.weightCutPct),
-      // Keep the selected source's approval hook so its future rule-change
-      // condition carries forward unchanged.
-      approvalHook: r.approvalHook,
+      // A contract this form does not know stays as it is on this chain.
+      approvalHook: deadlineHookAddress(rules.notice, chainId, r.approvalHook as Address),
       metadata: {
         ...m,
         reservedPercent: pctToBp(rules.reservedPct),
@@ -1166,7 +1173,7 @@ function RulesetEditorForm({
 
   const { access } = source;
 
-  const baseline = useMemo(() => rulesFromSource(source), [source]);
+  const baseline = useMemo(() => rulesFromSource(source, chainId), [source, chainId]);
 
   const projectChains = useMemo(() => Array.from(new Map([[chainId, projectId] as const, ...chains].map(([id, pid]) => [id, [id as JBChainId, pid] as const])).values()), [chainId, projectId, chains]);
   const [selectedChains, setSelectedChains] = useState<Set<number>>(() => new Set([chainId]));
@@ -1336,7 +1343,7 @@ function RulesetEditorForm({
         if (peer.option.requiresStartDate && (!commonMust || commonMust < Math.max(now + 60, Number(peer.entry.ruleset.start) + 1))) {
           throw new Error(`Choose a future start after the queued rules on ${chainName(destination.chainId)}.`);
         }
-        const peerStages = queueDestinationStages(baseline, stagesRules, rulesFromSource(peer), chainId, destination.chainId, afterMode);
+        const peerStages = queueDestinationStages(baseline, stagesRules, rulesFromSource(peer, destination.chainId), chainId, destination.chainId, afterMode);
         const peerParent = action === "replace"
           ? BigInt(peer.entry.ruleset.basedOnId) === BigInt(destination.data.current.ruleset.id) ? destination.data.current.ruleset : null
           : peer.entry.ruleset;
@@ -1351,7 +1358,7 @@ function RulesetEditorForm({
           parent: peerParent ? { start: Number(peerParent.start), duration: Number(peerParent.duration), noticeSeconds: parentNotice } : null,
           latestRulesetId: Number(destination.data.latest.ruleset.id),
           firstMust: commonMust,
-          stages: peerStages.map((rules, i) => ({ duration: rules.duration, noticeSeconds: knownDeadlineSeconds(peer.entry.ruleset.approvalHook as Address, destination.chainId), ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
+          stages: peerStages.map((rules, i) => ({ duration: rules.duration, noticeSeconds: knownDeadlineSeconds(deadlineHookAddress(rules.notice, destination.chainId, peer.entry.ruleset.approvalHook as Address), destination.chainId), ...(i >= 1 && i <= followers.length ? followers[i - 1] : {}) })),
           now,
           validUntil: replacementUntil,
         });
@@ -1360,10 +1367,10 @@ function RulesetEditorForm({
         }
         const validUntil = timing.validUntil;
         assertQueueExecutionWindow(validUntil, multi, now);
-        return { ...destination, source: peer, configs: peerStages.map((rules, i) => buildQueueDestinationConfig(rules, timing.musts[i], peer)), starts: timing.starts,
+        return { ...destination, source: peer, configs: peerStages.map((rules, i) => buildQueueDestinationConfig(rules, timing.musts[i], peer, destination.chainId)), starts: timing.starts,
           ...(validUntil !== undefined ? { validUntil } : {}),
           ...(peerStages.length > 1 && peerParent ? { expectedFirstParentId: BigInt(peerParent.id) } : {}),
-          changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
+          changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer, destination.chainId) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
         };
       });
       const configs = destinations.find(destination => destination.chainId === chainId)!.configs;
@@ -1538,6 +1545,7 @@ function RulesetEditorForm({
       ) : null}
 
       <RulesFields
+        customNotice={baseline.notice === "custom"}
         rules={state}
         onChange={patch}
         onLimit={setLimit}
@@ -1624,6 +1632,7 @@ function RulesetEditorForm({
             </div>
             <div className="mt-4">
               <RulesFields
+                customNotice={baseline.notice === "custom"}
                 rules={f.rules}
                 onChange={(p) =>
                   patchFollower(f.id, { rules: { ...f.rules, ...p } })
@@ -1783,7 +1792,10 @@ function RulesFields({
   onLimit,
   disabled,
   weightValid,
+  customNotice,
 }: {
+  /** The source rules name a notice contract this form does not know. */
+  customNotice: boolean;
   rules: EditorState;
   onChange: (patch: Partial<EditorState>) => void;
   onLimit: (i: number, patch: Partial<LimitDraft>) => void;
@@ -1797,6 +1809,28 @@ function RulesFields({
       <section>
         <span className="field-label">Cycle length</span>
         <CycleLength seconds={rules.duration} onChange={(seconds) => set("duration", seconds)} disabled={disabled} />
+      </section>
+
+      <section>
+        <label className="block">
+          <span className="field-label">Rule-change notice</span>
+          <p className="mt-1 text-xs text-smoke-700">
+            How far ahead a later rule change must be queued once these rules begin.
+          </p>
+          <select
+            value={rules.notice}
+            disabled={disabled}
+            onChange={(e) => set("notice", e.target.value as ApprovalDeadline)}
+            className="input-well select-caret mt-1.5 min-h-[40px] !w-auto max-w-full px-3 pr-9 text-sm"
+          >
+            {(["3hours", "1day", "3days", "7days", "none"] as const).map((value) => (
+              <option key={value} value={value}>
+                {noticeLabel(value)}
+              </option>
+            ))}
+            {customNotice ? <option value="custom">Custom contract (current)</option> : null}
+          </select>
+        </label>
       </section>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -2093,6 +2127,10 @@ export function multiCurrencyLimitBlock(
   return `${names} ${affected.length === 1 ? "has" : "have"} payout limits in more than one currency, which this editor can't preserve. Queueing here would drop them — use a tool that edits fund-access limits directly.`;
 }
 
+function noticeLabel(notice: ApprovalDeadline): string {
+  return notice === "none" ? "No notice" : notice === "custom" ? "Custom contract" : DEADLINE_LABELS[notice];
+}
+
 type Change = { label: string; from: string; to: string };
 
 /** Describe one editor state as label → human value, for diffing. */
@@ -2104,6 +2142,7 @@ function describe(s: EditorState): { label: string; value: string }[] {
         ? formatDuration(s.duration, { exact: true, zeroLabel: "No expiry" })
         : "Incomplete",
     },
+    { label: "Rule-change notice", value: noticeLabel(s.notice) },
     {
       label: "Issuance",
       value: `${Number(s.weight)} tokens per unit`,

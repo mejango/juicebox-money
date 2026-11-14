@@ -376,14 +376,14 @@ describe('the ruleset-queue editor\'s recheck', () => {
     const rules = { duration: 86400, weight: '200', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false,
       pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false,
       allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true,
-      allowAddAccountingContext: true, allowAddPriceFeed: true,
+      notice: 'custom', allowAddAccountingContext: true, allowAddPriceFeed: true,
       limits: [{ token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, currency: 1, mode: 'limited', amount: '2', surplusAllowances: [{ amount: 3n, currency: 2 }] }] }
     const destinations = CHAINS.map(chainId => {
       const src = source(chainId)
       const data = { current: src.entry, upcoming: null, latest: src.entry, latestApprovalStatus: 0,
         plan: { defaultAction: 'current' as const, options: [src.option], hasQueuedRuleset: false, hasMultipleQueuedRulesets: false }, sources: { current: src } }
       return { chainId, projectId: PROJECTS[chainId], controller: v6Address('JBController', chainId), authority: ALICE, source: src, data,
-        configs: [buildQueueDestinationConfig(rules as never, 2_000_000_000, src)], starts: [2_000_000_000], changes: [] }
+        configs: [buildQueueDestinationConfig(rules as never, 2_000_000_000, src, 1)], starts: [2_000_000_000], changes: [] }
     })
     return { account: ALICE, configs: destinations[0].configs, destinations, clearsPayouts: false } as unknown as Parameters<typeof reviewedQueueCalls>[0]
   }

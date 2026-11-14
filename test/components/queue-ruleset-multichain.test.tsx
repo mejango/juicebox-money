@@ -50,7 +50,7 @@ const HOOK = '0x2222222222222222222222222222222222222222' as Address
 const OTHER = '0x3333333333333333333333333333333333333333' as Address
 
 function rules(patch: Partial<Rules> = {}): Rules {
-  return { duration: 86400, weight: '100', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false, pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false, allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true, allowAddAccountingContext: true, allowAddPriceFeed: true,
+  return { notice: 'custom', duration: 86400, weight: '100', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false, pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false, allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true, allowAddAccountingContext: true, allowAddPriceFeed: true,
     limits: [{ token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, currency: 1, mode: 'limited', amount: '2', surplusAllowances: [{ amount: 3n, currency: 2 }] }], ...patch }
 }
 function source(chainId: JBChainId): Source {
@@ -63,7 +63,7 @@ function review(chainIds: readonly JBChainId[] = [1, 8453]): Review {
   const destinations = chainIds.map((chainId, index) => {
     const src = source(chainId)
     const data = { current: src.entry, upcoming: null, latest: src.entry, latestApprovalStatus: 0, plan: { defaultAction: 'current' as const, options: [src.option], hasQueuedRuleset: false, hasMultipleQueuedRulesets: false }, sources: { current: src } }
-    return { chainId, projectId: index ? 303 : 101, controller: v6Address('JBController', chainId), authority: ACCOUNT, source: src, data, configs: [buildQueueDestinationConfig(rules({ weight: '200' }), 2_000_000_000, src)], starts: [2_000_000_000], changes: [] }
+    return { chainId, projectId: index ? 303 : 101, controller: v6Address('JBController', chainId), authority: ACCOUNT, source: src, data, configs: [buildQueueDestinationConfig(rules({ weight: '200' }), 2_000_000_000, src, chainId)], starts: [2_000_000_000], changes: [] }
   })
   return { account: ACCOUNT, configs: destinations[0].configs, destinations, clearsPayouts: false }
 }
@@ -188,25 +188,38 @@ describe('multichain ruleset configuration', () => {
     const src = source(8453)
     src.entry.ruleset.approvalHook = OTHER
     src.entry.metadata.baseCurrency = 2
-    const config = buildQueueDestinationConfig(mapped, 123, src)
+    const config = buildQueueDestinationConfig(mapped, 123, src, 8453)
     expect(config.metadata).toMatchObject({ baseCurrency: 2, dataHook: HOOK, metadata: 128, useDataHookForPay: true, useDataHookForCashOut: true, scopeCashOutsToLocalBalances: true, reservedPercent: 0 })
     expect(config.approvalHook).toBe(OTHER)
     expect(config.splitGroups.map(group => group.splits)).toEqual([src.reservedSplits, src.payoutSplits[0].splits])
     expect(config.fundAccessLimitGroups[0]).toEqual({ terminal: src.terminal, token: NATIVE_TOKEN, payoutLimits: [{ amount: parseEther('2'), currency: 1 }], surplusAllowances: [{ amount: 3n, currency: 2 }] })
+  })
+  it('sends a chosen rule-change notice as each chain\'s own deadline contract, and leaves an unchanged one alone', () => {
+    const baseline = rules({ notice: '1day' })
+    // The peer runs a contract this form does not know; only a changed notice replaces it.
+    const peer = rules({ notice: 'custom' })
+    const src = source(8453)
+    src.entry.ruleset.approvalHook = OTHER
+    expect(buildQueueDestinationConfig(rulesForQueueDestination(baseline, { ...baseline, weight: '9' }, peer, 1, 8453), 100, src, 8453).approvalHook).toBe(OTHER)
+    const changed = rulesForQueueDestination(baseline, { ...baseline, notice: '3days' }, peer, 1, 8453)
+    expect(changed.notice).toBe('3days')
+    expect(buildQueueDestinationConfig(changed, 100, src, 8453).approvalHook).toBe(v6Address('JBDeadline3Days', 8453))
+    expect(buildQueueDestinationConfig({ ...baseline, notice: '3days' }, 100, source(1), 1).approvalHook).toBe(v6Address('JBDeadline3Days', 1))
+    expect(buildQueueDestinationConfig({ ...baseline, notice: 'none' }, 100, src, 8453).approvalHook).toBe(zeroAddress)
   })
   it('maps canonical USDC limit amounts to peer token/currency/decimals and keeps peer allowances', () => {
     const baseline = rules({ limits: [{ ...rules().limits[0], token: USDC_ADDRESSES[1], symbol: 'USDC', currency: Number(BigInt(USDC_ADDRESSES[1]) & 0xffffffffn), decimals: 6 }] })
     const stage = { ...baseline, limits: [{ ...baseline.limits[0], amount: '12.34' }] }
     const peer = rules({ limits: [{ ...baseline.limits[0], token: USDC_ADDRESSES[8453], surplusAllowances: [{ amount: 71n, currency: 2 }] }] })
     const mapped = rulesForQueueDestination(baseline, stage, peer, 1, 8453)
-    const config = buildQueueDestinationConfig(mapped, 100, source(8453))
+    const config = buildQueueDestinationConfig(mapped, 100, source(8453), 8453)
     expect(config.fundAccessLimitGroups[0]).toMatchObject({ token: USDC_ADDRESSES[8453], payoutLimits: [{ amount: 12_340_000n, currency: Number(BigInt(USDC_ADDRESSES[8453]) & 0xffffffffn) }], surplusAllowances: [{ amount: 71n, currency: 2 }] })
   })
   it('retains untouched custom-token and multi-currency peer limits, and refuses to map edited custom tokens', () => {
     const peer = rules({ limits: [{ ...rules().limits[0], token: OTHER, symbol: 'CUSTOM', unrepresentableLimits: [{ amount: 99n, currency: 2 }] }] })
     const baseline = rules(), stage = rules({ pausePay: true })
     const mapped = rulesForQueueDestination(baseline, stage, peer, 1, 8453)
-    expect(buildQueueDestinationConfig(mapped, 100, source(8453)).fundAccessLimitGroups[0].payoutLimits).toEqual([{ amount: parseEther('2'), currency: 1 }, { amount: 99n, currency: 2 }])
+    expect(buildQueueDestinationConfig(mapped, 100, source(8453), 8453).fundAccessLimitGroups[0].payoutLimits).toEqual([{ amount: parseEther('2'), currency: 1 }, { amount: 99n, currency: 2 }])
     const customStage = { ...peer, limits: [{ ...peer.limits[0], amount: '3' }] }
     expect(() => rulesForQueueDestination(peer, customStage, peer, 1, 8453)).toThrow('mapping cannot be verified')
   })
