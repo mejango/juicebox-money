@@ -38,16 +38,17 @@ export async function readActivityRows<T extends BsActivityEvent>(
 }
 
 /**
- * The loaded events a feed can draw while older ones are still unloaded. A page
- * can end in the middle of a transaction, so the oldest loaded transaction may
- * be missing events: a bridge send without the cash out inside it, a purchase
- * without its mint. It waits for the next page, where it arrives whole. With
- * nothing more to load, or when it is all that is loaded, it shows as it is.
+ * The loaded events a feed can draw while older ones are still unloaded. Pages
+ * are cut by time, so only the oldest loaded moment can be incomplete, and
+ * transactions sharing it can interleave: a bridge send without the cash out
+ * inside it, a purchase without its mint. Everything at that moment waits for
+ * the next page, where it arrives whole. With nothing more to load, or when
+ * that moment is all that is loaded, it shows as it is.
  */
 export function withoutPartialOldest<T extends BsActivityEvent>(events: T[], more: boolean): T[] {
   if (!more || !events.length) return events
-  const oldest = sameTxKey(events[events.length - 1])
-  const whole = events.filter(event => sameTxKey(event) !== oldest)
+  const oldest = events[events.length - 1].timestamp
+  const whole = events.filter(event => event.timestamp !== oldest)
   return whole.length ? whole : events
 }
 

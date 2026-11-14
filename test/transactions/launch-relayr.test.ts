@@ -1146,6 +1146,22 @@ describe('relayed launch execution and recovery', () => {
     expect(m.pay).toHaveBeenCalledTimes(1)
   })
 
+  it('signs again, at the same nonces, a launch that was signed for the launcher this site used before', async () => {
+    m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
+    await expect(run()).rejects.toThrow('cancelled')
+    // The site now launches through another contract; recovery still recognizes the bytes it sent before.
+    const FORMER = TARGET, NEXT = '0x9999999999999999999999999999999999999999' as const
+    const former = (args: { chainId: number; owner: string; salt: string }, creationFee: bigint) => ({ chainId: args.chainId, address: FORMER, abi: ABI, functionName: 'deploy', args: [args.owner, args.salt], value: creationFee })
+    m.build.mockImplementation(({ chainId, owner, salt, creationFee }) => ({ ...former({ chainId, owner, salt }, creationFee), address: NEXT }))
+    m.recovery.mockImplementation((args, transaction) => {
+      const sent = former(args, transaction.value)
+      if (sent.address.toLowerCase() !== transaction.to.toLowerCase() || encodeFunctionData(sent as Parameters<typeof encodeFunctionData>[0]).toLowerCase() !== transaction.input.toLowerCase()) throw new Error("not a launch this site sent")
+      return { to: transaction.to, data: transaction.input, value: transaction.value }
+    })
+    await expect(run()).rejects.toThrow('now go through another contract')
+    expect(loadLaunchSession()?.relayr).toMatchObject({ phase: 'signing', signed: [], retryNonces: { 1: '0', 10: '0' } })
+  })
+
   it('refreshes a published launch at the same nonces once one request expired unused while another can still run', async () => {
     m.funding.mockRejectedValueOnce(new Error('Funding selection cancelled'))
     await expect(run()).rejects.toThrow('cancelled')

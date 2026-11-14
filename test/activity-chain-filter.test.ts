@@ -23,17 +23,23 @@ describe('the activity chain filter', () => {
 })
 
 describe('a transaction cut by the page boundary', () => {
-  const tx = (id: string, txHash: string) => ({ id, chainId: 1, projectId: 7, txHash }) as BsActivityEvent
+  const tx = (id: string, txHash: string, timestamp: number) => ({ id, chainId: 1, projectId: 7, txHash, timestamp }) as BsActivityEvent
   // Newest first: the page ends on the bridge send, with the cash out inside it still unloaded.
-  const page = [tx('pay', '0xa'), tx('mint', '0xa'), tx('send', '0xb')]
+  const page = [tx('pay', '0xa', 30), tx('mint', '0xa', 30), tx('send', '0xb', 20)]
 
   it('waits for the next page while older events are unloaded', () => {
     expect(withoutPartialOldest(page, true).map(event => event.id)).toEqual(['pay', 'mint'])
   })
 
+  it('holds back every transaction at the oldest loaded moment: they interleave, so any of them may be cut', () => {
+    // 0xb's cash out and 0xc's payment share a block; 0xb's bridge send is still on the next page.
+    const interleaved = [tx('pay', '0xa', 30), tx('cash out', '0xb', 20), tx('pay 2', '0xc', 20)]
+    expect(withoutPartialOldest(interleaved, true).map(event => event.id)).toEqual(['pay'])
+  })
+
   it('shows as it is once everything is loaded, or when it is all there is', () => {
     expect(withoutPartialOldest(page, false)).toBe(page)
-    const only = [tx('send', '0xb'), tx('cash out', '0xb')]
+    const only = [tx('send', '0xb', 20), tx('cash out', '0xb', 20)]
     expect(withoutPartialOldest(only, true)).toBe(only)
   })
 })
