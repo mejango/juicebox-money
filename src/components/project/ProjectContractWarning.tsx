@@ -23,7 +23,7 @@ export function ProjectContractWarning({
     queryFn: async () => {
       // Loaded on demand: the check's readers stay out of the page's first load.
       const [{ auditProjectContracts }, { clientFor }] = await Promise.all([
-        import('@/lib/project-contract-audit'),
+        import('@bananapus/nana-sdk-core/review/contract-audit'),
         import('@/lib/authority'),
       ])
       return Promise.all(

@@ -237,18 +237,4 @@ export function replaceShopMetadataMedia(original: Record<string, unknown>, uri:
   return next
 }
 
-export const SHOP_ITEM_NAME_MAX = 200
-export const SHOP_ITEM_DESCRIPTION_MAX = 20_000
-
-/** Rename or redescribe an item, keeping every other field of its original JSON. */
-export function editShopMetadataDetails(original: Record<string, unknown>, name: string, description: string): Record<string, unknown> {
-  const next: Record<string, unknown> & { name: string; description: string } = { ...original, name: name.trim(), description: description.trim() }
-  // Readers prefer these older keys where a file has them.
-  if ('productName' in original) next.productName = next.name
-  if ('productDescription' in original) next.productDescription = next.description
-  if (!next.name) throw new Error('Name the item.')
-  if (next.name.length > SHOP_ITEM_NAME_MAX) throw new Error(`Keep the name within ${SHOP_ITEM_NAME_MAX} characters.`)
-  if (next.description.length > SHOP_ITEM_DESCRIPTION_MAX) throw new Error(`Keep the description within ${SHOP_ITEM_DESCRIPTION_MAX.toLocaleString('en-US')} characters.`)
-  if (Object.keys(next).every(key => next[key] === (original[key] ?? ''))) throw new Error('Change the name or the description first.')
-  return next
-}
+export { editShopMetadataDetails, SHOP_ITEM_DESCRIPTION_MAX, SHOP_ITEM_NAME_MAX } from '@bananapus/nana-sdk-core/v6'

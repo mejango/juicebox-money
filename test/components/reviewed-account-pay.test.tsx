@@ -11,6 +11,7 @@
  * the RPC and the app review are fakes.
  */
 
+import { knownPaymentRouterEntries } from '@/lib/payment-router-entry'
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { encodeAbiParameters, encodeFunctionData, erc20Abi, zeroAddress, type Address } from 'viem'
@@ -61,6 +62,8 @@ const m = vi.hoisted(() => ({
   nativePrepared: null as unknown,
   /** The SDK's prepareUserPay, run by the real query. */
   prepareUserPay: (async () => PREPARED_DEFAULT) as (...args: unknown[]) => Promise<unknown>,
+  /** The SDK's best-route rule, for a project that lists more than one entry for a token. */
+  prepareBestUserPay: (async () => null) as (...args: unknown[]) => Promise<unknown>,
   /** Drive the real shop cart, not the empty stand-in. */
   realCart: false,
   /** Offer buying ETH with dollars in the token select. */
@@ -139,6 +142,7 @@ vi.mock('@bananapus/nana-sdk-core/v6', async original => {
   const actual = await original<typeof import('@bananapus/nana-sdk-core/v6')>()
   return { ...actual, getProjectNftInventory: vi.fn(async () => null),
     prepareUserPay: (...args: unknown[]) => m.prepareUserPay(...args),
+    prepareBestUserPay: (...args: unknown[]) => m.prepareBestUserPay(...args),
     prepareDefifaPay: (...args: Parameters<typeof actual.prepareDefifaPay>) => m.nativePrepared ? Promise.resolve(m.nativePrepared) : actual.prepareDefifaPay(...args),
   }
 })
@@ -233,6 +237,7 @@ beforeEach(() => {
   m.realNativeRecovery = false
   m.nativePrepared = null
   m.prepareUserPay = vi.fn(async () => PREPARED)
+  m.prepareBestUserPay = vi.fn(async () => null)
   m.realCart = false
   m.onRamp = false
   m.resolveSuckers = async () => []
@@ -540,6 +545,33 @@ describe('a form that changes while its payment is prepared', () => {
     expect(request.address).toBe(TERMINAL_2)
     expect(request.args[4]).toBe(5n)
     expect(request.args[6]).toBe(OTHER_METADATA)
+  })
+
+  it('quotes every listed entry for the token and pays the one the SDK picks', async () => {
+    const [router] = knownPaymentRouterEntries(1)
+    m.prepareBestUserPay = vi.fn(async () => ({ ...PREPARED, metadata: OTHER_METADATA, minReturnedTokens: 5n, terminal: router, type: 'router' }))
+    m.queries.paySurface = surfaceWith({ terminals: [TERMINAL, router] })
+    await renderPanel()
+    await typeAmount('1')
+    await waitUntil(() => button('Pay', false)?.disabled === false)
+    expect(m.prepareUserPay).not.toHaveBeenCalled()
+    expect((vi.mocked(m.prepareBestUserPay).mock.calls[0] as unknown[])[1]).toMatchObject({
+      token: NATIVE, amount: 10n ** 18n,
+      candidates: [{ terminal: TERMINAL, type: 'multi' }, { terminal: router, type: 'router' }],
+    })
+    const request = await confirmAndSend()
+    expect(request.address).toBe(router)
+    expect(request.args[4]).toBe(5n)
+  })
+
+  it('refuses to pay when no listed entry can take the payment', async () => {
+    const [router] = knownPaymentRouterEntries(1)
+    m.queries.paySurface = surfaceWith({ terminals: [TERMINAL, router] })
+    await renderPanel()
+    await typeAmount('1')
+    await waitUntil(() => host.textContent?.includes('Try again') ?? false)
+    expect(button('Pay').disabled).toBe(true)
+    expect(wallet.writeContract).not.toHaveBeenCalled()
   })
 
   it('blocks a cached preparation whose refresh fails, and pays the retried one', async () => {
