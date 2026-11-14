@@ -129,4 +129,8 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Agent-system impact:** None.
 
 ### Review
-REVIEW_B5
+- Activity: a bridge send (`prepare` on a sucker) reads "sending X TOKEN to Chain" by the account that called the sucker; the cash out the sucker makes inside it is dropped in the one grouping function, so the project, account and homepage feeds agree. A bridge claim names the account inside a 32-byte beneficiary.
+- Project page: `auditProjectContracts` checks the controller, terminals, the terminal a known router registry forwards to, the rule-change hook, the data hook, the omnichain deployer's extra hook and the buyback hook for payments and cash outs. A failed read says the check did not finish instead of showing a clean project. Run live against 17 Base projects: only project 20's extra data hook was named.
+- The check's readers and RPC client load on demand. Budgets raised with measured numbers: `/[urn]` 543 to 544 KiB, all scripts 2741 to 2744 KiB.
+- Verification: full `npm run check` green (3687 unit tests, 90 browser tests). Codex `gpt-6.1-sol` six passes: seven findings fixed, one set aside (a send and its inner cash out split across a 250 event page, self-correcting on Load more), pass 6 CLEAN.
+- Not done here: Croptop's deployer is a constant in the audit until the SDK table has it; revnet.money has no such card yet. New copy for jango: "Bridged out", "Bridge sends", "sending X to Chain", the two contract card titles and their sentences, "Router terminal".
