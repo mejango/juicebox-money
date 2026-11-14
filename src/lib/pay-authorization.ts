@@ -46,7 +46,7 @@ export async function signPayAuthorization(
     reviewedSendDeps,
   )
   assertWallet()
-  return { authorization, signature }
+  return { owner: account, authorization, signature }
 }
 
 /** Pay metadata carrying the signed allowance, keyed to the entry that spends it. */

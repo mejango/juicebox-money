@@ -1918,7 +1918,7 @@ describe('an ERC-20 payment authorized through Permit2', () => {
   beforeEach(() => {
     m.token = 'erc20'
     m.prepareUserPay = vi.fn(async () => ({ ...PREPARED, metadata: '0x' }))
-    permit.sign = vi.fn(async () => ({ authorization, signature: SIGNATURE }))
+    permit.sign = vi.fn(async () => ({ owner: ALICE, authorization, signature: SIGNATURE }))
   })
 
   it('signs first, approves Permit2 once, then pays with the signed allowance in its metadata', async () => {

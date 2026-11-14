@@ -1505,7 +1505,7 @@ export function PayPanel({
           if (current?.kind !== "permit2") throw new ReviewLineError(PAYMENT_CHANGED);
           if (!current.needsTokenApproval) tokenApproval = undefined;
           const kept = signedAuthorization.current;
-          let signed = kept?.reviewed === reviewed && permit2PayAuthorizationReusable(kept.signed, current.authorization)
+          let signed = kept?.reviewed === reviewed && permit2PayAuthorizationReusable(kept.signed, current.authorization, account)
             ? kept.signed
             : null;
           if (!signed) {
