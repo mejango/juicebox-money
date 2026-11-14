@@ -97,6 +97,7 @@ const budgets = {
   // Token address prediction when extending a token to a new chain: measured 2716.4 KiB, rounded up only.
   // Permit2 pay authorization, the SDK's project hook and router resolvers, revnet fee netting: measured 2723.1 KiB, rounded up only.
   // Configured Safe proxy and monthly-quota handling: measured2724.3 KiB, rounded up only.
+  // Activity chain filter, the empty terminal list rule and ordered direct sends: CI measured 2724.0 KiB and over, rounded up only.
   allScripts: 2725 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
