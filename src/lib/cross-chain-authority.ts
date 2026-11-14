@@ -10,7 +10,7 @@ import {
 import {
   fetchSafeCreation,
   type SafeServiceOptions,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 import type { Address } from 'viem'
 import { chainName } from '@/lib/urn'
 

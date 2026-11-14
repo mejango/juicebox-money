@@ -179,7 +179,7 @@ describe('Safe queue and the transaction service', () => {
       isExecuted: false,
     }
     mocks.fetch.mockImplementation(async (input: string) =>
-      String(input).startsWith(`https://api.safe.global/tx-service/sep/api/v1/safes/${SAFE}/multisig-transactions/`)
+      String(input).startsWith(`https://juicebox.center/v1/safe/sep/api/v1/safes/${SAFE}/multisig-transactions/`)
         ? new Response(JSON.stringify({ results: [row], next: null }), { status: 200 })
         : new Response('{}', { status: 404 }),
     )
@@ -222,7 +222,7 @@ describe("a queued handle claim on Ethereum", () => {
       isExecuted: false,
     }
     mocks.fetch.mockImplementation(async (input: string) =>
-      String(input).startsWith(`https://api.safe.global/tx-service/eth/api/v1/safes/${SAFE}/multisig-transactions/`)
+      String(input).startsWith(`https://juicebox.center/v1/safe/eth/api/v1/safes/${SAFE}/multisig-transactions/`)
         ? new Response(JSON.stringify({ results: [row], next: null }), { status: 200 })
         : new Response('{}', { status: 404 }),
     )

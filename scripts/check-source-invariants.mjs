@@ -21,6 +21,9 @@ function sourceFiles(root) {
 
 for (const path of sourceFiles("src")) {
   const source = read(path);
+  if (path !== "src/lib/safe-service-config.ts" && source.includes("@bananapus/nana-sdk-core/safe-service")) {
+    failures.push(`${path}: Safe requests must use the configured local Safe service module`);
+  }
   failures.push(...appHoldLogic(path, source));
 
   if (/from\s+["']viem\/chains["']/.test(source)) {
@@ -64,9 +67,13 @@ if (!rpcTransport.includes("createPacedJBCenterLimiter()") ||
   failures.push("Browser RPC pacing must use the shared SDK provider limiter before timeout creation");
 }
 
+if (!/import \{ heldCall,[^}]*\} from ['"]@\/lib\/safe-connector['"]/.test(read("src/lib/write-holds.ts"))) {
+  failures.push("Saved Safe recovery must use the configured Safe connector before SDK review calls");
+}
+
 const safeConnector = read("src/lib/safe-connector.ts");
 for (const name of ["readSafeAppExecution", "requireSafeProposalSuccess", "SAFE_PROPOSAL_UNCONFIRMED", "heldCall", "findPendingSafeAppProposal", "lookAtSafeProposal", "watchSafeProposal", "atOnceExecution", "reportedSafeExecution"]) {
-  if (!new RegExp(`export \\{[^}]*\\b${name}\\b[^}]*\\} from ['"]@bananapus/nana-sdk-core/safe-service['"]`, "s").test(safeConnector)) {
+  if (!new RegExp(`export \\{[^}]*\\b${name}\\b[^}]*\\} from ['"]@/lib/safe-service-config['"]`, "s").test(safeConnector)) {
     failures.push(`Safe connector must re-export SDK ${name}`);
   }
 }

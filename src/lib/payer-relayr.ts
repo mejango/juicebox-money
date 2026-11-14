@@ -13,7 +13,7 @@ import { recoverSaved, requireHeldSettlement, SavedAttemptShownError, strictReti
 import { loadReviewEngine } from '@/lib/preload-review'
 import { reviewedSendDeps } from '@/lib/reviewed-send'
 import { isSafeConnection, SAFE_NONCE_GUIDANCE, waitForSafeExecutionHash } from '@/lib/safe-connector'
-import { SAFE_EXEC_ABI, safeExecutionResult } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI, safeExecutionResult } from '@/lib/safe-service-config'
 import { isSafeExecutionSuccessLog } from '@/lib/safe'
 import { withRelayrScopeLock } from '@/lib/relayr'
 import { fence, type TabLocks } from '@/lib/tab-locks'

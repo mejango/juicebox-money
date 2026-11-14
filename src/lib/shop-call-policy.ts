@@ -1,6 +1,6 @@
 import { erc2771ForwarderAbi, jb721TiersHookAbi, jb721TiersHookProjectDeployerAbi, jbOmnichainDeployerAbi, revDeployerAbi } from '@bananapus/nana-sdk-core'
 import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
-import { SAFE_EXEC_ABI } from '@bananapus/nana-sdk-core/safe-service'
+import { SAFE_EXEC_ABI } from '@/lib/safe-service-config'
 import { ReviewLineError } from '@bananapus/nana-sdk-core/review'
 import { decodeFunctionData, type Abi, type Address, type Hex } from 'viem'
 import { reservedSupplyOk } from '@/lib/shop-reserves'

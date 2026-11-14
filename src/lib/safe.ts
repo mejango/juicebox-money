@@ -60,7 +60,7 @@ import {
   type SafeConfirmation,
   type SafeQueuedTransaction,
   type SafeServiceOptions,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 import {
   readMatchingAuthorityIdentities,
   UnprovenSafeError,

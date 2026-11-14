@@ -25,3 +25,53 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - **Verification:** A unit test per rule, `npm run check` with budgets and browser tests per PR, CI green before asking to merge.
 - **Resource budget:** One worktree, edits in the main session, one full gate per PR.
 
+
+
+## 2026-11-13: Trusted-site Safe API through Center
+
+## Plan refinement
+- **Objective:** Center keeps SAFE_API_KEY server-side and proxies Safe Transaction Service requests from its existing trusted sites; revnet and juicebox.money use the proxy, eliminating browser-key setup. Success includes authenticated upstream calls, exact response/status propagation and no key exposure.
+- **System fit:** Existing Center /v1 origin policy and Store budgets govern the new narrow proxy; SDK owns Safe endpoint selection and retry behavior; both client roots opt into their existing Center environment. Signing, Safe hash verification and execution stay in existing owners. Deployment/key configuration are separate from tested local code; user supplies key via server environment.
+- **Reuse and simplicity:** Reuse fixed Safe chain prefixes and existing origin/rate-limit/body/fetch patterns. Add a narrow SDK configuration point rather than app-local Safe transports or persisted localStorage mutations. No arbitrary target URLs, no new dependency, no server-side transaction signing.
+- **Evidence and unknowns:** Current origin/main Center f6b033b and SDK641e385 are newer than dirty local checkouts; use isolated worktrees. Installed SDK requests directly and retries monthly429. Safe API docs confirm bearer auth and account quotas. Center trusts exact configured origins; origin checks are browser policy, not cryptographic caller authentication, so shared/per-client limits remain necessary.
+- **Verification:** Proxy tests cover allowed/denied origins, endpoint/method/path validation, credential forwarding and non-disclosure, redirects, upstream errors, size/time limits and budgets. SDK tests cover opt-in routing, preserved default/custom routes and monthly-quota no-retry. Run relevant checks and both full client suites before any proposed push; no publishing or main pushes without approval.
+- **Resource budget:** Delegate Center implementation and SDK implementation separately after this plan gate; parent integrates paired clients and reviews boundaries. Reuse dependencies only with matching lockfiles; serialize heavy gates. Replan on missing auth/hosting capability rather than broadening proxy access or exposing the key.
+
+- [ ] Implement and test bounded Center Safe proxy.
+- [ ] Implement SDK opt-in routing and quota retry handling.
+- [ ] Integrate revnet and juicebox.money together, verify with candidate SDK.
+- [ ] Review changes and document exact deployment/key activation steps and outstanding authorization.
+
+
+## Plan refinement
+- **Objective:** Route every Safe service call through Center while preserving lazy loading on pages without Safe features.
+- **System fit:** SDK remains transport owner; one local configured re-export module supplies the existing SDK API to browser and server callers, before requests execute.
+- **Reuse and simplicity:** Reuse safe-service-config and replace direct SDK imports with that owner; remove eager root bootstrap and duplicate authority bootstrap. No new transport or asynchronous initialization.
+- **Evidence and unknowns:** Full revnet candidate tests3168 passed but eager root config added approximately20KiB to static route bundles. Actual rebuilt route budgets will determine success.
+- **Verification:** Enforce configured import boundary in source checks; retain browser/server first-read routing tests; rerun full consumer checks and measure budgets without blanket increases.
+- **Resource budget:** Import rewrites only, bounded frontend gates; preserve all SDK candidate code and other bot work.
+
+
+## Plan refinement
+- **Objective:** Integrate the reviewed Safe service façade with merged JBM PR181 and release SDK6.7.0 after all consumer checks pass.
+- **System fit:** Preserve latest main SDK6.6.0 behavior and the local configured transport owner; signing, recovery and authority remain in SDK. User authorized merge; coordinate external mutations with parent.
+- **Reuse and simplicity:** Commit current import/configuration work then merge origin/main normally; preserve exact non-SDK locked dependencies and existing paired-client tests.
+- **Evidence and unknowns:** Parent reports main67e4a881 and candidate SHA25691b1f6405530cf81760b28622f572f1b9ced87ea306577078c07cf388087eb41; verify fetched commit and installed graph. Candidate package metadata6.5.0 is temporary verification only, never committed as release6.7.0.
+- **Verification:** Source invariants and first-read tests, full npm check in the granted exclusive slot, then published dependency and lock verification before PR/merge.
+- **Resource budget:** JBM worktree only; hold heavy checks for parent slot; do not disturb other bot branches or non-SDK versions.
+- [x] Commit façade work and merge latest main.
+- [x] Verify candidate on merged main, preserving locked dependency graph.
+- [ ] Update to published SDK6.7.0 and coordinate reviewed PR/merge.
+
+### JBM integration verification (2026-11-14)
+- Façade commit69f8c5f4, normal merge4d3199f5 includes main67e4a881 (SDK6.6.0 and paired-client corrections).
+- Candidate tarball SHA25691b1f6405530cf81760b28622f572f1b9ced87ea306577078c07cf388087eb41 installed with npm12.0.1 on Node26.13.1. All non-SDK lock records and1110 installed non-SDK package manifests unchanged. Temporary file dependency satisfied dependency validation, then original tracked6.6.0 package/lock restored for example-version fixtures; no fabricated release metadata.
+- Dependency, dead-code, production-audit, container, lint, type, source-invariant, protocol, live-schema, transaction and wallet gates pass. First coverage attempt passed3622 tests and failed only6 example-pin fixtures due to the temporary file dependency; rerun with restored actual6.6.0 manifest passed3628/3628 tests in298 files and all coverage thresholds. Candidate code remained installed throughout. Browser build passed. Budget checks passed after minimal rounded project543KiB and aggregate2725KiB ceilings (measured542.0KiB and2724.3KiB); static-route ceilings and lazy-wallet checks unchanged. Browser tests90/90 passed on isolated appport3198 and original build fixture4399; first browser startup was blocked by another process already occupying3100, with no assertions run.
+
+### Published SDK and final integration (2026-11-14)
+- Normal merge70160383 includes mainf83dc5f3 (PR182 activity filtering and explicit empty-terminal acknowledgement) without conflicts. Earlier full candidate evidence remains bound to67e4a881; final combined head will run the full remote CI.
+- Installed actual registry SDK6.7.0 after successful automated release43557177856 and metadata propagation. All1939 package files match the checked91b1f640 candidate except package.json; no extra/missing files. All1110 non-SDK installed manifests and lock entries unchanged. Evidence:/tmp/jbm-sdk670-equivalence.json.
+- Explicit Node26.13.1/npm12.0.1 final installation/dependency check,84 focused tests across7 files (routing, documentation pins, PR182 behavior, queue/account integration), types and source invariants pass. Prior full tests/build/browser used Node26.13.1 with npm-run launcher11.20.0 due PATH ordering; candidate install used explicitnpm12. Final remote CI enforces the declared toolchain. No fullsuite rerun solely for launcher choice.
+- Examples now pin6.7.0 while retaining the original6.6.0 live-read/simulation attribution. Awaiting exact-head remote CI and paired-client merge coordination.
+
+- Final CI on41dd4518 passed Test/build11m12s and OCI3m23s. MainPR183 then introduced ordered direct owner sends and a budget-comment conflict. Normal mergef917cace preserves both behaviors and the configured authority import;64 authority/routing tests, types and source checks pass. Fresh combined browserbuild passes, with aggregate2725.1KiB requiring only rounded2726 cap; project542.2KiB stays below543 and all static-route caps stay unchanged. Final corrected head receives new full remote CI.

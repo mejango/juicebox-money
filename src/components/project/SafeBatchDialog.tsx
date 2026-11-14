@@ -25,7 +25,7 @@ import {
 } from '@/lib/safe-batch-submit'
 import { readProposalNonces } from '@/lib/safe'
 import { safeNonceLabel } from '@/lib/safe-nonce-choice'
-import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
+import { hasSafeService } from '@/lib/safe-service-config'
 import { chainName } from '@/lib/urn'
 
 /**

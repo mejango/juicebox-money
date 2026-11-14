@@ -18,7 +18,7 @@ import {
   safeTransactionUrl,
   usableSafeConfirmations,
   type SafeQueuedTransaction,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 import { composeBatch, mirrorBatch, upsertStep, type BatchCall, type BatchStep } from '@/lib/safe-batch'
 import { presetInfraAvailable, resolveMirrorValues } from '@/lib/safe-batch-presets'
 import { chainName } from '@/lib/urn'

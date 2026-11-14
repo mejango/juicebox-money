@@ -7,7 +7,7 @@ import { getAccount, getPublicClient } from 'wagmi/actions'
 import {
   isSafeWalletPeer,
   waitForSafeExecutionHash as waitForExecution,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 import {
   getWalletConnectPeerUrl,
   getWatchedConfig,
@@ -29,7 +29,7 @@ export {
   swapDeadline,
   watchSafeProposal,
   type SafeAppCall,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 
 /**
  * Whether the connected wallet proposes to a Safe rather than sending: the
