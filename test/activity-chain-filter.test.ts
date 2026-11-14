@@ -37,9 +37,12 @@ describe('a transaction cut by the page boundary', () => {
     expect(withoutPartialOldest(interleaved, true).map(event => event.id)).toEqual(['pay'])
   })
 
-  it('shows as it is once everything is loaded, or when it is all there is', () => {
+  it('shows as it is once everything is loaded', () => {
     expect(withoutPartialOldest(page, false)).toBe(page)
+  })
+
+  it('shows nothing while a whole page shares one moment and more remain: any of it may be cut', () => {
     const only = [tx('send', '0xb', 20), tx('cash out', '0xb', 20)]
-    expect(withoutPartialOldest(only, true)).toBe(only)
+    expect(withoutPartialOldest(only, true)).toEqual([])
   })
 })
