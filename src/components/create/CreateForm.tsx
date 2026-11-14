@@ -130,6 +130,7 @@ import {
   stageDurationSeconds,
   revnetCutFrequency,
   stageOk,
+  itemsCanCashOut,
   stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
@@ -770,9 +771,7 @@ export function CreateForm() {
   const launchStep = wizardSteps.indexOf("Launch");
   const rulesFlavor = flavor === "revnet" ? "revnet" : "project";
   // Items cash out under a stage's cash out rules, in place of tokens: with cash outs off they would redeem for nothing.
-  const itemsCanCashOut =
-    !isSimpleProject &&
-    stages.some((s) => s.cashOuts && !routesAllFunds(s.payouts, stageRoutesEverything(s, multiToken)));
+  const itemsCashOut = itemsCanCashOut(flavor, stages, multiToken);
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0;
@@ -1581,7 +1580,7 @@ export function CreateForm() {
       noNewTiersWithVotes: storeConfig.noNewTiersWithVotes,
       noNewTiersWithOwnerMinting: storeConfig.noNewTiersWithOwnerMinting,
       issueTokensForSplits: storeConfig.issueTokensForSplits,
-      itemsRedeem: storeConfig.itemsRedeem && itemsCanCashOut,
+      itemsRedeem: storeConfig.itemsRedeem && itemsCashOut,
       operatorCanAdjustTiers: storeConfig.operatorCanAdjustTiers,
       operatorCanUpdateMetadata: storeConfig.operatorCanUpdateMetadata,
       operatorCanMint: storeConfig.operatorCanMint,
@@ -2561,7 +2560,7 @@ export function CreateForm() {
     },
     {
       label: "Can move funds",
-      value: launchFundsFact(reviewStages, rulesFlavor, authorityEnabled, multiToken, storeConfig.itemsRedeem),
+      value: launchFundsFact(reviewStages, rulesFlavor, authorityEnabled, multiToken, storeConfig.itemsRedeem && itemsCashOut),
     },
     {
       label: "Can change rules",
@@ -4159,7 +4158,7 @@ export function CreateForm() {
                     blurb={blurb}
                   />
                 ))}
-                {!itemsCanCashOut ? (
+                {flavor === "revnet" ? null : !itemsCashOut ? (
                   <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
                     Items can cash out where the rules allow cash outs. Turn
                     cash outs on in the rules to offer this.

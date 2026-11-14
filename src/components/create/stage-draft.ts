@@ -398,6 +398,26 @@ export function stageRoutesEverything(
     : [stage.routedMode === "all"];
 }
 
+/** Does any stage leave funds holders can cash out: cash outs on, and not everything routed to payouts? */
+export function anyStageCashesOut(stages: DraftStage[], multiToken: boolean): boolean {
+  return stages.some(
+    (stage) => stage.cashOuts && !routesAllFunds(stage.payouts, stageRoutesEverything(stage, multiToken)),
+  );
+}
+
+/**
+ * Can shop items cash out in place of tokens? Only on a project with rules: a
+ * simple project has no cash outs, and a revnet's contracts always cash out its
+ * tokens. With cash outs off in every stage an item would redeem for nothing.
+ */
+export function itemsCanCashOut(
+  flavor: "simple" | "project" | "revnet",
+  stages: DraftStage[],
+  multiToken: boolean,
+): boolean {
+  return flavor === "project" && anyStageCashesOut(stages, multiToken);
+}
+
 /**
  * A payout token's switch between percent and fixed amounts. One field holds both
  * units, so its numbers are cleared: 20% must never become 20 ETH.
@@ -581,9 +601,7 @@ export function launchFundsFact(
   const routed = stages.flatMap(routedTokens);
   const paysRecipients = routed.some(([rows]) => rows.length > 0);
   const paysOwner = routed.some(([rows, mode]) => mode === "all" && splitsTotal(rows, "percent") < 100);
-  const holders = stages.some(
-    (stage) => stage.cashOuts && !routesAllFunds(stage.payouts, stageRoutesEverything(stage, multiToken)),
-  );
+  const holders = anyStageCashesOut(stages, multiToken);
   const who = [
     ...(hasOwner && (paysOwner || stages.some((stage) => stageWithdrawals(stage, multiToken))) ? ["the project owner"] : []),
     ...(paysRecipients ? ["payout recipients"] : []),

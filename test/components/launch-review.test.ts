@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   encodedAutoIssuances,
+  itemsCanCashOut,
   launchFundsFact,
   newDraftStage,
   newSimpleProjectDraftStage,
@@ -113,5 +114,20 @@ describe('launch review of a revnet stage', () => {
     expect(stated.find(part => part.startsWith('Mints'))).toMatch(/^Mints 1,000 tokens to 0x1111…1111 on /)
     expect(encodedAutoIssuances(stage, [1, 10])).toEqual([{ count: '1000', beneficiary: ALICE, chainId: 10 }])
     expect(parts({ ...stage, scheduleOn: false, schedule: '' }, true, false, 'revnet')[0]).toBe('Starts about 10 minutes after launch')
+  })
+})
+
+describe('whether shop items can cash out in place of tokens', () => {
+  const on = { ...newDraftStage(true), cashOuts: true }
+  const off = { ...newDraftStage(true), cashOuts: false }
+
+  it('is offered on a project with a stage that cashes out', () => {
+    expect(itemsCanCashOut('project', [off, on], false)).toBe(true)
+    expect(itemsCanCashOut('project', [off], false)).toBe(false)
+  })
+
+  it('is never offered on a revnet, whose contracts always cash out its tokens, or a simple project', () => {
+    expect(itemsCanCashOut('revnet', [on], false)).toBe(false)
+    expect(itemsCanCashOut('simple', [on], false)).toBe(false)
   })
 })
