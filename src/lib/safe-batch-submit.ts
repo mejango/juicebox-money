@@ -8,7 +8,7 @@ import { getAddress, type Address, type Hex } from 'viem'
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { wagmiConfig } from '@/providers/Providers'
 import { clientFor, runAuthorityCalls, type AuthorityCall } from '@/lib/authority'
-import { hasSafeService } from '@bananapus/nana-sdk-core/safe-service'
+import { hasSafeService } from '@/lib/safe-service-config'
 import { runSafeCalls, type SafeCallResult } from '@/lib/safe'
 import {
   encodeMultiSend,

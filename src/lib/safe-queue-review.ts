@@ -25,7 +25,7 @@ import {
 import { truncateAddress } from "@/lib/format";
 import { rolloutContractName } from "@/lib/protocol-rollout";
 import { routerGatewayAbi } from "@/lib/router-gateway-abi";
-import type { SafeQueuedTransaction } from "@bananapus/nana-sdk-core/safe-service";
+import type { SafeQueuedTransaction } from "@/lib/safe-service-config";
 
 /**
  * Selectors are derived from the SAME SDK ABIs the send path encodes with,

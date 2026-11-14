@@ -10,7 +10,7 @@ import {
   canonicalSafeTxHash,
   safeTransactionMatchesCall,
   type SafeQueuedTransaction,
-} from '@bananapus/nana-sdk-core/safe-service'
+} from '@/lib/safe-service-config'
 import { isSafeExecutionLog, SAFE_SERVICE } from '@/lib/safe'
 import {
   isSafeConnection,

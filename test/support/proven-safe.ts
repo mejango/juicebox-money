@@ -55,5 +55,5 @@ export function provenSafeChain(options: Partial<SafeChainOptions> = {}) {
 
 /** The creation URL of PROVEN_SAFE on a chain's Safe service. */
 export function creationUrl(prefix: string): string {
-  return `https://api.safe.global/tx-service/${prefix}/api/v1/safes/${PROVEN_SAFE}/creation/`
+  return `https://juicebox.center/v1/safe/${prefix}/api/v1/safes/${PROVEN_SAFE}/creation/`
 }

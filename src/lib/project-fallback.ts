@@ -21,7 +21,7 @@ import {
   type Address,
   type PublicClient,
 } from 'viem'
-import type { SafeServiceOptions } from '@bananapus/nana-sdk-core/safe-service'
+import type { SafeServiceOptions } from '@/lib/safe-service-config'
 import { getProject, type BsProject } from '@/lib/bendystraw'
 import { readCrossChainHandleAuthority } from '@/lib/cross-chain-authority'
 import { jbCenterRpcTransport } from '@/lib/jbcenter-rpc'

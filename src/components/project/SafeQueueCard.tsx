@@ -70,7 +70,7 @@ import {
   safeTransactionMatchesCall,
   usableSafeConfirmations,
   type SafeQueuedTransaction,
-} from "@bananapus/nana-sdk-core/safe-service";
+} from "@/lib/safe-service-config";
 import { LoadingText } from "@/components/ui/LoadingText";
 import { ModalShell } from "@/components/ui/ModalShell";
 import { useSafeConnection } from "@/lib/safe-connector";

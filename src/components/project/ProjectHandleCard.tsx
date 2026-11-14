@@ -42,7 +42,7 @@ import {
   isDeployableSafeAuthority,
   validateSafeCreationForCurrentPolicy,
 } from '@bananapus/nana-sdk-core/safe'
-import { safeQueueUrl } from '@bananapus/nana-sdk-core/safe-service'
+import { safeQueueUrl } from '@/lib/safe-service-config'
 import {
   readCrossChainHandleAuthority,
   readSafeCreation,

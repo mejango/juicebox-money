@@ -10,7 +10,7 @@ import {
   type SafeOwnership,
 } from '@/components/account/AccountProjectCard'
 import { getProjectsOwnedBy, type BsProject } from '@/lib/bendystraw'
-import { fetchSafesOwnedBy } from '@bananapus/nana-sdk-core/safe-service'
+import { fetchSafesOwnedBy } from '@/lib/safe-service-config'
 import { SAFE_SERVICE } from '@/lib/safe'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import { PRODUCTION_CHAINS } from '@/lib/chains'

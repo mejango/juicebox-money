@@ -743,7 +743,7 @@ describe('AccountSafeProjects', () => {
     expect(mocks.readAuthorityIdentity).toHaveBeenCalledExactlyOnceWith({ chain: { id: 1 } }, SAFE)
     // Mainnets only: the indexer read that follows covers nothing else.
     const asked = mocks.safeService.mock.calls.map(call => String(call[0]))
-    expect(asked).toContain(`https://api.safe.global/tx-service/eth/api/v1/owners/${ALICE}/safes/`)
+    expect(asked).toContain(`https://juicebox.center/v1/safe/eth/api/v1/owners/${ALICE}/safes/`)
     expect(asked).toHaveLength(4)
     expect(asked.join()).not.toMatch(/sep/)
     await act(async () => renderer.unmount())
