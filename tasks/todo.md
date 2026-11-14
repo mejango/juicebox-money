@@ -156,3 +156,17 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - Codex `gpt-6.1-sol`: CLEAN on the first pass.
 - Not rendered with a wallet: the connect editor and the pay panel's route choice are covered by unit tests only.
 - New copy for jango: "Connect another chain", "Link this project to one you own on another chain, so its tokens can move between them.", "Connect a chain", "Review connection", "Tokens that can move", "Tokens can then move between these projects and be cashed out on either one. Connect only projects with the same rules.", and the refusals in `connect-chain.ts`.
+
+## 2026-11-14: Funding chart balance never below zero (B7)
+
+- [x] The Balance series floors at 0, and its comment says what the indexed number is.
+
+## Plan refinement
+- **Objective:** The funding chart's Balance could read below zero. Success is a balance that never shows negative, the same as Juicescan's port.
+- **System fit:** `bucketize` in `FundingChart.tsx` owns the series; the floor lives there.
+- **Reuse and simplicity:** One `Math.max`. No new module.
+- **Evidence and unknowns:** Bendystraw `src/JBMultiTerminal.ts` accrues `balanceUsd` flow by flow at each transaction's rate, so an inflow at one price and an outflow at a higher one sums below zero. The number is still not holdings at today's price; whether to relabel it is with jango.
+- **Verification:** One unit test; CI runs the full gate.
+- **Resource budget:** One small pull request.
+- **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
+- **Agent-system impact:** None.
