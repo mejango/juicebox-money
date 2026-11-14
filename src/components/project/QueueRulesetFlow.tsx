@@ -1,5 +1,6 @@
 "use client";
 
+import { missingFeedsLabel, probeFeedPairs } from "@/lib/feed-reachability";
 import { DurationSelect } from "@/components/create/DurationSelect";
 import { durationFields, durationFieldsSeconds, type DurationFields } from "@/components/create/stage-draft";
 import { destinationJournal } from "@/lib/destination-journal";
@@ -27,6 +28,7 @@ import {
   getUpcomingRuleset,
   hasPermissions,
   payoutSplitGroupId,
+  requiredFeedPairs,
   v6Address,
   type JBAccountingContext,
   type JBRulesetConfig,
@@ -95,6 +97,7 @@ import {
   orderedRulesetSchedule,
   SCHEDULE_PREPARATION_SECONDS,
   LAUNCH_START_DELAY_SECONDS,
+  type FeedPair,
 } from "@/lib/launch";
 
 /** Payout amounts at/above this are treated as "no limit" (unlimited). */
@@ -146,6 +149,8 @@ type EditorState = {
   reservedPct: string;
   /** Cash-out tax, as a 0-100 percent string. */
   cashOutTaxPct: string;
+  /** What issuance is priced in: 1 ETH, 2 USD, or a token's own currency. */
+  baseCurrency: number;
   /** The notice a later rule change must give; "custom" keeps the chain's own contract. */
   notice: ApprovalDeadline;
   pausePay: boolean;
@@ -698,6 +703,7 @@ function rulesFromSource(source: PrefillSource, chainId: number): EditorState {
       weightCutPct: billionthsToPct(r.weightCutPercent, 7),
       reservedPct: bpToPct(m.reservedPercent),
       cashOutTaxPct: bpToPct(m.cashOutTaxRate),
+      baseCurrency: m.baseCurrency,
       notice: deadlineForHook(r.approvalHook as Address, chainId),
       pausePay: m.pausePay,
       pauseCreditTransfers: m.pauseCreditTransfers,
@@ -1042,6 +1048,7 @@ export function buildQueueDestinationConfig(
       approvalHook: deadlineHookAddress(rules.notice, chainId, r.approvalHook as Address),
       metadata: {
         ...m,
+        baseCurrency: rules.baseCurrency,
         reservedPercent: pctToBp(rules.reservedPct),
         cashOutTaxRate: pctToBp(rules.cashOutTaxPct),
         pausePay: rules.pausePay,
@@ -1373,6 +1380,14 @@ function RulesetEditorForm({
           changes: peerStages.flatMap((rules, index) => diffRows(index === 0 ? rulesFromSource(peer, destination.chainId) : peerStages[index - 1], rules).map(change => ({ label: `${chainName(destination.chainId)} #${index + 1}: ${change.label}`, value: `${change.from} → ${change.to}` }))),
         };
       });
+      // A new issuance currency needs a price from every accepted token on every chain.
+      const feeds = await probeFeedPairs(destinations.map(destination => ({
+        chainId: destination.chainId,
+        projectId: BigInt(destination.projectId),
+        pairs: newBaseFeedPairs(destination.source.access, destination.source.entry.metadata.baseCurrency, destination.configs.map(config => config.metadata.baseCurrency)),
+      })), id => clientFor(id as JBChainId));
+      if (feeds.status === "unavailable") throw new Error(`Couldn't verify price feeds right now. ${feeds.reason} Nothing was sent.`);
+      if (feeds.status === "missing") throw new Error(`No onchain price feed links ${missingFeedsLabel(feeds.missing)}, so payments and cash outs would revert under these rules.`);
       const configs = destinations.find(destination => destination.chainId === chainId)!.configs;
       const clearsPayouts = access.some(item => hasPayoutLimit(item.payoutLimits)) && configs[0].fundAccessLimitGroups.every(group => group.payoutLimits.length === 0);
       setReview({ configs, destinations, account: address, clearsPayouts });
@@ -1456,7 +1471,7 @@ function RulesetEditorForm({
             ]
           : []),
         ...review.destinations.flatMap(destination => [
-          { label: chainName(destination.chainId), value: `Project #${destination.projectId}; issuance per ${currencyLabel(destination.source.entry.metadata.baseCurrency, "base currency " + destination.source.entry.metadata.baseCurrency)}` },
+          { label: chainName(destination.chainId), value: `Project #${destination.projectId}; issuance per ${currencyLabel(destination.configs[0].metadata.baseCurrency, "base currency " + destination.configs[0].metadata.baseCurrency)}` },
           ...(review.destinations.length > 1 ? destination.changes : []),
           ...destination.starts.map((start, index) => ({ label: `${chainName(destination.chainId)} ruleset #${index + 1}`, value: `Starts around ${formatRulesetDate(start)}` })),
           ...(destination.validUntil !== undefined ? [{ label: `${chainName(destination.chainId)} execute before`, value: `${formatRulesetDate(destination.validUntil)}. Rebuild if unexecuted after this time; a Safe executed elsewhere can still execute late.` }] : []),
@@ -1833,6 +1848,23 @@ function RulesFields({
         </label>
       </section>
 
+      {rules.baseCurrency === BASE_ETH || rules.baseCurrency === BASE_USD ? (
+        <section>
+          <label className="block">
+            <span className="field-label">Issuance priced in</span>
+            <select
+              value={rules.baseCurrency}
+              disabled={disabled}
+              onChange={(e) => set("baseCurrency", Number(e.target.value))}
+              className="input-well select-caret mt-1.5 min-h-[40px] !w-auto max-w-full px-3 pr-9 text-sm"
+            >
+              <option value={BASE_ETH}>ETH</option>
+              <option value={BASE_USD}>USD</option>
+            </select>
+          </label>
+        </section>
+      ) : null}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <NumField
           label="Issuance (tokens per payment unit)"
@@ -2127,6 +2159,21 @@ export function multiCurrencyLimitBlock(
   return `${names} ${affected.length === 1 ? "has" : "have"} payout limits in more than one currency, which this editor can't preserve. Queueing here would drop them — use a tool that edits fund-access limits directly.`;
 }
 
+/** The price pairs a ruleset's new issuance currency adds for the accepted tokens. */
+export function newBaseFeedPairs(access: readonly { ctx: JBAccountingContext; symbol: string }[], current: number, bases: readonly number[]): FeedPair[] {
+  const contexts = access.map(item => item.ctx);
+  const key = (pair: { pricingCurrency: number; unitCurrency: number }) => `${pair.pricingCurrency}:${pair.unitCurrency}`;
+  const known = new Set(requiredFeedPairs(contexts, current).map(key));
+  const label = (currency: number) => access.find(item => item.ctx.currency === currency)?.symbol ?? currencyLabel(currency, `currency ${currency}`);
+  const added = new Map<string, FeedPair>();
+  for (const base of new Set(bases)) {
+    for (const pair of requiredFeedPairs(contexts, base)) {
+      if (!known.has(key(pair))) added.set(key(pair), { ...pair, aLabel: label(pair.pricingCurrency), bLabel: label(pair.unitCurrency) });
+    }
+  }
+  return [...added.values()];
+}
+
 function noticeLabel(notice: ApprovalDeadline): string {
   return notice === "none" ? "No notice" : notice === "custom" ? "Custom contract" : DEADLINE_LABELS[notice];
 }
@@ -2143,6 +2190,7 @@ function describe(s: EditorState): { label: string; value: string }[] {
         : "Incomplete",
     },
     { label: "Rule-change notice", value: noticeLabel(s.notice) },
+    { label: "Issuance priced in", value: currencyLabel(s.baseCurrency, `currency ${s.baseCurrency}`) },
     {
       label: "Issuance",
       value: `${Number(s.weight)} tokens per unit`,

@@ -72,23 +72,33 @@ export async function probeFeedReachability(args: {
   chains: number[]
   getClient: (chainId: number) => Pick<PublicClient, 'readContract'> | null
 }): Promise<FeedReachability> {
-  const perChain = args.chains
-    .map(chainId => ({
+  return probeFeedPairs(
+    args.chains.map(chainId => ({
       chainId,
       pairs: requiredFeedPairs(
         args.accounting,
         args.issuanceBase,
         chainId as JBChainId,
       ),
-    }))
-    .filter(({ pairs }) => pairs.length > 0)
+    })),
+    args.getClient,
+  )
+}
+
+/** Probe the given pairs on each chain; `projectId` reads that project's own
+ *  feeds before the protocol defaults. */
+export async function probeFeedPairs(
+  chains: { chainId: number; pairs: FeedPair[]; projectId?: bigint }[],
+  getClient: (chainId: number) => Pick<PublicClient, 'readContract'> | null,
+): Promise<FeedReachability> {
+  const perChain = chains.filter(({ pairs }) => pairs.length > 0)
   if (perChain.length === 0) return { status: 'ok' }
 
   let unverified: string | null = null
   const missing: MissingFeed[] = []
   const results = await Promise.all(
-    perChain.map(async ({ chainId, pairs }) => {
-      const client = args.getClient(chainId)
+    perChain.map(async ({ chainId, pairs, projectId }) => {
+      const client = getClient(chainId)
       if (!client)
         return {
           chainId,
@@ -115,7 +125,7 @@ export async function probeFeedReachability(args: {
       }
       const verdict = await sdkProbeFeedReachability(
         observed as unknown as PublicClient,
-        { chainId: chainId as JBChainId, pairs },
+        { chainId: chainId as JBChainId, pairs, projectId },
       )
       return { chainId, pairs, verdict, reason }
     }),
@@ -159,27 +169,31 @@ export function feedReachabilityBlock(
   if (result.status === 'unavailable') {
     return `Couldn't verify price feeds right now — ${result.reason} Retry once it's reachable.`
   }
-  // The same token pair can be missing through several currency pairs
-  // (context↔base and context↔context); collapse to one line per token
-  // pair, naming every affected chain.
-  const chainsByPair = new Map<string, number[]>()
-  for (const m of result.missing) {
-    const key = [m.aLabel, m.bLabel].sort().join(' and ')
-    const chains = chainsByPair.get(key) ?? []
-    if (!chains.includes(m.chainId)) chains.push(m.chainId)
-    chainsByPair.set(key, chains)
-  }
-  const parts = [...chainsByPair]
-    .map(
-      ([pairLabel, chains]) =>
-        `${pairLabel} on ${chains.map(chainName).join(', ')}`,
-    )
-    .join('; ')
   return (
-    `No onchain price feed links ${parts}, so payments and cash outs would revert. ` +
+    `No onchain price feed links ${missingFeedsLabel(result.missing)}, so payments and cash outs would revert. ` +
     `Accept only one of these tokens for now — launching unblocks automatically once the protocol registers the missing feed.` +
     (revnet
       ? " A revnet's accepted tokens are permanent, so this could never be fixed after launch."
       : '')
   )
+}
+
+/** "ETH and USD on Base; …": one entry per token pair, naming every chain. */
+export function missingFeedsLabel(missing: MissingFeed[]): string {
+  // The same token pair can be missing through several currency pairs
+  // (context↔base and context↔context); collapse to one line per token
+  // pair, naming every affected chain.
+  const chainsByPair = new Map<string, number[]>()
+  for (const m of missing) {
+    const key = [m.aLabel, m.bLabel].sort().join(' and ')
+    const chains = chainsByPair.get(key) ?? []
+    if (!chains.includes(m.chainId)) chains.push(m.chainId)
+    chainsByPair.set(key, chains)
+  }
+  return [...chainsByPair]
+    .map(
+      ([pairLabel, chains]) =>
+        `${pairLabel} on ${chains.map(chainName).join(', ')}`,
+    )
+    .join('; ')
 }

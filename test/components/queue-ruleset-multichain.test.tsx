@@ -34,7 +34,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', async importOriginal => ({
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: async () => 'ETH' }))
 vi.mock('@bananapus/nana-sdk-core/v6', async original => ({ ...await original<typeof import('@bananapus/nana-sdk-core/v6')>(), getCurrentRuleset: mocks.current, getUpcomingRuleset: mocks.upcoming, getAccountingContexts: mocks.contexts }))
 
-import { assertQueueExecutionWindow, buildQueueDestinationConfig, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, verifyQueuedStageOrder, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
+import { assertQueueExecutionWindow, buildQueueDestinationConfig, newBaseFeedPairs, queueDestinationStages, queueStageStarts, queueSourceFingerprint, readQueueJournal, reviewedQueueCalls, rulesForQueueDestination, saveQueueJournal, submitQueueReview, verifyQueuedStageOrder, QueueRecovery, QueueRulesetFlow } from '@/components/project/QueueRulesetFlow'
 import { clearSuckerGroups } from '@/lib/sucker-group'
 import { relayrCallsScope } from '@/lib/relayr'
 import { lapsingLocksForTests } from '@bananapus/nana-sdk-core/testing'
@@ -50,7 +50,7 @@ const HOOK = '0x2222222222222222222222222222222222222222' as Address
 const OTHER = '0x3333333333333333333333333333333333333333' as Address
 
 function rules(patch: Partial<Rules> = {}): Rules {
-  return { notice: 'custom', duration: 86400, weight: '100', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false, pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false, allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true, allowAddAccountingContext: true, allowAddPriceFeed: true,
+  return { baseCurrency: 1, notice: 'custom', duration: 86400, weight: '100', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false, pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false, allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true, allowAddAccountingContext: true, allowAddPriceFeed: true,
     limits: [{ token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, currency: 1, mode: 'limited', amount: '2', surplusAllowances: [{ amount: 3n, currency: 2 }] }], ...patch }
 }
 function source(chainId: JBChainId): Source {
@@ -181,7 +181,8 @@ describe('multichain ruleset configuration', () => {
 
   it('changes only reviewed scalar fields, preserving other chain settings and all source hooks/locked splits/allowances', () => {
     const baseline = rules()
-    const peer = rules({ duration: 172800, cashOutTaxPct: '25', holdFees: true })
+    // The peer's own issuance currency (USD here) is one of the settings it keeps.
+    const peer = rules({ duration: 172800, cashOutTaxPct: '25', holdFees: true, baseCurrency: 2 })
     const updated = rules({ weight: '250', reservedPct: '0' })
     const mapped = rulesForQueueDestination(baseline, updated, peer, 1, 8453)
     expect(mapped).toMatchObject({ duration: 172800, weight: '250', reservedPct: '0', cashOutTaxPct: '25', holdFees: true })
@@ -206,6 +207,19 @@ describe('multichain ruleset configuration', () => {
     expect(buildQueueDestinationConfig(changed, 100, src, 8453).approvalHook).toBe(v6Address('JBDeadline3Days', 8453))
     expect(buildQueueDestinationConfig({ ...baseline, notice: '3days' }, 100, source(1), 1).approvalHook).toBe(v6Address('JBDeadline3Days', 1))
     expect(buildQueueDestinationConfig({ ...baseline, notice: 'none' }, 100, src, 8453).approvalHook).toBe(zeroAddress)
+  })
+  it('sends a changed issuance currency and asks only for the price pairs it adds', () => {
+    const baseline = rules()
+    const usd = rulesForQueueDestination(baseline, { ...baseline, baseCurrency: 2 }, rules(), 1, 8453)
+    expect(buildQueueDestinationConfig(usd, 100, source(8453), 8453).metadata.baseCurrency).toBe(2)
+    expect(buildQueueDestinationConfig(rules(), 100, source(8453), 8453).metadata.baseCurrency).toBe(source(8453).entry.metadata.baseCurrency)
+    const eth = { ctx: { token: NATIVE_TOKEN, decimals: 18, currency: 61166 }, symbol: 'ETH' }
+    // Priced in ETH already: nothing new to prove. Moving to USD needs ETH priced in USD.
+    expect(newBaseFeedPairs([eth], 1, [1, 1])).toEqual([])
+    const added = newBaseFeedPairs([eth], 1, [2, 2, 1])
+    expect(added.length).toBeGreaterThan(0)
+    expect(added.every(pair => [pair.pricingCurrency, pair.unitCurrency].includes(2))).toBe(true)
+    expect(added.map(pair => [pair.aLabel, pair.bLabel].sort().join('/'))).toContain('ETH/USD')
   })
   it('maps canonical USDC limit amounts to peer token/currency/decimals and keeps peer allowances', () => {
     const baseline = rules({ limits: [{ ...rules().limits[0], token: USDC_ADDRESSES[1], symbol: 'USDC', currency: Number(BigInt(USDC_ADDRESSES[1]) & 0xffffffffn), decimals: 6 }] })

@@ -376,7 +376,7 @@ describe('the ruleset-queue editor\'s recheck', () => {
     const rules = { duration: 86400, weight: '200', weightCutPct: '1', reservedPct: '10', cashOutTaxPct: '5', pausePay: false,
       pauseCreditTransfers: false, pause721Transfers: false, holdFees: false, ownerMustSendPayouts: false, allowOwnerMinting: false,
       allowSetTerminals: true, allowSetController: true, allowTerminalMigration: true, allowSetCustomToken: true,
-      notice: 'custom', allowAddAccountingContext: true, allowAddPriceFeed: true,
+      baseCurrency: 1, notice: 'custom', allowAddAccountingContext: true, allowAddPriceFeed: true,
       limits: [{ token: NATIVE_TOKEN, symbol: 'ETH', decimals: 18, currency: 1, mode: 'limited', amount: '2', surplusAllowances: [{ amount: 3n, currency: 2 }] }] }
     const destinations = CHAINS.map(chainId => {
       const src = source(chainId)
