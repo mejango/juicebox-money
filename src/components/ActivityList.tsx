@@ -22,7 +22,7 @@ import {
   type BsActivityEvent,
   type EventToken,
 } from '@/lib/bendystraw'
-import { activityChains, activityOnChain, sameTxKey } from '@/lib/activity-rows'
+import { activityChains, activityOnChain, sameTxKey, withoutPartialOldest } from '@/lib/activity-rows'
 import { knownTokenSymbol } from '@/lib/token-symbol'
 import { displayChainName, explorerHostname } from '@/lib/chainDisplay'
 import {
@@ -1244,7 +1244,8 @@ export function ActivityList({
 
   const [selectedChain, setSelectedChain] = useState<number | null>(null)
 
-  const everyChainEvents = projectFeedEvents(liveEvents)
+  // A transaction cut by the page boundary waits for the next page, so its row is never half of it.
+  const everyChainEvents = projectFeedEvents(withoutPartialOldest(liveEvents, liveEvents.length < liveTotal))
   const chains = activityChains(everyChainEvents)
   const projectEvents = activityOnChain(everyChainEvents, selectedChain)
   const categories: ActivityCategory[] = []

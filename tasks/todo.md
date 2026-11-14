@@ -177,7 +177,7 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - [x] R2 Single-chain launches go through the omnichain deployer, so the project can connect a chain later.
 - [x] R3 Payment notice: chains whose notice differs show a notice with a toggle; a failed read shows a notice with a quiet retry and still lets the payment go.
 - [ ] R4 Pay route: say when a route's quote is an estimate.
-- [ ] R5 A bridge send and the cash out inside it read as one feed item, also across a page boundary.
+- [x] R5 A bridge send and the cash out inside it read as one feed item, also across a page boundary.
 - [ ] R6 Earlier open questions, decided the way jango has been ruling.
 
 ## Plan refinement
