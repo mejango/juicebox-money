@@ -209,6 +209,22 @@ export async function getProject(
   return data.project
 }
 
+/** One deployment's indexed payment notice: '' when it has none, null when the indexer has no such project. */
+export async function getProjectPayNotice(
+  chainId: number,
+  projectId: number,
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<string | null> {
+  const data = await bendystraw<{ project: { payDisclosure: string | null } | null }>(
+    `query($chainId: Float!, $projectId: Float!) {
+      project(chainId: $chainId, projectId: $projectId, version: 6) { payDisclosure }
+    }`,
+    { chainId, projectId },
+    { policy: 'standard', signal },
+  )
+  return data.project ? (data.project.payDisclosure ?? '').trim() : null
+}
+
 export async function searchProjects(
   text: string,
   limit = 24,
