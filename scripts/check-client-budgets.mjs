@@ -69,7 +69,8 @@ const routes = [
   // and revnet fee netting in holder values: measured 541.2 KiB.
   // Configured Safe proxy and monthly-quota handling: measured just above542.0 KiB, rounded up only.
   // Bridge sends in activity and the unknown contracts card (its readers load on demand): measured 543.4 KiB, rounded up only.
-  { route: '/[urn]', path: '/eth:1', kib: 544, text: 'Browser Fixture Project' },
+  // 544 -> 545: the pay card quotes every listed terminal through the SDK's best-route rule: measured 544.1 KiB, rounded up only.
+  { route: '/[urn]', path: '/eth:1', kib: 545, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
