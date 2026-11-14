@@ -252,11 +252,12 @@
   },
   "authorityCalls": {
     "src/components/project/AuthorityEditsCard.tsx": {
-      "calls": 2,
+      "calls": 3,
       "actions": [
         "Update project metadata",
         "Deploy project ERC-20",
-        "Rename project ERC-20"
+        "Rename project ERC-20",
+        "Connect another chain"
       ]
     },
     "src/components/project/AuthorityOverview.tsx": {

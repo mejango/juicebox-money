@@ -15,6 +15,7 @@ import { getTokenAddress, hasPermissions, JBPermissionIdsV6 } from '@bananapus/n
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import {
+  bytesToHex,
   encodeFunctionData,
   erc20Abi,
   isAddress,
@@ -59,6 +60,7 @@ import { fence, type TabLocks } from '@/lib/tab-locks'
 import { loadRelayrPendingSession, relayrCallsScope } from '@/lib/relayr'
 import { RelayrDiscard } from '@/components/RelayrDiscard'
 import { useAuthorityRun } from '@/hooks/useAuthorityRun'
+import { connectAssetNames, connectChainCandidates, planChainConnection } from '@/lib/connect-chain'
 import { destinationJournal } from '@/lib/destination-journal'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { wagmiConfig } from '@/providers/Providers'
@@ -216,7 +218,8 @@ export function AuthorityEditsCard({
       Promise.all(deployments.map(row => readEditState(row, isRevnet))),
   })
   const rows = query.data ?? []
-  const [open, setOpen] = useState<'metadata' | 'token' | null>(null)
+  const [open, setOpen] = useState<'metadata' | 'token' | 'connect' | null>(null)
+  const connectable = isRevnet ? [] : connectChainCandidates(rows.map(row => row.chainId))
   const uriDiffers = valuesDiffer(rows.map(row => row.uri))
   const tokenDiffers = valuesDiffer(
     rows.map(row =>
@@ -297,6 +300,25 @@ export function AuthorityEditsCard({
           >
             {null}
           </EditRow>
+
+          {connectable.length ? (
+            <EditRow
+              title="Connect another chain"
+              description="Link this project to one you own on another chain, so its tokens can move between them."
+              differs={false}
+              actionLabel="Connect a chain"
+              open={open === 'connect'}
+              onToggle={() => setOpen(current => (current === 'connect' ? null : 'connect'))}
+            >
+              {open === 'connect' ? (
+                <ConnectChainEditor
+                  rows={rows}
+                  candidates={connectable}
+                  onCancel={() => setOpen(null)}
+                />
+              ) : null}
+            </EditRow>
+          ) : null}
         </div>
       )}
     </section>
@@ -1450,6 +1472,114 @@ export function TokenEditor({
           <p className="text-xs leading-relaxed text-smoke-700">
             Existing balances are unchanged.
             {tokenRun.plan?.addressNote}
+          </p>
+        </TxProgress>
+      ) : null}
+    </div>
+  )
+}
+
+/** Deploys the suckers that link this project with one the same account owns on another chain. */
+export function ConnectChainEditor({
+  rows,
+  candidates,
+  onCancel,
+}: {
+  rows: Pick<EditChainState, 'chainId' | 'projectId' | 'name' | 'authority' | 'error'>[]
+  candidates: JBChainId[]
+  onCancel: () => void
+}) {
+  const [chainId, setChainId] = useState<JBChainId>(candidates[0])
+  const [projectId, setProjectId] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [checking, setChecking] = useState(false)
+  // The salt is part of the reviewed calls: after Discard a fresh review makes a new one.
+  const connectRun = useAuthorityRun<{ calls: AuthorityCall[]; assets: string; target: string }>()
+  const review = connectRun.plan
+  const { busy, done } = connectRun
+  const invalidate = () => {
+    connectRun.close()
+    setError(null)
+  }
+
+  const buildReview = async () => {
+    setError(null)
+    setChecking(true)
+    try {
+      const { calls, assets } = await planChainConnection({
+        members: rows,
+        targetChainId: chainId,
+        targetProjectId: BigInt(projectId),
+        salt: bytesToHex(crypto.getRandomValues(new Uint8Array(32))),
+        clientFor,
+      })
+      connectRun.review({ calls, assets: connectAssetNames(assets), target: `${chainName(chainId)} #${projectId}` })
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : 'Could not review the connection.')
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  const submit = () => void connectRun.run({
+    outcome: (result, reviewed) => outcomeMessage(result, `Connected on ${reviewed.calls.length} chains.`),
+    failure: 'Could not connect the chains.',
+  })
+
+  return (
+    <div className="mt-4 rounded-xl border border-smoke-200 p-4 max-sm:rounded-none max-sm:border-x-0 max-sm:border-b-0 max-sm:px-0 max-sm:pb-0">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-medium text-ink">Connect a chain</p>
+        <button type="button" onClick={onCancel} disabled={busy} className="text-xs text-smoke-700 hover:text-ink">
+          Cancel
+        </button>
+      </div>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="field-label">Chain</span>
+          <select
+            value={chainId}
+            onChange={event => { setChainId(Number(event.target.value) as JBChainId); invalidate() }}
+            disabled={busy}
+            className="input-well mt-1.5 min-h-[42px] w-full px-3 text-sm disabled:opacity-60"
+          >
+            {candidates.map(id => <option key={id} value={id}>{chainName(id)}</option>)}
+          </select>
+        </label>
+        <TextField
+          label={`Project ID on ${chainName(chainId)}`}
+          value={projectId}
+          onChange={value => { setProjectId(value.replace(/\D/g, '').slice(0, 12)); invalidate() }}
+          disabled={busy}
+          required
+        />
+      </div>
+      <button
+        type="button"
+        onClick={() => void buildReview()}
+        disabled={busy || checking || !projectId || BigInt(projectId) === 0n}
+        className="btn-primary mt-4 min-h-[44px] w-full text-sm"
+      >
+        {checking ? 'Checking…' : 'Review connection'}
+      </button>
+      {error && !review ? <ErrorNote message={error} /> : null}
+
+      {review ? (
+        <TxProgress
+          open
+          title={done ? 'Chains connected' : 'Confirm connection'}
+          rows={[
+            { label: 'Connect', value: [...rows.map(row => `${row.name} #${row.projectId}`), review.target].join(', ') },
+            { label: 'Tokens that can move', value: `Project tokens, ${review.assets}` },
+          ]}
+          steps={review.calls.map(call => ({ key: String(call.chainId), title: `Connect on ${chainName(call.chainId)}` }))}
+          {...connectRun.progress(submit)}
+          start={submit}
+          onClose={invalidate}
+        >
+          {connectRun.discard.element}
+          <p className="text-xs leading-relaxed text-smoke-700">
+            Tokens can then move between these projects and be cashed out on either one. Connect only projects with the same rules.
           </p>
         </TxProgress>
       ) : null}

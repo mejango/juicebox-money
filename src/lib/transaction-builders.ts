@@ -10,6 +10,7 @@ import {
   jbMultiTerminalAbi,
   jbProjectsAbi,
   jbRouterTerminalRegistryAbi,
+  jbSuckerRegistryAbi,
   revOwnerAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
@@ -411,6 +412,34 @@ export function buildTokenMetadataAuthorityCall({
  * `omnichainTokenSalt`). A zero salt would deploy a nonce-keyed clone —
  * a different address per chain, irreversibly.
  */
+/** `deploySuckersFor` on the registry: the caller and salt decide the suckers' addresses. */
+export function buildDeploySuckersAuthorityCall({
+  chainId,
+  authority,
+  registry,
+  projectId,
+  salt,
+  configurations,
+}: {
+  chainId: JBChainId
+  authority: Address
+  registry: Address
+  projectId: bigint
+  salt: Hex
+  configurations: readonly unknown[]
+}): AuthorityCall {
+  return buildAuthorityCall({
+    chainId,
+    authority,
+    target: registry,
+    abi: jbSuckerRegistryAbi,
+    functionName: 'deploySuckersFor',
+    args: [projectId, salt, configurations],
+    contractName: 'JBSuckerRegistry',
+    label: 'Connect chains',
+  })
+}
+
 export function buildDeployTokenAuthorityCall({
   chainId,
   authority,

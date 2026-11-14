@@ -52,6 +52,7 @@ and the check fails on a missing marker.
 | Update project metadata | Per-destination `JBController.setUriOf`, metadata preservation, and frozen recovery | **P/E** | `contracts/manage.test.ts`, `components/metadata-editor.test.tsx` |
 | Deploy project ERC-20 | `JBController.deployERC20For` | **E** | `contracts/manage.test.ts` |
 | Rename project ERC-20 | `setTokenMetadataOf` | **E** | `contracts/transaction-backlog.test.ts` |
+| Connect another chain | `JBSuckerRegistry.deploySuckersFor` on every chain from one owner with one salt, default peers, only tokens every chain accepts | **P/E** | `lib/connect-chain.test.ts`, `components/relayr-discard-flows.test.tsx` |
 | Mint project tokens | active `mintTokensOf` | **E** | `contracts/transaction-backlog.test.ts` |
 | Transfer project ownership | `JBProjects.transferFrom` | **E** | `contracts/transaction-backlog.test.ts` |
 | Add or revoke permissions | `JBPermissions.setPermissionsFor` | **E** | `contracts/transaction-builders.test.ts` |
