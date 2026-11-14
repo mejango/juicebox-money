@@ -1195,7 +1195,8 @@ export function PayPanel({
     }
     // An approval a Safe ran after its run ended settles as the run's earlier step.
     if (sequenceSafePhase !== "done" && sequenceSafeTx.settledStep == null) return;
-    dispatchSequence({ type: "completed", kinds: [sequenceSafeStage] });
+    // The payment is the last step: once it ran, so did an approval batched with it.
+    dispatchSequence({ type: "completed", kinds: sequenceSafeStage === "payment" ? sequenceActions.map(action => action.kind) : [sequenceSafeStage] });
     if (sequenceSafeStage === "payment") {
       patchSequence({ safeStage: null, complete: true, status: mode === "pay" ? "Payment confirmed." : "Added to the balance." });
     } else {
@@ -1211,6 +1212,7 @@ export function PayPanel({
   }, [
     mode,
     refetchAuthorization,
+    sequenceActions,
     sequenceSafeError,
     sequenceSafePhase,
     sequenceSafeTx.stopped,
@@ -1536,6 +1538,8 @@ export function PayPanel({
         context: sequenceContext,
         // An approval and its payment resume as one action after a reload.
         scope: `jbm:pay:${chainId}:${projectId}:${reviewed.terminal}:${reviewed.token}`,
+        // A Safe takes the approval and the payment as one proposal, signed once and run together.
+        batch: true,
         assertWriteState: () => writeState.current(reviewed),
       };
       // The payment is the run's last step, so a run of fewer calls is the payment alone.
@@ -1549,11 +1553,14 @@ export function PayPanel({
         return;
       }
       if (paid.status === "proposed") {
-        // A Safe executes each step as its own proposal: an approval first, then the payment.
-        const stage = kinds[paid.step] ?? "payment";
-        patchSequence({ safeStage: stage, status: stage === "token-approval"
-          ? "Approval proposed to your Safe. Execute it there before continuing."
-          : "Payment proposed to your Safe. Execute it there to finish." });
+        // A Safe takes every step as one proposal: it settles as the payment. A resumed run proposes its steps one by one.
+        const { batched } = paid;
+        const stage = batched ? "payment" : kinds[paid.step] ?? "payment";
+        patchSequence({ safeStage: stage, status: batched
+          ? "Approval and payment proposed to your Safe as one batch. Execute it there to finish."
+          : stage === "token-approval"
+            ? "Approval proposed to your Safe. Execute it there before continuing."
+            : "Payment proposed to your Safe. Execute it there to finish." });
         return;
       }
       if (kinds.length > 1 && paid.receipts.length > 1) setApprovalBlock(paid.receipts[0]?.blockNumber);

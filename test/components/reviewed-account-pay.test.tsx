@@ -1245,26 +1245,30 @@ describe('a payment from a Safe', () => {
     expect(wallet.writes()).toEqual([{ functionName: 'pay', account: ALICE }])
   })
 
-  it("ends an approval whose result can't be proven on Done, freeing the panel, and keeps the call held", async () => {
+  it("proposes an ERC-20 payment's approval and payment as one batch, and keeps a batch that can't be proven held", async () => {
     m.safe = true
     m.token = 'erc20'
     await reviewPayment()
     await confirmReview()
     await waitUntil(() => [...host.querySelectorAll('button')].some(item => item.textContent === 'Done'))
-    // Safe's service is lost before the approval's execution can be read.
+    // One proposal for the Safe's signers, and no call of its own.
+    expect(wallet.batches()).toEqual([['approve', 'pay']])
+    expect(wallet.writes()).toEqual([])
+    expect(dialogStatus()).toBe(AWAITING)
+    // Safe's service is lost before the batch's execution can be read.
     await loseService()
     await waitUntil(() => panelSays(UNPROVEN))
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
 
     await click(button('Done', false) ? 'Done' : 'Close review')
     expect(host.querySelector('[data-tx-confirm]')).toBeNull()
     expect(button('Pay').disabled).toBe(false)
 
-    // The write hold still holds the same approval: it is not proposed again.
+    // The write hold still holds the same batch: it is not proposed again.
     await click('Pay')
     await confirmReview()
     await waitUntil(() => panelSays(UNPROVEN))
-    expect(wallet.writes()).toEqual([{ functionName: 'approve', account: ALICE }])
+    expect(wallet.batches()).toEqual([['approve', 'pay']])
+    expect(wallet.writes()).toEqual([])
   })
 })
 
