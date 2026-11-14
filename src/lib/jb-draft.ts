@@ -24,10 +24,10 @@ import {
 } from '@/components/create/SplitsEditor'
 import {
   CASH_OUT_TAXES,
-  DURATION_PRESETS,
   newDraftStage,
   scheduledStart,
   stageCashOutTax,
+  durationFields,
   stageDurationSeconds,
   type DraftStage,
 } from '@/components/create/stage-draft'
@@ -403,26 +403,8 @@ const taxFields = (
     ? { cashOutTax: rate, taxCustomOn: false, taxCustomPct: '' }
     : { cashOutTax: 0, taxCustomOn: true, taxCustomPct: formatUnits(BigInt(rate), 2) }
 
-function durationFields(
-  seconds: number,
-): Pick<DraftStage, 'durationValue' | 'customDuration' | 'customUnit'> {
-  const preset =
-    seconds === 0 ||
-    seconds === FOREVER_SECONDS ||
-    DURATION_PRESETS.some(([value]) => value === seconds)
-  if (preset) return { durationValue: String(seconds), customDuration: '', customUnit: 'days' }
-  const units = [
-    ['years', 31_536_000],
-    ['weeks', 604_800],
-    ['days', 86_400],
-  ] as const
-  const [customUnit, size] = units.find(([, each]) => seconds % each === 0) ?? [
-    'hours' as const,
-    3_600,
-  ]
-  const customDuration = String(seconds / size)
-  if (Math.round(Number(customDuration) * size) !== seconds) refuse('a cycle length this form cannot show')
-  return { durationValue: 'custom', customDuration, customUnit }
+function durationFieldsOf(seconds: number) {
+  return durationFields(seconds) ?? refuse('a cycle length this form cannot show')
 }
 
 /** Keys the form sets for its own display, not part of what a draft says. */
@@ -548,7 +530,7 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
     const modeOf = (n: number) => (modes[n] === 'all' ? 'all' : 'amounts')
     return {
       ...common,
-      ...durationFields(stage.duration),
+      ...durationFieldsOf(stage.duration),
       startMode: !first && stage.startAt > 0 ? 'date' : 'cycles',
       startCycles: stage.startAfterCycles || '1',
       startDate: first ? '' : localOf(stage.startAt),
