@@ -2,6 +2,8 @@ import {
   emptyJbDraftItem,
   emptyJbDraftSplit,
   emptyJbDraftStage,
+  JbDraftError,
+  jbDraftDecimal,
   jbDraftTokenCurrency,
   jbDraftUnsupported,
   parseJbDraft,
@@ -31,9 +33,15 @@ import {
 } from '@/components/create/stage-draft'
 import { newDraftItem } from '@/components/create/store-draft'
 import { SUPPORTED_CHAINS, environmentForChainIds } from '@/lib/chains'
-import { parseDraft, type CreateDraft } from '@/lib/draft'
+import {
+  parseDraft,
+  PERMANENTLY_DISABLED_AUTHORITY,
+  storeIdentity,
+  type CreateDraft,
+} from '@/lib/draft'
 import { toLocalDateTimeInput } from '@/lib/format'
 import {
+  activeChainOverrides,
   autoIssuanceMintChain,
   CASH_OUTS_OFF_REVNET,
   FOREVER_SECONDS,
@@ -54,11 +62,8 @@ const refuse = (what: string): never => {
 
 type Token = JbDraft['accepts'][number]
 
-/** A typed number as the format's plain decimal, or '' when it isn't one. */
-const num = (value: string): string => {
-  const text = value.trim()
-  return /^\d*(?:\.\d*)?$/.test(text) ? text : ''
-}
+/** A typed number as the format's plain decimal. Throws on one the file can't hold. */
+const num = jbDraftDecimal
 const projectIdOf = (value: string) => num(value.replace('#', ''))
 const unixOf = (local: string): number => {
   const ms = local ? new Date(local).getTime() : NaN
@@ -126,12 +131,17 @@ function splitOut(row: DraftSplit, amounts = false): JbDraftSplit {
 /** A rate out of 10,000 as the format's 0 to 1 value. */
 const taxOut = (rate: number) => formatUnits(BigInt(rate), 4)
 
+const forever = (stage: DraftStage) => stageDurationSeconds(stage) === FOREVER_SECONDS
+
 /** Write this form's draft as the shared file's contents. */
 export function toJbDraft(draft: CreateDraft): JbDraft {
   const revnet = draft.flavor === 'revnet'
   const kind = revnet ? 'revnet' : 'project'
   const custom = draft.customAddress.trim() !== ''
-  const tokens: Token[] = custom ? ['custom'] : draft.accepts
+  // The file lists ETH first, as the form's own two payout lists do.
+  const tokens: Token[] = custom
+    ? ['custom']
+    : [...draft.accepts].sort((a, b) => Number(a !== 'eth') - Number(b !== 'eth'))
   const funds = jbDraftTokenCurrency(tokens[0])
   const base: JbDraftCurrency = custom
     ? 'token'
@@ -188,6 +198,12 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
     const paysAll = routed && payouts.every((payout) => payout.mode === 'all')
     const allowance =
       stage.payouts === 'flexible' || (routed && !paysAll && stage.routedSurplusOn)
+    // One amount here launches as that much of each token: a file holds one currency.
+    if (multi && allowance && stage.surplusCapOn) {
+      throw new JbDraftError(
+        "This draft has a limited owner allowance beside two accepted tokens, which a .jb file can't hold.",
+      )
+    }
     const byDate = index > 0 && stage.startMode === 'date'
     return {
       ...common,
@@ -198,20 +214,23 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
           : num(stage.startCycles) || '1',
       duration: stageDurationSeconds(stage),
       cutPercent: num(stage.cutPct),
-      cashOutTax: stage.cashOuts ? taxOut(stageCashOutTax(stage)) : '1',
+      // Payouts of everything leave nothing to cash out: the launch sends 1.
+      cashOutTax: stage.cashOuts && !paysAll ? taxOut(stageCashOutTax(stage)) : '1',
       payouts,
       surplusAllowance: {
         mode: !allowance ? 'none' : stage.surplusCapOn ? 'limited' : 'unlimited',
         amount: allowance && stage.surplusCapOn ? num(stage.surplusAmount) : '',
         currency: funds,
       },
-      approval: draft.approvalDeadline,
+      // A stage that never ends has no next stage to approve.
+      approval: forever(stage) ? 'none' : draft.approvalDeadline,
       holdFees: stage.payouts !== 'none' && stage.holdFees,
       ownerMinting: stage.ownerMinting,
       pausePay: !stage.acceptPayments,
       pauseCreditTransfers: stage.pauseCreditTransfers,
       pause721Transfers: stage.pause721Transfers,
-      powers: { ...stage.powers },
+      // A custom token is priced by feeds its owner adds: the launch grants that.
+      powers: { ...stage.powers, addPriceFeed: stage.powers.addPriceFeed || custom },
     }
   }
 
@@ -230,7 +249,6 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
     reserveEvery: num(item.reserveN),
     reserveBeneficiary: item.reserveBeneficiary.trim(),
     category: item.category,
-    votingUnits: num(item.votingUnits),
     splits: item.splits.map((row) => splitOut(row)),
     allowOwnerMint: item.allowOwnerMint,
     transfersPausable: item.transfersPausable,
@@ -239,7 +257,15 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
     ownerCanEditDiscount: item.ownerCanEditDiscount,
   })
 
-  const newSafe = draft.authorityMode === 'create'
+  // "Allow changes" off launches with the disabled owner, whatever Safe was being set up.
+  const owners = [draft.owner, ...activeChainOverrides(draft.ownerPerChain, draft.chains)]
+  const disabled =
+    draft.owner.trim().toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY &&
+    owners.every((owner) => owner.trim().toLowerCase() === PERMANENTLY_DISABLED_AUTHORITY)
+  const newSafe = draft.authorityMode === 'create' && !disabled
+  const identity = storeIdentity(draft)
+  const customApproval =
+    !revnet && draft.approvalDeadline === 'custom' && !draft.stages.every(forever)
   return {
     v: 2,
     kind,
@@ -273,12 +299,8 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
     accepts: tokens,
     customToken: draft.customAddress.trim(),
     anyToken: launchAcceptsAnyToken(draft.flavor, draft.allowAnyToken),
-    approvalHook:
-      !revnet && draft.approvalDeadline === 'custom' ? draft.approvalCustom.trim() : '',
-    approvalHookPerChain:
-      !revnet && draft.approvalDeadline === 'custom'
-        ? chainMapOut(draft.approvalPerChain)
-        : {},
+    approvalHook: customApproval ? draft.approvalCustom.trim() : '',
+    approvalHookPerChain: customApproval ? chainMapOut(draft.approvalPerChain) : {},
     afterMode: revnet ? 'wait' : draft.afterMode,
     stages: draft.stages.map(stageOut),
     shop: {
@@ -287,6 +309,15 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
           ? funds
           : (draft.storeCurrency ?? funds),
       ...draft.storeConfig,
+      collectionName: identity.name,
+      collectionSymbol: identity.symbol,
+      // Items and tokens cannot both cash out: the launch drops item redemption.
+      // A revnet's deployer turns both of these off.
+      issueTokensForSplits: !revnet && draft.storeConfig.issueTokensForSplits,
+      itemsRedeem:
+        !revnet &&
+        draft.storeConfig.itemsRedeem &&
+        !(draft.flavor !== 'simple' && draft.stages.some((stage) => stage.cashOuts)),
       categories: draft.storeCategories,
       items: draft.items.map(itemOut),
     },
@@ -305,7 +336,10 @@ const sameAsFirst = <T>(values: T[]) => values.every((value) => value === values
 function localOf(seconds: number): string {
   if (seconds === 0) return ''
   if (seconds % 60 !== 0) refuse('a time set to the second')
-  return toLocalDateTimeInput(seconds)
+  const local = toLocalDateTimeInput(seconds)
+  // A clock change can show one local time twice: the form would read back the other.
+  if (unixOf(local) !== seconds) refuse('a time this form cannot show')
+  return local
 }
 
 function splitIn(row: JbDraftSplit, amounts = false): DraftSplit {
@@ -359,10 +393,6 @@ const sumOf = (rows: JbDraftSplit[]) =>
 /** The format's 0 to 1 tax as a rate out of 10,000. */
 function taxIn(value: string): number {
   const rate = Number(value || '0') * 10_000
-  if (!Number.isFinite(rate) || rate > 10_000) refuse('a cash out tax above 1')
-  if (Math.abs(rate - Math.round(rate)) > 1e-6) {
-    refuse('a cash out tax finer than four decimals')
-  }
   return Math.round(rate)
 }
 
@@ -437,13 +467,20 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
   if (file.chains.some((id) => environmentForChainIds([id]) !== environment)) {
     refuse('mainnet and testnet chains together')
   }
-  if (revnet && !file.anyToken) refuse('a revnet that does not accept any token')
 
   const bases = file.stages.map((stage) => stage.baseCurrency)
   if (!sameAsFirst(bases)) refuse('stages priced in different currencies')
   if (custom && bases[0] !== 'token') refuse('issuance priced in another currency than its token')
-  const approvals = file.stages.map((stage) => stage.approval)
+  // A stage that never ends launches with no approval rule, whatever the form holds.
+  const ending = file.stages.filter((stage) => stage.duration !== FOREVER_SECONDS)
+  if (!revnet && file.stages.some((stage) => !ending.includes(stage) && stage.approval !== 'none')) {
+    refuse('an approval rule on a stage that never ends')
+  }
+  const approvals = ending.map((stage) => stage.approval)
   if (!sameAsFirst(approvals)) refuse('approval rules that differ by stage')
+  if (file.shop.itemsRedeem && file.stages.some((stage) => taxIn(stage.cashOutTax) < 10_000)) {
+    refuse('items redeemed for funds beside cash outs')
+  }
   if (!custom && file.shop.currency === 'token') refuse('a shop priced in a token it does not accept')
 
   const stageIn = (stage: JbDraftStage, index: number): DraftStage => {
@@ -460,7 +497,6 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
     }
     if (revnet) {
       const rate = taxIn(stage.cashOutTax)
-      if (rate > CASH_OUTS_OFF_REVNET) refuse('a revnet cash out tax of 1')
       const off = rate === CASH_OUTS_OFF_REVNET
       if (stage.cutDays && !(Number(stage.cutPercent) > 0)) refuse('a cut interval without a cut')
       return {
@@ -493,10 +529,19 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
     }
     const routed = modes.some((mode) => mode !== 'none')
     const paysAll = modes.every((mode) => mode === 'all')
+    if (multi && allowance.mode === 'limited') {
+      refuse('a limited owner allowance beside two accepted tokens')
+    }
     if (paysAll && allowance.mode !== 'none') {
       refuse('an owner allowance beside payouts of everything')
     }
+    // Fees are held on payouts and allowance use: with neither, the launch sends none held.
+    if (stage.holdFees && !routed && allowance.mode === 'none') refuse('held fees with nothing paid out')
     const rate = taxIn(stage.cashOutTax)
+    if (paysAll && rate < 10_000) refuse('a cash out tax under 1 beside payouts of everything')
+    if (custom && !stage.powers.addPriceFeed) {
+      refuse('a custom token without the power to add price sources')
+    }
     const rowsOf = (n: number) =>
       (stage.payouts[n]?.splits ?? []).map((row) => splitIn(row, modes[n] === 'amounts'))
     // "None" beside a paying token is fixed amounts with none set.
@@ -528,6 +573,8 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
 
   const itemIn = (item: JbDraftItem): CreateDraft['items'][number] => {
     if (item.excludedChains.length) refuse('a shop item left off some chains')
+    if (Number(item.votingUnits) > 0) refuse('shop item voting units')
+    if (item.metadataUri) refuse('a shop item with its own metadata file')
     if (hasEntries(item.reserveBeneficiaryPerChain)) {
       refuse('a reserved item beneficiary that differs by chain')
     }
@@ -545,7 +592,6 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
       reserveN: item.reserveEvery,
       reserveBeneficiary: item.reserveBeneficiary,
       category: item.category,
-      votingUnits: item.votingUnits,
       splits: item.splits.map((row) => splitIn(row)),
       allowOwnerMint: item.allowOwnerMint,
       transfersPausable: item.transfersPausable,
@@ -592,7 +638,7 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
     chains: file.chains,
     stages: file.stages.map(stageIn),
     afterMode: file.afterMode,
-    approvalDeadline: revnet ? '1day' : approvals[0],
+    approvalDeadline: revnet ? '1day' : (approvals[0] ?? 'none'),
     storeCurrency,
     storeConfig,
     storeCategories: categories,

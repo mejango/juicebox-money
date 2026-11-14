@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { parseJbDraft, type JbDraft } from '@bananapus/nana-sdk-core/v6'
 import { parseDraft, type CreateDraft } from '@/lib/draft'
 import { fromJbDraft, readJbDraftFile, toJbDraft, writeJbDraftFile } from '@/lib/jb-draft'
-import { toLocalDateTimeInput } from '@/lib/format'
+import { exactUnits, toLocalDateTimeInput } from '@/lib/format'
 
 const A = '0x00000000000000000000000000000000000000a1'
 const B = '0x00000000000000000000000000000000000000b2'
@@ -46,12 +46,12 @@ function projectDraft(): CreateDraft {
     afterMode: 'cycle',
     approvalDeadline: 'custom',
     storeCurrency: 'usd',
-    storeConfig: { collectionName: 'Shop', collectionSymbol: 'SHOP', itemsRedeem: true, operatorCanMint: false },
+    storeConfig: { collectionName: 'Shop', collectionSymbol: 'SHOP', operatorCanMint: false },
     storeCategories: [{ id: 1, name: 'Shirts' }],
     items: [{
       name: 'Shirt', price: '25', supply: '100', description: 'Cotton',
       mediaUri: 'ipfs://shirt', mediaType: 'image/png',
-      discountPct: '5', reserveN: '10', reserveBeneficiary: A, category: 1, votingUnits: '2',
+      discountPct: '5', reserveN: '10', reserveBeneficiary: A, category: 1,
       splits: [split({ value: '50', kind: 'project', projectId: '7', beneficiary: B, perChain: { 8453: '9' } })],
       transfersPausable: true, allowCredits: false, perChainSupply: { 8453: 'unlimited' },
     }],
@@ -68,7 +68,7 @@ function projectDraft(): CreateDraft {
         payouts: 'routed', routedMode: 'amounts',
         payoutSplits: [split({ value: '1.5', perChainAmount: { 8453: '2' } })],
         routedModeUsdc: 'all', payoutSplitsUsdc: [split({ value: '40', kind: 'project', projectId: '4', beneficiary: A, preferAddToBalance: true })],
-        holdFees: true, surplusCapOn: true, surplusAmount: '3', routedSurplusOn: true,
+        holdFees: true, routedSurplusOn: true,
         cashOuts: true, cashOutTax: 3000,
         ownerMinting: true, acceptPayments: false, pauseCreditTransfers: true, pause721Transfers: true,
         metadataExtra: 5,
@@ -132,7 +132,7 @@ describe('the shared .jb file', () => {
     expect(first).toMatchObject({
       startAt: START, duration: 7 * 86_400, issuance: '10000', baseCurrency: 'usd', cutPercent: '2.5',
       cashOutTax: '0.3', approval: 'custom', pausePay: true, holdFees: true,
-      surplusAllowance: { mode: 'limited', amount: '3', currency: 'eth' },
+      surplusAllowance: { mode: 'unlimited', amount: '', currency: 'eth' },
     })
     expect(first.reserved.map((row) => row.to)).toEqual(['address', 'hook', 'sticky'])
     expect(first.reserved[0]).toMatchObject({ share: '20', lockedUntil: START + 3_600, addressPerChain: { 8453: B } })
@@ -179,6 +179,44 @@ describe('the shared .jb file', () => {
     expect(fromJbDraft(file)).toMatchObject({ customAddress: B, storeCurrency: 'token', issuanceBase: null })
   })
 
+  it('writes what the launch sends where the launch overrides the form', () => {
+    const draft = projectDraft()
+    draft.storeConfig.itemsRedeem = true
+    draft.items[0].votingUnits = '2'
+    draft.stages[0] = { ...draft.stages[0], routedMode: 'all', payoutSplits: [], routedSurplusOn: false }
+    draft.stages[2] = { ...draft.stages[2], durationValue: String(4_294_967_295) }
+    const file = toJbDraft(draft)
+    expect(file.shop.itemsRedeem).toBe(false)
+    expect(file.shop.items[0].votingUnits).toBe('')
+    expect(file.stages[0].cashOutTax).toBe('1')
+    expect(file.stages.map((stage) => stage.approval)).toEqual(['custom', 'custom', 'none'])
+    expect(toJbDraft(fromJbDraft(file))).toEqual(file)
+    const custom = toJbDraft(parseDraft(JSON.stringify({ ...projectDraft(), customAddress: B, storeCurrency: 'token', accepts: ['eth'] })))
+    expect(custom.stages.map((stage) => stage.powers.addPriceFeed)).toEqual([true, true, true])
+    custom.stages[1].powers.addPriceFeed = false
+    expect(() => fromJbDraft(custom)).toThrow('a custom token without the power to add price sources')
+    const off = toJbDraft({
+      ...projectDraft(), authorityMode: 'create', owner: '0xdead000000000000000000000000000000000000', ownerPerChain: {},
+    })
+    expect(off).toMatchObject({ safe: null, owner: '0xdead000000000000000000000000000000000000' })
+    const unnamed = projectDraft()
+    unnamed.storeConfig = { ...unnamed.storeConfig, collectionName: '', collectionSymbol: '' }
+    expect(toJbDraft(unnamed).shop).toMatchObject({ collectionName: 'Round trip', collectionSymbol: 'RT' })
+    const capped = projectDraft()
+    capped.stages[0] = { ...capped.stages[0], surplusCapOn: true, surplusAmount: '3' }
+    expect(() => toJbDraft(capped)).toThrow('a limited owner allowance beside two accepted tokens')
+    const usdcFirst = toJbDraft({ ...projectDraft(), accepts: ['usdc', 'eth'] })
+    expect(usdcFirst.accepts).toEqual(['eth', 'usdc'])
+    expect(usdcFirst.stages[0].payouts.map((payout) => payout.token)).toEqual(['eth', 'usdc'])
+    expect(() => toJbDraft({ ...projectDraft(), stages: [{ ...projectDraft().stages[0], issuanceRate: '1e3' }] }))
+      .toThrow("This draft has a number a .jb file can't hold: 1e3.")
+  })
+
+  it('refuses an amount finer than its token holds, never rounds it', () => {
+    expect(exactUnits('0.000001', 6)).toBe(1n)
+    expect(() => exactUnits('0.0000015', 6)).toThrow('0.0000015 has more decimal places than its token holds.')
+  })
+
   it('refuses a file from before version 2 and a file that is not one', () => {
     expect(() => readJbDraftFile(JSON.stringify(projectDraft()))).toThrow('a format this site no longer reads')
     expect(() => readJbDraftFile('{"projectType":"custom","details":{},"chainIds":[]}')).toThrow('a format this site no longer reads')
@@ -199,10 +237,21 @@ describe('the shared .jb file', () => {
       ['a ticker that is not 1 to 11 capital letters and digits', (file) => { file.ticker = 'trip' }],
       ['a chain this site does not launch on', (file) => { file.chains = [1, 999_999] }],
       ['mainnet and testnet chains together', (file) => { file.chains = [1, 84532] }],
-      ['a cash out tax finer than four decimals', (file) => { file.stages[0].cashOutTax = '0.12345' }],
       ['a hook split that differs by chain', (file) => { file.stages[0].reserved[1].addressPerChain = { 8453: B } }],
       ['a hook split that differs by chain', (file) => { file.stages[0].reserved[1].projectIdPerChain = { 8453: '4' } }],
-      ['a value longer than this form holds', (file) => { file.stages[0].reserved[0].share = '20.000000001' }],
+      ['an approval rule on a stage that never ends', (file) => { file.stages[0].duration = 4_294_967_295 }],
+      ['a limited owner allowance beside two accepted tokens', (file) => {
+        file.stages[1].surplusAllowance = { mode: 'limited', amount: '3', currency: 'eth' }
+      }],
+      ['held fees with nothing paid out', (file) => { file.stages[2].holdFees = true }],
+      ['items redeemed for funds beside cash outs', (file) => { file.shop.itemsRedeem = true }],
+      ['shop item voting units', (file) => { file.shop.items[0].votingUnits = '2' }],
+      ['a shop item with its own metadata file', (file) => { file.shop.items[0].metadataUri = 'ipfs://meta' }],
+      ['a cash out tax under 1 beside payouts of everything', (file) => {
+        const stage = file.stages[0]
+        stage.payouts = stage.payouts.map((payout) => ({ ...payout, mode: 'all', splits: [] }))
+        stage.surplusAllowance = { ...stage.surplusAllowance, mode: 'none', amount: '' }
+      }],
       ['a value longer than this form holds', (file) => { file.shop.categories[0].name = 'x'.repeat(41) }],
       ['an owner allowance beside payouts of everything', (file) => {
         file.stages[0].payouts[0] = { ...file.stages[0].payouts[0], mode: 'all', splits: [] }
@@ -211,8 +260,6 @@ describe('the shared .jb file', () => {
     for (const [what, change] of cases) {
       expect(refusal(change)).toBe(`juicebox.money can't launch this file: it has ${what}.`)
     }
-    expect(refusal((file) => { file.stages[0].cashOutTax = '1' }, revnetDraft)).toContain('a revnet cash out tax of 1')
-    expect(refusal((file) => { file.anyToken = false }, revnetDraft)).toContain('a revnet that does not accept any token')
   })
 
   it('keeps a new Safe as the owner', () => {

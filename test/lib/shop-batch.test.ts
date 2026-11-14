@@ -67,7 +67,7 @@ describe('shop batch destination review', () => {
     expect(configs[0].functionName).toBe('adjustTiers')
     const first = configs[0].args![0] as unknown as { price: bigint; initialSupply: number }[]
     const second = configs[1].args![0] as unknown as { price: bigint; initialSupply: number }[]
-    expect(first[0]).toMatchObject({ price: parseUnits(draft.price, 18), initialSupply: 9, encodedIpfsUri: URI, votingUnits: 0, reserveFrequency: 3, reserveBeneficiary: ACCOUNT, category: 4, discountPercent: 25, flags: { allowOwnerMint: true, useReserveBeneficiaryAsDefault: true, useVotingUnits: false } })
+    expect(first[0]).toMatchObject({ price: parseUnits(draft.price, 18), initialSupply: 9, encodedIpfsUri: URI, votingUnits: 0, reserveFrequency: 3, reserveBeneficiary: ACCOUNT, category: 4, discountPercent: 25, flags: { allowOwnerMint: true, useReserveBeneficiaryAsDefault: false, useVotingUnits: false } })
     expect(first[0]).toMatchObject({ splitPercent: 300000000, splits: [{ projectId: 15n, beneficiary: ACCOUNT, preferAddToBalance: true, lockedUntil: 1893456000, hook: zeroAddress }, { projectId: 17n, beneficiary: PEER_RECIPIENT, hook: PEER_HOOK }] })
     expect(second[0]).toMatchObject({ price: parseUnits(draft.price, 6), initialSupply: 23, splits: [{ projectId: 29n, beneficiary: PEER_RECIPIENT, preferAddToBalance: true, lockedUntil: 1893456000, hook: zeroAddress }, { projectId: 17n, beneficiary: PEER_RECIPIENT, hook: PEER_HOOK }] })
     expect(configs.map(config => config.args![1])).toEqual([[], []])

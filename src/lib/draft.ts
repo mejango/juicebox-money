@@ -488,3 +488,32 @@ export function warnOnDraftDrift(draft: CreateDraft) {
     console.warn('.jb draft drift: the built draft fails parseDraft.', error)
   }
 }
+
+/** The owner address that means "no one can change this project". */
+export const PERMANENTLY_DISABLED_AUTHORITY = '0xdead000000000000000000000000000000000000'
+
+function deriveSymbol(name: string): string {
+  const words = name
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean)
+  const initials = words.map((w) => w[0]).join('')
+  const symbol = (initials.length >= 2 ? initials : (words[0] ?? '')).slice(0, 8)
+  return symbol || 'ITEMS'
+}
+
+/** The shop collection's name and symbol as launched: what was typed, else taken from the project. */
+export function storeIdentity(from: {
+  flavor: CreateDraft['flavor']
+  name: string
+  ticker: string
+  storeConfig: Pick<CreateDraft['storeConfig'], 'collectionName' | 'collectionSymbol'>
+}): { name: string; symbol: string } {
+  return {
+    name: from.storeConfig.collectionName.trim() || from.name.trim(),
+    symbol:
+      from.storeConfig.collectionSymbol.trim() ||
+      (from.flavor === 'revnet' ? from.ticker.trim() : '') ||
+      deriveSymbol(from.name),
+  }
+}

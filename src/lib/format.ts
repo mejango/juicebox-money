@@ -1,4 +1,4 @@
-import { formatUnits } from 'viem'
+import { formatUnits, parseUnits } from 'viem'
 import { explorerHostname } from './chainDisplay'
 
 export function formatTokenAmount(
@@ -375,4 +375,14 @@ export function compactTokenTotal(raw: bigint): string {
     return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1).replace(/\.0$/, '')}k`
   }
   return formatTokenAmount(raw)
+}
+
+/** A typed amount in a token's smallest units. viem's parseUnits rounds what the token
+ *  cannot hold, which would send another amount than the one typed: this refuses it. */
+export function exactUnits(value: string, decimals: number): bigint {
+  const text = value.trim()
+  if ((text.split('.')[1] ?? '').length > decimals) {
+    throw new Error(`${text} has more decimal places than its token holds.`)
+  }
+  return parseUnits(text, decimals)
 }

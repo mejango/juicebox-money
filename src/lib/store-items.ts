@@ -1,5 +1,5 @@
 import { reservedSupplyOk } from "@/lib/shop-reserves"
-import { parseUnits } from 'viem'
+import { exactUnits } from './format'
 import type {
   DraftItem,
   StoreCategory,
@@ -87,7 +87,7 @@ export function storeItemsForChain(
   return pinned.map(({ draft: item, encodedIpfsUri }) => {
     let price: bigint
     try {
-      price = parseUnits(item.price.trim(), decimals)
+      price = exactUnits(item.price, decimals)
     } catch {
       throw new Error(
         `“${item.name.trim()}” has too many decimal places for this store.`,

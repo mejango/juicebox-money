@@ -237,7 +237,7 @@ describe("local transaction builders", () => {
         discountPercent: 4,
         flags: {
           allowOwnerMint: true,
-          useReserveBeneficiaryAsDefault: true,
+          useReserveBeneficiaryAsDefault: false,
           transfersPausable: false,
           useVotingUnits: true,
           cantBeRemoved: true,

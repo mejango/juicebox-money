@@ -1294,8 +1294,9 @@ function tierConfigs(items: StoreItem[], chainId: JBChainId, historicalStore: bo
         discountPercent: item.discountPercent,
         flags: {
           allowOwnerMint: item.flags.allowOwnerMint,
-          useReserveBeneficiaryAsDefault:
-            item.reserveFrequency > 0 && item.reserveBeneficiary !== null,
+          // Each item keeps its own beneficiary: as a default, the last item's
+          // would take every item's reserves.
+          useReserveBeneficiaryAsDefault: false,
           transfersPausable: item.flags.transfersPausable,
           useVotingUnits: historicalStore && item.votingUnits > 0,
           cantBeRemoved: item.flags.cantBeRemoved,

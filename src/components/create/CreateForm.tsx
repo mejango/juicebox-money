@@ -47,8 +47,7 @@ import {
   useSafeConnection,
   waitForSafeExecutionHash,
 } from "@/lib/safe-connector";
-import { etherscanTxUrl, formatDateTime, formatTokenAmount, ipfsUrl } from "@/lib/format";
-import { readJbDraftFile, writeJbDraftFile } from "@/lib/jb-draft";
+import { etherscanTxUrl, exactUnits, formatDateTime, formatTokenAmount, ipfsUrl } from "@/lib/format";
 import { pinnedItemMedia } from "@/lib/store-items";
 import { cidV0ToBytes32 } from "@bananapus/nana-sdk-core";
 import { DISCOUNT_DENOMINATOR } from "@bananapus/nana-sdk-core/v6";
@@ -68,6 +67,8 @@ import {
   warnOnDraftDrift,
   type CreateDraft,
   type DraftRules,
+  PERMANENTLY_DISABLED_AUTHORITY,
+  storeIdentity,
 } from "@/lib/draft";
 import {
   abandonLaunchSession,
@@ -202,8 +203,6 @@ const StageRulesEditor = dynamic(
   { loading: () => <p role="status" className="mt-4 text-sm text-smoke-600">Loading rules editor…</p> },
 );
 
-const PERMANENTLY_DISABLED_AUTHORITY =
-  "0xdead000000000000000000000000000000000000";
 
 type SupportedChainId = (typeof SUPPORTED_CHAINS)[number]["id"];
 
@@ -258,19 +257,6 @@ type ChainStatus = LaunchChainStatus & {
  * once its event names the project.
  */
 const LAUNCH_SETTLED_CONFIRMING_LINE = "Your launch went through. Its project is still confirming.";
-
-function deriveSymbol(name: string): string {
-  const words = name
-    .toUpperCase()
-    .split(/[^A-Z0-9]+/)
-    .filter(Boolean);
-  const initials = words.map((w) => w[0]).join("");
-  const symbol = (initials.length >= 2 ? initials : (words[0] ?? "")).slice(
-    0,
-    8,
-  );
-  return symbol || "ITEMS";
-}
 
 /** Human labels for the fixed approval-deadline choices. */
 const APPROVAL_LABELS: Record<
@@ -1141,7 +1127,7 @@ export function CreateForm() {
     }
     const valid = rows.filter((s) => splitOk(s, "amount", [chainId]));
     const values = valid.map((row) =>
-      parseUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
+      exactUnits(row.perChainAmount[chainId]?.trim() || row.value, decimals),
     );
     const total = values.reduce((a, b) => a + b, 0n);
     // A zero total is "fixed amounts, none set yet" — a payout limit of 0, NOT
@@ -1221,7 +1207,7 @@ export function CreateForm() {
       surplusAllowanceOn: surplusOn,
       surplusAllowanceAmount:
         surplusOn && stage.surplusCapOn
-          ? parseUnits(stage.surplusAmount || "0", accountingDecimals)
+          ? exactUnits(stage.surplusAmount || "0", accountingDecimals)
           : null,
       holdFees: stage.payouts !== "none" && stage.holdFees,
       cashOutTaxRate:
@@ -1532,9 +1518,7 @@ export function CreateForm() {
           storeCategories.find((c) => c.id === item.category)?.name ||
           undefined,
       });
-      // parseUnits rounds sub-precision input to 0 — refuse accidental
-      // free items (e.g. a 0.0000001 USD price against 6 decimals).
-      const price = parseUnits(item.price, storePriceDecimals);
+      const price = exactUnits(item.price, storePriceDecimals);
       if (price === 0n) {
         throw new Error(
           `The price of "${item.name.trim()}" is too small — it rounds to 0.`,
@@ -1600,11 +1584,7 @@ export function CreateForm() {
     // The store collection deploys with every launch (even empty) so the
     // project can stock it later without a ruleset change.
     const store: LaunchPlan["store"] = {
-      name: storeConfig.collectionName.trim() || name.trim(),
-      symbol:
-        storeConfig.collectionSymbol.trim() ||
-        (flavor === "revnet" ? ticker.trim() : "") ||
-        deriveSymbol(name),
+      ...storeIdentity({ flavor, name, ticker, storeConfig }),
       currency: effectiveStoreCurrency,
       preventOverspending: storeConfig.preventOverspending,
       noNewTiersWithReserves: storeConfig.noNewTiersWithReserves,
@@ -2403,14 +2383,32 @@ export function CreateForm() {
     if (!file) return;
     setImportError(null);
     try {
+      // The file mapper loads only when a file is used.
+      const { readJbDraftFile } = await import("@/lib/jb-draft");
       applyDraft(readJbDraftFile(await file.text()));
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Import failed.");
     }
   };
 
-  const exportDraft = () => {
-    const blob = new Blob([writeJbDraftFile(buildDraft())], {
+  const exportDraft = async () => {
+    setImportError(null);
+    if (
+      (logoFile && !logoUri) ||
+      (coverFile && !coverUri) ||
+      items.some((item) => item.mediaFile && !item.mediaUri)
+    ) {
+      setImportError("An image is still uploading. Export once it finishes.");
+      return;
+    }
+    let text: string;
+    try {
+      text = (await import("@/lib/jb-draft")).writeJbDraftFile(buildDraft());
+    } catch (e) {
+      setImportError(e instanceof Error ? e.message : "Export failed.");
+      return;
+    }
+    const blob = new Blob([text], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -2958,7 +2956,7 @@ export function CreateForm() {
           />
         </label>
         <button
-          onClick={exportDraft}
+          onClick={() => void exportDraft()}
           disabled={busy}
           className="inline-flex min-h-[28px] items-center gap-1 rounded-full border border-smoke-200 px-3 text-[11px] font-medium text-smoke-500 transition-colors hover:border-smoke-400 hover:text-ink disabled:opacity-60"
         >
@@ -4118,8 +4116,12 @@ export function CreateForm() {
                     }
                     disabled={busy}
                     placeholder={
-                      (flavor === "revnet" && ticker.trim()) ||
-                      deriveSymbol(name)
+                      storeIdentity({
+                        flavor,
+                        name,
+                        ticker,
+                        storeConfig: { collectionName: "", collectionSymbol: "" },
+                      }).symbol
                     }
                     className="input-well mt-1 min-h-[44px] px-3.5 text-sm disabled:opacity-60"
                   />
