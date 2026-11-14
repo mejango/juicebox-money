@@ -12,6 +12,7 @@ import { isAddressEqual, type Address } from "viem";
 import { ActionRowsSkeleton, ActivityRows, OverviewTabSkeleton, ProjectHeaderSkeleton, ProjectPayPanelSkeleton, ProjectPageSkeleton } from "@/components/LoadingSkeletons";
 import { ProjectHeader, ProjectTreasury, ProjectOverview, ProjectExtras, ProjectBackOffice } from "@/app/[urn]/ProjectMetadataSections";
 import { ProjectActivity } from "@/app/[urn]/ProjectActivity";
+import { ProjectContractWarning } from "@/components/project/ProjectContractWarning";
 import { PendingPaymentsGate } from "@/components/project/PendingPaymentsGate";
 import { ChainIcon } from "@/components/ChainIcon";
 import { ProjectLogoWithFallback } from "@/components/ProjectLogoWithFallback";
@@ -477,6 +478,7 @@ async function ProjectPageContents({ urn, result: pending }: {
         {siblings.error || operator === undefined ? (
           <ProjectDataStatus deployments={diagnosticDeployments} notice="partial" />
         ) : null}
+        <ProjectContractWarning chains={chainPairs} isRevnet={isRevnet} />
 
         {/* Content + pay card */}
         <ProjectTabs

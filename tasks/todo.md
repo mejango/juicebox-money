@@ -14,7 +14,7 @@ jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (re
 - [x] B12 Set terminals sends an empty list only with Allow an empty list turned on (it stops payments and cash outs); the card and a queued batch step share the rule (`emptyWith`, `parseAddressList`), and a step saved before the field reads as off. Same field in Juicescan.
 - [x] B11 Owner calls Relayr cannot take (one chain twice, an unsupported chain, a target without the forwarder) are reviewed once and sent in order from the wallet, under core's journal keyed as revnet.money keys its own (account, and each call's chain, target and function): the same calls continue after the last confirmed one, other arguments replace the run, and a run left unfinished stays direct. Relayr is still tried first. jango's ruling of 2026-11-14 (match revnet.money), with its known weakness: set X on two chains, fail on the second, set Y by another route, request X again, and the old run resumes past the first chain.
 - [x] B4 Rulesets: Edit rules takes any cycle length, a rule-change notice and the issuance currency; the surplus allowance runs on any chain and for operators (see the 2026-11-14 ruleset section below). Not built, for jango: a field for a new custom approval contract; the allowance for a Safe signer not connected as the Safe.
-- [ ] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). An activity chain filter (a native select of the chains in the loaded events, display order; `activityChains`, `activityOnChain`). Inbound bridge claims already read "claimed X from Chain" (`bridgeClaimEvent`). Open: unknown-contracts warning; a sucker's outbound cash out still reads "cashed out" (needs the project's sucker addresses in the feed).
+- [x] B5 Read surface: done: data hook rows in the ruleset detail, words for the empty activity state, a "Rules change in" line above the pay card (`RulesChangeNotice`). An activity chain filter (a native select of the chains in the loaded events, display order; `activityChains`, `activityOnChain`). Inbound bridge claims already read "claimed X from Chain" (`bridgeClaimEvent`). A bridge send reads "sending X to Chain" and the cash out the sucker makes inside it is hidden (`withoutBridgeCashOuts`). The project page warns about contracts it does not recognize (`auditProjectContracts`, `ProjectContractWarning`).
 - [x] B6 Copy: "cash out" written open, chain slugs in display order, logo hint matches the 25 MB check, fees to JBP6, account title without a dash, each client names the other's `.jb` draft. Not changed after checking the recorded rules: there is no blanket em dash rule (only page titles) and no rule against `$` tickers, so both go to the end list.
 - [x] B7 Buyback card: a pool registration at exactly the maximum TWAP window is refused (the hook stores 30 minutes). Held for jango: resolving the current hook and router terminal through the ruleset data hook, as revnet.money does, belongs in the SDK.
 
@@ -112,3 +112,21 @@ Built on the reviewed shop batch: `SHOP_ACTIONS` names each action's permission 
 
 ### Review
 Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates pass: 3667 unit tests, budgets (all scripts raised 2738 to 2741 on a measured 2740.1), 90 browser tests on port 3187 (3100 held by another process). Not rendered in a browser with an owner wallet.
+
+## 2026-11-14: Bridge sends in activity and the unknown contracts warning (B5)
+
+- [x] Activity: the feed reads `bridgeToOutboxEvent` and shows "sending X TOKEN to Chain"; a cash out whose holder is that event's sucker, in the same transaction, makes no row. Project feed and home rail share the rule.
+- [x] Project page: one audit per chain of the controller, terminals, rule-change hook, data hook, omnichain extra hook and buyback hook against the SDK's known deployments, the address registry's deployer, and the project's verified Defifa game. A failed read says the check did not finish.
+
+## Plan refinement
+- **Objective:** juicebox.money says the same two things Juicescan says: a bridge send is a send, and a project pointing at a contract the app does not know carries a warning. Success is both shown from live data shapes with tests.
+- **System fit:** The feed rule lives beside the other feed filters in `ActivityList`; the audit is a pure reader in `src/lib` that a client card displays, read through the paced browser RPC lanes after the page loads, so page renders and crawlers cost no RPC.
+- **Reuse and simplicity:** SDK `knownAddressName`, `getCurrentRuleset`, `resolveProjectBuybackHook`, `getProjectNftInventory`. Juicescan's extra 721 clone identity reads are skipped: its own fallback accepts any instance from a known deployer, so the result is the same.
+- **Evidence and unknowns:** One live Bendystraw transaction shows the outbox event and the sucker's cash out side by side with matching sucker and holder. The audit run against 17 live Base projects flags one, project 20's extra data hook, which has no registry deployer and is not in Juicescan's table either. Unknown: the SDK table lacks Defifa deployers and old LP split hook generations, which no audited role uses today.
+- **Verification:** Unit tests for the feed rule, the audit and the card; `npm run check`; Codex until clean.
+- **Resource budget:** One branch stacked on the ruleset editor, one full gate, review passes as needed.
+- **Authority and recovery:** Draft PR only, merged on jango's word. Two commits for the feed, one for the warning; each reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+REVIEW_B5
