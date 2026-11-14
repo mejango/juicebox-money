@@ -147,6 +147,21 @@ describe('Safe batch steps', () => {
     ).toThrow(/wrong contract/)
   })
 
+  it('queues an empty terminal list only with its acknowledgement, and reads an older saved step as off', () => {
+    const DIRECTORY = CONTROLLER
+    const setTerminals = (fields: Parameters<typeof buildStep>[0]['values']) =>
+      buildStep({
+        kind: 'power',
+        chainId: 1,
+        projectId: 7,
+        values: { ...powerStepValues('allowSetTerminals', DIRECTORY, {}), ...fields },
+      })
+    expect(setTerminals({ terminals: [TERMINAL] }).args).toEqual([7n, [TERMINAL]])
+    expect(setTerminals({ terminals: [], allowEmpty: true }).args).toEqual([7n, []])
+    expect(() => setTerminals({ terminals: [], allowEmpty: false })).toThrow(/must list valid addresses/)
+    expect(() => setTerminals({ terminals: [] })).toThrow(/must list valid addresses/)
+  })
+
   it('keys steps by kind and target, extended by pool token or power function', () => {
     expect(stepKey(hookStep())).toBe(`setHookFor:${REGISTRY.toLowerCase()}`)
     expect(stepKey(poolStep())).toBe(

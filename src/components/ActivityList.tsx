@@ -22,9 +22,9 @@ import {
   type BsActivityEvent,
   type EventToken,
 } from '@/lib/bendystraw'
-import { sameTxKey } from '@/lib/activity-rows'
+import { activityChains, activityOnChain, sameTxKey } from '@/lib/activity-rows'
 import { knownTokenSymbol } from '@/lib/token-symbol'
-import { explorerHostname } from '@/lib/chainDisplay'
+import { displayChainName, explorerHostname } from '@/lib/chainDisplay'
 import {
   formatCompactAmount,
   formatCompactTokenAmount,
@@ -1196,7 +1196,11 @@ export function ActivityList({
   const [selectedCategories, setSelectedCategories] =
     useState<Set<ActivityCategory> | null>(null)
 
-  const projectEvents = projectFeedEvents(liveEvents)
+  const [selectedChain, setSelectedChain] = useState<number | null>(null)
+
+  const everyChainEvents = projectFeedEvents(liveEvents)
+  const chains = activityChains(everyChainEvents)
+  const projectEvents = activityOnChain(everyChainEvents, selectedChain)
   const categories: ActivityCategory[] = []
   projectEvents.forEach(event => {
     const category = activityCategory(event)
@@ -1215,11 +1219,26 @@ export function ActivityList({
         <ProjectTabIcon label="Activity" />
         Latest
       </h2>
-      <ActivityTypeFilter
-        categories={categories}
-        selected={selectedCategories}
-        onChange={setSelectedCategories}
-      />
+      <div className="flex items-center gap-3">
+        {chains.length > 1 ? (
+          <select
+            aria-label="Chain"
+            value={selectedChain !== null && chains.includes(selectedChain) ? selectedChain : ''}
+            onChange={event => setSelectedChain(event.target.value ? Number(event.target.value) : null)}
+            className="min-h-11 max-w-[9rem] cursor-pointer rounded-md bg-transparent text-sm text-smoke-700 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+          >
+            <option value="">All chains</option>
+            {chains.map(chain => (
+              <option key={chain} value={chain}>{displayChainName(chain)}</option>
+            ))}
+          </select>
+        ) : null}
+        <ActivityTypeFilter
+          categories={categories}
+          selected={selectedCategories}
+          onChange={setSelectedCategories}
+        />
+      </div>
     </div>
   )
 

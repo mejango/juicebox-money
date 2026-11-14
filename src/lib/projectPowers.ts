@@ -31,6 +31,8 @@ export type FlowField = {
   kind: FieldKind
   placeholder?: string
   help?: string
+  /** An address list may be left empty only while this bool field is on. */
+  emptyWith?: string
   initial?:
     | string
     | 'ADDR_CONNECTED'
@@ -155,6 +157,13 @@ export const POWERS: PowerDescriptor[] = [
         placeholder: '0x… (one per line)',
         initial: 'ADDR_TERMINALS',
         help: 'The full list, one address per line. Prefilled with what is set on chain right now.',
+        emptyWith: 'allowEmpty',
+      },
+      {
+        name: 'allowEmpty',
+        label: 'Allow an empty list',
+        kind: 'bool',
+        help: 'An empty list stops payments and cash outs.',
       },
     ],
     buildArgs: (projectId, values) => [
@@ -315,12 +324,15 @@ export function initialFieldValue(
  * Null when the text is empty or any entry does not resolve — a partially-parsed list
  * would silently drop a terminal, which is the failure this field exists to prevent.
  */
-export function parseAddressList(raw: string): Address[] | null {
+export function parseAddressList(
+  raw: string,
+  allowEmpty = false,
+): Address[] | null {
   const entries = raw
     .split(/[\s,]+/)
     .map(entry => entry.trim())
     .filter(Boolean)
-  if (!entries.length) return null
+  if (!entries.length) return allowEmpty ? [] : null
   const out: Address[] = []
   for (const entry of entries) {
     const resolved = resolvedAddress(entry)
