@@ -1,5 +1,7 @@
 "use client";
 
+import { DurationSelect } from "@/components/create/DurationSelect";
+import { durationFields, durationFieldsSeconds, type DurationFields } from "@/components/create/stage-draft";
 import { destinationJournal } from "@/lib/destination-journal";
 import {
   JBCoreContracts,
@@ -276,15 +278,6 @@ function isWeightValid(weight: string): boolean {
   }
   return true;
 }
-
-const DURATION_PRESETS: { label: string; seconds: number }[] = [
-  { label: "No expiry", seconds: 0 },
-  { label: "1 day", seconds: 86_400 },
-  { label: "3 days", seconds: 259_200 },
-  { label: "7 days", seconds: 604_800 },
-  { label: "14 days", seconds: 1_209_600 },
-  { label: "28 days", seconds: 2_419_200 },
-];
 
 /** basis-points-of-10000 → a trimmed 0-100 percent string. */
 function bpToPct(bp: number): string {
@@ -1269,6 +1262,7 @@ function RulesetEditorForm({
   const nonFinalOpenEnded = stagesRules.some(
     (rules, i) => i < stagesRules.length - 1 && rules.duration === 0,
   );
+  const durationsValid = stagesRules.every((rules) => Number.isInteger(rules.duration));
   const lastRules = stagesRules[stagesRules.length - 1];
   const lastTimed =
     lastRules.duration > 0 && lastRules.duration !== FOREVER_SECONDS;
@@ -1291,7 +1285,7 @@ function RulesetEditorForm({
 
   const handleReview = async () => {
     if (!isConnected || !address) { openSignIn(); return; }
-    if (!weightValid || !limitsValid || !startValid || busy) return;
+    if (!weightValid || !limitsValid || !startValid || !durationsValid || busy) return;
     if (!followersValid || nonFinalOpenEnded) return;
     if (limitBlock) { setFlowError(limitBlock); return; }
     if (changes.length === 0 && followers.length === 0) {
@@ -1709,6 +1703,7 @@ function RulesetEditorForm({
               !limitsValid ||
               !startValid ||
               !followersValid ||
+              !durationsValid ||
               nonFinalOpenEnded ||
               !!limitBlock))
         }
@@ -1758,6 +1753,30 @@ function RulesetEditorForm({
 
 
 /** The editable rule fields for one ruleset — Ruleset #1 and every follow-on ruleset render the same set. */
+/** The shared duration control over the editor's seconds. An incomplete
+ *  custom length reads as NaN, which the review refuses. */
+function CycleLength({ seconds, onChange, disabled }: { seconds: number; onChange: (seconds: number) => void; disabled: boolean }) {
+  const shown = (value: number): DurationFields =>
+    durationFields(value) ?? { durationValue: "custom", customDuration: String(Math.round(value / 360) / 10), customUnit: "hours" };
+  const [draft, setDraft] = useState(() => ({ seconds, fields: shown(seconds) }));
+  // Another source's rules replaced the length under the control.
+  if (Number.isInteger(seconds) && seconds !== draft.seconds) setDraft({ seconds, fields: shown(seconds) });
+  return (
+    <DurationSelect
+      fields={draft.fields}
+      zeroLabel="No expiry"
+      forever={false}
+      disabled={disabled}
+      onChange={(patch) => {
+        const fields = { ...draft.fields, ...patch };
+        const next = durationFieldsSeconds(fields) ?? Number.NaN;
+        setDraft({ seconds: next, fields });
+        onChange(next);
+      }}
+    />
+  );
+}
+
 function RulesFields({
   rules,
   onChange,
@@ -1777,29 +1796,7 @@ function RulesFields({
     <div className="mt-4 space-y-5">
       <section>
         <span className="field-label">Cycle length</span>
-        <select
-          value={rules.duration}
-          disabled={disabled}
-          onChange={(e) => set("duration", Number(e.target.value))}
-          className="input-well select-caret mt-1.5 min-h-[40px] !w-auto max-w-full px-3 pr-9 text-sm"
-        >
-          {DURATION_PRESETS.some(
-            (p) => p.seconds === rules.duration,
-          ) ? null : (
-            <option value={rules.duration}>
-              {formatDuration(rules.duration, {
-                exact: true,
-                zeroLabel: "No expiry",
-              })}{" "}
-              (current)
-            </option>
-          )}
-          {DURATION_PRESETS.map((p) => (
-            <option key={p.seconds} value={p.seconds}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <CycleLength seconds={rules.duration} onChange={(seconds) => set("duration", seconds)} disabled={disabled} />
       </section>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -2103,10 +2100,9 @@ function describe(s: EditorState): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [
     {
       label: "Cycle length",
-      value: formatDuration(s.duration, {
-        exact: true,
-        zeroLabel: "No expiry",
-      }),
+      value: Number.isInteger(s.duration)
+        ? formatDuration(s.duration, { exact: true, zeroLabel: "No expiry" })
+        : "Incomplete",
     },
     {
       label: "Issuance",
