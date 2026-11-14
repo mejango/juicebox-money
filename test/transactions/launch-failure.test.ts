@@ -1,6 +1,7 @@
 import { assertShopCallPolicy } from '@/lib/shop-call-policy'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeFunctionData, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { jb721TiersHookProjectDeployerAbi, jbV6ContractAddress } from '@bananapus/nana-sdk-core'
 import { buildHistoricalLaunchRequest, buildLaunchRequest, launchCallForRecovery, createSimpleProjectStage, DEFAULT_STORE_FLAGS, requireFinalizedLaunchFailure, type LaunchPlan } from '@/lib/launch'
 
 const ACCOUNT = '0x1111111111111111111111111111111111111111' as const
@@ -68,6 +69,22 @@ describe('finalized direct launch failure release', () => {
       expect(() => launchCallForRecovery(args, { from: OTHER, chainId: 8453, to: candidate.address, input: data, value: 123n })).toThrow('saved plan')
       expect(() => launchCallForRecovery(args, { from: ACCOUNT, chainId: 8453, to: candidate.address, input: '0x1234', value: 123n })).toThrow('saved plan')
     }
+  })
+
+  it('recognizes a single-chain launch sent through the launcher used before the omnichain deployer', () => {
+    const args = { ...direct, owner: ACCOUNT, creationFee: 123n }
+    const [owner, projectUri, deploy721Config, rulesetConfigurations, terminalConfigurations] = request.args as unknown as [string, string, { deployTiersHookConfig: unknown }, unknown, unknown]
+    const former = jbV6ContractAddress.JB721TiersHookProjectDeployer[8453]
+    const input = encodeFunctionData({
+      abi: jb721TiersHookProjectDeployerAbi, functionName: 'launchProjectFor',
+      args: [owner, deploy721Config.deployTiersHookConfig, { projectUri, rulesetConfigurations, terminalConfigurations, memo: '' }, jbV6ContractAddress.JBController[8453], HASH],
+    } as Parameters<typeof encodeFunctionData>[0])
+    expect(launchCallForRecovery(args, { from: ACCOUNT, chainId: 8453, to: former, input, value: 123n })).toEqual({ to: former, data: input, value: 123n })
+    // The bytes and the address go together: the former bytes at today's deployer are not a launch this site sent.
+    expect(() => launchCallForRecovery(args, { from: ACCOUNT, chainId: 8453, to: request.address, input, value: 123n })).toThrow('saved plan')
+    // A linked launch never used the former launcher.
+    const linked = { ...args, plan: { ...plan, chains: [8453, 10], linkChains: true } }
+    expect(() => launchCallForRecovery(linked, { from: ACCOUNT, chainId: 8453, to: former, input, value: 123n })).toThrow('saved plan')
   })
 
   it('requires finalized canonical inclusion after the caller proves Safe inner failure', async () => {

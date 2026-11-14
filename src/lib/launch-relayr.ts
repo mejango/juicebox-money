@@ -556,6 +556,19 @@ export async function runRelayrLaunch({ session, account, onStatus, onProgress }
         const expected = buildLaunchRequest({ chainId: signed.chainId as JBChainId, owner: account,
           projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt, creationFee })
         const data = launchData(expected)
+        if (isAddressEqual(request.from, account) && !isAddressEqual(request.to, expected.address)) {
+          // Signed for the launcher this site used before: the same plan, so it is signed again for today's.
+          let former = false
+          try {
+            launchCallForRecovery({ chainId: signed.chainId as JBChainId, owner: account, projectUri: current.projectUri, plan: current.plans[signed.chainId], salt: current.salt },
+              { from: request.from, to: request.to, chainId: signed.chainId, input: request.data, value: request.value })
+            former = true
+          } catch { /* not a launch this site sent: refused below */ }
+          if (former) {
+            pinnedRequest(signed)
+            throw new LaunchSignaturesNeedRefresh(`Launches on ${chainName(signed.chainId)} now go through another contract. Review fresh launch authorizations before payment.`)
+          }
+        }
         if (!isAddressEqual(request.from, account) || !isAddressEqual(request.to, expected.address)) {
           throw new Error('The saved launch authorization no longer matches the reviewed launch. Check the original bundle before continuing.')
         }

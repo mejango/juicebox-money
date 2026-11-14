@@ -12,6 +12,8 @@ import {
   getProjectsOwnedBy,
   getRevnetOperator,
   getSuckerGroupAddToBalance,
+  getDeploymentTokenBalanceMoments,
+  getProjectPayNotice,
   getSuckerGroupMoments,
   getSuckerGroupProjects,
   getTokenUsdRates,
@@ -104,6 +106,8 @@ describe("a Bendystraw read's signal", () => {
     ['@/lib/bendystraw#getRevnetOperator', signal => getRevnetOperator(8453, 11, { signal })],
     ['@/lib/bendystraw#getProjectPayers', signal => getProjectPayers([[8453, 11]], { signal })],
     ['@/lib/bendystraw#getSuckerGroupMoments', signal => getSuckerGroupMoments('group', { signal })],
+    ['@/lib/bendystraw#getProjectPayNotice', signal => getProjectPayNotice(8453, 11, { signal })],
+    ['@/lib/bendystraw#getDeploymentTokenBalanceMoments', signal => getDeploymentTokenBalanceMoments([[8453, 11]], { signal })],
     ['@/lib/bendystraw#getTokenUsdRates', signal =>
       getTokenUsdRates({ chainId: 8453, projectId: 11, token: '0x000000000000000000000000000000000000EEEe' }, { signal })],
     ['@/lib/bendystraw#getSuckerGroupAddToBalance', signal => getSuckerGroupAddToBalance('group', { signal })],

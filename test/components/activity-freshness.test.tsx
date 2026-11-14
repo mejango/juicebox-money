@@ -160,13 +160,14 @@ describe('activity freshness', () => {
     const older = event('older', 1)
     const newest = event('newest', 5)
     mocks.groupActivity
-      .mockResolvedValueOnce({ items: [older], totalCount: 3 })
+      // Two rows in all until the newest arrives. The one loaded row is the oldest loaded moment,
+      // which the page may have cut, so nothing shows and the feed reads the next page by itself.
+      .mockResolvedValueOnce({ items: [older], totalCount: 2 })
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValueOnce({ items: [newest, first], totalCount: 3 })
     const view = await render({
-      events: [first], total: 3, suckerGroupId: 'group', initialEventsUpdatedAt: NOW,
+      events: [first], total: 2, suckerGroupId: 'group', initialEventsUpdatedAt: NOW,
     })
-    await act(async () => view.root.findByType('button').props.onClick())
     expect(mocks.groupActivity).toHaveBeenNthCalledWith(1, 'group', 250, 1, 1, {
       signal: expect.any(AbortSignal),
     })

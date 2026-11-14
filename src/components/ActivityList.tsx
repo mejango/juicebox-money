@@ -6,6 +6,7 @@ import {
   createContext,
   isValidElement,
   useContext,
+  useEffect,
   useState,
   type ReactNode,
 } from 'react'
@@ -22,7 +23,7 @@ import {
   type BsActivityEvent,
   type EventToken,
 } from '@/lib/bendystraw'
-import { activityChains, activityOnChain, sameTxKey } from '@/lib/activity-rows'
+import { activityChains, activityOnChain, sameTxKey, withoutPartialOldest } from '@/lib/activity-rows'
 import { knownTokenSymbol } from '@/lib/token-symbol'
 import { displayChainName, explorerHostname } from '@/lib/chainDisplay'
 import {
@@ -1244,7 +1245,16 @@ export function ActivityList({
 
   const [selectedChain, setSelectedChain] = useState<number | null>(null)
 
-  const everyChainEvents = projectFeedEvents(liveEvents)
+  // A transaction cut by the page boundary waits for the next page, so its row is never half of it.
+  const moreToLoad = liveEvents.length < liveTotal
+  const wholeEvents = withoutPartialOldest(liveEvents, moreToLoad)
+  // Every loaded event shares one moment: nothing is whole yet, so read on rather than show a part.
+  const readOn = moreToLoad && liveEvents.length > 0 && wholeEvents.length === 0 && !feed.loading && !feed.error
+  const loadMore = feed.loadMore
+  useEffect(() => {
+    if (readOn) void loadMore()
+  }, [readOn, loadMore, liveEvents.length])
+  const everyChainEvents = projectFeedEvents(wholeEvents)
   const chains = activityChains(everyChainEvents)
   const projectEvents = activityOnChain(everyChainEvents, selectedChain)
   const categories: ActivityCategory[] = []
@@ -1288,7 +1298,7 @@ export function ActivityList({
     </div>
   )
 
-  if (projectEvents.length === 0) {
+  if (projectEvents.length === 0 && !moreToLoad) {
     if (liveError) {
       return (
         <div>

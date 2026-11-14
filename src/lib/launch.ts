@@ -31,7 +31,7 @@ import {
   type JBAccountingContext,
   type JBFeedPair,
 } from '@bananapus/nana-sdk-core/v6'
-import { encodeFunctionData, zeroAddress, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
+import { encodeFunctionData, zeroAddress, zeroHash, type Address, type Hex, type PublicClient, type TransactionReceipt } from 'viem'
 import type { SafeDeploymentPlan } from '@bananapus/nana-sdk-core/safe'
 import { chainName } from '@/lib/urn'
 
@@ -824,16 +824,14 @@ function scaleDecimals(amount: bigint, from: number, to: number): bigint {
  * Assemble the launch request for one chain. Pure — no wallet, no network —
  * so it's directly testable via `simulateContract`.
  *
- * Every launch goes through `JB721TiersHookProjectDeployer.launchProjectFor`
- * (even with zero store items) so the store hook exists from day 1. The
- * deployer injects the hook as the ruleset's pay data hook itself — its
- * ruleset tuple omits dataHook/useDataHookForPay, and viem drops those extra
- * metadata keys by name.
+ * Every launch goes through `JBOmnichainDeployer.launchProjectFor` (even with
+ * zero store items and on a single chain) so the store hook exists from day 1
+ * and the project can connect a chain later.
  *
  * Multi-chain launches are independent per-chain transactions. When
- * `plan.linkChains` is set and more than one chain is selected, the omnichain
- * branch below ALSO configures suckers (`suckerConfigFor`) — the plan is the
- * same on every chain, so the rulesets come out byte-identical either way.
+ * `plan.linkChains` is set and more than one chain is selected, the launch
+ * ALSO deploys suckers — the plan is the same on every chain, so the rulesets
+ * come out byte-identical either way.
  */
 type LaunchRequestArgs = {
   chainId: JBChainId
@@ -862,17 +860,20 @@ export function launchCallForRecovery(
   transaction: { from: Address; to: Address | null; chainId?: number; input: Hex; value: bigint },
 ): { to: Address; data: Hex; value: bigint } {
   const original = { ...args, creationFee: transaction.value }
-  const historical = buildHistoricalLaunchRequest(original)
-  const encode = (request: ReturnType<typeof buildLaunchRequest>) => encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]).toLowerCase()
-  if (transaction.chainId !== args.chainId || transaction.from.toLowerCase() !== args.owner.toLowerCase() ||
-      transaction.to?.toLowerCase() !== historical.address.toLowerCase() ||
-      (transaction.input.toLowerCase() !== encode(historical) && transaction.input.toLowerCase() !== encode(buildLaunchRequest(original)))) {
-    throw new Error('Launch differs from saved plan; keep recovery data.')
-  }
-  return { to: historical.address, data: transaction.input, value: transaction.value }
+  // Every encoding this site has sent for the plan: today's, the earlier store shape, and the launcher
+  // that single-chain and unlinked launches used before they moved to JBOmnichainDeployer.
+  const sent = ([[false, false], [true, false], [false, true], [true, true]] as const).flatMap(([historicalStore, formerLauncher]) => {
+    try { return [compileLaunchRequest(original, historicalStore, formerLauncher)] } catch { return [] }
+  })
+  const match = transaction.chainId === args.chainId && transaction.from.toLowerCase() === args.owner.toLowerCase()
+    ? sent.find(request => transaction.to?.toLowerCase() === request.address.toLowerCase() &&
+        transaction.input.toLowerCase() === encodeFunctionData(request as Parameters<typeof encodeFunctionData>[0]).toLowerCase())
+    : undefined
+  if (!match) throw new Error('Launch differs from saved plan; keep recovery data.')
+  return { to: match.address, data: transaction.input, value: transaction.value }
 }
 
-function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean) {
+function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean, formerLauncher = false) {
   const { chainId, plan } = args
   const { accounting } = plan
   // The plan is the authority: its owner was frozen when the run was pinned.
@@ -1091,49 +1092,48 @@ function compileLaunchRequest(args: LaunchRequestArgs, historicalStore: boolean)
         },
       ]
 
-  // Linked multichain launches go through the omnichain deployer: same
-  // 721-hook config, plus the sucker deployment config (shared salt pairs
-  // the suckers). Its ruleset tuple takes FULL metadata; the deployer
-  // injects the 721 hook as the pay data hook itself.
-  if (plan.linkChains && plan.chains.length > 1) {
-    return buildOmnichainLaunchProjectTx({
+  // Every launch goes through the omnichain deployer, with the same 721-hook
+  // config. Its ruleset tuple takes FULL metadata; the deployer injects the
+  // 721 hook as the pay data hook itself. A linked multichain launch also
+  // deploys the suckers (the shared salt pairs them). A single-chain or
+  // unlinked launch deploys none, and stays able to connect a chain later:
+  // a sucker can mint bridged tokens only through this deployer's data hook.
+  const linked = plan.linkChains && plan.chains.length > 1
+  // Recovery only: the bytes a single-chain or unlinked launch carried before this.
+  if (formerLauncher && !linked) {
+    return {
       chainId,
-      chainIds: plan.chains as JBChainId[],
-      owner,
-      projectUri: args.projectUri,
-      deploy721Config: {
-        deployTiersHookConfig: build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore),
-        useDataHookForCashOut: plan.store.itemsRedeem,
-        salt: args.salt,
-      },
-      rulesetConfigurations,
-      terminalConfigurations,
-      assets: bridgeAssetsFor(plan),
-      bridge: plan.bridge,
-      salt: args.salt,
-      creationFee: args.creationFee,
-    })
+      address: v6Address('JB721TiersHookProjectDeployer', chainId),
+      abi: jb721TiersHookProjectDeployerAbi,
+      functionName: 'launchProjectFor' as const,
+      args: [
+        owner,
+        build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore),
+        { projectUri: args.projectUri, rulesetConfigurations, terminalConfigurations, memo: '' },
+        v6Address('JBController', chainId),
+        args.salt,
+      ],
+      value: args.creationFee,
+    } as const
   }
-
-  return {
+  return buildOmnichainLaunchProjectTx({
     chainId,
-    address: v6Address('JB721TiersHookProjectDeployer', chainId),
-    abi: jb721TiersHookProjectDeployerAbi,
-    functionName: 'launchProjectFor' as const,
-    args: [
-      owner,
-      build721HookConfig(args.plan.store, args.projectUri, accounting, chainId, historicalStore),
-      {
-        projectUri: args.projectUri,
-        rulesetConfigurations,
-        terminalConfigurations,
-        memo: '',
-      },
-      v6Address('JBController', chainId),
-      args.salt,
-    ],
-    value: args.creationFee,
-  } as const
+    chainIds: linked ? (plan.chains as JBChainId[]) : [chainId],
+    owner,
+    projectUri: args.projectUri,
+    deploy721Config: {
+      deployTiersHookConfig: build721HookConfig(plan.store, args.projectUri, accounting, chainId, historicalStore),
+      useDataHookForCashOut: plan.store.itemsRedeem,
+      salt: args.salt,
+    },
+    rulesetConfigurations,
+    terminalConfigurations,
+    assets: bridgeAssetsFor(plan),
+    bridge: plan.bridge,
+    // The deployer deploys suckers only for a nonzero sucker salt.
+    salt: linked ? args.salt : zeroHash,
+    creationFee: args.creationFee,
+  })
 }
 
 /**

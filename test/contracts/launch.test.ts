@@ -15,6 +15,7 @@ import {
   encodeAbiParameters,
   encodeFunctionData,
   zeroAddress,
+  zeroHash,
   type Abi,
   type Address,
 } from 'viem'
@@ -127,9 +128,9 @@ function encode(request: ReturnType<typeof buildLaunchRequest>) {
 function projectConfig(
   request: ReturnType<typeof buildLaunchRequest>,
 ): ProjectLaunchConfig {
-  // The builder returns a union of deployer tuple types; this branch is pinned
-  // by the launchProjectFor assertion before its project config is inspected.
-  return request.args[2] as unknown as ProjectLaunchConfig
+  // The omnichain deployer takes the rulesets and terminals as its own arguments.
+  const args = request.args as readonly unknown[]
+  return { rulesetConfigurations: args[3], terminalConfigurations: args[4] } as unknown as ProjectLaunchConfig
 }
 
 function split(overrides: Partial<SplitConfig> = {}): SplitConfig {
@@ -212,16 +213,22 @@ describe('project launch encoding', () => {
     expect(config.rulesetConfigurations[0].approvalHook).toBe(zeroAddress)
   })
 
-  it('wallet-action:launch-a-project round-trips the 721 project deployer call through its canonical ABI', () => {
+  it('wallet-action:launch-a-project sends a single-chain launch through the omnichain deployer with no suckers', () => {
     const request = requestFor(plan())
     const data = encode(request)
     const decoded = decodeFunctionData({ abi: request.abi, data })
 
     expect(request.functionName).toBe('launchProjectFor')
     expect(request.value).toBe(123n)
-    expect(data.slice(0, 10)).toBe('0xc04ae38f')
+    expect(request.address).toBe(jbV6ContractAddress.JBOmnichainDeployer[1])
+    expect(data.slice(0, 10)).toBe('0x2d993173')
     expect(decoded.functionName).toBe('launchProjectFor')
-    expect(decoded.args).toHaveLength(5)
+    expect(decoded.args).toHaveLength(7)
+    // The deployer deploys suckers only for a nonzero sucker salt, so a
+    // single-chain launch sends zero and can connect a chain later.
+    expect(decoded.args?.[6]).toEqual({ deployerConfigurations: [], salt: zeroHash })
+    // The shop's own salt is still the launch's.
+    expect(decoded.args?.[2]).toMatchObject({ salt: SALT })
   })
 
   it.each([
@@ -453,7 +460,7 @@ describe('project launch encoding', () => {
     expect(ruleset.fundAccessLimitGroups[0].payoutLimits[0].amount).toBe(0n)
   })
 
-  it('wallet-action:launch-linked-chains uses the omnichain deployer ABI only for explicitly linked chains', () => {
+  it('wallet-action:launch-linked-chains deploys suckers only for explicitly linked chains', () => {
     const request = requestFor(
       plan({
         chains: [1, 10],
@@ -469,6 +476,9 @@ describe('project launch encoding', () => {
     expect(data.slice(0, 10)).toBe('0x2d993173')
     expect(decoded.functionName).toBe('launchProjectFor')
     expect(decoded.args).toHaveLength(7)
+    const suckers = decoded.args?.[6] as { deployerConfigurations: unknown[]; salt: string }
+    expect(suckers.deployerConfigurations).toHaveLength(1)
+    expect(suckers.salt).toBe(SALT)
     expect(decoded.args?.[2]).toMatchObject({
       deployTiersHookConfig: {
         tiersConfig: { currency: BASE_CURRENCY_USD, decimals: 6, tiers: [] },
@@ -482,10 +492,8 @@ describe('project launch encoding', () => {
   it('leaves multichain launches unlinked when the plan says so', () => {
     const request = requestFor(plan({ chains: [1, 10], linkChains: false }))
 
-    expect(request.address).toBe(
-      jbV6ContractAddress.JB721TiersHookProjectDeployer[1],
-    )
-    expect(request.args).toHaveLength(5)
+    expect(request.address).toBe(jbV6ContractAddress.JBOmnichainDeployer[1])
+    expect((request.args as readonly unknown[])[6]).toEqual({ deployerConfigurations: [], salt: zeroHash })
     expect(() => encode(request)).not.toThrow()
   })
 
@@ -850,9 +858,9 @@ describe('shop pricing currency', () => {
         store: { ...plan().store, currency: 'token' },
       }),
     )
-    const hookConfig = (request.args as readonly unknown[])[1] as {
-      tiersConfig: { currency: number; decimals: number }
-    }
+    const hookConfig = ((request.args as readonly unknown[])[2] as {
+      deployTiersHookConfig: { tiersConfig: { currency: number; decimals: number } }
+    }).deployTiersHookConfig
     expect(hookConfig.tiersConfig).toEqual(
       expect.objectContaining({
         currency: tokenCurrencyId(CUSTOM),

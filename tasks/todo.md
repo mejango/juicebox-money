@@ -170,3 +170,29 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Resource budget:** One small pull request.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Round 9, jango's answers to the end list
+
+- [x] R1 Funding chart Balance is holdings at today's price: each token's indexed balance history times today's price (`holdingsEvents`, live `JBPrices` read, newest indexed rate as the fallback).
+- [x] R2 Single-chain launches go through the omnichain deployer, so the project can connect a chain later.
+- [x] R3 Payment notice: chains whose notice differs show a notice with a toggle; a failed read shows a notice with a quiet retry and still lets the payment go.
+- [x] R4 Pay route: the card already says "You get about" with an "At least" floor whenever a market price sets part of the amount; Juicescan now does the same. Choosing between routes on an exact figure needs a simulated payment per route, which belongs in the SDK: asked of jango.
+- [x] R5 A bridge send and the cash out inside it read as one feed item, also across a page boundary.
+- [x] R6 Earlier open questions, decided the way jango has been ruling: a `.jb` file the editor cannot express is refused, as built (two-token capped allowance, an item split to a multi-chain project); item cash out rule, collection name defaults and the reserve beneficiary on added items stay as built; shop items with no IPFS file stay read-only and rights held only on another chain are not offered here; a new custom approval contract is not a field in Edit rules (an existing one is kept); the surplus allowance for a Safe signer not connected as the Safe is not built. The copy listed in the earlier sections stands as approved.
+
+## Plan refinement
+- **Objective:** Close the items jango answered on 2026-11-14 so the three clients behave the same and state only what is true.
+- **System fit:** Each rule stays with its owner: the chart series in `FundingChart.tsx`, launch encoding in the create flow, the notice in the pay panel, the feed merge in the activity module. Juicescan carries a hand port of each.
+- **Reuse and simplicity:** R1 reuses the per-token history the homepage chart already reads and the page's own price read; `bucketize` became one keyed fold for both series.
+- **Evidence and unknowns:** Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (not flow-accrued; the B7 note above came from a stale checkout). The indexer reads a several-field clause inside OR as any of those fields, so the history is read per deployment. Not rendered with a wallet.
+- **Verification:** A unit test per rule; `npm run check` before the pull request; CI green before merge.
+- **Resource budget:** One branch and one pull request per client.
+- **Authority and recovery:** Pull requests, merged on jango's word. One commit per item; each reverts alone.
+- **Agent-system impact:** None.
+
+### Review
+- R2 also fixes a live gap: Edit rules sent `JBController.queueRulesetsOf` for a project run through `JBOmnichainDeployer`, which keys the shop and the project's own data hook by ruleset, so a ruleset queued that way would start with neither. It now queues through the deployer with the stored hook (`extraDataHookOf`) restored.
+- Not rendered with a wallet; not launched or queued on a live chain from this branch.
+- Codex (`gpt-6.1-sol`, read-only) five passes: findings fixed, pass 5 CLEAN. From them: a queue copied from a ruleset whose shop `JBOmnichainDeployer` would not carry is refused; recovery recognizes a launch sent through the former launcher, and an unpaid Relayr launch signed for it is signed again at the same nonces; Balance waits for today's prices and says when some are recent or missing; a feed page that shares one moment shows nothing and reads on.
+- Full check green on the head: 3699 unit tests, 90 browser tests (browser stage on `PLAYWRIGHT_APP_PORT=3147`, another session's server held 3100). Budgets raised with measured numbers: `/[urn]` 548 KiB, all scripts 2747 KiB.
+- New copy for jango: "The project’s notice could not be loaded." with "Retry", "The notice differs on {chains}.", "No notice.", and the chart label "What the project held over time at today’s prices, shown as bars."

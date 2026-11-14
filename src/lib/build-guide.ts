@@ -211,7 +211,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
       {
         type: 'points',
         items: [
-          { key: 'Launch contract', text: 'the app uses REVDeployer.deployFor for revnets, JBOmnichainDeployer.launchProjectFor for linked chains, and JB721TiersHookProjectDeployer.launchProjectFor for other projects. These launchers set up the required extensions.' },
+          { key: 'Launch contract', text: 'the app uses REVDeployer.deployFor for revnets and JBOmnichainDeployer.launchProjectFor for every other project, on one chain or several. These launchers set up the required extensions.' },
           { key: 'Creation fee', text: 'up to 0.001 ETH per chain plus gas, shown in the review before you sign.' },
           { key: 'One transaction per chain', text: 'sign each launch in order with the same wallet. The app keeps a shared salt so linked bridge contracts get matching addresses.' },
           { key: 'Afterwards', text: 'each chain has its own project ID; the page lives at /<chain>:<id>. The Rulesets or Terms tab shows the terms as the contracts hold them.' },
@@ -349,7 +349,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['Send payouts', 'JBMultiTerminal.sendPayoutsOf'],
           ['Withdraw surplus allowance', 'JBMultiTerminal.useAllowanceOf'],
           ['Send reserved tokens to other recipients', 'JBController.sendReservedTokensToSplitsOf'],
-          ['Schedule new terms', 'JBController.queueRulesetsOf (buildQueueRulesetsTx)'],
+          ['Schedule new terms', 'JBController.queueRulesetsOf (buildQueueRulesetsTx). When the current data hook is JBOmnichainDeployer: JBOmnichainDeployer.queueRulesetsOf (buildOmnichainQueueRulesetsTx)'],
           ['Edit recipients and shares', 'JBController.setSplitGroupsOf (buildSetSplitGroupsTx)'],
           ['Create the project’s transferable ERC-20 token contract', 'JBController.deployERC20For (buildDeployErc20Tx)'],
           ['Move tokens tracked in Juicebox into the ERC-20', 'JBController.claimTokensFor (buildClaimTokensTx)'],
@@ -840,13 +840,13 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           ['JBFundAccessLimitGroup', 'terminal, token, payoutLimits[] and surplusAllowances[] as { amount (uint224, in the token’s decimals), currency (uint32) }, sorted by strictly increasing currency. Empty = no payouts; type(uint224).max = unlimited. Per chain, never aggregate'],
           ['JBTerminalConfig', 'terminal, accountingContextsToAccept[] of { token, decimals (uint8), currency (uint32) }. NATIVE_TOKEN is 0x…EEEe with currency 61166'],
           ['JBSplitGroup / JBSplit', 'groupId (1 = reserved tokens; uint256(uint160(token)) = payouts in that token), splits[] of { percent (uint32, of 1e9), projectId (uint64), beneficiary, preferAddToBalance, lockedUntil (uint48), hook }. Routing: hook, else projectId, else beneficiary'],
-          ['JBOmnichainDeployer.launchProjectFor', '(owner, projectUri, JBOmnichain721Config, rulesetConfigurations, terminalConfigurations, memo, JBSuckerDeploymentConfig) payable → (projectId, hook, suckers[]). Also deploys this chain’s suckers; the sucker salt is keccak256(sender, salt), so the same sender must launch on every chain'],
+          ['JBOmnichainDeployer.launchProjectFor', '(owner, projectUri, JBOmnichain721Config, rulesetConfigurations, terminalConfigurations, memo, JBSuckerDeploymentConfig) payable → (projectId, hook, suckers[]). Also deploys this chain’s suckers when the sucker salt is not zero; that salt is keccak256(sender, salt), so the same sender must launch on every chain. With a zero salt and no sucker configurations it launches on one chain, and the project can add chains later'],
           ['JB721TiersHookProjectDeployer.launchProjectFor', '(owner, JBDeploy721TiersHookConfig, JBLaunchProjectConfig, controller, salt) payable → (projectId, hook). Sets the hook as the data hook'],
         ],
       },
       {
         type: 'text',
-        text: 'Read JBProjects.creationFee() right before each launch (getProjectCreationFee in the SDK) and pass that exact amount as value. Show it in the review before signing. buildLaunchProjectTx calls JBController.launchProjectFor directly and creates no shop; use JB721TiersHookProjectDeployer.launchProjectFor when the project needs one.',
+        text: 'Read JBProjects.creationFee() right before each launch (getProjectCreationFee in the SDK) and pass that exact amount as value. Show it in the review before signing. buildLaunchProjectTx calls JBController.launchProjectFor directly and creates no shop; a project launched that way cannot add chains later. Use JBOmnichainDeployer.launchProjectFor for a shop or for chains now or later. Queue later rulesets through JBOmnichainDeployer.queueRulesetsOf, passing the project’s own data hook (extraDataHookOf) in the metadata: a ruleset queued straight on the controller starts without the shop.',
       },
       {
         type: 'info',

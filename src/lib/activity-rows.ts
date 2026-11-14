@@ -37,6 +37,20 @@ export async function readActivityRows<T extends BsActivityEvent>(
   return { events, hasMore: true }
 }
 
+/**
+ * The loaded events a feed can draw while older ones are still unloaded. Pages
+ * are cut by time, so only the oldest loaded moment can be incomplete, and
+ * transactions sharing it can interleave: a bridge send without the cash out
+ * inside it, a purchase without its mint. Everything at that moment waits for
+ * the next page, where it arrives whole. With nothing more to load it shows as it
+ * is; when that moment is all that is loaded nothing shows and the feed reads on.
+ */
+export function withoutPartialOldest<T extends BsActivityEvent>(events: T[], more: boolean): T[] {
+  if (!more || !events.length) return events
+  const oldest = events[events.length - 1].timestamp
+  return events.filter(event => event.timestamp !== oldest)
+}
+
 /** The chains the events happened on, in display order: the activity chain filter's choices. */
 export function activityChains(events: readonly BsActivityEvent[]): number[] {
   return [...new Set(events.map(event => event.chainId))].sort(byChainOrder)

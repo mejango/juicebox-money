@@ -89,6 +89,9 @@ import {
 } from "@/lib/pay-authorization";
 import { isSafeConnection } from "@/lib/safe-connector";
 import { chainName } from "@/lib/urn";
+import { payNoticeView } from "@/lib/pay-notice";
+import { getProjectPayNotice } from "@/lib/bendystraw";
+import { PayNoticeNote } from "@/components/project/PayNoticeNote";
 import { assertReviewedAccountConnected } from "@/lib/wallet-context";
 import { SAFE_PROPOSAL_UNCONFIRMED } from "@/lib/safe-connector";
 import { wagmiConfig } from "@/providers/Providers";
@@ -334,6 +337,23 @@ export function PayPanel({
     projectId: number;
   }>(() => ({ chainId: initialChainId, projectId: initialProjectId }));
   const { chainId, projectId } = deployment;
+  // Each chain keeps its own project file, so the notice is read per chain. The page's own chain
+  // arrives with the page; the others come from the indexer.
+  const chainsKey = JSON.stringify(chains);
+  const noticeRead = useQuery({
+    queryKey: ["payNotices", chainsKey],
+    staleTime: 60_000,
+    queryFn: async ({ signal }) => Object.fromEntries(await Promise.all(
+      (JSON.parse(chainsKey) as [number, number][]).map(async ([cid, pid]) =>
+        [cid, await getProjectPayNotice(cid, pid, { signal }).catch(() => null)] as const),
+    )),
+  });
+  const noticeView = payNoticeView(chainId, {
+    ...noticeRead.data,
+    ...(payDisclosure !== undefined ? { [initialChainId]: payDisclosure.trim() } : {}),
+  });
+  // Still reading is not a failed read.
+  if (noticeRead.isFetching) noticeView.failed = false;
   const {
     quantities: cart,
     items: cartItems,
@@ -1477,7 +1497,7 @@ export function PayPanel({
   const sequenceContext = [
     ...contextRows(sequenceRows),
     ...(mode === "pay" && sequenceSummary?.quoteFailed ? [{ label: "Quote", value: PAY_QUOTE_FAILED_MESSAGE }] : []),
-    ...(payDisclosure ? [{ label: "Project notice", value: payDisclosure, strong: true }] : []),
+    ...(noticeView.notice ? [{ label: "Project notice", value: noticeView.notice, strong: true }] : []),
   ];
 
   const runPaymentSequence = async () => {
@@ -2364,6 +2384,7 @@ export function PayPanel({
           {retryBps !== null ? (
             <AllowedDecreaseField bps={retryBps} onChange={setRetrySlippageBps} maxBps={Number(PAY_MAX_SLIPPAGE_BPS)} />
           ) : null}
+          {mode === "pay" ? <PayNoticeNote view={noticeView} retry={() => void noticeRead.refetch()} /> : null}
         </TxProgress>
       ) : null}
     </div>

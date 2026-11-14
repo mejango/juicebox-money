@@ -70,7 +70,9 @@ const routes = [
   // Configured Safe proxy and monthly-quota handling: measured just above542.0 KiB, rounded up only.
   // Bridge sends in activity and the unknown contracts card (its readers load on demand): measured 543.4 KiB, rounded up only.
   // 544 -> 545: the pay card quotes every listed terminal through the SDK's best-route rule: measured 544.1 KiB, rounded up only.
-  { route: '/[urn]', path: '/eth:1', kib: 545, text: 'Browser Fixture Project' },
+  // 545 -> 548: Edit rules queues through JBOmnichainDeployer (its call and ABI), the pay review reads each chain's
+  // notice, and the Balance chart reads holdings and today's prices: measured 547.7 KiB, rounded up only.
+  { route: '/[urn]', path: '/eth:1', kib: 548, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
@@ -108,7 +110,9 @@ const budgets = {
   // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
   // The project contract check in its own on-demand chunk, and bridge sends in activity: measured 2743.2 KiB, rounded up only.
   // 2744 -> 2746: the connect-a-chain owner action and the SDK's best-route pay rule: measured 2745.6 KiB.
-  allScripts: 2746 * KIB,
+  // 2746 -> 2747: round 9 (every launch through the omnichain deployer, the queue's carried-shop rule, the
+  // pay notice versions, the Balance price notes, the feed's whole-moment rule): measured 2746.2 KiB.
+  allScripts: 2747 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
