@@ -501,6 +501,19 @@ describe('a bridge send and the cash out inside it', () => {
     expect(renderToStaticMarkup(<>{parts.action}</>)).toMatch(/sending.*100\.13 REV.*to Ethereum/)
   })
 
+  it('keeps a Safe’s repayment the row, by the Safe, when a deposit shares its transaction', () => {
+    const deposit = event({
+      id: 'deposit',
+      addToBalanceEvent: { amount: '1', amountUsd: '0', memo: '', from: '0xexecutor', token: '0x0', decimals: 18, tokenSymbol: 'ETH' },
+    } as Partial<BsActivityEvent>)
+    const repay = event({
+      id: 'repay',
+      repayLoanEvent: { repayBorrowAmount: '1', collateralCountToReturn: '1', caller: '0xsafe', from: '0xexecutor' },
+    } as Partial<BsActivityEvent>)
+    const [group] = groupSameTxEvents([deposit, repay])
+    expect(combinedActivityParts(group, 'REV').actor).toBe('0xsafe')
+  })
+
   it('names the account inside a bridge claim’s 32-byte beneficiary', () => {
     const claim = event({
       id: 'claim',

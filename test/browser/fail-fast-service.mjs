@@ -133,8 +133,8 @@ const activityEventFields = `
   sendReservedTokensToSplitEvent { tokenCount beneficiary splitProjectId hook from }
   autoIssueEvent { beneficiary count stageId from }
   borrowLoanEvent { borrowAmount collateral beneficiary token from }
-  repayLoanEvent { repayBorrowAmount collateralCountToReturn from }
-  liquidateLoanEvent { borrowAmount collateral from }
+  repayLoanEvent { repayBorrowAmount collateralCountToReturn caller from }
+  liquidateLoanEvent { borrowAmount collateral caller from }
   mintNftEvent { tierId tokenId beneficiary totalAmountPaid from }
   deployErc20Event { symbol name token from }
   setUriEvent { uri caller from }

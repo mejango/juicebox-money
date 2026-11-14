@@ -397,11 +397,14 @@ export type BsActivityEvent = {
   repayLoanEvent?: {
     repayBorrowAmount: string
     collateralCountToReturn: string
+    /** Who called the loans contract: a Safe here, where `from` is the account that executed for it. */
+    caller: string
     from: string
   } | null
   liquidateLoanEvent?: {
     borrowAmount: string
     collateral: string
+    caller: string
     from: string
   } | null
   mintNftEvent?: {
@@ -504,9 +507,9 @@ const ACTIVITY_EVENT_FIELDS = `
     borrowAmount collateral beneficiary token from
   }
   repayLoanEvent {
-    repayBorrowAmount collateralCountToReturn from
+    repayBorrowAmount collateralCountToReturn caller from
   }
-  liquidateLoanEvent { borrowAmount collateral from }
+  liquidateLoanEvent { borrowAmount collateral caller from }
   mintNftEvent {
     tierId tokenId beneficiary totalAmountPaid from
   }

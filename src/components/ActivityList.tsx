@@ -268,6 +268,12 @@ export function projectFeedEvents<T extends BsActivityEvent>(events: T[]): T[] {
  */
 const GROUP_ORDER: ActivityCategory[] = [
   'projectCreate',
+  // A loan or a bridge claim is its transaction's row, by its own account; the deposit or mint
+  // inside it reads after it.
+  'borrowLoan',
+  'repayLoan',
+  'liquidateLoan',
+  'bridgeClaim',
   'pay',
   'addToBalance',
   'nftMint',
@@ -275,7 +281,6 @@ const GROUP_ORDER: ActivityCategory[] = [
   'buybackSwap',
   'tokenMint',
   'autoIssue',
-  'bridgeClaim',
   'bridgeSend',
 ]
 
@@ -818,8 +823,8 @@ export function activityParts(
     event.deployErc20Event?.from ??
     event.sendPayoutsEvent?.from ??
     event.sendReservedTokensToSplitsEvent?.from ??
-    event.repayLoanEvent?.from ??
-    event.liquidateLoanEvent?.from ??
+    event.repayLoanEvent?.caller ??
+    event.liquidateLoanEvent?.caller ??
     event.setUriEvent?.caller ??
     event.projectTransferEvent?.previousOwner ??
     event.operatorPermissionsSetEvent?.caller ??
