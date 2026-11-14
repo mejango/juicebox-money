@@ -110,7 +110,9 @@ const budgets = {
   // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
   // The project contract check in its own on-demand chunk, and bridge sends in activity: measured 2743.2 KiB, rounded up only.
   // 2744 -> 2746: the connect-a-chain owner action and the SDK's best-route pay rule: measured 2745.6 KiB.
-  allScripts: 2746 * KIB,
+  // 2746 -> 2747: round 9 (every launch through the omnichain deployer, the queue's carried-shop rule, the
+  // pay notice versions, the Balance price notes, the feed's whole-moment rule): measured 2746.2 KiB.
+  allScripts: 2747 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
