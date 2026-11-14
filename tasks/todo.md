@@ -170,3 +170,22 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Resource budget:** One small pull request.
 - **Authority and recovery:** A pull request, merged on jango's word. One commit; reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-14: Round 9, jango's answers to the end list
+
+- [x] R1 Funding chart Balance is holdings at today's price: each token's indexed balance history times today's price (`holdingsEvents`, live `JBPrices` read, newest indexed rate as the fallback).
+- [ ] R2 Single-chain launches go through the omnichain deployer, so the project can connect a chain later.
+- [ ] R3 Payment notice: chains whose notice differs show a notice with a toggle; a failed read shows a notice with a quiet retry and still lets the payment go.
+- [ ] R4 Pay route: say when a route's quote is an estimate.
+- [ ] R5 A bridge send and the cash out inside it read as one feed item, also across a page boundary.
+- [ ] R6 Earlier open questions, decided the way jango has been ruling.
+
+## Plan refinement
+- **Objective:** Close the items jango answered on 2026-11-14 so the three clients behave the same and state only what is true.
+- **System fit:** Each rule stays with its owner: the chart series in `FundingChart.tsx`, launch encoding in the create flow, the notice in the pay panel, the feed merge in the activity module. Juicescan carries a hand port of each.
+- **Reuse and simplicity:** R1 reuses the per-token history the homepage chart already reads and the page's own price read; `bucketize` became one keyed fold for both series.
+- **Evidence and unknowns:** Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (not flow-accrued; the B7 note above came from a stale checkout). The indexer drops one field of a two-field nested OR, so the history is read per deployment. Not rendered with a wallet.
+- **Verification:** A unit test per rule; `npm run check` before the pull request; CI green before merge.
+- **Resource budget:** One branch and one pull request per client.
+- **Authority and recovery:** Pull requests, merged on jango's word. One commit per item; each reverts alone.
+- **Agent-system impact:** None.

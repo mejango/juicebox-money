@@ -1352,8 +1352,8 @@ export type BsPriceMoment = {
   /** Cumulative payment volume valued in USD at each payment's own time —
    *  correct even across accounting-context switches. 18-dec fixed point. */
   volumeUsd: string
-  /** Every token's balance at this moment, each valued at its latest
-   *  indexed USD rate, summed. 18-dec. */
+  /** Every token's balance at this moment, each valued at the rate indexed
+   *  when it last moved, summed. 18-dec. */
   balanceUsd: string
   tokenSupply: string
   /** 18-dec USD per one whole accounting token, as of THIS moment's block.
@@ -1446,6 +1446,28 @@ export async function getProjectTokenBalanceMoments(): Promise<BsTokenBalanceMom
     { max: Number.POSITIVE_INFINITY, policy: 'stable' },
   )
   return page.items
+}
+
+/**
+ * The named deployments' per-token balance changes, oldest first. One exact
+ * query per deployment: the indexer does not hold both fields of a nested OR
+ * clause, so a combined filter returns other chains' rows.
+ */
+export async function getDeploymentTokenBalanceMoments(
+  deployments: readonly (readonly [number, number])[],
+  { signal }: { signal?: AbortSignal } = {},
+): Promise<BsTokenBalanceMoment[]> {
+  const pages = await Promise.all(
+    deployments.map(([chainId, projectId]) =>
+      getPagedItems<BsTokenBalanceMoment>(
+        DEPLOYMENT_TOKEN_BALANCE_MOMENTS_QUERY,
+        'projectTokenBalanceMoments',
+        { chainId, projectId },
+        { max: Number.POSITIVE_INFINITY, policy: 'stable', signal },
+      ),
+    ),
+  )
+  return pages.flatMap(page => page.items).sort((a, b) => a.timestamp - b.timestamp)
 }
 
 export type BsTokenUsdRate = {
@@ -1623,6 +1645,19 @@ const TOKEN_BALANCES_QUERY = `query($limit: Int!, $offset: Int!) {
 const TOKEN_BALANCE_MOMENTS_QUERY = `query($limit: Int!, $offset: Int!) {
   projectTokenBalanceMoments(
     where: { version: 6 }
+    orderBy: "timestamp"
+    orderDirection: "asc"
+    limit: $limit
+    offset: $offset
+  ) {
+    items { chainId projectId token decimals balance timestamp tokenUsdRate }
+    totalCount
+  }
+}`
+
+const DEPLOYMENT_TOKEN_BALANCE_MOMENTS_QUERY = `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+  projectTokenBalanceMoments(
+    where: { chainId: $chainId, projectId: $projectId, version: 6 }
     orderBy: "timestamp"
     orderDirection: "asc"
     limit: $limit

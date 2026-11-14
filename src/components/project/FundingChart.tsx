@@ -3,12 +3,21 @@
 import { useEffect, useMemo, useState } from 'react'
 import { SecuredReserveChart } from '@/components/SecuredReserveChart'
 import { ChartRangeSelect } from '@/components/project/StepChartBase'
+import { JBCoreContracts, jbV6ContractAddress, type JBChainId } from '@bananapus/nana-sdk-core'
+import { useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { formatUnits, type Address, type PublicClient } from 'viem'
+import { useConfig } from 'wagmi'
+import { getPublicClient } from 'wagmi/actions'
+import { readTreasuryUsdPrice } from '@/components/project/ProjectStats'
 import {
+  getDeploymentTokenBalanceMoments,
   getSuckerGroupAddToBalance,
   getSuckerGroupMoments,
   type BsAddToBalance,
   type BsPriceMoment,
+  type BsTokenBalanceMoment,
 } from '@/lib/bendystraw'
+import { accountingContextsQuery } from '@/lib/project-display-queries'
 import type { ReservePoint } from '@/lib/homepage-reserves'
 
 const BARS = 45
@@ -37,7 +46,7 @@ const METRICS: { value: Metric; label: string; chartLabel: string }[] = [
     value: 'balance',
     label: 'Balance',
     chartLabel:
-      'Project balance over time, shown as bars. Focus and use arrow keys to inspect values.',
+      'What the project held over time at today’s prices, shown as bars. Focus and use arrow keys to inspect values.',
   },
 ]
 
@@ -50,50 +59,16 @@ function usd(value: number) {
   })
 }
 
+type UsdEvent = { timestamp: number; key?: string; base?: number; add?: number }
+
 /**
  * Even time buckets from the first event to now, forward-filling quiet
  * stretches so the bars read as a continuous history like the homepage chart.
- *
- * Volume is cumulative INTAKE — indexed payment volume plus funds added
- * straight to the terminal — so it can only rise. Volume sums each payment
- * and addition at its own time's USD value (volumeUsd, amountUsd). Balance is
- * the indexer's flow-accrued USD balance (balanceUsd): every inflow and
- * outflow at its own time's rate, so payouts and cash outs pull it down. It
- * is not holdings at today's price, and price moves between an inflow and its
- * outflow can push the sum below zero. A balance is never negative, so it
- * floors at 0.
+ * Each keyed event replaces that key's standing value; the bar is the sum of
+ * the standing values plus every unkeyed addition so far.
  */
-export function bucketize(
-  moments: BsPriceMoment[],
-  adds: BsAddToBalance[],
-  metric: Metric,
-  rangeSeconds: number,
-): ReservePoint[] {
-  type UsdEvent = { timestamp: number; base?: number; add?: number }
-  const events: UsdEvent[] = []
-  for (const moment of moments) {
-    try {
-      events.push({
-        timestamp: moment.timestamp,
-        base:
-          Number(
-            BigInt(metric === 'volume' ? moment.volumeUsd : moment.balanceUsd),
-          ) / 1e18,
-      })
-    } catch {
-      // Skip an unparseable row.
-    }
-  }
-  if (metric === 'volume') {
-    for (const add of adds) {
-      try {
-        events.push({ timestamp: add.timestamp, add: Number(BigInt(add.amountUsd)) / 1e18 })
-      } catch {
-        // Skip an unparseable row.
-      }
-    }
-  }
-  events.sort((a, b) => a.timestamp - b.timestamp)
+export function bucketize(events: UsdEvent[], rangeSeconds: number): ReservePoint[] {
+  events = [...events].sort((a, b) => a.timestamp - b.timestamp)
   if (!events.length) return []
 
   const t1 = Math.floor(Date.now() / 1000)
@@ -103,14 +78,18 @@ export function bucketize(
   )
   const span = Math.max(t1 - t0, 1)
   const points: ReservePoint[] = []
+  const standing = new Map<string, number>()
   let index = 0
-  let lastBase = 0
-  let cumulativeAdds = 0
+  let total = 0
   const consume = (limit: number) => {
     while (index < events.length && events[index].timestamp <= limit) {
       const event = events[index]
-      if (event.base !== undefined) lastBase = event.base
-      if (event.add !== undefined) cumulativeAdds += event.add
+      if (event.base !== undefined) {
+        const key = event.key ?? ''
+        total += event.base - (standing.get(key) ?? 0)
+        standing.set(key, event.base)
+      }
+      if (event.add !== undefined) total += event.add
       index += 1
     }
   }
@@ -119,12 +98,97 @@ export function bucketize(
   for (let bar = 0; bar < BARS; bar++) {
     const end = t0 + (span * (bar + 1)) / BARS
     consume(end)
-    points.push({
-      timestamp: Math.floor(end),
-      valueUsd: Math.max(0, lastBase + cumulativeAdds),
-    })
+    points.push({ timestamp: Math.floor(end), valueUsd: Math.max(0, total) })
   }
   return points
+}
+
+const usd18 = (raw: string) => Number(BigInt(raw)) / 1e18
+
+/**
+ * Cumulative intake: indexed payment volume plus funds added straight to the
+ * terminal, each at its own time's USD value, so it only rises.
+ */
+export function volumeEvents(moments: BsPriceMoment[], adds: BsAddToBalance[]): UsdEvent[] {
+  const events: UsdEvent[] = []
+  for (const moment of moments) {
+    try {
+      events.push({ timestamp: moment.timestamp, base: usd18(moment.volumeUsd) })
+    } catch {
+      // Skip an unparseable row.
+    }
+  }
+  for (const add of adds) {
+    try {
+      events.push({ timestamp: add.timestamp, add: usd18(add.amountUsd) })
+    } catch {
+      // Skip an unparseable row.
+    }
+  }
+  return events
+}
+
+export const rateKey = (chainId: number, token: string) => `${chainId}:${token.toLowerCase()}`
+
+/**
+ * What the project held over time, every amount at today's price, so the
+ * curve moves only when funds move and ends on what the project holds now.
+ * `todayRates` is USD per whole token by `rateKey`; a token with no live
+ * price uses the newest rate the indexer recorded for it.
+ */
+export function holdingsEvents(
+  moments: BsTokenBalanceMoment[],
+  todayRates: ReadonlyMap<string, number>,
+): UsdEvent[] {
+  const indexed = new Map<string, number>()
+  for (const moment of moments) {
+    if (moment.tokenUsdRate) indexed.set(rateKey(moment.chainId, moment.token), usd18(moment.tokenUsdRate))
+  }
+  const events: UsdEvent[] = []
+  for (const moment of moments) {
+    const key = rateKey(moment.chainId, moment.token)
+    const rate = todayRates.get(key) ?? indexed.get(key) ?? 0
+    try {
+      events.push({
+        timestamp: moment.timestamp,
+        key: `${moment.projectId}:${key}`,
+        base: Number(formatUnits(BigInt(moment.balance), moment.decimals)) * rate,
+      })
+    } catch {
+      // Skip an unparseable row.
+    }
+  }
+  return events
+}
+
+/** Today's USD price of each token the deployments accept. A failed read leaves the token out. */
+async function readTodayRates(
+  config: ReturnType<typeof useConfig>,
+  reader: Pick<QueryClient, 'fetchQuery'>,
+  chains: [number, number][],
+): Promise<Map<string, number>> {
+  const rates = new Map<string, number>()
+  await Promise.all(
+    chains.map(async ([rawChainId, rawProjectId]) => {
+      const chainId = rawChainId as JBChainId
+      const client = getPublicClient(config, { chainId }) as PublicClient | undefined
+      const prices = jbV6ContractAddress[JBCoreContracts.JBPrices][chainId] as Address | undefined
+      if (!client || !prices) return
+      try {
+        const projectId = BigInt(rawProjectId)
+        const contexts = await reader.fetchQuery(accountingContextsQuery(client, { chainId, projectId }))
+        await Promise.all(
+          contexts.map(async context => {
+            const price = await readTreasuryUsdPrice(client, prices, projectId, context.currency).catch(() => null)
+            if (price != null) rates.set(rateKey(chainId, context.token), Number(formatUnits(price, 18)))
+          }),
+        )
+      } catch {
+        // The indexed rate stands in.
+      }
+    }),
+  )
+  return rates
 }
 
 /**
@@ -133,11 +197,23 @@ export function bucketize(
  */
 export function FundingChart({
   suckerGroupId,
+  chains,
 }: {
   suckerGroupId: string | null
+  /** [chainId, projectId] pairs across the sucker group. */
+  chains: [number, number][]
 }) {
+  const config = useConfig()
+  const queryClient = useQueryClient()
   const [moments, setMoments] = useState<BsPriceMoment[] | null>(null)
   const [adds, setAdds] = useState<BsAddToBalance[]>([])
+  const [held, setHeld] = useState<BsTokenBalanceMoment[]>([])
+  const chainsKey = JSON.stringify(chains)
+  const { data: todayRates } = useQuery({
+    queryKey: ['fundingChartRates', chainsKey],
+    staleTime: 60_000,
+    queryFn: () => readTodayRates(config, queryClient, chains),
+  })
   const [metric, setMetric] = useState<Metric>('volume')
   // A quarter, like the price chart's default window.
   const [rangeSeconds, setRangeSeconds] = useState(91 * DAY)
@@ -163,19 +239,34 @@ export function FundingChart({
         // Without the add-to-balance rows the volume series still shows
         // indexed payment volume; it just understates direct additions.
       })
+    getDeploymentTokenBalanceMoments(JSON.parse(chainsKey) as [number, number][], { signal })
+      .then(items => {
+        if (!stopped) setHeld(items)
+      })
+      .catch(() => {
+        // Without the holdings history the balance series stays empty.
+      })
     return () => {
       stopped = true
       left.abort()
     }
-  }, [suckerGroupId])
+  }, [suckerGroupId, chainsKey])
 
   const points = useMemo(
-    () => (moments ? bucketize(moments, adds, metric, rangeSeconds) : []),
-    [moments, adds, metric, rangeSeconds],
+    () =>
+      moments
+        ? bucketize(
+            metric === 'volume'
+              ? volumeEvents(moments, adds)
+              : holdingsEvents(held, todayRates ?? new Map()),
+            rangeSeconds,
+          )
+        : [],
+    [moments, adds, held, todayRates, metric, rangeSeconds],
   )
 
   if (!suckerGroupId) return null
-  if (moments !== null && points.length === 0) return null
+  if (moments !== null && moments.length === 0 && held.length === 0) return null
 
   const selected = METRICS.find(item => item.value === metric)!
   const totalUsd = points.length ? points[points.length - 1].valueUsd : null
