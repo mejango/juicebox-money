@@ -102,13 +102,16 @@ export function useStepRun<Step>({
         throw error
       })
       // The result names the run's calls by the plan's steps (see `shownOf`).
-      const ended = result && { ...result, shown }
+      // A fresh run asked for a batch goes to a Safe as one proposal; a saved run never asks.
+      const batched = !!frozen.batch && frozen.calls.length > 1
+      const ended = result && { ...result, shown, batched: batched && result.status === 'proposed' }
       if (run.current !== current) return ended
       halt()
       if (result?.status === 'done') {
         finish(current, result.hashes.at(-1)!)
       } else if (result?.status === 'proposed') {
-        current.waiting = shown(result.step)
+        // A Safe batch is one proposal of every step: it settles as the last one.
+        current.waiting = batched ? current.steps.length - 1 : shown(result.step)
         setIndex(current.waiting)
         setProposed(true)
       } else if (current.submitted !== null) {

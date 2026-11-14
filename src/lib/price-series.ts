@@ -219,6 +219,8 @@ export function floorAtMoment(
       balanceDecimals: inUsd ? 18 : decimals,
     }),
     tax,
+    // Only revnets have this price history.
+    true,
   )
   if (!price) return null
   if (!inUsd) {

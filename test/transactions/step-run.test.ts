@@ -138,6 +138,17 @@ describe('useStepRun', () => {
     expect(t.run).toHaveBeenCalledOnce()
   })
 
+  it('finishes a batched run, proposed to a Safe as one proposal, once the Safe executes it', async () => {
+    const t = await renderRun()
+    t.action.mockImplementation(steps => ({ account: ACCOUNT, scope: 'jbm:pay', batch: true, calls: steps.map(call) }))
+    await act(async () => { void t.ref.current!.start(['approve', 'pay']) })
+    expect(t.runs[0].action.batch).toBe(true)
+    await t.runs[0].end({ status: 'proposed', step: 0, safeTxHash: H1 })
+    expect(t.ref.current).toMatchObject({ running: false, proposed: true, index: 1 })
+    await t.engine({ phase: 'done', hash: H2 })
+    expect(t.onFinish).toHaveBeenCalledWith(H2)
+  })
+
   it('finishes a run whose last step was proposed once the Safe executes it', async () => {
     const t = await renderRun()
     await act(async () => { void t.ref.current!.start(['mint']) })
