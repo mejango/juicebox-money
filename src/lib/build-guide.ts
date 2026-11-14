@@ -2,6 +2,9 @@ import type { GuideSection } from '@/components/GuideSections'
 import { LEGACY_BUILD_SECTIONS } from '@/lib/build-guide-legacy'
 
 const REPO = 'https://github.com/mejango/juicebox-money/blob/main'
+/** The `.jb` file's schema, shared by every Juicebox site. */
+const JB_DRAFT_SOURCE =
+  'https://github.com/Bananapus/juice-sdk-v4/blob/main/packages/core/src/v6/jbDraft.ts'
 const CORE = 'https://github.com/Bananapus/nana-core-v6/blob/main/src'
 const SKILLS = 'https://github.com/mejango/juicebox-skills/tree/main/plugins/juicebox-v6/skills'
 
@@ -118,7 +121,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
           { href: '/create', label: 'Open the launch form' },
           { href: 'https://juicebox.center/api', label: 'Juicebox Center API directory' },
           { href: 'https://github.com/mejango/juicebox-skills', label: 'Juicebox V6 skills' },
-          { href: `${REPO}/src/lib/draft.ts`, label: 'Source: draft format' },
+          { href: JB_DRAFT_SOURCE, label: 'Source: draft format' },
         ],
       },
     ],
@@ -153,7 +156,7 @@ export const BUILD_SECTIONS: readonly GuideSection[] = [
         items: [
           { href: '/create', label: 'Open the launch form' },
           { href: `${REPO}/src/lib/launch.ts`, label: 'Source: how the form becomes a launch call' },
-          { href: `${REPO}/src/lib/draft.ts`, label: 'Source: draft format' },
+          { href: JB_DRAFT_SOURCE, label: 'Source: draft format' },
         ],
       },
     ],

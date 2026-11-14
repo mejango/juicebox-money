@@ -329,7 +329,9 @@ function splitIn(row: JbDraftSplit, amounts = false): DraftSplit {
       preferAddToBalance: row.addToBalance,
     }
   }
-  if (hasEntries(row.addressPerChain)) refuse('a hook split that differs by chain')
+  if (hasEntries(row.addressPerChain) || hasEntries(row.projectIdPerChain)) {
+    refuse('a hook split that differs by chain')
+  }
   if (row.to === 'sticky') {
     return {
       ...base,

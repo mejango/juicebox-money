@@ -201,6 +201,7 @@ describe('the shared .jb file', () => {
       ['mainnet and testnet chains together', (file) => { file.chains = [1, 84532] }],
       ['a cash out tax finer than four decimals', (file) => { file.stages[0].cashOutTax = '0.12345' }],
       ['a hook split that differs by chain', (file) => { file.stages[0].reserved[1].addressPerChain = { 8453: B } }],
+      ['a hook split that differs by chain', (file) => { file.stages[0].reserved[1].projectIdPerChain = { 8453: '4' } }],
       ['a value longer than this form holds', (file) => { file.stages[0].reserved[0].share = '20.000000001' }],
       ['a value longer than this form holds', (file) => { file.shop.categories[0].name = 'x'.repeat(41) }],
       ['an owner allowance beside payouts of everything', (file) => {
