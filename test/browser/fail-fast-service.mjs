@@ -606,6 +606,31 @@ const graphqlFixtures = [
     data: { project },
   },
   {
+    name: 'projectPayNotice',
+    query: `query($chainId: Float!, $projectId: Float!) {
+      project(chainId: $chainId, projectId: $projectId, version: 6) { payDisclosure }
+    }`,
+    variables: { chainId: 1, projectId: 1 },
+    data: { project: { payDisclosure: null } },
+  },
+  {
+    name: 'deploymentTokenBalanceMoments',
+    query: `query($chainId: Int!, $projectId: Int!, $limit: Int!, $offset: Int!) {
+      projectTokenBalanceMoments(
+        where: { chainId: $chainId, projectId: $projectId, version: 6 }
+        orderBy: "timestamp"
+        orderDirection: "asc"
+        limit: $limit
+        offset: $offset
+      ) {
+        items { chainId projectId token decimals balance timestamp tokenUsdRate }
+        totalCount
+      }
+    }`,
+    variables: { chainId: 1, projectId: 1, limit: 1000, offset: 0 },
+    data: { projectTokenBalanceMoments: { items: [], totalCount: 0 } },
+  },
+  {
     name: 'participants',
     query: `query ParticipantsByFilter(
       $where: participantFilter!
