@@ -184,7 +184,7 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Objective:** Close the items jango answered on 2026-11-14 so the three clients behave the same and state only what is true.
 - **System fit:** Each rule stays with its owner: the chart series in `FundingChart.tsx`, launch encoding in the create flow, the notice in the pay panel, the feed merge in the activity module. Juicescan carries a hand port of each.
 - **Reuse and simplicity:** R1 reuses the per-token history the homepage chart already reads and the page's own price read; `bucketize` became one keyed fold for both series.
-- **Evidence and unknowns:** Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (not flow-accrued; the B7 note above came from a stale checkout). The indexer drops one field of a two-field nested OR, so the history is read per deployment. Not rendered with a wallet.
+- **Evidence and unknowns:** Bendystraw `origin/main` values a V6 balance per token at the rate when it last moved (not flow-accrued; the B7 note above came from a stale checkout). The indexer reads a several-field clause inside OR as any of those fields, so the history is read per deployment. Not rendered with a wallet.
 - **Verification:** A unit test per rule; `npm run check` before the pull request; CI green before merge.
 - **Resource budget:** One branch and one pull request per client.
 - **Authority and recovery:** Pull requests, merged on jango's word. One commit per item; each reverts alone.

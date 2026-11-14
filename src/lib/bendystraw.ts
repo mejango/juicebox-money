@@ -1466,8 +1466,7 @@ export async function getProjectTokenBalanceMoments(): Promise<BsTokenBalanceMom
 
 /**
  * The named deployments' per-token balance changes, oldest first. One exact
- * query per deployment: the indexer does not hold both fields of a nested OR
- * clause, so a combined filter returns other chains' rows.
+ * query per deployment, each with its own page count.
  */
 export async function getDeploymentTokenBalanceMoments(
   deployments: readonly (readonly [number, number])[],
