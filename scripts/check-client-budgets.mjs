@@ -107,7 +107,8 @@ const budgets = {
   // Shop item actions (edit details, set discount, remove) in the on-demand item modal: measured 2737.4 KiB, rounded up only.
   // Edit rules choices (cycle length, notice, issuance currency with its feed probe) and the allowance chain choice: measured 2740.1 KiB, rounded up only.
   // The project contract check in its own on-demand chunk, and bridge sends in activity: measured 2743.2 KiB, rounded up only.
-  allScripts: 2744 * KIB,
+  // 2744 -> 2746: the connect-a-chain owner action and the SDK's best-route pay rule: measured 2745.6 KiB.
+  allScripts: 2746 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }
