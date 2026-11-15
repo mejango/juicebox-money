@@ -186,7 +186,12 @@ describe('the shared .jb file', () => {
     draft.stages[0] = { ...draft.stages[0], routedMode: 'all', payoutSplits: [], routedSurplusOn: false }
     draft.stages[2] = { ...draft.stages[2], durationValue: String(4_294_967_295) }
     const file = toJbDraft(draft)
-    expect(file.shop.itemsRedeem).toBe(false)
+    // Items cash out under a stage's cash out rules: kept while one stage cashes out, dropped with none,
+    // where they would redeem for nothing.
+    expect(file.shop.itemsRedeem).toBe(true)
+    expect(fromJbDraft(file).storeConfig.itemsRedeem).toBe(true)
+    const noCashOuts = { ...draft, stages: draft.stages.map((stage) => ({ ...stage, cashOuts: false })) }
+    expect(toJbDraft(noCashOuts).shop.itemsRedeem).toBe(false)
     expect(file.shop.items[0].votingUnits).toBe('')
     expect(file.stages[0].cashOutTax).toBe('1')
     expect(file.stages.map((stage) => stage.approval)).toEqual(['custom', 'custom', 'none'])
@@ -244,7 +249,10 @@ describe('the shared .jb file', () => {
         file.stages[1].surplusAllowance = { mode: 'limited', amount: '3', currency: 'eth' }
       }],
       ['held fees with nothing paid out', (file) => { file.stages[2].holdFees = true }],
-      ['items redeemed for funds beside cash outs', (file) => { file.shop.itemsRedeem = true }],
+      ['items redeemed for funds with cash outs off', (file) => {
+        file.shop.itemsRedeem = true
+        file.stages.forEach((stage) => { stage.cashOutTax = '1' })
+      }],
       ['shop item voting units', (file) => { file.shop.items[0].votingUnits = '2' }],
       ['a shop item with its own metadata file', (file) => { file.shop.items[0].metadataUri = 'ipfs://meta' }],
       ['a cash out tax under 1 beside payouts of everything', (file) => {

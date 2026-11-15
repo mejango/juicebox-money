@@ -266,6 +266,7 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
   const identity = storeIdentity(draft)
   const customApproval =
     !revnet && draft.approvalDeadline === 'custom' && !draft.stages.every(forever)
+  const stages = draft.stages.map(stageOut)
   return {
     v: 2,
     kind,
@@ -302,7 +303,7 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
     approvalHook: customApproval ? draft.approvalCustom.trim() : '',
     approvalHookPerChain: customApproval ? chainMapOut(draft.approvalPerChain) : {},
     afterMode: revnet ? 'wait' : draft.afterMode,
-    stages: draft.stages.map(stageOut),
+    stages,
     shop: {
       currency:
         draft.storeCurrency === 'token' && !custom
@@ -311,13 +312,13 @@ export function toJbDraft(draft: CreateDraft): JbDraft {
       ...draft.storeConfig,
       collectionName: identity.name,
       collectionSymbol: identity.symbol,
-      // Items and tokens cannot both cash out: the launch drops item redemption.
+      // Items cash out under a stage's cash out rules, in place of tokens: with none, the launch drops it.
       // A revnet's deployer turns both of these off.
       issueTokensForSplits: !revnet && draft.storeConfig.issueTokensForSplits,
       itemsRedeem:
         !revnet &&
         draft.storeConfig.itemsRedeem &&
-        !(draft.flavor !== 'simple' && draft.stages.some((stage) => stage.cashOuts)),
+        draft.flavor !== 'simple' && stages.some((stage) => stage.cashOutTax !== '1'),
       categories: draft.storeCategories,
       items: draft.items.map(itemOut),
     },
@@ -460,8 +461,8 @@ export function fromJbDraft(file: JbDraft): CreateDraft {
   }
   const approvals = ending.map((stage) => stage.approval)
   if (!sameAsFirst(approvals)) refuse('approval rules that differ by stage')
-  if (file.shop.itemsRedeem && file.stages.some((stage) => taxIn(stage.cashOutTax) < 10_000)) {
-    refuse('items redeemed for funds beside cash outs')
+  if (file.shop.itemsRedeem && file.stages.every((stage) => taxIn(stage.cashOutTax) === 10_000)) {
+    refuse('items redeemed for funds with cash outs off')
   }
   if (!custom && file.shop.currency === 'token') refuse('a shop priced in a token it does not accept')
 

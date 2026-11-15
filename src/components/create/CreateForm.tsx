@@ -130,6 +130,7 @@ import {
   stageDurationSeconds,
   revnetCutFrequency,
   stageOk,
+  itemsCanCashOut,
   stageRoutesEverything,
   stageSummary,
   stageSummaryParts,
@@ -769,7 +770,8 @@ export function CreateForm() {
   const storeStep = wizardSteps.indexOf("Shop");
   const launchStep = wizardSteps.indexOf("Launch");
   const rulesFlavor = flavor === "revnet" ? "revnet" : "project";
-  const anyCashOuts = !isSimpleProject && stages.some((s) => s.cashOuts);
+  // Items cash out under a stage's cash out rules, in place of tokens: with cash outs off they would redeem for nothing.
+  const itemsCashOut = itemsCanCashOut(flavor, stages, multiToken);
   const accountingOk = customOn
     ? resolvedAddress(customAddress) !== null && customMeta !== null
     : accepts.length > 0;
@@ -1578,7 +1580,7 @@ export function CreateForm() {
       noNewTiersWithVotes: storeConfig.noNewTiersWithVotes,
       noNewTiersWithOwnerMinting: storeConfig.noNewTiersWithOwnerMinting,
       issueTokensForSplits: storeConfig.issueTokensForSplits,
-      itemsRedeem: storeConfig.itemsRedeem && !anyCashOuts,
+      itemsRedeem: storeConfig.itemsRedeem && itemsCashOut,
       operatorCanAdjustTiers: storeConfig.operatorCanAdjustTiers,
       operatorCanUpdateMetadata: storeConfig.operatorCanUpdateMetadata,
       operatorCanMint: storeConfig.operatorCanMint,
@@ -2558,7 +2560,7 @@ export function CreateForm() {
     },
     {
       label: "Can move funds",
-      value: launchFundsFact(reviewStages, rulesFlavor, authorityEnabled, multiToken, storeConfig.itemsRedeem),
+      value: launchFundsFact(reviewStages, rulesFlavor, authorityEnabled, multiToken, storeConfig.itemsRedeem && itemsCashOut),
     },
     {
       label: "Can change rules",
@@ -4156,10 +4158,10 @@ export function CreateForm() {
                     blurb={blurb}
                   />
                 ))}
-                {anyCashOuts ? (
+                {flavor === "revnet" ? null : !itemsCashOut ? (
                   <p className="rounded-lg bg-smoke-75 px-3.5 py-2.5 text-xs leading-relaxed text-smoke-700">
-                    Items and tokens cannot both cash out for project funds.
-                    Turn token cash outs off to let items cash out.
+                    Items can cash out where the rules allow cash outs. Turn
+                    cash outs on in the rules to offer this.
                   </p>
                 ) : (
                   <CheckRow
@@ -4171,8 +4173,8 @@ export function CreateForm() {
                       }))
                     }
                     disabled={busy}
-                    title="Let holders cash out their items"
-                    blurb="Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules."
+                    title="Holders cash out items, not tokens"
+                    blurb="Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules. Tokens can no longer be cashed out."
                   />
                 )}
               </div>
