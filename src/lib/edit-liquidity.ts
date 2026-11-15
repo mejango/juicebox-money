@@ -14,6 +14,7 @@ const ACTION_INCREASE_LIQUIDITY = '00'
 const ACTION_DECREASE_LIQUIDITY = '01'
 const ACTION_MINT_POSITION = '02'
 const ACTION_BURN_POSITION = '03'
+const ACTION_SETTLE = '0b'
 const ACTION_TAKE_PAIR = '11'
 const ACTION_CLOSE_CURRENCY = '12'
 const ACTION_SWEEP = '14'
@@ -48,6 +49,39 @@ export function closeActions(pool: Pool, recipient: Address, value: bigint) {
     actions += ACTION_SWEEP
   }
   return { actions, parameters }
+}
+
+/**
+ * The closing actions of a plan that burns one band to mint another. The mint's
+ * maxima bound what the mint takes in, not what the wallet pays once the burn's
+ * return is counted, so closing the net would let a price move pull more than
+ * was reviewed. This pays in exactly the reviewed caps (SETTLE, payer is the
+ * caller) and takes everything left over (TAKE_PAIR), which reverts when a
+ * currency is still owed: the wallet never pays more than the caps.
+ */
+export function cappedCloseActions(
+  pool: Pool,
+  recipient: Address,
+  value: bigint,
+  erc20: ReadonlyArray<{ currency: Address; max: bigint }>,
+) {
+  let actions = ''
+  const parameters: Hex[] = []
+  for (const currency of [pool.key.currency0, pool.key.currency1]) {
+    const cap = /^0x0{40}$/.test(currency)
+      ? value
+      : (erc20.find(side => side.currency.toLowerCase() === currency.toLowerCase())?.max ?? 0n)
+    if (cap <= 0n) continue
+    actions += ACTION_SETTLE
+    parameters.push(
+      encodeAbiParameters(
+        [{ type: 'address' }, { type: 'uint256' }, { type: 'bool' }],
+        [currency, cap, true],
+      ),
+    )
+  }
+  parameters.push(takePairParams(pool, recipient))
+  return { actions: `${actions}${ACTION_TAKE_PAIR}`, parameters }
 }
 
 export function takePairParams(pool: Pool, recipient: Address): Hex {
@@ -167,9 +201,10 @@ export interface EditLiquidityPlan extends EditOperations {
  *   fees offset what it pays.
  * - Same band, less liquidity → DECREASE_LIQUIDITY + TAKE_PAIR: the freed
  *   share and unclaimed fees return to the wallet, behind 95% floors.
- * - New band → BURN_POSITION + MINT_POSITION + CLOSE×2 [+ SWEEP]: the burn's
- *   credit funds the mint inside the unlock; only the difference touches the
- *   wallet, in either direction. The part of each target the old position
+ * - New band → BURN_POSITION + MINT_POSITION + SETTLE per funded currency +
+ *   TAKE_PAIR: the burn's credit funds the mint inside the unlock; the wallet
+ *   pays in at most its reviewed caps and takes back whatever is left, and the
+ *   call reverts if a currency is still owed. The part of each target the old position
  *   already covers is shaved 1% so ~1% of price drift between review and
  *   execution still fits without wallet funding, matching the plain move.
  * - Nothing on either side → the full-exit removal.
@@ -195,7 +230,10 @@ export function buildEditLiquidityPlan(input: {
           takePairParams(pool, account),
         ])
       : (() => {
-          const close = closeActions(pool, account, ops.value)
+          const close =
+            ops.kind === 'move'
+              ? cappedCloseActions(pool, account, ops.value, ops.erc20)
+              : closeActions(pool, account, ops.value)
           return encodeUnlock(`${ops.actions}${close.actions}`, [
             ...ops.parameters,
             ...close.parameters,

@@ -170,6 +170,18 @@ function V4PlanView({ steps, chainId }: { steps: V4PlanStep[]; chainId: number }
                 <V4PlanRow label="Recipient">{addressLabel(chainId, step.recipient)}</V4PlanRow>
               </dl>
             )
+          case 'SETTLE':
+            return (
+              <dl key={index} className="space-y-0.5">
+                {title(
+                  step.payerIsCaller
+                    ? 'Pay in: exactly this much from the caller, the rest is taken back below'
+                    : 'Pay in: exactly this much from the position manager',
+                )}
+                <V4PlanRow label="Currency">{currencyLabel(chainId, step.currency)}</V4PlanRow>
+                <V4PlanRow label="Amount">{String(step.amount)}</V4PlanRow>
+              </dl>
+            )
           case 'CLOSE_CURRENCY':
             return (
               <dl key={index} className="space-y-0.5">

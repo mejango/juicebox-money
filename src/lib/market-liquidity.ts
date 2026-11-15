@@ -1,6 +1,7 @@
 import { decodeAbiParameters, type Address, type Hex } from 'viem'
 import type { MarketResult, UserLpPosition } from '@/components/project/MarketSection'
 import {
+  cappedCloseActions,
   closeActions,
   editOperations,
   encodeUnlock,
@@ -368,7 +369,11 @@ export function buildMarketEdit({
   if (!operations.length) throw new Error('This leaves the market as it is.')
 
   const value = operations.reduce((sum, ops) => sum + ops.value, 0n)
-  const close = closeActions(pool, account, value)
+  const erc20 = mergeErc20(operations.map(ops => ops.erc20))
+  // A re-fit burns to mint, so the whole edit pays in its reviewed caps and takes the rest.
+  const close = operations.some(ops => ops.burned)
+    ? cappedCloseActions(pool, account, value, erc20)
+    : closeActions(pool, account, value)
   const sum = (pick: (ops: EditOperations) => bigint) =>
     operations.reduce((total, ops) => total + pick(ops), 0n)
   return {
@@ -379,7 +384,7 @@ export function buildMarketEdit({
     token: token?.edit ?? null,
     pair: pair?.edit ?? null,
     value,
-    erc20: mergeErc20(operations.map(ops => ops.erc20)),
+    erc20,
     tokenFlow: sum(ops => ops.tokenFlow),
     pairFlow: sum(ops => ops.pairFlow),
     tokenFunding: sum(ops => ops.tokenFunding),

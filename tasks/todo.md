@@ -232,3 +232,20 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Resource budget:** One draft pull request.
 - **Authority and recovery:** Draft pull request; merged on jango's word after the SDK release. Reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-15: A re-band's reviewed cap is enforced onchain
+
+- [x] C1 A move (`buildEditLiquidityPlan`) and a market re-fit (`buildMarketEdit`) end in `SETTLE` of each reviewed cap from the caller plus `TAKE_PAIR` (`cappedCloseActions`) in place of `CLOSE_CURRENCY` x2 [+ `SWEEP`].
+- [x] C2 The editors require the wallet to hold the whole cap for such a plan, since the cap is paid in and the rest taken back.
+- [x] C3 The review dialog shows the `SETTLE` step (SDK 6.10.0 decodes it).
+- [x] C4 Pin `@bananapus/nana-sdk-core` 6.10.0 (published); full check green on the registry package.
+
+## Plan refinement
+- **Objective:** After signing, a price move can no longer make a re-band pull more from the wallet than the review's "Authorizes up to" figure (jango, 2026-11-15: "yeah built it, sounds right").
+- **System fit:** The rule lives in the two plan builders; panels only gate the balance and display. revnet.money and Juicescan build the same bytes.
+- **Reuse and simplicity:** One closing helper beside the existing one; no new plan fields (the caps are the plan's `value` and `erc20`).
+- **Evidence and unknowns:** v4-periphery `PositionManager._takePair` calls `_getFullCredit`, which reverts `DeltaNotPositive` on a debt. Fork run on Base projects 3 and 6 (through Juicescan's identical builders): funded re-bands and re-fits execute and return the unused cap; the same plans with caps cut to a tenth revert. A wallet holding less than the cap now cannot send a re-band at all.
+- **Verification:** Unit tests assert the exact actions and settle parameters; `npm run check` on the packed SDK tarball; Codex until clean; CI after the pin.
+- **Resource budget:** One pull request per client plus one SDK minor.
+- **Authority and recovery:** jango asked for it in-session; merged on his word. Reverts alone.
+- **Agent-system impact:** None.
