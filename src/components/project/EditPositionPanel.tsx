@@ -513,7 +513,7 @@ export function EditPositionPanel({
     if (r.plan.tokenMinimum > 0n || r.plan.pairMinimum > 0n) {
       rows.push({
         label: 'Enforced onchain',
-        value: `At least ${formatTokenAmount(r.plan.tokenMinimum, 18)} ${sym} + ${formatTokenAmount(r.plan.pairMinimum, pairDec)} ${pairSym} back (95% floors)`,
+        value: `Removed liquidity pays at least ${formatTokenAmount(r.plan.tokenMinimum, 18)} ${sym} + ${formatTokenAmount(r.plan.pairMinimum, pairDec)} ${pairSym} (95% floors)`,
       })
     }
     return rows
