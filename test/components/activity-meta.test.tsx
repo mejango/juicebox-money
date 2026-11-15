@@ -26,6 +26,7 @@ import {
 import { mergeActivityEvents } from '@/hooks/useLiveFeed'
 import { ActivityAmountLine, ActivityMeta } from '@/components/ActivityMeta'
 import {
+  raisedByChainRows,
   suckerGroupAccountingToken,
   type BsActivityEvent,
   type BsProject,
@@ -206,6 +207,22 @@ describe('single accounting-token determination', () => {
       projectRow({ chainId: 8453, tokenSymbol: 'USDC', decimals: 6 }),
     ]
     expect(suckerGroupAccountingToken(rows)).toBeNull()
+  })
+
+  it('gives a raised amount a unit only on a one-token deployment', () => {
+    const rows = raisedByChainRows([
+      projectRow({ chainId: 1, volume: '5', volumeUsd: '7' }),
+      projectRow({
+        chainId: 8453,
+        volume: '9',
+        volumeUsd: '11',
+        accountingTokenCount: 2,
+      }),
+    ])
+    expect(rows).toEqual([
+      { chainId: 1, usd: '7', volume: '5', symbol: 'USDC', decimals: 6 },
+      { chainId: 8453, usd: '11' },
+    ])
   })
 
   it('returns null when decimals disagree even if symbols match', () => {

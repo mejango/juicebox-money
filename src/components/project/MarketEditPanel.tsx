@@ -417,10 +417,13 @@ export function MarketEditPanel({
   const reviewRows = (r: Reviewed): TxConfirmRow[] => {
     const rows: TxConfirmRow[] = [
       { label: 'Market', value: `${ids} on ${chainName(chainId)}` },
-      {
-        label: 'Corridor',
-        value: `${corridor ? `${formatPrice(corridor.floor)} – ${formatPrice(corridor.ceiling)} ${pairSym}/${sym}` : '—'}${r.plan.refit ? ' (re-fit)' : ' (kept)'}`,
-      },
+      // Without a re-fit the bands keep their ticks, which the current corridor may not describe.
+      r.plan.refit
+        ? {
+            label: 'Corridor',
+            value: `${corridor ? `${formatPrice(corridor.floor)} – ${formatPrice(corridor.ceiling)} ${pairSym}/${sym}` : '—'} (re-fit)`,
+          }
+        : { label: 'Bands', value: 'Kept as they are' },
     ]
     if (r.plan.token) rows.push({ label: `${sym} side`, value: sideLine(r.plan.token, 'token') })
     if (r.plan.pair) rows.push({ label: `${pairSym} side`, value: sideLine(r.plan.pair, 'pair') })
@@ -446,7 +449,7 @@ export function MarketEditPanel({
     if (r.plan.tokenMinimum > 0n || r.plan.pairMinimum > 0n) {
       rows.push({
         label: 'Enforced onchain',
-        value: `At least ${amountsText(r.plan.tokenMinimum, r.plan.pairMinimum)} back (95% floors)`,
+        value: `Removed liquidity pays at least ${amountsText(r.plan.tokenMinimum, r.plan.pairMinimum)} (95% floors)`,
       })
     }
     return rows

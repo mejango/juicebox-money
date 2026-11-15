@@ -5,6 +5,7 @@ import {
   editOperations,
   encodeUnlock,
   mergeErc20,
+  moveStillCovered,
   MODIFY_LIQUIDITY_PARAMS,
   takePairParams,
   type EditLiquidityKind,
@@ -194,6 +195,7 @@ export interface MarketSideEdit {
   liquidityDelta: bigint
   amount0Max: bigint
   amount1Max: bigint
+  burned?: EditOperations['burned']
 }
 
 export interface MarketEditPlan {
@@ -234,6 +236,7 @@ function sideEdit(
     liquidityDelta: ops.liquidityDelta,
     amount0Max: ops.amount0Max,
     amount1Max: ops.amount1Max,
+    burned: ops.burned,
   }
 }
 
@@ -412,7 +415,11 @@ export function marketEditStillFits(
       sqrtAtTick(side.tickUpper),
       side.kind === 'increase' ? side.liquidityDelta : side.liquidity,
     )
-    if (required.amount0 > side.amount0Max || required.amount1 > side.amount1Max) {
+    if (
+      required.amount0 > side.amount0Max ||
+      required.amount1 > side.amount1Max ||
+      !moveStillCovered(side, live.sqrtP)
+    ) {
       return 'The pool price moved beyond the reviewed range. Review fresh amounts.'
     }
   }

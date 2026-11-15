@@ -221,7 +221,7 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 
 - [x] S1 The pay panel passes the connected account to `prepareBestUserPay` (`simulateFrom`): each native-token route is run as that account and the one that delivers the most tokens wins.
 - [x] S2 The payment notice rule comes from the SDK (`payNoticeView`); `src/lib/pay-notice.ts` is removed. The site passes its chain order.
-- [ ] S3 Pin `@bananapus/nana-sdk-core` 6.9.0 once it is published; until then the branch is checked against the packed tarball.
+- [x] S3 `@bananapus/nana-sdk-core` pinned to 6.9.0 (published 2026-11-15), examples and Build guide included.
 
 ## Plan refinement
 - **Objective:** A payer is sent to the route that delivers the most, decided on what each route actually does, and the notice rule has one home.

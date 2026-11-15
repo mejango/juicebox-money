@@ -10,7 +10,7 @@ import { AddressLink } from '@/components/ui/AddressLink'
 import { OverviewTab } from '@/components/project/OverviewTab'
 import { ProjectStats } from '@/components/project/ProjectStats'
 import { BackOfficeTab, ExtrasTab } from '@/components/project/LazyProjectTabs'
-import type { BsProject } from '@/lib/bendystraw'
+import { raisedByChainRows, type BsProject } from '@/lib/bendystraw'
 import type { ProjectMetadata } from '@/lib/project-server-data'
 import type { ResolvedProjectRoute } from '@/lib/project-route.server'
 import { formatDate, ipfsUrl, projectLogoUrl } from '@/lib/format'
@@ -188,13 +188,7 @@ export async function ProjectHeader({ project, metadata: pending, urn, chains, c
             ) : null}
             <ProjectStats
               totalRaisedUsd={totalRaisedUsd}
-              raisedByChain={chains.map((row) => ({
-                chainId: row.chainId,
-                usd: row.volumeUsd || "0",
-                volume: row.volume || "0",
-                symbol: row.tokenSymbol,
-                decimals: row.decimals,
-              }))}
+              raisedByChain={raisedByChainRows(chains)}
               paymentsCount={paymentsCount}
               suckerGroupId={project.suckerGroupId}
               chains={chainPairs}
