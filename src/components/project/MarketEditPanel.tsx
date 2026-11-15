@@ -242,8 +242,14 @@ export function MarketEditPanel({
       })
       const held = balances.data ?? (await balances.refetch()).data
       if (!held) throw new FlowError('Could not read your wallet balances.')
-      if (plan.tokenFlow > held.tok) throw new FlowError(`That's more ${sym} than your balance.`)
-      if (plan.pairFlow > held.pair) throw new FlowError(`That's more ${pairSym} than your balance.`)
+      // A re-fit pays in its whole cap and takes the rest back, so the wallet must hold the cap.
+      const paysCap = plan.token?.kind === 'move' || plan.pair?.kind === 'move'
+      if ((paysCap ? plan.tokenFunding : plan.tokenFlow) > held.tok) {
+        throw new FlowError(`That's more ${sym} than your balance.`)
+      }
+      if ((paysCap ? plan.pairFunding : plan.pairFlow) > held.pair) {
+        throw new FlowError(`That's more ${pairSym} than your balance.`)
+      }
       const steps = await buildPlan(
         client,
         connectedAddress,

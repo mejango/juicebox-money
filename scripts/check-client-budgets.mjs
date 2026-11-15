@@ -113,7 +113,8 @@ const budgets = {
   // 2744 -> 2746: the connect-a-chain owner action and the SDK's best-route pay rule: measured 2745.6 KiB.
   // 2746 -> 2747: round 9 (every launch through the omnichain deployer, the queue's carried-shop rule, the
   // pay notice versions, the Balance price notes, the feed's whole-moment rule): measured 2746.2 KiB.
-  allScripts: 2747 * KIB,
+  // 2747 -> 2748: the capped close of a liquidity re-band and its settle step in review: measured 2747.1 KiB.
+  allScripts: 2748 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

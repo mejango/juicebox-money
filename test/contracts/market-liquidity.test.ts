@@ -166,8 +166,9 @@ describe('market grouping and edits', () => {
     expect(plan.tokenFlow).toBeLessThanOrEqual(0n)
     expect(plan.pairFlow).toBeLessThanOrEqual(0n)
     const [actions, params] = unlock(plan.unlockData)
-    expect(actions.startsWith('0x03020302')).toBe(true)
-    expect(params.length).toBeGreaterThanOrEqual(6)
+    // Two burns and mints, then TAKE_PAIR alone: nothing is paid in, so the burns must cover the mints.
+    expect(actions).toBe('0x0302030211')
+    expect(params).toHaveLength(5)
   })
 
   it('removes one side, keeps an unchanged side, and mints a missing side', () => {

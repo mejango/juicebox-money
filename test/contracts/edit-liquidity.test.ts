@@ -218,9 +218,18 @@ describe('LP edit plan', () => {
     expect(plan.tokenMinimum).toBe((held.amount1 * 9_500n) / 10_000n)
 
     const [actions, params] = unlock(plan.unlockData)
-    // BURN_POSITION, MINT_POSITION, CLOSE_CURRENCY ×2, SWEEP (native funding refund).
-    expect(actions).toBe('0x0302121214')
+    // BURN_POSITION, MINT_POSITION, SETTLE each reviewed cap from the caller, TAKE_PAIR: whatever the caps do
+    // not cover stays owed and TAKE_PAIR reverts, so the wallet never pays more than it reviewed.
+    expect(actions).toBe('0x03020b0b11')
     expect(params).toHaveLength(5)
+    const settle = [{ type: 'address' }, { type: 'uint256' }, { type: 'bool' }] as const
+    expect(decodeAbiParameters(settle, params[2])).toEqual([pool.key.currency0, plan.pairFunding, true])
+    expect(decodeAbiParameters(settle, params[3])).toEqual([pool.key.currency1, plan.tokenFunding, true])
+    expect(decodeAbiParameters([{ type: 'address' }, { type: 'address' }, { type: 'address' }], params[4])).toEqual([
+      pool.key.currency0,
+      pool.key.currency1,
+      ALICE,
+    ])
     const [tokenId, amount0Min, amount1Min] = decodeAbiParameters(
       [{ type: 'uint256' }, { type: 'uint128' }, { type: 'uint128' }, { type: 'bytes' }],
       params[0],
@@ -248,8 +257,9 @@ describe('LP edit plan', () => {
     expect(plan.value).toBe(0n)
     expect(plan.erc20).toEqual([])
     const [actions, params] = unlock(plan.unlockData)
-    expect(actions).toBe('0x03021212')
-    expect(params).toHaveLength(4)
+    // Nothing to pay in: the burn must cover the mint or TAKE_PAIR reverts.
+    expect(actions).toBe('0x030211')
+    expect(params).toHaveLength(3)
   })
 
   it('refuses a reviewed move once the burn no longer covers the mint', () => {
