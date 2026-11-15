@@ -216,3 +216,19 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - Full check green: 3699 unit tests, 90 browser tests.
 - Not launched on a live chain from this branch.
 - New copy for jango: "Items can cash out where the rules allow cash outs. Turn cash outs on in the rules to offer this." and "Holders can give up their items for a share of funds not set aside for payouts, under the cash out rules. Tokens can no longer be cashed out."
+
+## 2026-11-14: Round 10, exact pay route choice and the shared notice rule (SDK 6.9.0)
+
+- [x] S1 The pay panel passes the connected account to `prepareBestUserPay` (`simulateFrom`): each native-token route is run as that account and the one that delivers the most tokens wins.
+- [x] S2 The payment notice rule comes from the SDK (`payNoticeView`); `src/lib/pay-notice.ts` is removed. The site passes its chain order.
+- [x] S3 `@bananapus/nana-sdk-core` pinned to 6.9.0 (published 2026-11-15), examples and Build guide included.
+
+## Plan refinement
+- **Objective:** A payer is sent to the route that delivers the most, decided on what each route actually does, and the notice rule has one home.
+- **System fit:** The rule lives in the SDK; the pay panel only passes the payer and the chain order.
+- **Reuse and simplicity:** Two call-site changes and one deleted module.
+- **Evidence and unknowns:** The SDK change is Codex-clean (four passes). An RPC without call overrides leaves the previews deciding, as before.
+- **Verification:** `npm run check` on the packed SDK tarball; CI after 6.9.0 is published.
+- **Resource budget:** One draft pull request.
+- **Authority and recovery:** Draft pull request; merged on jango's word after the SDK release. Reverts alone.
+- **Agent-system impact:** None.

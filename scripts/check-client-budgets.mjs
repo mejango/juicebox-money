@@ -72,7 +72,8 @@ const routes = [
   // 544 -> 545: the pay card quotes every listed terminal through the SDK's best-route rule: measured 544.1 KiB, rounded up only.
   // 545 -> 548: Edit rules queues through JBOmnichainDeployer (its call and ABI), the pay review reads each chain's
   // notice, and the Balance chart reads holdings and today's prices: measured 547.7 KiB, rounded up only.
-  { route: '/[urn]', path: '/eth:1', kib: 548, text: 'Browser Fixture Project' },
+  // 548 -> 549: the SDK's exact pay route choice (each route run as the payer) measures 548.2 KiB.
+  { route: '/[urn]', path: '/eth:1', kib: 549, text: 'Browser Fixture Project' },
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
