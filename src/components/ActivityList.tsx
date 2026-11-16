@@ -34,7 +34,7 @@ import {
 } from '@/lib/format'
 import { chainName } from '@/lib/urn'
 import { isStickyHook } from '@/lib/sticky'
-import { ACTIVITY_PAGE_SIZE, PROJECT_ACTIVITY_FRESHNESS_MS } from '@/lib/project-activity'
+import { ACTIVITY_PAGE_SIZE, ACTIVITY_POLL_MS } from '@/lib/project-activity'
 import { StickyRecipient } from '@/components/project/StickyRecipient'
 import { ActorLink } from './ActorLink'
 import {
@@ -1227,7 +1227,7 @@ export function ActivityList({
     initial: events,
     initialTotal: total ?? events.length,
     updatedAt: error ? undefined : initialEventsUpdatedAt,
-    pollMs: PROJECT_ACTIVITY_FRESHNESS_MS,
+    pollMs: ACTIVITY_POLL_MS,
     pollKey: `${chainId}:${projectId}:${suckerGroupId ?? ''}:${error}`,
     read: async (offset, signal) => {
       const page = await (suckerGroupId
