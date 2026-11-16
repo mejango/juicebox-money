@@ -242,11 +242,15 @@ describe('Safe batch tray', () => {
     seed()
     render()
     await settle()
+    expect(mocks.readSafeQueue).toHaveBeenCalledTimes(1)
     click(button('Review and propose on Ethereum'))
     await settle()
+    // The tray's read is seconds old; the dialog still reads the nonces again as it opens.
+    expect(mocks.readSafeQueue).toHaveBeenCalledTimes(2)
 
     const dialog = document.querySelector('dialog')
     expect(dialog?.open).toBe(true)
+    expect(dialog?.querySelector('select[aria-label="Safe nonce"]')).not.toBeNull()
     expect(dialog?.textContent).toContain('Batch on Ethereum')
     expect(dialog?.textContent).toContain('Set buyback pool')
     expect(dialog?.textContent).toContain('Set buyback hook')

@@ -79,6 +79,7 @@ import { AddressLink } from "@/components/ui/AddressLink";
 import { explorerTxUrl } from '@/lib/chainDisplay'
 import { clientFor } from '@/lib/authority'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
+import { safeQueueQueryOptions } from '@/lib/safe-queue-query'
 import {
   ENS_REGISTRY_ADDRESS,
   PROJECT_HANDLES_ADDRESS,
@@ -901,7 +902,7 @@ export function SafeQueueCard({
           chain.handleOnly ? undefined : assertSafeProjectAuthority(chain, safe),
           queryClient.fetchQuery(safeAccountQueryOptions(chain.chainId, safe)),
           hasSafeService(chain.chainId)
-            ? readSafeQueue(chain.chainId, safe)
+            ? queryClient.fetchQuery(safeQueueQueryOptions(chain.chainId, safe))
             : getSafeNextNonce(chain.chainId, safe).then(nonce => ({ nonce, pending: [] })),
         ]);
         if (!info) {
@@ -1012,10 +1013,10 @@ export function SafeQueueCard({
     ? new Set(ready.map((row) => row.chain.chainId)).size
     : ready.length;
   const refetchQueues = async () => {
-    await Promise.all(chains.map(chain => queryClient.invalidateQueries({
-      queryKey: safeAccountQueryOptions(chain.chainId, safe).queryKey,
-      refetchType: 'none',
-    })));
+    await Promise.all(chains.flatMap(chain => [
+      safeAccountQueryOptions(chain.chainId, safe).queryKey,
+      safeQueueQueryOptions(chain.chainId, safe).queryKey,
+    ]).map(queryKey => queryClient.invalidateQueries({ queryKey, refetchType: 'none' })));
     await Promise.all(queries.map(query => query.refetch()));
   };
 

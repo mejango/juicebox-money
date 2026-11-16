@@ -9,7 +9,7 @@ import { SafeBatchPresetDialog } from '@/components/project/SafeBatchPresetDialo
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { TabShell } from '@/components/project/Tabs'
 import { clientFor } from '@/lib/authority'
-import { readSafeQueue } from '@/lib/safe'
+import { safeQueueQueryOptions } from '@/lib/safe-queue-query'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
 import { multiSendCallsOf } from '@bananapus/nana-sdk-core/safe'
 import {
@@ -47,28 +47,23 @@ function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: 
   })
   const info = account.isError ? null : account.data
   const tx = useQuery({
-    queryKey: ['safeBatchProposed', chainId, authority, key],
+    ...safeQueueQueryOptions(chainId, authority ?? zeroAddress),
     enabled: !!info,
-    staleTime: 30_000,
     refetchInterval: 30_000,
-    queryFn: async (): Promise<SafeQueuedTransaction | null> => {
-      const { pending } = await readSafeQueue(chainId, authority!)
-      return (
-        pending.find(candidate => {
-          // multiSendCallsOf reads only a recognized MultiSendCallOnly.
-          const calls = multiSendCallsOf(candidate)
-          return (
-            !!calls &&
-            callsKey(calls) === key &&
-            safeTransactionMatchesCall(candidate, {
-              to: candidate.to,
-              data: candidate.data ?? '0x',
-              operation: 1,
-            })
-          )
-        }) ?? null
-      )
-    },
+    select: ({ pending }): SafeQueuedTransaction | null =>
+      pending.find(candidate => {
+        // multiSendCallsOf reads only a recognized MultiSendCallOnly.
+        const calls = multiSendCallsOf(candidate)
+        return (
+          !!calls &&
+          callsKey(calls) === key &&
+          safeTransactionMatchesCall(candidate, {
+            to: candidate.to,
+            data: candidate.data ?? '0x',
+            operation: 1,
+          })
+        )
+      }) ?? null,
   }).data
   return info && tx ? { tx, info } : null
 }

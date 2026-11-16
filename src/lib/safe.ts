@@ -95,7 +95,7 @@ export type SafeCall = {
   contractName?: string
   /** The inner calls of a MultiSend batch, for the review. */
   calls?: readonly TransactionReviewCall[]
-  /** The Safe nonce to propose at (Safe service route), one of readProposalNonces. Default: the next free one. */
+  /** The Safe nonce to propose at (Safe service route), one of proposalNoncesOf. Default: the next free one. */
   nonce?: number
   reverifyAuthority?: () => Promise<void>
   onSafePrepared?: (tx: SafeQueuedTransaction) => Promise<void>
@@ -416,11 +416,13 @@ export async function readSafeQueue(
  * free one. A queued nonce offers the proposal as a replacement of what is
  * queued there.
  */
-export async function readProposalNonces(
-  chainId: JBChainId,
-  safe: Address,
-): Promise<{ choices: number[]; next: number }> {
-  const { nonce, pending } = await readSafeQueue(chainId, safe)
+export function proposalNoncesOf({
+  nonce,
+  pending,
+}: {
+  nonce: number
+  pending: SafeQueuedTransaction[]
+}): { choices: number[]; next: number } {
   const choices = proposalNonceChoices(nonce, pending)
   return { choices, next: choices[choices.length - 1] }
 }
