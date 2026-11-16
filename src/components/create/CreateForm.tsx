@@ -84,6 +84,7 @@ import {
   type LaunchChainStatus,
   type LaunchSession,
 } from "@/lib/launch-session";
+import { pollIndexed } from "@/lib/indexed-check";
 import { fence, type TabLocks } from "@/lib/tab-locks";
 import {
   CASH_OUTS_OFF_REVNET,
@@ -2243,9 +2244,7 @@ export function CreateForm() {
         }
       }
     };
-    const t = setInterval(tick, 5000);
-    void tick();
-    return () => clearInterval(t);
+    return pollIndexed(tick);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doneUnindexed.join(",")]);
 
