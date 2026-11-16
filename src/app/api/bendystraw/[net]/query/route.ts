@@ -1,4 +1,4 @@
-import { bendystraw } from '@/lib/bendystraw'
+import { bendystraw, BendystrawRateLimited } from '@/lib/bendystraw'
 import { resolvePersistedBendystrawRequest } from '@/lib/bendystraw-proxy'
 
 const MAX_REQUEST_BYTES = 32 * 1024
@@ -31,6 +31,57 @@ async function readBoundedBody(
     offset += chunk.byteLength
   }
   return bytes
+}
+
+/** The wait a 429 names when the indexer gave none in whole seconds: one page refresh. */
+const RETRY_AFTER_SECONDS = '30'
+
+type SharedRead = { read: Promise<unknown>; waiting: number; stop: AbortController }
+const inFlight = new Map<string, SharedRead>()
+
+/**
+ * One indexer read for identical requests that overlap: every visitor polls
+ * the same queries, and they all spend this server's budget. The read ends
+ * when the last browser waiting on it has left. Nothing is kept once it settles.
+ */
+function sharedRead(
+  key: string,
+  signal: AbortSignal,
+  read: (signal: AbortSignal) => Promise<unknown>,
+): Promise<unknown> {
+  let shared = inFlight.get(key)
+  if (!shared) {
+    const stop = new AbortController()
+    const entry: SharedRead = {
+      stop,
+      waiting: 0,
+      read: read(stop.signal).finally(() => {
+        if (inFlight.get(key) === entry) inFlight.delete(key)
+      }),
+    }
+    inFlight.set(key, entry)
+    shared = entry
+  }
+  const entry = shared
+  entry.waiting += 1
+  return new Promise((resolve, reject) => {
+    const leave = () => {
+      entry.waiting -= 1
+      if (entry.waiting === 0) {
+        if (inFlight.get(key) === entry) inFlight.delete(key)
+        entry.stop.abort(signal.reason)
+      }
+      reject(signal.reason)
+    }
+    if (signal.aborted) {
+      leave()
+      return
+    }
+    signal.addEventListener('abort', leave, { once: true })
+    entry.read
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', leave))
+  })
 }
 
 export async function POST(
@@ -78,12 +129,18 @@ export async function POST(
 
   try {
     // Uncached: Next's fetch cache would keep a disk file for every distinct
-    // client query. The browser's request signal ends the indexer read when
-    // the page that asked is left, with no retry.
-    const data = await bendystraw(
-      persisted.query,
-      persisted.variables,
-      { network: net, policy: 'no-store', signal: request.signal },
+    // client query. The indexer read ends when every page that asked has left,
+    // with no retry; a 429 is answered as one, not asked again.
+    const data = await sharedRead(
+      `${net}\n${persisted.query}\n${JSON.stringify(persisted.variables)}`,
+      request.signal,
+      signal =>
+        bendystraw(persisted.query, persisted.variables, {
+          network: net,
+          policy: 'no-store',
+          signal,
+          failOnRateLimit: true,
+        }),
     )
     return Response.json(
       { data },
@@ -103,6 +160,20 @@ export async function POST(
       console.error(
         'Bendystraw relay failed:',
         String(error).replace(/[\p{Cc}\s]+/gu, ' '),
+      )
+    }
+    if (error instanceof BendystrawRateLimited) {
+      return Response.json(
+        { error: 'Bendystraw rate limited' },
+        {
+          status: 429,
+          headers: {
+            'cache-control': 'no-store',
+            'retry-after': /^\d{1,5}$/.test(error.retryAfter ?? '')
+              ? error.retryAfter!
+              : RETRY_AFTER_SECONDS,
+          },
+        },
       )
     }
     return Response.json(

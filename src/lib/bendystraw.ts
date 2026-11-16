@@ -8,6 +8,7 @@ import {
   bendystrawCacheTtl,
   bendystrawProjectRefFilter as projectRefAnd,
   bendystrawProjectRefsFilters as projectRefsWheres,
+  BendystrawRequestError,
   downsampleTimeSeries,
   matchesBendystrawProjectRef as matchesProjectRef,
   normalizeBendystrawEndpoint,
@@ -63,6 +64,20 @@ export function bendystrawNetworkHint(
     : undefined
 }
 
+/**
+ * The indexer's own rate limit answer. Thrown from inside the fetch, so the
+ * request is not sent again, and carrying the wait the indexer asked for.
+ */
+export class BendystrawRateLimited extends BendystrawRequestError {
+  constructor(readonly retryAfter: string | null) {
+    super('Bendystraw request failed (429)', 429)
+  }
+}
+
+/** How long the browser holds its indexer reads back after the relay answers 429. */
+const RATE_LIMIT_PAUSE_MS = 5_000
+let rateLimitedUntil = 0
+
 export async function bendystraw<T>(
   query: string,
   variables: Record<string, unknown>,
@@ -73,6 +88,8 @@ export async function bendystraw<T>(
     policy?: BendystrawCachePolicy | 'no-store'
     /** The caller's: when it aborts, the request under way stops and is not retried, and none is sent after. */
     signal?: AbortSignal
+    /** A 429 from the indexer throws `BendystrawRateLimited` at once instead of being asked again. */
+    failOnRateLimit?: boolean
   } = {},
 ): Promise<T> {
   const contract = compileBendystrawOperation(query)
@@ -83,13 +100,23 @@ export async function bendystraw<T>(
     variables,
   })
   if (typeof window !== 'undefined') {
-    return requestPersistedBendystraw<T>({
-      contract,
-      network,
-      query,
-      signal: opts.signal,
-      variables,
-    })
+    // Every visitor shares the relay's budget: after a 429, reads (a query's
+    // own retry included) fail here until the pause passes, without a request.
+    if (Date.now() < rateLimitedUntil) throw new BendystrawRateLimited(null)
+    try {
+      return await requestPersistedBendystraw<T>({
+        contract,
+        network,
+        query,
+        signal: opts.signal,
+        variables,
+      })
+    } catch (error) {
+      if (error instanceof BendystrawRequestError && error.status === 429) {
+        rateLimitedUntil = Date.now() + RATE_LIMIT_PAUSE_MS
+      }
+      throw error
+    }
   }
   const cacheOptions =
     opts.policy === 'no-store'
@@ -113,7 +140,14 @@ export async function bendystraw<T>(
     query,
     variables,
     {
-      fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
+      fetch: async (input, init) => {
+        const response = await fetch(input, { ...init, ...cacheOptions })
+        if (opts.failOnRateLimit && response.status === 429) {
+          await response.body?.cancel()
+          throw new BendystrawRateLimited(response.headers.get('retry-after'))
+        }
+        return response
+      },
       operationName: contract.operationName,
       signal: opts.signal,
       validateData: (value): value is T => contract.validateData(value),
