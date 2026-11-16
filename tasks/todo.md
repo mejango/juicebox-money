@@ -249,3 +249,18 @@ Codex (`gpt-6.1-sol`) came back CLEAN on the first pass. `npm run check` gates p
 - **Resource budget:** One pull request per client plus one SDK minor.
 - **Authority and recovery:** jango asked for it in-session; merged on his word. Reverts alone.
 - **Agent-system impact:** None.
+
+## 2026-11-16: Liquidity balance gate needs the whole native value (G1)
+
+- [x] G1 One rule, `liquidityShortfall`, for the position and market editors: a native pair must hold the whole value sent (headroom included), and an edit that pulls nothing reads no balance, so a failed read never blocks a withdrawal.
+
+## Plan refinement
+
+- **Objective:** Review refuses a native-pair increase the wallet cannot send, as Juicescan now does, instead of leaving the wallet to refuse it.
+- **System fit:** The rule moves from four inline copies into one function beside the plan builders; both panels read it.
+- **Reuse and simplicity:** No new reads, same wording, same error path.
+- **Evidence and unknowns:** Codex reported the case on Juicescan's port of this gate (mejango/juicescan#131). Still as before: unclaimed fees and one-unit rounding are not modeled.
+- **Verification:** Unit test of the rule, typecheck, full check.
+- **Resource budget:** One small pull request per client.
+- **Authority and recovery:** jango said yes to the port on 2026-11-16; pull requests, merge on his word.
+- **Agent-system impact:** None.
