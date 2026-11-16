@@ -49,8 +49,8 @@ function useProposedBatch(chainId: JBChainId, authority: Address | null, steps: 
   const tx = useQuery({
     queryKey: ['safeBatchProposed', chainId, authority, key],
     enabled: !!info,
-    staleTime: 15_000,
-    refetchInterval: 15_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
     queryFn: async (): Promise<SafeQueuedTransaction | null> => {
       const { pending } = await readSafeQueue(chainId, authority!)
       return (
@@ -126,6 +126,10 @@ function QueuedChainPanel({
           ) : null}
           <button type="button" onClick={onRemove} className="text-smoke-700 underline">
             Remove from the batch
+          </button>
+          {/* The review offers the Safe's nonces: one queued too late is proposed again earlier. */}
+          <button type="button" onClick={onReview} className="text-smoke-700 underline">
+            Propose at another nonce
           </button>
         </div>
       ) : (
