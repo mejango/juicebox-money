@@ -973,7 +973,7 @@ export function MarketSection({
     queryKey: ['market', chainId, projectId],
       enabled: !!publicClient,
 
-      refetchInterval: 15_000,
+      refetchInterval: 30_000,
       refetchOnWindowFocus: true,
 
     retry: 1,
