@@ -18,6 +18,7 @@ import {
   buildEditLiquidityPlan,
   describeEditLiquidityPlan,
   editLiquidityStillFits,
+  liquidityShortfall,
   type EditLiquidityPlan,
 } from '@/lib/edit-liquidity'
 import { FlowError, shortError } from '@/lib/errors'
@@ -289,17 +290,10 @@ export function EditPositionPanel({
         account: connectedAddress,
       })
       const held = balances.data ?? (await balances.refetch()).data
-      if (!held) throw new FlowError('Could not read your wallet balances.')
-      // Gate on what the pool actually pulls, not on the maxima: those carry
-      // 1% price headroom that only gets spent if the price moves. A move is
-      // the exception: it pays in its whole cap and takes the rest back.
-      const paysCap = plan.kind === 'move'
-      if ((paysCap ? plan.tokenFunding : plan.tokenFlow) > held.tok) {
-        throw new FlowError(`That's more ${sym} than your balance.`)
-      }
-      if ((paysCap ? plan.pairFunding : plan.pairFlow) > held.pair) {
-        throw new FlowError(`That's more ${pairSym} than your balance.`)
-      }
+      // A move pays in its whole cap and takes the rest back.
+      const short = liquidityShortfall(plan, plan.kind === 'move', held && { token: held.tok, pair: held.pair })
+      if (short === 'unread') throw new FlowError('Could not read your wallet balances.')
+      if (short) throw new FlowError(`That's more ${short === 'token' ? sym : pairSym} than your balance.`)
       const steps = await buildPlan(
         client,
         connectedAddress,

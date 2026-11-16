@@ -13,7 +13,7 @@ import { liquidityIntent } from '@bananapus/nana-sdk-core/review'
 import { legacyEditMarketKeys } from '@/lib/legacy-intents'
 import { useStepRun, type StepRunAction } from '@/hooks/useStepRun'
 import { useViewedAccount } from '@/hooks/useViewedAccount'
-import { bandPrices } from '@/lib/edit-liquidity'
+import { bandPrices, liquidityShortfall } from '@/lib/edit-liquidity'
 import { FlowError, shortError } from '@/lib/errors'
 import { formatTokenAmount } from '@/lib/format'
 import {
@@ -241,15 +241,11 @@ export function MarketEditPanel({
         account: connectedAddress,
       })
       const held = balances.data ?? (await balances.refetch()).data
-      if (!held) throw new FlowError('Could not read your wallet balances.')
       // A re-fit pays in its whole cap and takes the rest back, so the wallet must hold the cap.
       const paysCap = plan.token?.kind === 'move' || plan.pair?.kind === 'move'
-      if ((paysCap ? plan.tokenFunding : plan.tokenFlow) > held.tok) {
-        throw new FlowError(`That's more ${sym} than your balance.`)
-      }
-      if ((paysCap ? plan.pairFunding : plan.pairFlow) > held.pair) {
-        throw new FlowError(`That's more ${pairSym} than your balance.`)
-      }
+      const short = liquidityShortfall(plan, paysCap, held && { token: held.tok, pair: held.pair })
+      if (short === 'unread') throw new FlowError('Could not read your wallet balances.')
+      if (short) throw new FlowError(`That's more ${short === 'token' ? sym : pairSym} than your balance.`)
       const steps = await buildPlan(
         client,
         connectedAddress,

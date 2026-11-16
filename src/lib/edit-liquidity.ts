@@ -611,3 +611,25 @@ export function describeEditLiquidityPlan(plan: {
       }
   }
 }
+
+/**
+ * Which side the wallet cannot fund, or null. Gated on what the pool pulls,
+ * not on the maxima, whose 1% headroom is spent only if the price moves. A
+ * change that pays in its caps (paysCap) must hold them whole, and native
+ * value is sent whole, headroom included. A side that pulls nothing is not
+ * read against a balance, so a failed read never blocks a withdrawal.
+ */
+export function liquidityShortfall(
+  plan: { tokenFlow: bigint; tokenFunding: bigint; pairFlow: bigint; pairFunding: bigint; value: bigint },
+  paysCap: boolean,
+  held: { token: bigint; pair: bigint } | undefined,
+): 'unread' | 'token' | 'pair' | null {
+  const tokenNeed = paysCap ? plan.tokenFunding : plan.tokenFlow
+  const flowNeed = paysCap ? plan.pairFunding : plan.pairFlow
+  const pairNeed = plan.value > flowNeed ? plan.value : flowNeed
+  if (tokenNeed <= 0n && pairNeed <= 0n) return null
+  if (!held) return 'unread'
+  if (tokenNeed > held.token) return 'token'
+  if (pairNeed > held.pair) return 'pair'
+  return null
+}
