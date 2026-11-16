@@ -37,7 +37,7 @@ import {
 } from '@/components/LoadingSkeletons'
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
 import { Revalidating } from '@/components/ui/Revalidating'
-import { cachedQuery, PERSIST } from '@/lib/query-persist'
+import { cachedQuery, PERSIST, type PersistMeta } from '@/lib/query-persist'
 import { accountingContextsQuery, currentRulesetQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
@@ -939,6 +939,31 @@ export async function readMovableLpPositions(
   return found.flat()
 }
 
+/**
+ * The project's pool and live price. Every card that shows them passes the
+ * same `['market', chainId, projectId]` key, so they share one read.
+ */
+export function marketQuery(
+  queryClient: QueryClient,
+  client: PublicClient,
+  options: { meta: PersistMeta; queryKey: readonly ['market', JBChainId, number] },
+) {
+  const [, chainId, projectId] = options.queryKey
+  return projectDisplayQuery(queryClient, {
+    ...options,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: (reader) =>
+      resolveMarket(
+        client,
+        chainId,
+        projectId,
+        JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
+        reader,
+      ),
+  })
+}
+
 // ------------------------------------------------------------- component --
 
 export function MarketSection({
@@ -952,8 +977,6 @@ export function MarketSection({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
-  const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
 
   // The project's OWN token symbol, always read on chain. There is deliberately no
   // fallback to bendystraw's project row: its `tokenSymbol` is the ACCOUNTING symbol
@@ -967,19 +990,15 @@ export function MarketSection({
     isLoading,
     isError,
     isFetching: marketFetching,
-  } = useKeptQuery(projectDisplayQuery(queryClient, {
+  } = useKeptQuery({
+    ...marketQuery(queryClient, publicClient!, {
       meta: PERSIST,
-    staleTime: 60000,
-    queryKey: ['market', chainId, projectId],
-      enabled: !!publicClient,
-
-      refetchInterval: 30_000,
-      refetchOnWindowFocus: true,
-
-    retry: 1,
-      queryFn: (reader) =>
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
-    }))
+      queryKey: ['market', chainId, projectId],
+    }),
+    enabled: !!publicClient,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  })
 
   const hasPool = market?.status === 'pool'
 

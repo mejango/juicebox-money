@@ -3,7 +3,7 @@
 import { useKeptQuery } from '@/hooks/useKeptQuery'
 
 import { useMemo, useState } from 'react'
-import type { BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { priceHistoryRead } from '@/lib/price-references'
 import { cachedQuery } from '@/lib/query-persist'
 import {
   ammSeriesFrom,
@@ -26,7 +26,6 @@ import { ChartRangeButton } from './StepChartBase'
  */
 
 const DAY = 86_400
-const PRICE_REFRESH_MS = 15_000
 const LINE = '#4FA270'
 
 const RANGES = [
@@ -84,19 +83,8 @@ export function MarketPriceChart({
   // Shares the Overview chart's query — one fetch per project, not two.
   const { data: history, isPending } = useKeptQuery(
     cachedQuery({
-    queryKey: ['revnetPriceHistory', suckerGroupId],
-    enabled: !!suckerGroupId,
-    staleTime: 30_000,
-    refetchInterval: PRICE_REFRESH_MS,
-    refetchOnWindowFocus: true,
-    retry: 1,
-    queryFn: async (): Promise<BsRevnetPriceHistory> => {
-      const response = await fetch(
-        `/api/price-history?suckerGroupId=${encodeURIComponent(suckerGroupId!)}&chainId=${chainId}`,
-      )
-      if (!response.ok) throw new Error('Price history is unavailable.')
-      return response.json() as Promise<BsRevnetPriceHistory>
-    },
+      queryKey: ['revnetPriceHistory', suckerGroupId],
+      ...priceHistoryRead(suckerGroupId, chainId),
     }),
   )
 

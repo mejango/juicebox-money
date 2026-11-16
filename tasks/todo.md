@@ -1,3 +1,27 @@
+# Fewer network requests (2026-11-16)
+
+A page loads what it needs once, then refreshes about every 30 seconds or on a user action. Eleven audited findings, one at a time, each with a test that fails without it.
+
+- [ ] 1 Price references: 30 s, controller and symbol through cached reads
+- [ ] 2 Multicall: explicit per-chain batch on the hot display path (the shared wagmi client also serves pre-prompt and proof reads, so no global switch)
+- [ ] 3 Pending payments: one indexer query across chains and gateways if the schema allows it
+- [ ] 4 Bendystraw relay: 429 passes through with Retry-After, no retry on 429, coalesce identical in-flight requests
+- [ ] 5 Activity feeds: 30 s
+- [ ] 6 Price history: 30 s from one exported constant
+- [ ] 7 Safe queue: one `safeQueueQueryOptions` that tray, card and dialog select from
+- [ ] 8 `priceReferences` reads the market through the shared `['market', ...]` key
+- [ ] 9 Hidden tabs stop polling and refetch on return
+- [ ] 10 Pending payment checks: cache gateway constants and token fields, one block per chain per tick
+- [ ] 11 Create indexed-check: 5 s for 2 minutes, then 30 s, skipped while the document is hidden
+
+## Plan refinement
+- **Objective:** An idle project page sends far fewer RPC and indexer requests (measured 91 per minute on /eth:1) with the same displayed data; success is each finding's test plus a green `npm run check`. Scope is these eleven findings in juicebox.money only.
+- **System fit:** Display reads keep their owners (`project-display-queries`, `safe.ts`, `pending-payments.ts`, the Bendystraw relay route); reads before a wallet prompt, Safe policy checks, proof reads and `reviewPendingPayment` are untouched. The SDK retry policy and revnet.money change elsewhere.
+- **Reuse and simplicity:** Reuse `tokenSymbol`, `projectDisplayQuery`, react-query `select` and `fetchQuery`, viem `multicall`; new code is one shared query-options function per shared read and one in-flight map in the relay. No new dependency.
+- **Evidence and unknowns:** Line references come from a read-only audit at b17460ee and are re-read before each change; the indexer schema decides finding 3 and the client split decides finding 2. Request counts after the change are not measured live in this task.
+- **Verification:** A vitest regression per behavior change, affected tests as I go, then `PLAYWRIGHT_APP_PORT=3190 npm run check` until it exits 0.
+- **Resource budget:** One worktree, one finding per commit, one full gate at the end; a finding that would weaken a money or correctness read is skipped and reported, not reworked.
+
 # Parity with Juicescan and revnet.money (2026-11-13)
 
 jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (revnet scope), thorough, unsure items in one list at the end. Source reports: scratchpad `parity-1..5-*.md`, `parity-rev-*.md` (juicebox.money 0512c604).

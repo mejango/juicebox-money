@@ -1,4 +1,9 @@
 import {
+  JBCoreContracts,
+  jbDirectoryAbi,
+  jbV6ContractAddress,
+} from '@bananapus/nana-sdk-core'
+import {
   getAccountingContexts,
   getAllRulesets,
   getCurrentRuleset,
@@ -8,7 +13,7 @@ import type {
   QueryClient,
   UseQueryOptions,
 } from '@tanstack/react-query'
-import type { PublicClient } from 'viem'
+import type { Address, PublicClient } from 'viem'
 import { tokenSymbol } from '@/lib/token-symbol'
 import { projectDisplayKey, type DisplayProject } from '@/lib/project-display-cache'
 
@@ -60,6 +65,27 @@ export function accountingContextsQuery(
     staleTime: PROJECT_CONFIGURATION_STALE_MS,
     retry: 1,
     queryFn: () => getAccountingContexts(client, project),
+  }
+}
+
+/** The project's controller, which changes only by an owner's migration. */
+export function controllerQuery(client: PublicClient, project: DisplayProject) {
+  return {
+    queryKey: projectDisplayKey(project, 'controller'),
+    staleTime: PROJECT_CONFIGURATION_STALE_MS,
+    retry: 1,
+    queryFn: () => {
+      const directory = jbV6ContractAddress[JBCoreContracts.JBDirectory][
+        project.chainId
+      ] as Address | undefined
+      if (!directory) throw new Error(`V6 contracts unavailable on ${project.chainId}`)
+      return client.readContract({
+        address: directory,
+        abi: jbDirectoryAbi,
+        functionName: 'controllerOf',
+        args: [project.projectId],
+      })
+    },
   }
 }
 
