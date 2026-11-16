@@ -16,7 +16,7 @@ import { LoadingText } from '@/components/ui/LoadingText'
 import { mapConcurrentChecks } from '@/lib/concurrent-checks'
 import type { RawAttempt } from '@/lib/raw-relayr'
 import { useLinkedDeployments } from '@/lib/sucker-group'
-import { fetchPendingPayments, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type ReviewedPayment } from '@/lib/pending-payments'
+import { fetchPendingPaymentsAcross, loadPendingPaymentBatch, PENDING_PAYMENT_ACTION, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPaymentPass, type ReviewedPayment } from '@/lib/pending-payments'
 import { isReplaceableProjectBatch, loadProjectBatch, projectBatchRecoveryReason, recheckProjectBatch, projectBatchScope, runProjectBatch, type ProjectBatch, type ProjectBatchCall } from '@/lib/project-batch'
 
 const subscribeHydration = () => () => {}
@@ -88,7 +88,7 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
         if (deployments.has(chain) && deployments.get(chain) !== project) throw new Error('Conflicting project deployments. Reload the project.')
         deployments.set(chain, project)
       }
-      return (await mapConcurrentChecks([...deployments], ([chain, project]) => fetchPendingPayments(chain as JBChainId, project, { signal }))).flat()
+      return fetchPendingPaymentsAcross([...deployments] as [JBChainId, number][], { signal })
     },
   })
   const verification = useQuery({
@@ -96,8 +96,9 @@ export function PendingPayments({ chainId, projectId, chains: listed }: {
     enabled: hydrated && !!pending.data?.length,
     staleTime: 15_000, refetchInterval: 30_000, retry: 1,
     queryFn: async () => {
+      const pass: PendingPaymentPass = new Map()
       return mapConcurrentChecks(pending.data ?? [], async payment => {
-        try { return { payment, review: await reviewPendingPayment(payment), error: null } }
+        try { return { payment, review: await reviewPendingPayment(payment, undefined, pass), error: null } }
         catch (failure) { return { payment, review: null, error: failure instanceof Error ? failure.message : 'Could not verify this payment.' } }
       })
     },

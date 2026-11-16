@@ -584,6 +584,20 @@ const graphqlFixtures = [
     data: { projects: { items: [project, { ...project, projectId: 6, name: 'Source Project' }] } },
   },
   {
+    name: 'pendingPaymentsAcross',
+    query: `query PendingPaymentsAcross($where: routerPendingCallFilter!, $limit: Int!) {
+      routerPendingCalls(where: $where, orderBy: "pendingCallId", orderDirection: "asc", limit: $limit) {
+        totalCount
+        items { chainId version gateway pendingCallId projectId sourceProjectId token amount retainedAmount preferAddToBalance shouldReturnHeldFees beneficiary refundTo memo metadata callCommitment status }
+      }
+    }`,
+    variables: { where: { AND: [
+      { OR: [{ AND: [{ chainId: 1 }, { projectId: 1 }, { gateway_in: ['0xe2c259b2fcfd2d57ebcda9b3d2d10bdb1b2cd977', '0x4a56aef5b6a5b9742abb02ca67c5a85ba183d901'] }] }] },
+      { version: 6 }, { retainedAmount_gt: '0' }, { status_in: ['queued', 'retried'] },
+    ] }, limit: 100 },
+    data: { routerPendingCalls: { items: [], totalCount: 0 } },
+  },
+  {
     name: 'pendingPayments',
     query: `query PendingPayments($chainId: Int!, $projectId: Int!, $gateway: String!, $limit: Int!, $offset: Int!) {
       routerPendingCalls(
