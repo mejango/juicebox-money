@@ -36,6 +36,7 @@ import {
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
+import { useTabShowing } from '@/components/project/Tabs'
 import { Revalidating } from '@/components/ui/Revalidating'
 import { cachedQuery, PERSIST, type PersistMeta } from '@/lib/query-persist'
 import { accountingContextsQuery, currentRulesetQuery, projectDisplayQuery } from '@/lib/project-display-queries'
@@ -977,6 +978,7 @@ export function MarketSection({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
+  const showing = useTabShowing()
 
   // The project's OWN token symbol, always read on chain. There is deliberately no
   // fallback to bendystraw's project row: its `tokenSymbol` is the ACCOUNTING symbol
@@ -996,6 +998,7 @@ export function MarketSection({
       queryKey: ['market', chainId, projectId],
     }),
     enabled: !!publicClient,
+    subscribed: showing,
     refetchInterval: 30_000,
     refetchOnWindowFocus: true,
   })

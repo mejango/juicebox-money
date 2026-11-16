@@ -17,6 +17,7 @@ import {
   type MarketPriceView,
 } from './MarketPriceViewToggle'
 import { ChartRangeButton } from './StepChartBase'
+import { useTabShowing } from './Tabs'
 
 /**
  * The market price on its own terms: AMM spot over time, scaled to the trades
@@ -79,12 +80,14 @@ export function MarketPriceChart({
   const [marketPriceView, setMarketPriceView] =
     useState<MarketPriceView>('smooth')
   const [hover, setHover] = useState<{ index: number; x: number } | null>(null)
+  const showing = useTabShowing()
 
   // Shares the Overview chart's query — one fetch per project, not two.
   const { data: history, isPending } = useKeptQuery(
     cachedQuery({
       queryKey: ['revnetPriceHistory', suckerGroupId],
       ...priceHistoryRead(suckerGroupId, chainId),
+      subscribed: showing,
     }),
   )
 

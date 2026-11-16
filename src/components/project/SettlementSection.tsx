@@ -2,6 +2,7 @@
 
 import { legacyBridgeSendKey } from '@/lib/legacy-intents'
 import { useKeptQuery } from '@/hooks/useKeptQuery'
+import { useTabShowing } from '@/components/project/Tabs'
 
 import {
   JBCoreContracts,
@@ -534,11 +535,13 @@ function QueuedMovementsCard({
   projectId: number
   chains: [number, number][]
 }) {
+  const showing = useTabShowing()
   const { data, isLoading, isError } = useKeptQuery({
     queryKey: ['settlement-movements', chainId, projectId],
     meta: PERSIST,
     staleTime: 20_000,
     retry: 1,
+    subscribed: showing,
     refetchInterval: 45_000,
     queryFn: async (): Promise<BridgeMovement[]> => {
       const res = await fetch(
