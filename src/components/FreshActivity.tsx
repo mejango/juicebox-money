@@ -4,6 +4,7 @@ import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useLiveFeed } from '@/hooks/useLiveFeed'
 import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import type { BsFreshActivityEvent } from '@/lib/bendystraw'
+import { ACTIVITY_POLL_MS } from '@/lib/project-activity'
 import { timeAgo } from '@/lib/format'
 import { toUrn } from '@/lib/urn'
 import { ActorLink } from './ActorLink'
@@ -17,7 +18,6 @@ import { LoadMoreRow } from './LoadMoreRow'
 import { ProjectLogo } from './ProjectLogo'
 import { ProjectLink } from './ProjectLink'
 
-const POLL_MS = 15_000
 /** Feed rows per page. A row holds every event of one transaction. */
 const PAGE_ROWS = 8
 
@@ -36,7 +36,7 @@ export function FreshActivity({
     initial: initialEvents,
     initialMore: initialHasMore,
     updatedAt: 'mount',
-    pollMs: POLL_MS,
+    pollMs: ACTIVITY_POLL_MS,
     pollKey: 'fresh',
     read: async (offset, signal) => {
       const response = await fetch(`/api/activity?rows=${PAGE_ROWS}&offset=${offset}`, { signal })

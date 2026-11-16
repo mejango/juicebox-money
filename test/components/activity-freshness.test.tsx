@@ -84,12 +84,12 @@ describe('activity freshness', () => {
   it.each([{ events: [] }, { events: [event('first', 3)] }])('uses the remaining server freshness before polling, including empty success (%j)', async ({ events }) => {
     await render({ events, initialEventsUpdatedAt: NOW - 5_000 })
     expect(mocks.projectActivity).not.toHaveBeenCalled()
-    await advance(9_999)
+    await advance(24_999)
     await show('visible')
     expect(mocks.projectActivity).not.toHaveBeenCalled()
     await advance(1)
     expect(mocks.projectActivity).toHaveBeenCalledOnce()
-    await advance(14_999)
+    await advance(29_999)
     await show('visible')
     expect(mocks.projectActivity).toHaveBeenCalledOnce()
     await advance(1)
@@ -98,7 +98,7 @@ describe('activity freshness', () => {
 
   it.each([
     { initialEventsUpdatedAt: undefined },
-    { initialEventsUpdatedAt: NOW - 15_000 },
+    { initialEventsUpdatedAt: NOW - 30_000 },
     { initialEventsUpdatedAt: NOW + 1_000 },
     { initialEventsUpdatedAt: Number.NaN },
     { initialEventsUpdatedAt: NOW, error: true },
@@ -114,7 +114,7 @@ describe('activity freshness', () => {
     mocks.projectActivity.mockRejectedValueOnce(new Error('offline'))
     await render({ error: true, initialEventsUpdatedAt: NOW })
     expect(JSON.stringify(renderer!.toJSON())).toContain('temporarily unavailable')
-    await advance(14_999)
+    await advance(29_999)
     expect(mocks.projectActivity).toHaveBeenCalledOnce()
     await advance(1)
     expect(mocks.projectActivity).toHaveBeenCalledTimes(2)
@@ -134,7 +134,7 @@ describe('activity freshness', () => {
     await show('visible')
     expect(mocks.projectActivity).toHaveBeenCalledOnce()
     await act(async () => resolve({ items: [], totalCount: 0 }))
-    await advance(14_999)
+    await advance(29_999)
     expect(mocks.projectActivity).toHaveBeenCalledOnce()
     await advance(1)
     expect(mocks.projectActivity).toHaveBeenCalledTimes(2)
@@ -171,9 +171,9 @@ describe('activity freshness', () => {
     expect(mocks.groupActivity).toHaveBeenNthCalledWith(1, 'group', 250, 1, 1, {
       signal: expect.any(AbortSignal),
     })
-    await advance(15_000)
+    await advance(30_000)
     expect(JSON.stringify(view.toJSON())).toContain('/tx/0xolder')
-    await advance(15_000)
+    await advance(30_000)
     expect(mocks.groupActivity).toHaveBeenNthCalledWith(3, 'group', 250, 1, 0, {
       signal: expect.any(AbortSignal),
     })

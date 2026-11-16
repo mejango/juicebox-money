@@ -19,10 +19,10 @@ import { useProjectTokenUnit } from '@/hooks/useProjectTokenUnit'
 import { getAccountActivity, type BsAccountActivityEvent } from '@/lib/bendystraw'
 import { explorerHostname } from '@/lib/chainDisplay'
 import { formatDate, timeAgo } from '@/lib/format'
+import { ACTIVITY_POLL_MS } from '@/lib/project-activity'
 import { legacyProjectHref, toUrn } from '@/lib/urn'
 
 const ACCOUNT_ACTIVITY_PAGE = 25
-const ACTIVITY_POLL_MS = 15_000
 
 /**
  * Everything the account did, across projects and chains, with a load-more
