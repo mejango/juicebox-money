@@ -421,7 +421,7 @@ function YouCard({
                   <select
                     value={activeChainId}
                     onChange={event => setActionChain(Number(event.target.value))}
-                    className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
+                    className="input-well select-caret mt-1.5 block min-h-[40px] w-auto max-w-full px-3 pr-9 text-sm"
                   >
                     {actionChains.map(([cid]) => (
                       <option key={cid} value={cid}>
