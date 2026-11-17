@@ -1541,7 +1541,7 @@ export function ConnectChainEditor({
             value={chainId}
             onChange={event => { setChainId(Number(event.target.value) as JBChainId); invalidate() }}
             disabled={busy}
-            className="input-well mt-1.5 min-h-[42px] w-full px-3 text-sm disabled:opacity-60"
+            className="input-well select-caret mt-1.5 min-h-[42px] w-full px-3 pr-9 text-sm disabled:opacity-60"
           >
             {candidates.map(id => <option key={id} value={id}>{chainName(id)}</option>)}
           </select>
