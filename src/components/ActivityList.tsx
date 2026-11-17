@@ -1281,7 +1281,7 @@ export function ActivityList({
             aria-label="Chain"
             value={selectedChain !== null && chains.includes(selectedChain) ? selectedChain : ''}
             onChange={event => setSelectedChain(event.target.value ? Number(event.target.value) : null)}
-            className="min-h-11 max-w-[9rem] cursor-pointer rounded-md bg-transparent text-sm text-smoke-700 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
+            className="select-caret min-h-11 max-w-[9rem] rounded-md bg-transparent pr-7 text-sm text-smoke-700 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink"
           >
             <option value="">All chains</option>
             {chains.map(chain => (

@@ -1211,7 +1211,7 @@ function FundsTxFlow({
               setReview(null)
               setFlowError(null)
             }}
-            className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
+            className="input-well select-caret mt-1.5 block min-h-[40px] w-auto max-w-full px-3 pr-9 text-sm"
           >
             {lines.map(l => (
               <option key={l.currency} value={l.currency}>

@@ -107,7 +107,8 @@ describe('original native action recovery', () => {
       await saveUnseen(); await render()
       expect(buttons()).toEqual(['Check original transaction'])
       vi.setSystemTime(Date.now() + 31 * 60_000)
-      await act(async () => { vi.advanceTimersByTime(60_000) }); await settle()
+      // The view reads again on focus; while it follows the write its follower makes the timed reads.
+      await act(async () => { window.dispatchEvent(new Event('focus')) }); await settle()
       expect(host.textContent).toContain("This transaction can't be checked onchain.")
       expect(buttons()).toContain('I checked my wallet')
       await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'I checked my wallet')!.click()); await settle()

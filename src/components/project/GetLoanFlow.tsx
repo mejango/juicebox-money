@@ -507,7 +507,7 @@ export function GetLoanFlow({
                   setCtxToken(e.target.value as Address)
                   resetInputs()
                 }}
-                className="input-well mt-1.5 block min-h-[40px] w-auto max-w-full px-3 text-sm"
+                className="input-well select-caret mt-1.5 block min-h-[40px] w-auto max-w-full px-3 pr-9 text-sm"
               >
                 {ctxs.map(c => (
                   <option key={c.token} value={c.token}>

@@ -220,7 +220,7 @@ export function SafeBatchDialog({
           value: (
             <select
               aria-label="Safe nonce"
-              className="input-well block min-h-[40px] w-auto max-w-full px-2"
+              className="input-well select-caret block min-h-[40px] w-auto max-w-full px-3 pr-9"
               value={proposalNonce}
               disabled={busy || complete}
               onChange={event => setPickedNonce(Number(event.target.value))}
