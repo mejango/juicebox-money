@@ -169,8 +169,8 @@ export async function POST(
           status: 429,
           headers: {
             'cache-control': 'no-store',
-            'retry-after': /^\d{1,5}$/.test(error.retryAfter ?? '')
-              ? error.retryAfter!
+            'retry-after': /^\d{1,5}$/.test(error.asked ?? '')
+              ? error.asked!
               : RETRY_AFTER_SECONDS,
           },
         },

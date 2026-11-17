@@ -69,7 +69,7 @@ export function bendystrawNetworkHint(
  * request is not sent again, and carrying the wait the indexer asked for.
  */
 export class BendystrawRateLimited extends BendystrawRequestError {
-  constructor(readonly retryAfter: string | null) {
+  constructor(readonly asked: string | null) {
     super('Bendystraw request failed (429)', 429)
   }
 }
