@@ -880,6 +880,7 @@ export function SafeQueueCard({
   }, [pendingSession, pendingScope]);
   const resumedScopeRef = useRef<string | null>(null);
 
+  const following = useRef(new Set<number>());
   const queries = useQueries({ queries: chains.map(chain => ({
     queryKey: [
       "safeQueues",
@@ -902,7 +903,12 @@ export function SafeQueueCard({
           chain.handleOnly ? undefined : assertSafeProjectAuthority(chain, safe),
           queryClient.fetchQuery(safeAccountQueryOptions(chain.chainId, safe)),
           hasSafeService(chain.chainId)
-            ? queryClient.fetchQuery(safeQueueQueryOptions(chain.chainId, safe))
+            // The card's own read always asks the Safe service, sharing a read already
+            // under way. Only a refresh that follows a newer shared answer reuses it.
+            ? queryClient.fetchQuery({
+                ...safeQueueQueryOptions(chain.chainId, safe),
+                staleTime: following.current.has(chain.chainId) ? Number.POSITIVE_INFINITY : 0,
+              })
             : getSafeNextNonce(chain.chainId, safe).then(nonce => ({ nonce, pending: [] })),
         ]);
         if (!info) {
@@ -1013,12 +1019,30 @@ export function SafeQueueCard({
     ? new Set(ready.map((row) => row.chain.chainId)).size
     : ready.length;
   const refetchQueues = async () => {
-    await Promise.all(chains.flatMap(chain => [
-      safeAccountQueryOptions(chain.chainId, safe).queryKey,
-      safeQueueQueryOptions(chain.chainId, safe).queryKey,
-    ]).map(queryKey => queryClient.invalidateQueries({ queryKey, refetchType: 'none' })));
+    await Promise.all(chains.map(chain => queryClient.invalidateQueries({
+      queryKey: safeAccountQueryOptions(chain.chainId, safe).queryKey,
+      refetchType: 'none',
+    })));
     await Promise.all(queries.map(query => query.refetch()));
   };
+
+  // Another reader of the shared queue (the batch tray's poll) got a newer answer than the one
+  // this card shows: the card takes it, so it is never behind what the tray shows.
+  const sharedQueues = useQueries({ queries: chains.map(chain => ({
+    ...safeQueueQueryOptions(chain.chainId, safe),
+    enabled: false,
+  })) });
+  const sharedQueuesAt = sharedQueues.map(shared => shared.dataUpdatedAt).join();
+  useEffect(() => {
+    if (busy) return;
+    queries.forEach((query, index) => {
+      const chainId = chains[index].chainId;
+      if (!query.dataUpdatedAt || query.isFetching || !(sharedQueues[index].dataUpdatedAt > query.dataUpdatedAt)) return;
+      following.current.add(chainId);
+      void query.refetch({ cancelRefetch: false }).finally(() => following.current.delete(chainId));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sharedQueuesAt]);
 
   const chainsRef = useRef(chains);
   chainsRef.current = chains;

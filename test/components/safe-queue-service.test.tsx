@@ -38,6 +38,7 @@ vi.mock('@bananapus/nana-sdk-core/safe', { spy: true })
 
 import { SafeQueueCard, type SafeQueueChain } from '@/components/project/SafeQueueCard'
 import { safeAccountQueryOptions } from '@/lib/safe-account-query'
+import { safeQueueQueryOptions } from '@/lib/safe-queue-query'
 import { publicClient } from '@/lib/wallet-core'
 import { readAuthorityIdentity, readBoundedSafeNonce } from '@bananapus/nana-sdk-core/safe'
 import { jbProjectHandlesAbi, PROJECT_HANDLES_ADDRESS } from '@/lib/project-handles'
@@ -161,6 +162,32 @@ describe('Safe queue and the transaction service', () => {
 
     expect(textOf(renderer.root)).toContain("Safe queue isn't available on Optimism Sepolia.")
     expect(mocks.fetch).not.toHaveBeenCalled()
+  })
+
+  it('reads the Safe service again on its own refresh, and takes a newer answer another reader got', async () => {
+    const proposal = safeProposalFor({ to: TARGET, data: '0x1234' }, 5)
+    const row = { ...proposal, safe: SAFE, safeTxHash: safeTransactionHash(1, SAFE, proposal), confirmationsRequired: 1, confirmations: [], isExecuted: false }
+    let queued: unknown[] = []
+    const queueReads = () => mocks.fetch.mock.calls.filter(([url]) => String(url).includes('multisig-transactions')).length
+    mocks.fetch.mockImplementation(async () => new Response(JSON.stringify({ results: queued, next: null })))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    // The tray read the queue a moment before the card mounts; the card still asks the service itself.
+    await client.fetchQuery(safeQueueQueryOptions(1, SAFE))
+    await renderQueue(1, 'Ethereum', undefined, true, client)
+    expect(textOf(renderer.root)).toContain('No pending transactions.')
+    expect(queueReads()).toBe(2)
+
+    // Another signer proposes. The card's own refresh (a window focus, say) must not reuse the kept answer.
+    queued = [row]
+    await act(async () => { await client.refetchQueries({ queryKey: ['safeQueues'] }) })
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('#5'))
+    expect(queueReads()).toBe(3)
+
+    // The proposal is executed and the tray's poll sees it: the card follows, with no read of its own.
+    queued = []
+    await act(async () => { await client.fetchQuery({ ...safeQueueQueryOptions(1, SAFE), staleTime: 0 }) })
+    await vi.waitFor(() => expect(textOf(renderer.root)).toContain('No pending transactions.'))
+    expect(queueReads()).toBe(4)
   })
 
   it("counts only the Safe's current owners' confirmations", async () => {
