@@ -858,12 +858,14 @@ export async function readUserLpPositions(
   owner: Address,
   /** The page's: it stops the indexed read. */
   signal?: AbortSignal,
+  /** An action waits on this read, so its indexed request is sent even after an indexer 429. */
+  fresh?: boolean,
 ): Promise<UserLpPosition[]> {
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return []
 
-  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal })
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal, fresh })
   if (indexed) {
     return indexed
       .filter(row => lc(row.owner) === lc(owner))
@@ -915,6 +917,7 @@ export async function readMovableLpPositions(
   pool: Extract<MarketResult, { status: 'pool' }>,
   owner: Address,
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<MovableLpPosition[]> {
   const retired = retiredPoolHooks(
     pool.key.hooks,
@@ -933,7 +936,7 @@ export async function readMovableLpPositions(
         sqrtP,
         price: poolPriceFromSqrt(sqrtP, pool.pairIsC0, pool.pair.decimals) ?? pool.price,
       }
-      const positions = await readUserLpPositions(client, chainId, from, owner, signal)
+      const positions = await readUserLpPositions(client, chainId, from, owner, signal, fresh)
       return positions.map(position => ({ from, position }))
     }),
   )

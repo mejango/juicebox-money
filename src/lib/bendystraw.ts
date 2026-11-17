@@ -74,9 +74,10 @@ export class BendystrawRateLimited extends BendystrawRequestError {
   }
 }
 
-/** How long the browser holds a network's indexer reads back after its relay answers 429. */
+/** How long the browser holds one indexer request back after the relay answered it with 429. */
 const RATE_LIMIT_PAUSE_MS = 5_000
-const rateLimitedUntil: Partial<Record<BendystrawNetwork, number>> = {}
+/** The requests held, each by its network, operation and variables. */
+const rateLimitedUntil = new Map<string, number>()
 
 export async function bendystraw<T>(
   query: string,
@@ -102,10 +103,15 @@ export async function bendystraw<T>(
     variables,
   })
   if (typeof window !== 'undefined') {
-    // Every visitor shares the relay's budget: after a 429, that network's reads
-    // (a query's own retry included) fail here until the pause passes, without a
-    // request. A read an action waits on is sent all the same.
-    if (!opts.fresh && Date.now() < (rateLimitedUntil[network] ?? 0)) throw new BendystrawRateLimited(null)
+    // Every visitor shares the relay's budget: a request the relay answered
+    // with 429 is not sent again (by a query's own retry, say) until the pause
+    // passes. Other requests, and a read an action waits on, are sent.
+    const request = `${network}\n${query}\n${JSON.stringify(variables)}`
+    const heldUntil = rateLimitedUntil.get(request)
+    if (heldUntil !== undefined) {
+      if (!opts.fresh && Date.now() < heldUntil) throw new BendystrawRateLimited(null)
+      if (Date.now() >= heldUntil) rateLimitedUntil.delete(request)
+    }
     try {
       return await requestPersistedBendystraw<T>({
         contract,
@@ -116,7 +122,7 @@ export async function bendystraw<T>(
       })
     } catch (error) {
       if (error instanceof BendystrawRequestError && error.status === 429) {
-        rateLimitedUntil[network] = Date.now() + RATE_LIMIT_PAUSE_MS
+        rateLimitedUntil.set(request, Date.now() + RATE_LIMIT_PAUSE_MS)
       }
       throw error
     }

@@ -324,7 +324,7 @@ function MovableLpRows({
       // Re-read both prices: the burn floors and the new liquidity come from them. The position
       // itself comes from the PositionManager, never the index.
       const [fresh, onchain, toSqrtPriceX96] = await Promise.all([
-        readMovableLpPositions(client, chainId, pool, connectedAddress),
+        readMovableLpPositions(client, chainId, pool, connectedAddress, undefined, true),
         readMovablePosition(client, positionManager, position.tokenId, from.key, connectedAddress),
         poolSqrtPriceX96(client, chainId, pool.key),
       ])
@@ -609,7 +609,7 @@ function ChainLpRows({
         throw new Error('The pool changed while this list was open. Reopen it and try again.')
       }
       const fresh = (
-        await readUserLpPositions(client, chainId, freshMarket, connectedAddress)
+        await readUserLpPositions(client, chainId, freshMarket, connectedAddress, undefined, true)
       ).find(p => p.tokenId === position.tokenId)
       if (!fresh) throw new Error('This position is no longer owned by your wallet.')
       stage({

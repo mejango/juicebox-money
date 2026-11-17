@@ -295,6 +295,30 @@ describe('Safe batch tray', () => {
     expect(window.localStorage.getItem(safeBatchStorageKey(1, 2))).toBeNull()
   })
 
+  it('does not offer nonces kept from before the dialog opened when the read on open fails', async () => {
+    seed()
+    const client = render()
+    await settle()
+    // The tray read nonce 10 as free; another signer has since queued there, and this read fails.
+    mocks.readSafeQueue.mockRejectedValue(new Error('Safe service unavailable'))
+    click(button('Review and propose on Ethereum'))
+    await settle()
+    click(byAria('Move step 1 down'))
+    await settle()
+
+    const dialog = document.querySelector('dialog')
+    expect(dialog?.querySelector('select[aria-label="Safe nonce"]')).toBeNull()
+    expect(dialog?.textContent).toContain('Could not read the Safe queue. Retrying.')
+    expect(button('Propose batch to Safe').disabled).toBe(true)
+
+    mocks.readSafeQueue.mockResolvedValue({ nonce: 11, pending: [] })
+    await act(async () => { await client.invalidateQueries({ queryKey: ['safeQueue'] }) })
+    await settle()
+    expect((dialog?.querySelector('select[aria-label="Safe nonce"]') as HTMLSelectElement).value).toBe('11')
+    expect(dialog?.textContent).not.toContain('Could not read the Safe queue')
+    expect(button('Propose batch to Safe').disabled).toBe(false)
+  })
+
   it('keeps the proposed steps on screen when the wait after a Safe proposal fails', async () => {
     mocks.submit.mockImplementationOnce(async ({ onProposed }: { onProposed: (hash: string) => Promise<void> | void }) => {
       await onProposed(`0x${'ab'.repeat(32)}`)

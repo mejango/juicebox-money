@@ -57,18 +57,21 @@ export async function fetchIndexedLpPositions({
   chainId,
   poolId,
   signal,
+  fresh,
 }: {
   chainId: number
   poolId: string
   /** The caller's: when it aborts, the read stops, and the abort is thrown rather than read as nothing indexed. */
   signal?: AbortSignal
+  /** For a read an action waits on: see `bendystraw`. */
+  fresh?: boolean
 }): Promise<BsLpPosition[] | null> {
   try {
     const page = await getPagedItems<BsLpPosition>(
       LP_POSITIONS_QUERY,
       'buybackPoolPositions',
       { chainId, poolId },
-      { pageSize: 250, signal },
+      { pageSize: 250, signal, fresh },
     )
     return page.items.length ? page.items : null
   } catch (error) {

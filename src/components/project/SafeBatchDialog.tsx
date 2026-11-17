@@ -185,12 +185,16 @@ export function SafeBatchDialog({
     staleTime: 0,
     select: proposalNoncesOf,
   })
-  const liveNonces = proposalSafe && noncesQuery.isFetchedAfterMount ? noncesQuery.data : undefined
+  // Only a read that succeeded since the dialog opened offers nonces: an answer kept from before
+  // may call a nonce free that another signer has since taken.
+  const noncesRead = noncesQuery.isFetchedAfterMount && noncesQuery.isSuccess
+  const noncesUnreadable = !!proposalSafe && noncesQuery.isFetchedAfterMount && noncesQuery.isError
+  const liveNonces = proposalSafe && noncesRead ? noncesQuery.data : undefined
   // A submitted batch keeps showing the nonces it was offered, whatever the queue becomes.
   const [submittedNonces, setSubmittedNonces] = useState<typeof liveNonces>()
   const nonces = busy || complete ? submittedNonces : liveNonces
   // The row is there from the start, so the choice cannot appear unnoticed after a slow read.
-  const noncesLoading = preparing || (!!proposalSafe && !noncesQuery.isFetchedAfterMount)
+  const noncesLoading = preparing || (!!proposalSafe && !noncesRead && !noncesUnreadable)
   const [pickedNonce, setPickedNonce] = useState<number | null>(null)
   const proposalNonce =
     nonces && pickedNonce !== null && nonces.choices.includes(pickedNonce) ? pickedNonce : nonces?.next
@@ -333,12 +337,14 @@ export function SafeBatchDialog({
           ? 'Could not verify the authority on this chain.'
           : route?.kind === 'unavailable'
             ? route.reason
-            : null)
+            : noncesUnreadable && !busy && !complete
+              ? 'Could not read the Safe queue. Retrying.'
+              : null)
       }
       busy={locked}
       complete={complete}
       onClose={close}
-      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count || noncesLoading }}
+      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count || noncesLoading || noncesUnreadable }}
     >
       {count ? (
         <ol className="space-y-2" aria-label="Batch steps">

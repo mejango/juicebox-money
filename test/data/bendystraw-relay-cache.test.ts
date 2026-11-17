@@ -229,13 +229,18 @@ describe('the relay spends the shared indexer budget once', () => {
 })
 
 describe('the browser after the relay answers 429', () => {
-  it('sends no indexer read during the pause, a retry included, then reads again', async () => {
+  const POOL = `0x${'ab'.repeat(32)}`
+  const limited = async () =>
+    new Response(JSON.stringify({ error: 'Bendystraw rate limited' }), { status: 429, headers: { 'content-type': 'application/json' } })
+  const json = (data: unknown) => async () =>
+    new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } })
+
+  it('holds that one request for the pause, a retry included, and sends every other read', async () => {
     // The relay request's own tries wait on real time; the pause is stepped through.
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.resetModules()
     vi.stubGlobal('window', {})
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
-      new Response(JSON.stringify({ error: 'Bendystraw rate limited' }), { status: 429, headers: { 'content-type': 'application/json' } }))
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(limited)
     vi.stubGlobal('fetch', fetcher)
     const browser = await import('@/lib/bendystraw')
 
@@ -245,34 +250,61 @@ describe('the browser after the relay answers 429', () => {
 
     // What a query's own retry does a second later: answered here, with no request.
     await vi.advanceTimersByTimeAsync(1_000)
-    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).rejects.toMatchObject({ status: 429 })
-    await expect(browser.bendystraw(query, { chainId: 1, projectId: 12 })).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
     expect(fetcher).toHaveBeenCalledTimes(sent)
 
-    // The hold is the mainnet relay's: a testnet read is sent.
+    // Another project's read and a testnet read are sent.
     fetcher.mockImplementation(async () => answer())
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 12 })).resolves.toEqual({ project: null })
     await expect(browser.bendystraw(query, { chainId: 84532, projectId: 11 })).resolves.toEqual({ project: null })
-    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
-    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/testnet/query')
-    // A read an action waits on is sent during the hold, here the operator lookup the split editor makes.
-    fetcher.mockImplementation(async () =>
-      new Response(JSON.stringify({ data: { permissionHolders: { items: [], totalCount: 0 } } }), { headers: { 'content-type': 'application/json' } }))
-    await expect(browser.getRevnetOperator(1, 11)).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
-    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
-    await expect(browser.getRevnetOperator(1, 11, { fresh: true })).resolves.toBeNull()
     expect(fetcher).toHaveBeenCalledTimes(sent + 2)
-    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/mainnet/query')
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/testnet/query')
+    // So is the held request itself when an action waits on it.
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 }, { fresh: true })).resolves.toEqual({ project: null })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 3)
 
     await vi.advanceTimersByTimeAsync(4_000)
-    fetcher.mockImplementation(async () => answer())
     await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).resolves.toEqual({ project: null })
-    expect(fetcher).toHaveBeenCalledTimes(sent + 3)
+    expect(fetcher).toHaveBeenCalledTimes(sent + 4)
+    vi.useRealTimers()
+  })
+
+  it('sends the reads an action waits on during a hold: the operator lookup and the position list', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.resetModules()
+    vi.stubGlobal('window', {})
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(limited)
+    vi.stubGlobal('fetch', fetcher)
+    const browser = await import('@/lib/bendystraw')
+    const positions = await import('@/lib/lp-positions-queries')
+
+    await expect(browser.getRevnetOperator(1, 11)).rejects.toMatchObject({ status: 429 })
+    expect(await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL })).toBeNull()
+    const sent = fetcher.mock.calls.length
+
+    // Held: the display reads send nothing.
+    await expect(browser.getRevnetOperator(1, 11)).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
+    expect(await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL })).toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(sent)
+
+    fetcher.mockImplementation(json({ permissionHolders: { items: [], totalCount: 0 } }))
+    await expect(browser.getRevnetOperator(1, 11, { fresh: true })).resolves.toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
+    fetcher.mockImplementation(json({ buybackPoolPositions: { items: [], totalCount: 0 } }))
+    await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL, fresh: true })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 2)
     vi.useRealTimers()
   })
 })
 
-it("sends the split editor's operator lookup even during the hold", async () => {
+it('marks every indexer read an action waits on as one to send during a hold', async () => {
   const { readFileSync } = await import('node:fs')
-  expect(readFileSync('src/components/project/EditSplitsFlow.tsx', 'utf8'))
-    .toContain('getRevnetOperator(chainId, projectId, { signal, fresh: true })')
+  const source = (file: string) => readFileSync(`src/components/project/${file}.tsx`, 'utf8')
+  expect(source('EditSplitsFlow')).toContain('getRevnetOperator(chainId, projectId, { signal, fresh: true })')
+  // Remove, edit and move liquidity read the wallet's positions again before the wallet is asked.
+  expect(source('EditPositionPanel')).toContain('readUserLpPositions(client!, chainId, market, account, undefined, true)')
+  expect(source('MarketEditPanel')).toContain('readUserLpPositions(client!, chainId, market, account, undefined, true)')
+  expect(source('LiquidityPositions')).toContain('readUserLpPositions(client, chainId, freshMarket, connectedAddress, undefined, true)')
+  expect(source('LiquidityPositions')).toContain('readMovableLpPositions(client, chainId, pool, connectedAddress, undefined, true)')
+  expect(source('MarketSection')).toContain('fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal, fresh })')
 })

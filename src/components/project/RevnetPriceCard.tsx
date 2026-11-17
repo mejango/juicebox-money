@@ -126,15 +126,15 @@ export function RevnetPriceCard({
     retry: 1,
     queryFn: async (reader) => {
       const [market, floor] = await Promise.all([
-        // The Market tab's own key: a pool either card read in the last
-        // refresh window is not read again.
+        // The Market tab's own key: a read of the pool under way is shared, and
+        // every refresh, a return to this tab included, reads the pool again.
         queryClient
           .fetchQuery({
             ...marketQuery(queryClient, publicClient!, {
               meta: PERSIST,
               queryKey: ['market', chainId, projectId],
             }),
-            staleTime: PRICE_REFRESH_MS / 2,
+            staleTime: 0,
           })
           .then(result => result.value, () => null),
         (async () => {
