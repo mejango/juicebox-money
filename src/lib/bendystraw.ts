@@ -8,6 +8,7 @@ import {
   bendystrawCacheTtl,
   bendystrawProjectRefFilter as projectRefAnd,
   bendystrawProjectRefsFilters as projectRefsWheres,
+  BendystrawRequestError,
   downsampleTimeSeries,
   matchesBendystrawProjectRef as matchesProjectRef,
   normalizeBendystrawEndpoint,
@@ -63,6 +64,21 @@ export function bendystrawNetworkHint(
     : undefined
 }
 
+/**
+ * The indexer's own rate limit answer. Thrown from inside the fetch, so the
+ * request is not sent again, and carrying the wait the indexer asked for.
+ */
+export class BendystrawRateLimited extends BendystrawRequestError {
+  constructor(readonly retryAfter: string | null) {
+    super('Bendystraw request failed (429)', 429)
+  }
+}
+
+/** How long the browser holds one indexer request back after the relay answered it with 429. */
+const RATE_LIMIT_PAUSE_MS = 5_000
+/** The requests held, each by its network, operation and variables. */
+const rateLimitedUntil = new Map<string, number>()
+
 export async function bendystraw<T>(
   query: string,
   variables: Record<string, unknown>,
@@ -73,6 +89,10 @@ export async function bendystraw<T>(
     policy?: BendystrawCachePolicy | 'no-store'
     /** The caller's: when it aborts, the request under way stops and is not retried, and none is sent after. */
     signal?: AbortSignal
+    /** A 429 from the indexer throws `BendystrawRateLimited` at once instead of being asked again. */
+    failOnRateLimit?: boolean
+    /** For a read an action waits on: it is sent even while the browser holds reads back after a 429. */
+    fresh?: boolean
   } = {},
 ): Promise<T> {
   const contract = compileBendystrawOperation(query)
@@ -83,13 +103,29 @@ export async function bendystraw<T>(
     variables,
   })
   if (typeof window !== 'undefined') {
-    return requestPersistedBendystraw<T>({
-      contract,
-      network,
-      query,
-      signal: opts.signal,
-      variables,
-    })
+    // Every visitor shares the relay's budget: a request the relay answered
+    // with 429 is not sent again (by a query's own retry, say) until the pause
+    // passes. Other requests, and a read an action waits on, are sent.
+    const request = `${network}\n${query}\n${JSON.stringify(variables)}`
+    const heldUntil = rateLimitedUntil.get(request)
+    if (heldUntil !== undefined) {
+      if (!opts.fresh && Date.now() < heldUntil) throw new BendystrawRateLimited(null)
+      if (Date.now() >= heldUntil) rateLimitedUntil.delete(request)
+    }
+    try {
+      return await requestPersistedBendystraw<T>({
+        contract,
+        network,
+        query,
+        signal: opts.signal,
+        variables,
+      })
+    } catch (error) {
+      if (error instanceof BendystrawRequestError && error.status === 429) {
+        rateLimitedUntil.set(request, Date.now() + RATE_LIMIT_PAUSE_MS)
+      }
+      throw error
+    }
   }
   const cacheOptions =
     opts.policy === 'no-store'
@@ -113,7 +149,14 @@ export async function bendystraw<T>(
     query,
     variables,
     {
-      fetch: (input, init) => fetch(input, { ...init, ...cacheOptions }),
+      fetch: async (input, init) => {
+        const response = await fetch(input, { ...init, ...cacheOptions })
+        if (opts.failOnRateLimit && response.status === 429) {
+          await response.body?.cancel()
+          throw new BendystrawRateLimited(response.headers.get('retry-after'))
+        }
+        return response
+      },
       operationName: contract.operationName,
       signal: opts.signal,
       validateData: (value): value is T => contract.validateData(value),
@@ -748,7 +791,7 @@ const MAX_INDEXED_REVNET_OPERATOR_CANDIDATES = 50
 export async function getRevnetOperatorCandidates(
   chainId: number,
   projectId: number,
-  { signal }: { signal?: AbortSignal } = {},
+  { signal, fresh }: { signal?: AbortSignal; fresh?: boolean } = {},
 ): Promise<string[]> {
   {
     const account = (
@@ -777,6 +820,7 @@ export async function getRevnetOperatorCandidates(
         pageSize: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
         max: MAX_INDEXED_REVNET_OPERATOR_CANDIDATES,
         signal,
+        fresh,
       },
     )
     // An incomplete page is not an authoritative candidate set. Let callers
@@ -805,9 +849,9 @@ export async function getRevnetOperatorCandidates(
 export async function getRevnetOperator(
   chainId: number,
   projectId: number,
-  { signal }: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; fresh?: boolean } = {},
 ): Promise<string | null> {
-  return (await getRevnetOperatorCandidates(chainId, projectId, { signal }))[0] ?? null
+  return (await getRevnetOperatorCandidates(chainId, projectId, options))[0] ?? null
 }
 
 export type BsParticipant = {
@@ -1601,6 +1645,7 @@ export async function getPagedItems<T>(
     network,
     policy = 'standard',
     signal,
+    fresh,
   }: {
     pageSize?: number
     max?: number
@@ -1614,6 +1659,8 @@ export async function getPagedItems<T>(
     policy?: BendystrawCachePolicy | 'no-store'
     /** The caller's, for every page's request. */
     signal?: AbortSignal
+    /** Passed to every page's request: see `bendystraw`. */
+    fresh?: boolean
   } = {},
 ): Promise<{ items: T[]; totalCount: number }> {
   const items: T[] = []
@@ -1626,7 +1673,7 @@ export async function getPagedItems<T>(
     >(
       query,
       { ...variables, limit: pageLimit, offset: startOffset + items.length },
-      { network, policy, signal },
+      { network, policy, signal, fresh },
     )
     const page = data[field]?.items ?? []
     totalCount = data[field]?.totalCount ?? totalCount

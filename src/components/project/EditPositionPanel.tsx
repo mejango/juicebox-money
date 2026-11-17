@@ -260,7 +260,7 @@ export function EditPositionPanel({
     if (market.status !== 'pool' || market.poolId !== pool.poolId) {
       throw new FlowError('The pool changed while this list was open. Reopen it and try again.')
     }
-    const fresh = (await readUserLpPositions(client!, chainId, market, account)).find(
+    const fresh = (await readUserLpPositions(client!, chainId, market, account, undefined, true)).find(
       p => p.tokenId === position.tokenId,
     )
     if (!fresh) throw new FlowError('This position is no longer owned by your wallet.')

@@ -151,3 +151,160 @@ describe("the relay's indexer read ends with the browser's request", () => {
     expect(logged).not.toHaveBeenCalled()
   })
 })
+
+describe('the relay spends the shared indexer budget once', () => {
+  const limited = (retryAfter?: string) =>
+    new Response('slow down', { status: 429, headers: retryAfter ? { 'retry-after': retryAfter } : {} })
+
+  it.each([
+    ['7', '7'],
+    [undefined, '30'],
+    ['Wed, 21 Oct 2026 07:28:00 GMT', '30'],
+  ] as const)('answers an indexer 429 as a 429 without asking again (Retry-After %s)', async (upstream, relayed) => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () => limited(upstream))
+    vi.stubGlobal('fetch', fetcher)
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const response = await relay('mainnet', { chainId: 1, projectId: 11 })
+
+    expect(response.status).toBe(429)
+    expect(response.headers.get('retry-after')).toBe(relayed)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('reads the indexer once for identical requests that overlap, and again once that read has settled', async () => {
+    const answers: ((response: Response) => void)[] = []
+    const fetcher = vi.fn<typeof fetch>(() => new Promise<Response>(resolve => { answers.push(resolve) }))
+    vi.stubGlobal('fetch', fetcher)
+
+    const first = relay('mainnet', { chainId: 1, projectId: 11 })
+    const second = relay('mainnet', { chainId: 1, projectId: 11 })
+    const other = relay('mainnet', { chainId: 1, projectId: 12 })
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
+    answers.forEach(resolve => resolve(answer()))
+
+    for (const response of await Promise.all([first, second, other])) {
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ data: { project: null } })
+    }
+    expect(fetcher).toHaveBeenCalledTimes(2)
+
+    // Nothing is kept: the next request reads the indexer again.
+    fetcher.mockImplementation(async () => answer())
+    await relay('mainnet', { chainId: 1, projectId: 11 })
+    expect(fetcher).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps a shared read going for the browser still waiting when another leaves', async () => {
+    let finish!: (response: Response) => void
+    let upstream: AbortSignal | undefined
+    const fetcher = vi.fn<typeof fetch>((_input, init) => new Promise<Response>(resolve => {
+      upstream = init?.signal ?? undefined
+      finish = resolve
+    }))
+    vi.stubGlobal('fetch', fetcher)
+    const leaving = new AbortController()
+    const request = (signal?: AbortSignal) => POST(
+      new Request('https://juicebox.money/api/bendystraw/mainnet/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ operation, variables: { chainId: 1, projectId: 11 } }),
+        signal,
+      }),
+      { params: Promise.resolve({ net: 'mainnet' }) },
+    )
+
+    const left = request(leaving.signal)
+    const stayed = request()
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce())
+    leaving.abort()
+    expect((await left).status).toBe(502)
+    expect(upstream?.aborted).toBe(false)
+    finish(answer())
+
+    expect((await stayed).status).toBe(200)
+    expect(fetcher).toHaveBeenCalledOnce()
+  })
+})
+
+describe('the browser after the relay answers 429', () => {
+  const POOL = `0x${'ab'.repeat(32)}`
+  const limited = async () =>
+    new Response(JSON.stringify({ error: 'Bendystraw rate limited' }), { status: 429, headers: { 'content-type': 'application/json' } })
+  const json = (data: unknown) => async () =>
+    new Response(JSON.stringify({ data }), { headers: { 'content-type': 'application/json' } })
+
+  it('holds that one request for the pause, a retry included, and sends every other read', async () => {
+    // The relay request's own tries wait on real time; the pause is stepped through.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.resetModules()
+    vi.stubGlobal('window', {})
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(limited)
+    vi.stubGlobal('fetch', fetcher)
+    const browser = await import('@/lib/bendystraw')
+
+    const refused = browser.bendystraw(query, { chainId: 1, projectId: 11 }).catch((error: unknown) => error)
+    expect(await refused).toMatchObject({ status: 429 })
+    const sent = fetcher.mock.calls.length
+
+    // What a query's own retry does a second later: answered here, with no request.
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
+    expect(fetcher).toHaveBeenCalledTimes(sent)
+
+    // Another project's read and a testnet read are sent.
+    fetcher.mockImplementation(async () => answer())
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 12 })).resolves.toEqual({ project: null })
+    await expect(browser.bendystraw(query, { chainId: 84532, projectId: 11 })).resolves.toEqual({ project: null })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 2)
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/testnet/query')
+    // So is the held request itself when an action waits on it.
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 }, { fresh: true })).resolves.toEqual({ project: null })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 3)
+
+    await vi.advanceTimersByTimeAsync(4_000)
+    await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).resolves.toEqual({ project: null })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 4)
+    vi.useRealTimers()
+  })
+
+  it('sends the reads an action waits on during a hold: the operator lookup and the position list', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.resetModules()
+    vi.stubGlobal('window', {})
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(limited)
+    vi.stubGlobal('fetch', fetcher)
+    const browser = await import('@/lib/bendystraw')
+    const positions = await import('@/lib/lp-positions-queries')
+
+    await expect(browser.getRevnetOperator(1, 11)).rejects.toMatchObject({ status: 429 })
+    expect(await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL })).toBeNull()
+    const sent = fetcher.mock.calls.length
+
+    // Held: the display reads send nothing.
+    await expect(browser.getRevnetOperator(1, 11)).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
+    expect(await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL })).toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(sent)
+
+    fetcher.mockImplementation(json({ permissionHolders: { items: [], totalCount: 0 } }))
+    await expect(browser.getRevnetOperator(1, 11, { fresh: true })).resolves.toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
+    fetcher.mockImplementation(json({ buybackPoolPositions: { items: [], totalCount: 0 } }))
+    await positions.fetchIndexedLpPositions({ chainId: 1, poolId: POOL, fresh: true })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 2)
+    vi.useRealTimers()
+  })
+})
+
+it('marks every indexer read an action waits on as one to send during a hold', async () => {
+  const { readFileSync } = await import('node:fs')
+  const source = (file: string) => readFileSync(`src/components/project/${file}.tsx`, 'utf8')
+  expect(source('EditSplitsFlow')).toContain('getRevnetOperator(chainId, projectId, { signal, fresh: true })')
+  // Remove, edit and move liquidity read the wallet's positions again before the wallet is asked.
+  expect(source('EditPositionPanel')).toContain('readUserLpPositions(client!, chainId, market, account, undefined, true)')
+  expect(source('MarketEditPanel')).toContain('readUserLpPositions(client!, chainId, market, account, undefined, true)')
+  expect(source('LiquidityPositions')).toContain('readUserLpPositions(client, chainId, freshMarket, connectedAddress, undefined, true)')
+  expect(source('LiquidityPositions')).toContain('readMovableLpPositions(client, chainId, pool, connectedAddress, undefined, true)')
+  expect(source('MarketSection')).toContain('fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal, fresh })')
+})

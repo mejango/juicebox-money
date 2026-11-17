@@ -14,7 +14,7 @@ import {
   getProjectPageData as readProjectPageData,
   readOnChainProject,
 } from '@/lib/project-fallback'
-import { ACTIVITY_PAGE_SIZE, PROJECT_ACTIVITY_FRESHNESS_MS } from '@/lib/project-activity'
+import { ACTIVITY_PAGE_SIZE, ACTIVITY_POLL_MS } from '@/lib/project-activity'
 
 const PROJECT_DISPLAY_FRESHNESS_MS = 30_000
 // Next's revalidate cache may serve expired records after a failed refresh.
@@ -100,7 +100,7 @@ export const getProjectActivityDisplay = cache((
     ? getProjectActivity(suckerGroupId, ACTIVITY_PAGE_SIZE, chainId, 0, { policy: 'no-store' })
     : getProjectActivityByProject(chainId, projectId, ACTIVITY_PAGE_SIZE, 0, { policy: 'no-store' }),
   () => true,
-  PROJECT_ACTIVITY_FRESHNESS_MS,
+  ACTIVITY_POLL_MS,
 ))
 
 /**

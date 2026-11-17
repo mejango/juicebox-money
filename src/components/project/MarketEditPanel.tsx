@@ -214,7 +214,7 @@ export function MarketEditPanel({
     if (market.status !== 'pool' || market.poolId !== pool.poolId) {
       throw new FlowError('The pool changed while this list was open. Reopen it and try again.')
     }
-    const positions = await readUserLpPositions(client!, chainId, market, account)
+    const positions = await readUserLpPositions(client!, chainId, market, account, undefined, true)
     const find = (side: UserLpPosition | null) =>
       side ? (positions.find(p => p.tokenId === side.tokenId) ?? null) : null
     const fresh: MarketSides = { tokenSide: find(sides.tokenSide), pairSide: find(sides.pairSide) }

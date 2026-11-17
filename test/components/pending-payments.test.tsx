@@ -44,7 +44,7 @@ vi.mock('@/components/ui/TxProgress', () => ({ TxProgress: (props: ComponentProp
 vi.mock('@/lib/pending-payments', () => ({
   PENDING_PAYMENT_ACTION: 'route-destination-payments',
   loadPendingPaymentBatch: mocks.load,
-  fetchPendingPayments: mocks.fetch, reviewPendingPayment: mocks.review, reverifyPendingPayment: mocks.reverify,
+  fetchPendingPaymentsAcross: mocks.fetch, reviewPendingPayment: mocks.review, reverifyPendingPayment: mocks.reverify,
   reconcilePendingPayment: mocks.reconcile, pendingPaymentOutcome: mocks.outcome,
   pendingPaymentId: (payment: ReviewedPayment['payment']) => `${payment.chainId}:${payment.gateway}:${payment.pendingCallId}`,
   pendingPaymentCall: (review: ReviewedPayment, account: Address) => ({
@@ -331,15 +331,18 @@ describe('pending payment review above activity', () => {
     await render()
     expect(tree!.toJSON()).toBeNull()
     const first = row(), second = row(10)
-    mocks.fetch.mockImplementation(async (chain: number) => [chain === 1 ? first.payment : second.payment])
+    mocks.fetch.mockResolvedValue([first.payment, second.payment])
     mocks.review.mockImplementation(async (payment: ReviewedPayment['payment']) => payment.chainId === 1 ? null : second.review)
     expect(await mocks.queryFn!({ signal: mocks.query.signal })).toEqual([first.payment, second.payment])
     mocks.rows = [first, second]
     await render()
     expect(await mocks.verifyFn!()).toEqual([{ ...first, review: null }, second])
-    // Each chain's indexed read takes the query's signal.
-    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }], [10, 42, { signal: mocks.query.signal }]])
+    // One indexed read covers every linked deployment, and takes the query's signal.
+    expect(mocks.fetch.mock.calls).toEqual([[[[1, 17], [10, 42]], { signal: mocks.query.signal }]])
     expect(mocks.review).toHaveBeenCalledTimes(2)
+    // The checks of one refresh share a pass, so each chain's block is read once.
+    expect(mocks.review.mock.calls[0][2]).toBeInstanceOf(Map)
+    expect(mocks.review.mock.calls[1][2]).toBe(mocks.review.mock.calls[0][2])
     expect(mocks.run).not.toHaveBeenCalled()
   })
 
@@ -414,7 +417,7 @@ describe('pending payment review above activity', () => {
     mocks.fetch.mockResolvedValue([])
     await render([[1, 99]])
     await mocks.queryFn!({ signal: mocks.query.signal })
-    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }]])
+    expect(mocks.fetch.mock.calls).toEqual([[[[1, 17]], { signal: mocks.query.signal }]])
   })
 
   it('retries payments only on deployments the onchain registry links to this project', async () => {
@@ -422,7 +425,7 @@ describe('pending payment review above activity', () => {
     mocks.fetch.mockResolvedValue([])
     await render()
     await mocks.queryFn!({ signal: mocks.query.signal })
-    expect(mocks.fetch.mock.calls).toEqual([[1, 17, { signal: mocks.query.signal }]])    // A batch the user already reviewed is still found on every listed deployment, so its recovery is never hidden.
+    expect(mocks.fetch.mock.calls).toEqual([[[[1, 17]], { signal: mocks.query.signal }]])    // A batch the user already reviewed is still found on every listed deployment, so its recovery is never hidden.
     expect(mocks.load).toHaveBeenCalledWith([[1, 17], [1, 17], [10, 42]])
   })
 

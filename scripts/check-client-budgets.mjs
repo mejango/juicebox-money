@@ -77,7 +77,8 @@ const routes = [
   // 406 -> 411: the SDK 4 wallet check, and SDK 4.0.0 reviewed Safe and Relayr sends.
   // Current-connector invocation plus nested Safe shop-policy decoding: measured 417.5 KiB.
   // 418 -> 419: the LP move action on holdings measures 418.4 KiB.
-  { route: '/account/[address]', path: `/account/${account}`, kib: 427, text: 'Holdings' },
+  // 427 -> 428: the shared Safe queue read and the indexer rate-limit pause measure 427.1 KiB.
+  { route: '/account/[address]', path: `/account/${account}`, kib: 428, text: 'Holdings' },
   // A path a page rejects calls notFound(); pages stream, so it answers 200 with
   // the 404 page inside and loads that page's chunks too.
   { route: '/_not-found', path: '/account/not-an-account', kib: 225, text: 'This juicebox is empty', notFound: true },
@@ -114,7 +115,9 @@ const budgets = {
   // 2746 -> 2747: round 9 (every launch through the omnichain deployer, the queue's carried-shop rule, the
   // pay notice versions, the Balance price notes, the feed's whole-moment rule): measured 2746.2 KiB.
   // 2747 -> 2748: the capped close of a liquidity re-band and its settle step in review: measured 2747.1 KiB.
-  allScripts: 2748 * KIB,
+  // 2748 -> 2749: shared display reads (price references, Safe queue, pending payments in one request) and
+  // tab-aware polling: measured 2748.1 KiB.
+  allScripts: 2749 * KIB,
   largestChunk: 400 * KIB,
   styles: 20 * KIB,
 }

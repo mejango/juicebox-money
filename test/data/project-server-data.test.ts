@@ -130,15 +130,15 @@ describe('bounded server project display reads', () => {
     expect(reads.project).toHaveBeenCalledTimes(2)
   })
 
-  it('retains actual activity completion age and refetches only after its 15 second window', async () => {
+  it('retains actual activity completion age and refetches only after its 30 second window', async () => {
     const first = await data.getProjectActivityDisplay(1, 7, 'group')
     expect(first.value).toEqual({ items: [], totalCount: 0 })
     expect(reads.activity).toHaveBeenCalledWith('group', 250, 1, 0, { policy: 'no-store' })
     vi.setSystemTime(Date.now() + 10_000)
     expect(await data.getProjectActivityDisplay(1, 7, 'group')).toEqual(first)
     expect(reads.activity).toHaveBeenCalledTimes(1)
-    vi.setSystemTime(Date.now() + 5_000)
-    expect((await data.getProjectActivityDisplay(1, 7, 'group')).updatedAt).toBe(first.updatedAt + 15_000)
+    vi.setSystemTime(Date.now() + 20_000)
+    expect((await data.getProjectActivityDisplay(1, 7, 'group')).updatedAt).toBe(first.updatedAt + 30_000)
     expect(reads.activity).toHaveBeenCalledTimes(2)
   })
 

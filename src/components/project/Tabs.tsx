@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import {
   ProjectOverflowIcon,
@@ -15,6 +15,47 @@ export type TabDef = {
   /** Renders the tab's content. Tabs are lazy: first activation mounts it,
    *  after which it stays mounted (hidden) so reads don't re-fire. */
   content: ReactNode
+}
+
+const TabShowing = createContext(true)
+
+/**
+ * Whether the tab panel this component sits in is the one showing. A visited
+ * tab stays mounted while hidden. True outside any tab.
+ */
+function useTabShowing(): boolean {
+  return useContext(TabShowing)
+}
+
+/**
+ * Options for a polling query inside a tab: silent while its tab is hidden,
+ * and read again each time the tab comes back, since the answer it kept may
+ * be a whole refresh old by then.
+ */
+export function useTabPolling(): { subscribed: boolean; refetchOnMount: true | 'always' } {
+  const showing = useTabShowing()
+  const wasHidden = useRef(false)
+  if (!showing) wasHidden.current = true
+  return { subscribed: showing, refetchOnMount: wasHidden.current ? 'always' : true }
+}
+
+/** One tab's panel: hidden rather than unmounted, and showing only when its parent tab is. */
+function TabPanel({
+  selected,
+  covered = false,
+  children,
+}: {
+  selected: boolean
+  /** Something else is shown in place of the whole tab area. */
+  covered?: boolean
+  children: ReactNode
+}) {
+  const parentShowing = useTabShowing()
+  return (
+    <div hidden={!selected}>
+      <TabShowing.Provider value={selected && !covered && parentShowing}>{children}</TabShowing.Provider>
+    </div>
+  )
 }
 
 const PROJECT_OVERFLOW_TABS = new Set(['extras', 'operator', 'owner'])
@@ -147,9 +188,9 @@ export function TabShell({
       <div className={panelClassName}>
         {tabs.map((tab, i) =>
           mounted.current.has(i) ? (
-            <div key={tab.label} hidden={active !== i}>
+            <TabPanel key={tab.label} selected={active === i}>
               {tab.content}
-            </div>
+            </TabPanel>
           ) : null,
         )}
       </div>
@@ -341,9 +382,9 @@ export function ProjectTabs({
           {tabs.map(tab => {
             const slug = tabSlug(tab.label)
             return mounted.current.has(slug) ? (
-              <div key={tab.label} hidden={normalActiveSlug !== slug}>
+              <TabPanel key={tab.label} selected={normalActiveSlug === slug} covered={activityActive}>
                 {tab.content}
-              </div>
+              </TabPanel>
             ) : null
           })}
         </div>

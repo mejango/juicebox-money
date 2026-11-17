@@ -79,7 +79,7 @@ import {
   MULTI_SEND_CALL_ONLY,
 } from '@bananapus/nana-sdk-core/safe'
 import { buildStep, composeBatch, type BatchStep } from '@/lib/safe-batch'
-import { readProposalNonces } from '@/lib/safe'
+import { proposalNoncesOf, readSafeQueue } from '@/lib/safe'
 import { listedHeld } from '../support/held-chain'
 import { HELD_RELEASED_ELSEWHERE_LINE } from '@bananapus/nana-sdk-core/review'
 import { modelNode } from '../support/chain-node'
@@ -332,7 +332,7 @@ describe('Safe owner batch', () => {
         )
       }),
     )
-    await expect(readProposalNonces(1, SAFE)).resolves.toEqual({ choices: [7, 8], next: 8 })
+    expect(proposalNoncesOf(await readSafeQueue(1, SAFE))).toEqual({ choices: [7, 8], next: 8 })
     const submit = (proposalNonce: number) => submitSafeBatch({
       signal: flow, chainId: 1, authority: SAFE, steps, route: { kind: 'safe-owner', authorityKind: 'safe' }, proposalNonce,
     })

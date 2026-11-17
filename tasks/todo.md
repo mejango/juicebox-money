@@ -1,3 +1,29 @@
+# Fewer network requests (2026-11-16)
+
+A page loads what it needs once, then refreshes about every 30 seconds or on a user action. Eleven audited findings, one at a time, each with a test that fails without it.
+
+- [x] 1 Price references: 30 s; controller and accepted-token symbol through cached queries (`controllerQuery`, `tokenSymbolQuery`)
+- [x] 2 Multicall: one explicit `multicall` per chain for supply and surplus in `readPriceReferenceRow`. No global `batch` switch: the one wagmi client also serves block-pinned, pre-prompt and proof reads
+- [x] 3 Pending payments: `fetchPendingPaymentsAcross`, one indexer request for every linked deployment and gateway generation, each deployment its own AND group (checked against the live indexer); the paged per-gateway read stays for a list longer than a page
+- [x] 4 Bendystraw relay: an indexer 429 is a 429 with Retry-After and is not asked again; identical overlapping requests share one read; the browser holds indexer reads 5 s after a 429. No TTL cache: no allow-list of display-only operations was established
+- [x] 5 Activity feeds: 30 s from `ACTIVITY_POLL_MS`
+- [x] 6 Price history: 30 s from `PRICE_REFRESH_MS` and `priceHistoryRead`
+- [x] 7 Safe queue: `safeQueueQueryOptions`; the dialog reads again as it opens; the two reads before a Safe action are unchanged
+- [x] 8 `priceReferences` reads the pool through `marketQuery` under the Market tab's key
+- [x] 9 Hidden tabs: `useTabShowing` as each polling query's `subscribed`
+- [x] 10 Pending payment checks: one block per chain per refresh, gateway constants and token facts once per session, only for the display list (`PendingPaymentPass`)
+- [x] 11 Create indexed-check: `pollIndexed`
+
+Left as it is: the SDK's own three tries inside one browser relay request (changed in the SDK separately). Request counts after the change were not measured on the live site.
+
+## Plan refinement
+- **Objective:** An idle project page sends far fewer RPC and indexer requests (measured 91 per minute on /eth:1) with the same displayed data; success is each finding's test plus a green `npm run check`. Scope is these eleven findings in juicebox.money only.
+- **System fit:** Display reads keep their owners (`project-display-queries`, `safe.ts`, `pending-payments.ts`, the Bendystraw relay route); reads before a wallet prompt, Safe policy checks, proof reads and `reviewPendingPayment` are untouched. The SDK retry policy and revnet.money change elsewhere.
+- **Reuse and simplicity:** Reuse `tokenSymbol`, `projectDisplayQuery`, react-query `select` and `fetchQuery`, viem `multicall`; new code is one shared query-options function per shared read and one in-flight map in the relay. No new dependency.
+- **Evidence and unknowns:** Line references come from a read-only audit at b17460ee and are re-read before each change; the indexer schema decides finding 3 and the client split decides finding 2. Request counts after the change are not measured live in this task.
+- **Verification:** A vitest regression per behavior change, affected tests as I go, then `PLAYWRIGHT_APP_PORT=3190 npm run check` until it exits 0.
+- **Resource budget:** One worktree, one finding per commit, one full gate at the end; a finding that would weaken a money or correctness read is skipped and reported, not reworked.
+
 # Parity with Juicescan and revnet.money (2026-11-13)
 
 jango: fix everywhere juicebox.money is behind Juicescan, align revnet.money (revnet scope), thorough, unsure items in one list at the end. Source reports: scratchpad `parity-1..5-*.md`, `parity-rev-*.md` (juicebox.money 0512c604).

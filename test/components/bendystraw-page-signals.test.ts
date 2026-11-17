@@ -80,6 +80,7 @@ describe("a page's Bendystraw reads", () => {
       '@/lib/loans-queries#getLoans',
       '@/lib/lp-positions-queries#fetchIndexedLpPositions',
       '@/lib/pending-payments#fetchPendingPayments',
+      '@/lib/pending-payments#fetchPendingPaymentsAcross',
       // Behind Next's unstable_cache().
       '@/lib/new-projects#getNewProjects',
     ]) expect(readers.has(reader), reader).toBe(true)

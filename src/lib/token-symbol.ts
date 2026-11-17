@@ -55,6 +55,21 @@ export async function tokenSymbol(
 }
 
 /**
+ * A token's symbol as a cached read: an ERC-20 symbol does not change, so one
+ * answer serves the session. A failed read is an error, never a cached guess.
+ */
+export function tokenSymbolQuery(client: PublicClient, token: Address, chainId: JBChainId) {
+  return {
+    queryKey: ['tokenSymbol', chainId, token.toLowerCase()] as const,
+    staleTime: Number.POSITIVE_INFINITY,
+    retry: 1,
+    queryFn: async (): Promise<string> =>
+      knownTokenSymbol(token, { chainId }) ??
+      (await client.readContract({ address: token, abi: erc20Abi, functionName: 'symbol' })),
+  }
+}
+
+/**
  * The currency a ruleset prices its tokens in, as people read it: ETH, USD,
  * or the symbol of the accepted token whose currency it names.
  */

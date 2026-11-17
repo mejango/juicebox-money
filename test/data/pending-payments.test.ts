@@ -11,7 +11,7 @@ vi.mock('@/lib/authority', () => ({ clientFor: mocks.clientFor }))
 vi.mock('@/lib/token-symbol', () => ({ tokenSymbol: mocks.symbol }))
 vi.mock('@/lib/project-batch', () => ({ loadProjectBatches: mocks.batches }))
 
-import { fetchPendingPayments, loadPendingPaymentBatch, paymentCommitment, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPayment } from '@/lib/pending-payments'
+import { fetchPendingPayments, fetchPendingPaymentsAcross, loadPendingPaymentBatch, paymentCommitment, pendingPaymentCall, pendingPaymentId, pendingPaymentOutcome, reconcilePendingPayment, reviewPendingPayment, reverifyPendingPayment, type PendingPayment } from '@/lib/pending-payments'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import * as rollout from '@/lib/protocol-rollout'
 
@@ -80,6 +80,48 @@ describe('complete authenticated pending payment inventory', () => {
     ])
     expect(mocks.bendystraw.mock.calls[0][0]).toContain('{ version: 6 }')
     expect(mocks.client.readContract).not.toHaveBeenCalled()
+  })
+
+  it('reads every linked deployment and gateway generation in one request, each deployment its own AND group', async () => {
+    vi.mocked(rollout.rolloutChain).mockReturnValue(recordedChain)
+    const rows = [payment(2, { chainId: 10, projectId: 42 }), payment(1, { gateway: PREVIOUS_GATEWAY })]
+    vi.spyOn(rollout, 'rolloutContractName').mockReturnValue('JBRouterTerminalGateway (test)')
+    mocks.bendystraw.mockResolvedValueOnce(page(rows))
+    const signal = new AbortController().signal
+    // In the deployments' order, whatever order the indexer answers in.
+    expect(await fetchPendingPaymentsAcross([[1, 1], [10, 42]], { signal })).toEqual([rows[1], rows[0]])
+    expect(mocks.bendystraw).toHaveBeenCalledTimes(1)
+    const [query, variables, options] = mocks.bendystraw.mock.calls[0]
+    expect(query).toContain('$where: routerPendingCallFilter!')
+    expect(options).toEqual({ policy: 'live', signal, chainId: 1 })
+    expect(variables.limit).toBe(100)
+    const [{ OR: groups }, ...rest] = variables.where.AND
+    expect(rest).toEqual([{ version: 6 }, { retainedAmount_gt: '0' }, { status_in: ['queued', 'retried'] }])
+    expect(groups.map((group: { AND: unknown[] }) => group.AND.slice(0, 2))).toEqual([
+      [{ chainId: 1 }, { projectId: 1 }],
+      [{ chainId: 10 }, { projectId: 42 }],
+    ])
+    expect(groups[0].AND[2].gateway_in.sort()).toEqual([GATEWAY, PREVIOUS_GATEWAY].sort())
+  })
+
+  it('refuses a row of another project, chain or gateway in the one-request answer', async () => {
+    vi.spyOn(rollout, 'rolloutContractName').mockReturnValue('JBRouterTerminalGateway (test)')
+    for (const stray of [payment(1, { projectId: 6 }), payment(1, { chainId: 10 }), payment(1, { gateway: OTHER })]) {
+      mocks.bendystraw.mockResolvedValueOnce(page([stray]))
+      await expect(fetchPendingPaymentsAcross([[1, 1]])).rejects.toThrow(/could not be verified|another gateway/)
+    }
+    mocks.bendystraw.mockResolvedValueOnce(page([payment(1), payment(1)]))
+    await expect(fetchPendingPaymentsAcross([[1, 1]])).rejects.toThrow('duplicate records')
+  })
+
+  it('reads a list longer than one page per deployment and gateway, in order', async () => {
+    const rows = Array.from({ length: 101 }, (_, index) => payment(index + 1))
+    mocks.bendystraw
+      .mockResolvedValueOnce(page(rows.slice(0, 100), 101))
+      .mockResolvedValueOnce(page(rows.slice(0, 100), 101))
+      .mockResolvedValueOnce(page(rows.slice(100), 101))
+    expect(await fetchPendingPaymentsAcross([[1, 1]])).toEqual(rows)
+    expect(mocks.bendystraw.mock.calls.slice(1).map(([, variables]) => variables.offset)).toEqual([0, 100])
   })
 
   it('keeps pending payments on the previous gateway generation listed', async () => {
@@ -306,5 +348,54 @@ describe('receipt proof of each pending payment outcome', () => {
     expect(() => pendingPaymentOutcome(call, receipt)).toThrow('does not prove')
     const unrelated = { ...eventLog('JBRouterTerminalGateway_ProcessPendingCall', payment()), topics: [ERROR] as [Hex], data: '0x' as Hex }
     expect(() => pendingPaymentOutcome(call, { logs: [unrelated] })).toThrow('does not prove')
+  })
+})
+
+describe('display checks of one refresh', () => {
+  const reads = (name: string) => mocks.client.readContract.mock.calls.filter(([call]) => call.functionName === name).length
+
+  it('share one block per chain and read the gateway constants and token facts once, while a check before an action reads all again', async () => {
+    const USDC = '0x3333333333333333333333333333333333333333' as Address
+    const first = payment(1, { token: USDC }), second = payment(2, { token: USDC })
+    mocks.client.readContract.mockImplementation(async ({ functionName, args }: { functionName: string; args?: readonly Hex[] }) => {
+      if (functionName === 'pendingCallCommitmentOf') return args?.[0] === first.pendingCallId ? first.callCommitment : second.callCommitment
+      if (functionName === 'pendingCallFailureOf') return { ...live.failure }
+      if (functionName === 'RETRY_DELAY') return 86_400n
+      if (functionName === 'FINALIZATION_FAILURE_COUNT') return 3n
+      if (functionName === 'decimals') return 6
+      throw new Error(`Unexpected read ${functionName}`)
+    })
+    const pass = new Map()
+    const [a, b] = await Promise.all([reviewPendingPayment(first, undefined, pass), reviewPendingPayment(second, undefined, pass)])
+    expect(a).toMatchObject({ decimals: 6, readyAt: 0n, functionName: 'processPendingCall' })
+    expect(b?.payment).toBe(second)
+    expect(mocks.client.getBlock).toHaveBeenCalledTimes(1)
+    expect([reads('RETRY_DELAY'), reads('FINALIZATION_FAILURE_COUNT'), reads('decimals')]).toEqual([1, 1, 1])
+    // Custody and failure state are read per payment, pinned to the shared block.
+    expect([reads('pendingCallCommitmentOf'), reads('pendingCallFailureOf')]).toEqual([2, 2])
+    expect(mocks.client.readContract.mock.calls.filter(([call]) => call.functionName.startsWith('pendingCall')).every(([call]) => call.blockNumber === 123n)).toBe(true)
+
+    // The next refresh reads a new block, and the fixed answers are kept.
+    await reviewPendingPayment(first, undefined, new Map())
+    expect(mocks.client.getBlock).toHaveBeenCalledTimes(2)
+    expect([reads('RETRY_DELAY'), reads('decimals')]).toEqual([1, 1])
+
+    // Without a pass, as before an action, nothing is reused.
+    await reviewPendingPayment(first)
+    expect(mocks.client.getBlock).toHaveBeenCalledTimes(3)
+    expect([reads('RETRY_DELAY'), reads('FINALIZATION_FAILURE_COUNT'), reads('decimals')]).toEqual([2, 2, 2])
+  })
+
+  it('does not keep a symbol that fell back to the address after a failed read', async () => {
+    const DAI = '0x4444444444444444444444444444444444444444' as Address
+    const row = payment(1, { token: DAI })
+    live.commitment = row.callCommitment
+    mocks.symbol.mockResolvedValueOnce('0x4444…4444').mockResolvedValue('DAI')
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ decimals: 6, symbol: '0x4444…4444' })
+    // The next refresh asks again and keeps the complete answer from then on.
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ decimals: 6, symbol: 'DAI' })
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ symbol: 'DAI' })
+    expect(mocks.symbol).toHaveBeenCalledTimes(2)
+    expect(reads('decimals')).toBe(2)
   })
 })

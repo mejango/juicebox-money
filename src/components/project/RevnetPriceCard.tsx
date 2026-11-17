@@ -5,32 +5,20 @@ import { useKeptQuery } from '@/hooks/useKeptQuery'
 import { projectDisplayKey } from '@/lib/project-display-cache'
 
 import {
-  accountingContextsQuery,
   accountingContextSymbolsQuery,
   allRulesetsQuery,
-  currentRulesetQuery,
   projectDisplayQuery,
 } from '@/lib/project-display-queries'
 import {
-  JBCoreContracts,
-  NATIVE_TOKEN,
   USD_CURRENCY_ID,
-  jbV6ContractAddress,
-  jbControllerAbi,
   JB_CHAINS,
-  jbDirectoryAbi,
-  jbTerminalStoreAbi,
   type JBChainId,
 } from '@bananapus/nana-sdk-core'
 import {
 } from '@bananapus/nana-sdk-core/v6'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMemo } from 'react'
-import {
-  erc20Abi,
-  type Address,
-  type PublicClient,
-} from 'viem'
+import type { PublicClient } from 'viem'
 import { getPublicClient } from 'wagmi/actions'
 import { useConfig, usePublicClient } from 'wagmi'
 import {
@@ -38,17 +26,18 @@ import {
   type CashOutTaxPoint,
 } from '@/components/project/PriceChart'
 import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
+import { useTabPolling } from '@/components/project/Tabs'
 import {
   basePerAccountingToken,
   toBaseAxis,
 } from '@/lib/base-currency-axis'
 import type { ChartStage } from '@/components/project/chartUtils'
 import {
+  marketQuery,
   readLpPositions,
-  resolveMarket,
   type MarketResult,
 } from '@/components/project/MarketSection'
-import { getTokenUsdRates, type BsRevnetPriceHistory } from '@/lib/bendystraw'
+import { getTokenUsdRates } from '@/lib/bendystraw'
 import {
   cashOutPriceFromTotals,
   netCashOutDisplayValue,
@@ -70,10 +59,12 @@ import { BASE_CURRENCY_USD } from '@bananapus/nana-sdk-core/v6'
 import { cachedQuery, PERSIST } from '@/lib/query-persist'
 import { formatCompactTokenAmount, formatTokenAmount } from '@/lib/format'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
-
-const PRICE_REFRESH_MS = 15_000
-/** One cadence for the floor history and the rates that price it, so new moments never meet a stale rate. */
-const HISTORY_REFRESH = { staleTime: 30_000, refetchInterval: PRICE_REFRESH_MS, refetchOnWindowFocus: true, retry: 1 }
+import {
+  HISTORY_REFRESH,
+  PRICE_REFRESH_MS,
+  priceHistoryRead,
+  readPriceReferenceRow,
+} from '@/lib/price-references'
 
 /**
  * Overview price chart for revnets (website/ parity: renderPriceChart) — the
@@ -96,6 +87,7 @@ export function RevnetPriceCard({
   severalTokens: boolean
 }) {
   const queryClient = useQueryClient()
+  const polling = useTabPolling()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
@@ -128,102 +120,31 @@ export function RevnetPriceCard({
       axisBaseCurrency,
     ],
     enabled: !!publicClient && axisBaseCurrency !== null,
-
+    ...polling,
     refetchInterval: PRICE_REFRESH_MS,
     refetchOnWindowFocus: true,
     retry: 1,
     queryFn: async (reader) => {
       const [market, floor] = await Promise.all([
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader).catch(
-          () => null,
-        ),
+        // The Market tab's own key: a read of the pool under way is shared, and
+        // every refresh, a return to this tab included, reads the pool again.
+        queryClient
+          .fetchQuery({
+            ...marketQuery(queryClient, publicClient!, {
+              meta: PERSIST,
+              queryKey: ['market', chainId, projectId],
+            }),
+            staleTime: 0,
+          })
+          .then(result => result.value, () => null),
         (async () => {
-          const readRow = async ([rawChainId, rawProjectId]: [
-            number,
-            number,
-          ]) => {
-              const rowChainId = rawChainId as JBChainId
-              const client = getPublicClient(config, {
-                chainId: rowChainId,
-              }) as PublicClient | undefined
-              if (!client) throw new Error(`Unsupported chain ${rawChainId}`)
-
-              const directory = jbV6ContractAddress[
-                JBCoreContracts.JBDirectory
-              ][rowChainId] as Address | undefined
-              const store = jbV6ContractAddress[
-                JBCoreContracts.JBTerminalStore
-              ][rowChainId] as Address | undefined
-              if (!directory || !store) {
-                throw new Error(`V6 contracts unavailable on ${rawChainId}`)
-              }
-
-              const pid = BigInt(rawProjectId)
-              const [contexts, currentRuleset, controller] = await Promise.all([
-                reader.fetchQuery(accountingContextsQuery(client, {
-                  chainId: rowChainId,
-                  projectId: pid,
-                })),
-                reader.fetchQuery(currentRulesetQuery(client, {
-                  chainId: rowChainId,
-                  projectId: pid,
-                })),
-                client.readContract({
-                  address: directory,
-                  abi: jbDirectoryAbi,
-                  functionName: 'controllerOf',
-                  args: [pid],
-                }),
-              ])
-              const context = contexts[0]
-              if (!context) {
-                throw new Error(`No accounting context on ${rawChainId}`)
-              }
-
-              const [supply, balance, contextSymbol] = await Promise.all([
-                client.readContract({
-                  address: controller,
-                  abi: jbControllerAbi,
-                  functionName: 'totalTokenSupplyWithReservedTokensOf',
-                  args: [pid],
-                }),
-                client.readContract({
-                  address: store,
-                  abi: jbTerminalStoreAbi,
-                  functionName: 'currentSurplusOf',
-                  args: [
-                    pid,
-                    [],
-                    [],
-                    BigInt(context.decimals),
-                    BigInt(context.currency),
-                  ],
-                }),
-                context.token.toLowerCase() === NATIVE_TOKEN.toLowerCase()
-                  ? Promise.resolve('ETH')
-                  : client.readContract({
-                      address: context.token,
-                      abi: erc20Abi,
-                      functionName: 'symbol',
-                    }),
-              ])
-
-              return {
-                chainId: rowChainId,
-                supply,
-                balance,
-                decimals: context.decimals,
-                /** Accounting-context currency, for the base-currency axis conversion. */
-                currency: Number(context.currency),
-                baseCurrency: Number(currentRuleset.metadata.baseCurrency),
-                contextSymbol,
-                isNative:
-                  context.token.toLowerCase() ===
-                  NATIVE_TOKEN.toLowerCase(),
-                cashOutTaxRate: currentRuleset.metadata.cashOutTaxRate,
-                scopeLocal:
-                  currentRuleset.metadata.scopeCashOutsToLocalBalances,
-              }
+          const readRow = ([rawChainId, rawProjectId]: [number, number]) => {
+            const rowChainId = rawChainId as JBChainId
+            const client = getPublicClient(config, {
+              chainId: rowChainId,
+            }) as PublicClient | undefined
+            if (!client) throw new Error(`Unsupported chain ${rawChainId}`)
+            return readPriceReferenceRow(client, reader, rowChainId, BigInt(rawProjectId))
           }
 
           // Local first. `scopeCashOutsToLocalBalances` prices from THIS
@@ -375,18 +296,9 @@ export function RevnetPriceCard({
 
   const { data: history } = useKeptQuery(
     cachedQuery({
-    queryKey: ['revnetPriceHistory', suckerGroupId],
-    enabled: !!suckerGroupId,
-    ...HISTORY_REFRESH,
-    queryFn: async (): Promise<BsRevnetPriceHistory> => {
-      // chainId is an endpoint-routing hint (testnet groups live on the
-      // testnet indexer); it never filters the group.
-      const response = await fetch(
-        `/api/price-history?suckerGroupId=${encodeURIComponent(suckerGroupId!)}&chainId=${chainId}`,
-      )
-      if (!response.ok) throw new Error('Price history is unavailable.')
-      return response.json() as Promise<BsRevnetPriceHistory>
-    },
+      queryKey: ['revnetPriceHistory', suckerGroupId],
+      ...priceHistoryRead(suckerGroupId, chainId),
+      ...polling,
     }),
   )
 
@@ -407,6 +319,7 @@ export function RevnetPriceCard({
       queryKey: ['tokenUsdRates', chainId, projectId, backingToken ?? null],
       enabled: severalTokens && !perPointRates && !!backingToken,
       ...HISTORY_REFRESH,
+      ...polling,
       queryFn: async ({ signal }) =>
         (await getTokenUsdRates({ chainId, projectId, token: backingToken! }, { signal }))
           .flatMap(row => {

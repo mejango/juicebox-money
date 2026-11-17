@@ -36,8 +36,9 @@ import {
   MarketSectionSkeleton,
 } from '@/components/LoadingSkeletons'
 import { MarketPriceChart } from '@/components/project/MarketPriceChart'
+import { useTabPolling } from '@/components/project/Tabs'
 import { Revalidating } from '@/components/ui/Revalidating'
-import { cachedQuery, PERSIST } from '@/lib/query-persist'
+import { cachedQuery, PERSIST, type PersistMeta } from '@/lib/query-persist'
 import { accountingContextsQuery, currentRulesetQuery, projectDisplayQuery } from '@/lib/project-display-queries'
 import { useProjectTokenSymbol } from '@/hooks/useProjectTokenSymbol'
 import { addrOf } from '@/lib/contracts'
@@ -857,12 +858,14 @@ export async function readUserLpPositions(
   owner: Address,
   /** The page's: it stops the indexed read. */
   signal?: AbortSignal,
+  /** An action waits on this read, so its indexed request is sent even after an indexer 429. */
+  fresh?: boolean,
 ): Promise<UserLpPosition[]> {
   const posm = POSITION_MANAGER_BY_CHAIN[chainId]
   const pm = POOL_MANAGER_BY_CHAIN[chainId]
   if (!posm || !pm) return []
 
-  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal })
+  const indexed = await fetchIndexedLpPositions({ chainId, poolId: pool.poolId, signal, fresh })
   if (indexed) {
     return indexed
       .filter(row => lc(row.owner) === lc(owner))
@@ -914,6 +917,7 @@ export async function readMovableLpPositions(
   pool: Extract<MarketResult, { status: 'pool' }>,
   owner: Address,
   signal?: AbortSignal,
+  fresh?: boolean,
 ): Promise<MovableLpPosition[]> {
   const retired = retiredPoolHooks(
     pool.key.hooks,
@@ -932,11 +936,36 @@ export async function readMovableLpPositions(
         sqrtP,
         price: poolPriceFromSqrt(sqrtP, pool.pairIsC0, pool.pair.decimals) ?? pool.price,
       }
-      const positions = await readUserLpPositions(client, chainId, from, owner, signal)
+      const positions = await readUserLpPositions(client, chainId, from, owner, signal, fresh)
       return positions.map(position => ({ from, position }))
     }),
   )
   return found.flat()
+}
+
+/**
+ * The project's pool and live price. Every card that shows them passes the
+ * same `['market', chainId, projectId]` key, so they share one read.
+ */
+export function marketQuery(
+  queryClient: QueryClient,
+  client: PublicClient,
+  options: { meta: PersistMeta; queryKey: readonly ['market', JBChainId, number] },
+) {
+  const [, chainId, projectId] = options.queryKey
+  return projectDisplayQuery(queryClient, {
+    ...options,
+    staleTime: 60_000,
+    retry: 1,
+    queryFn: (reader) =>
+      resolveMarket(
+        client,
+        chainId,
+        projectId,
+        JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH',
+        reader,
+      ),
+  })
 }
 
 // ------------------------------------------------------------- component --
@@ -952,8 +981,7 @@ export function MarketSection({
 }) {
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const queryClient = useQueryClient()
-  const chainMeta = JB_CHAINS[chainId]
-  const nativeSymbol = chainMeta?.nativeTokenSymbol ?? 'ETH'
+  const polling = useTabPolling()
 
   // The project's OWN token symbol, always read on chain. There is deliberately no
   // fallback to bendystraw's project row: its `tokenSymbol` is the ACCOUNTING symbol
@@ -967,19 +995,16 @@ export function MarketSection({
     isLoading,
     isError,
     isFetching: marketFetching,
-  } = useKeptQuery(projectDisplayQuery(queryClient, {
+  } = useKeptQuery({
+    ...marketQuery(queryClient, publicClient!, {
       meta: PERSIST,
-    staleTime: 60000,
-    queryKey: ['market', chainId, projectId],
-      enabled: !!publicClient,
-
-      refetchInterval: 30_000,
-      refetchOnWindowFocus: true,
-
-    retry: 1,
-      queryFn: (reader) =>
-        resolveMarket(publicClient!, chainId, projectId, nativeSymbol, reader),
-    }))
+      queryKey: ['market', chainId, projectId],
+    }),
+    enabled: !!publicClient,
+    ...polling,
+    refetchInterval: 30_000,
+    refetchOnWindowFocus: true,
+  })
 
   const hasPool = market?.status === 'pool'
 

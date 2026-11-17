@@ -19,7 +19,7 @@ import {
   getTokenUsdRates,
 } from '@/lib/bendystraw'
 import { fetchIndexedLpPositions, fetchIndexedPoolLiquidityEvents } from '@/lib/lp-positions-queries'
-import { fetchPendingPayments } from '@/lib/pending-payments'
+import { fetchPendingPaymentsAcross } from '@/lib/pending-payments'
 import { bindingsOf, findReaders, idOf, parse, SRC, sourcesUnder } from '../support/bendystraw-readers'
 
 function response(data: unknown, status = 200) {
@@ -114,7 +114,7 @@ describe("a Bendystraw read's signal", () => {
     ['@/lib/lp-positions-queries#fetchIndexedLpPositions', signal => fetchIndexedLpPositions({ chainId: 8453, poolId: POOL, signal })],
     ['@/lib/lp-positions-queries#fetchIndexedPoolLiquidityEvents', signal =>
       fetchIndexedPoolLiquidityEvents({ chainId: 8453, poolId: POOL, signal })],
-    ['@/lib/pending-payments#fetchPendingPayments', signal => fetchPendingPayments(8453, 11, { signal })],
+    ['@/lib/pending-payments#fetchPendingPaymentsAcross', signal => fetchPendingPaymentsAcross([[8453, 11]], { signal })],
   ]
 
   // Scans the whole browser build's source: slow on a loaded machine.

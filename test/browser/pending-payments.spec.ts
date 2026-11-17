@@ -42,15 +42,19 @@ for (const viewport of [{ name: 'mobile', width: 390, height: 844 }, { name: 'de
     const verificationGate = new Promise<void>(resolve => { releaseVerification = resolve })
 
     await page.route('**/api/bendystraw/*/query', async route => {
-      const request = route.request().postDataJSON() as { operation: string; variables: { chainId: number; projectId: number; gateway: string; offset: number; limit: number } }
-      if (!(registry as Record<string, string>)[request.operation]?.startsWith('query PendingPayments(')) {
+      const request = route.request().postDataJSON() as { operation: string; variables: { where: { AND: [{ OR: { AND: [{ chainId: number }, { projectId: number }, { gateway_in: string[] }] }[] }, ...unknown[]] }; limit: number } }
+      if (!(registry as Record<string, string>)[request.operation]?.startsWith('query PendingPaymentsAcross(')) {
         await route.fallback()
         return
       }
-      expect(request.variables).toEqual({ chainId: 1, projectId: 1, gateway: request.variables.gateway, limit: 100, offset: 0 })
-      // Every gateway generation is read; the retired one still holds these payments.
-      const items = request.variables.gateway === GATEWAY ? payments : []
-      await route.fulfill({ json: { data: { routerPendingCalls: { items, totalCount: items.length } } } })
+      // One request names every gateway generation; the retired one still holds these payments.
+      const [{ OR: groups }, ...rest] = request.variables.where.AND
+      expect(groups).toHaveLength(1)
+      expect(groups[0].AND.slice(0, 2)).toEqual([{ chainId: 1 }, { projectId: 1 }])
+      expect(groups[0].AND[2].gateway_in).toContain(GATEWAY)
+      expect(rest).toEqual([{ version: 6 }, { retainedAmount_gt: '0' }, { status_in: ['queued', 'retried'] }])
+      expect(request.variables.limit).toBe(100)
+      await route.fulfill({ json: { data: { routerPendingCalls: { items: payments, totalCount: payments.length } } } })
     })
 
     function gatewayRead(target: string, data: Hex): Hex | undefined {

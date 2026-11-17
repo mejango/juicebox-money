@@ -3,7 +3,7 @@
 import type { JBChainId } from '@bananapus/nana-sdk-core'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { type Abi, type AbiFunction, type Hex } from 'viem'
+import { zeroAddress, type Abi, type AbiFunction, type Hex } from 'viem'
 import { useSafeBatch } from '@/components/project/SafeBatchProvider'
 import { useUnmountSignal } from '@/hooks/useUnmountSignal'
 import { useWallet } from '@/hooks/useWallet'
@@ -23,7 +23,8 @@ import {
   submitSafeBatch,
   type SafeBatchRoute,
 } from '@/lib/safe-batch-submit'
-import { readProposalNonces } from '@/lib/safe'
+import { proposalNoncesOf } from '@/lib/safe'
+import { safeQueueQueryOptions } from '@/lib/safe-queue-query'
 import { safeNonceLabel } from '@/lib/safe-nonce-choice'
 import { hasSafeService } from '@/lib/safe-service-config'
 import { chainName } from '@/lib/urn'
@@ -178,14 +179,22 @@ export function SafeBatchDialog({
   // A Safe service proposal takes the next free nonce unless a queued one is picked to replace.
   const proposalSafe = route?.kind === 'safe-owner' && hasSafeService(chainId) ? authority : null
   const noncesQuery = useQuery({
-    queryKey: ['safeBatchNonces', chainId, proposalSafe],
+    ...safeQueueQueryOptions(chainId, proposalSafe ?? zeroAddress),
     enabled: !!proposalSafe,
-    staleTime: 15_000,
-    queryFn: () => readProposalNonces(chainId, proposalSafe!),
+    // The shared queue may be a poll old: the dialog reads it again as it opens.
+    staleTime: 0,
+    select: proposalNoncesOf,
   })
-  const nonces = proposalSafe ? noncesQuery.data : undefined
+  // Only a read that succeeded since the dialog opened offers nonces: an answer kept from before
+  // may call a nonce free that another signer has since taken.
+  const noncesRead = noncesQuery.isFetchedAfterMount && noncesQuery.isSuccess
+  const noncesUnreadable = !!proposalSafe && noncesQuery.isFetchedAfterMount && noncesQuery.isError
+  const liveNonces = proposalSafe && noncesRead ? noncesQuery.data : undefined
+  // A submitted batch keeps showing the nonces it was offered, whatever the queue becomes.
+  const [submittedNonces, setSubmittedNonces] = useState<typeof liveNonces>()
+  const nonces = busy || complete ? submittedNonces : liveNonces
   // The row is there from the start, so the choice cannot appear unnoticed after a slow read.
-  const noncesLoading = preparing || (!!proposalSafe && noncesQuery.isLoading)
+  const noncesLoading = preparing || (!!proposalSafe && !noncesRead && !noncesUnreadable)
   const [pickedNonce, setPickedNonce] = useState<number | null>(null)
   const proposalNonce =
     nonces && pickedNonce !== null && nonces.choices.includes(pickedNonce) ? pickedNonce : nonces?.next
@@ -247,6 +256,7 @@ export function SafeBatchDialog({
   const submit = async () => {
     if (!batch || !route || !authority || busy || complete) return
     if (route.kind === 'unavailable' || !order.ok || !count) return
+    setSubmittedNonces(nonces)
     setRun(current => ({ status: 'signing', steps, step: activeIndex, line: current.status === 'idle' ? null : current.line }))
     try {
       const outcome = await submitSafeBatch({
@@ -260,6 +270,7 @@ export function SafeBatchDialog({
         signal: flowSignal(),
         onProposed: hash => {
           // The queue card does not poll; show the new proposal there now.
+          void queryClient.invalidateQueries({ queryKey: ['safeQueue'] })
           void queryClient.invalidateQueries({ queryKey: ['safeQueues'] })
           batch.clear(chainId)
           const line = `Proposed to Safe as one batch of ${count} call${count === 1 ? '' : 's'}.`
@@ -326,12 +337,14 @@ export function SafeBatchDialog({
           ? 'Could not verify the authority on this chain.'
           : route?.kind === 'unavailable'
             ? route.reason
-            : null)
+            : noncesUnreadable && !busy && !complete
+              ? 'Could not read the Safe queue. Retrying.'
+              : null)
       }
       busy={locked}
       complete={complete}
       onClose={close}
-      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count || noncesLoading }}
+      next={{ label: route ? batchActionLabel(route, count, chainId) : 'Submit batch', onClick: () => void submit(), disabled: !route || route.kind === 'unavailable' || !order.ok || !count || noncesLoading || noncesUnreadable }}
     >
       {count ? (
         <ol className="space-y-2" aria-label="Batch steps">

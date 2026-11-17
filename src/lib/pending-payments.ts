@@ -8,6 +8,7 @@ import { LEGACY_PENDING_PAYMENT_ACTION, PENDING_PAYMENT_ACTION } from '@/lib/pro
 import { rolloutChain, rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { truncateAddress } from '@/lib/format'
 
 export type PendingPayment = {
   chainId: JBChainId; version: number; gateway: Address; pendingCallId: Hex
@@ -27,6 +28,12 @@ const PENDING_PAYMENTS_QUERY = `query PendingPayments($chainId: Int!, $projectId
     where: { AND: [{ chainId: $chainId }, { projectId: $projectId }, { gateway: $gateway }, { version: 6 }, { retainedAmount_gt: "0" }, { status_in: [queued, retried] }] }
     orderBy: "pendingCallId", orderDirection: "asc", limit: $limit, offset: $offset
   ) {
+    totalCount
+    items { chainId version gateway pendingCallId projectId sourceProjectId token amount retainedAmount preferAddToBalance shouldReturnHeldFees beneficiary refundTo memo metadata callCommitment status }
+  }
+}`
+const PENDING_PAYMENTS_ACROSS_QUERY = `query PendingPaymentsAcross($where: routerPendingCallFilter!, $limit: Int!) {
+  routerPendingCalls(where: $where, orderBy: "pendingCallId", orderDirection: "asc", limit: $limit) {
     totalCount
     items { chainId version gateway pendingCallId projectId sourceProjectId token amount retainedAmount preferAddToBalance shouldReturnHeldFees beneficiary refundTo memo metadata callCommitment status }
   }
@@ -70,10 +77,48 @@ function validatePayment(payment: PendingPayment, chainId: number, projectId: nu
  * selection. `signal` is the caller's, for every page's request.
  */
 export async function fetchPendingPayments(chainId: JBChainId, projectId: number, { signal }: { signal?: AbortSignal } = {}): Promise<PendingPayment[]> {
+  return (await Promise.all(gatewaysOn(chainId).map(gateway => fetchGatewayPayments(chainId, projectId, gateway, signal)))).flat()
+}
+
+/** Every gateway generation that can still hold a payment on `chainId`, lower case. */
+function gatewaysOn(chainId: JBChainId): string[] {
   const chain = rolloutChain(chainId)
-  const gateways = [...new Set([chain?.contracts.JBRouterTerminalGateway, ...Object.values(chain?.history.JBRouterTerminalGateway ?? {})]
+  return [...new Set([chain?.contracts.JBRouterTerminalGateway, ...Object.values(chain?.history.JBRouterTerminalGateway ?? {})]
     .filter((address): address is string => !!address).map(address => address.toLowerCase()))]
-  return (await Promise.all(gateways.map(gateway => fetchGatewayPayments(chainId, projectId, gateway, signal)))).flat()
+}
+
+/**
+ * The inventory of every deployment of one project, in the deployments' order,
+ * from one indexer request. Each deployment is its own AND group: an OR of
+ * bare fields would match a row on any one of them. A list longer than one
+ * page is read per deployment and gateway instead, where paging is in order.
+ */
+export async function fetchPendingPaymentsAcross(deployments: readonly (readonly [JBChainId, number])[], { signal }: { signal?: AbortSignal } = {}): Promise<PendingPayment[]> {
+  const scopes = deployments.map(([chainId, projectId]) => ({ chainId, projectId, gateways: gatewaysOn(chainId) })).filter(scope => scope.gateways.length)
+  if (!scopes.length) return []
+  const where = { AND: [
+    { OR: scopes.map(({ chainId, projectId, gateways }) => ({ AND: [{ chainId }, { projectId }, { gateway_in: gateways }] })) },
+    { version: 6 }, { retainedAmount_gt: '0' }, { status_in: ['queued', 'retried'] },
+  ] }
+  const { routerPendingCalls: page } = await bendystraw<{ routerPendingCalls: { items: PendingPayment[]; totalCount: number } }>(
+    PENDING_PAYMENTS_ACROSS_QUERY, { where, limit: 100 }, { policy: 'live', signal, chainId: scopes[0].chainId })
+  if (!page || !Array.isArray(page.items) || !Number.isSafeInteger(page.totalCount) || page.totalCount < 0 || page.items.length > 100 || page.items.length > page.totalCount) {
+    throw new Error('The pending payment list changed or is incomplete. Refresh to load all payments.')
+  }
+  if (page.items.length < page.totalCount) {
+    return (await Promise.all(scopes.map(scope => fetchPendingPayments(scope.chainId, scope.projectId, { signal })))).flat()
+  }
+  const seen = new Set<string>()
+  for (const payment of page.items) {
+    const scope = scopes.find(candidate => candidate.chainId === payment?.chainId)
+    if (!scope) throw new Error('The indexed pending payment could not be verified. Refresh before retrying.')
+    validatePayment(payment, scope.chainId, scope.projectId)
+    if (!scope.gateways.includes(payment.gateway.toLowerCase())) throw new Error('The indexed payment belongs to another gateway.')
+    const id = pendingPaymentId(payment)
+    if (seen.has(id)) throw new Error('The pending payment list contains duplicate records. Refresh to load all payments.')
+    seen.add(id)
+  }
+  return scopes.flatMap(scope => page.items.filter(payment => payment.chainId === scope.chainId))
 }
 
 // Pending IDs are monotonic within one gateway; gateway-scoped pagination also
@@ -103,25 +148,59 @@ async function fetchGatewayPayments(chainId: JBChainId, projectId: number, gatew
   return items
 }
 
-/** One block snapshot authenticates custody and determines the permitted next action. */
-export async function reviewPendingPayment(payment: PendingPayment, client: PublicClient = clientFor(payment.chainId)): Promise<ReviewedPayment | null> {
+/** The block each chain's display checks of one refresh share. */
+const latestBlock = (client: PublicClient) => client.getBlock()
+export type PendingPaymentPass = Map<number, ReturnType<typeof latestBlock>>
+
+// What a gateway or a token can never answer differently: read once a session
+// for display checks. A failed or partial answer is not kept.
+const fixedReads = new Map<string, Promise<unknown>>()
+function fixedRead<T>(key: string, read: () => Promise<T>, keep: (value: T) => boolean = () => true): Promise<T> {
+  const known = fixedReads.get(key) as Promise<T> | undefined
+  if (known) return known
+  const request = read()
+  fixedReads.set(key, request)
+  request.then(value => { if (!keep(value)) fixedReads.delete(key) }, () => fixedReads.delete(key))
+  return request
+}
+
+/**
+ * One block snapshot authenticates custody and determines the permitted next action.
+ * With a `pass` (the display list's refresh), payments on one chain share its block,
+ * and the gateway's constants and the token's decimals and symbol are read once.
+ * Without one, as before an action, every read is made again.
+ */
+export async function reviewPendingPayment(payment: PendingPayment, client: PublicClient = clientFor(payment.chainId), pass?: PendingPaymentPass): Promise<ReviewedPayment | null> {
   validatePayment(payment, payment.chainId, payment.projectId)
-  const block = await client.getBlock()
+  let reading = pass?.get(payment.chainId)
+  if (!reading) {
+    reading = latestBlock(client)
+    pass?.set(payment.chainId, reading)
+  }
+  const block = await reading
   const shared = { address: payment.gateway, blockNumber: block.number }
-  const [commitment, failure, delay, finalizationCount] = await Promise.all([
-    client.readContract({ ...shared, abi: routerGatewayAbi, functionName: 'pendingCallCommitmentOf', args: [payment.pendingCallId] }),
-    client.readContract({ ...shared, abi: routerGatewayAbi, functionName: 'pendingCallFailureOf', args: [payment.pendingCallId] }),
+  const readPolicy = () => Promise.all([
     client.readContract({ ...shared, abi: POLICY_ABI, functionName: 'RETRY_DELAY' }),
     client.readContract({ ...shared, abi: POLICY_ABI, functionName: 'FINALIZATION_FAILURE_COUNT' }),
+  ])
+  const [commitment, failure, [delay, finalizationCount]] = await Promise.all([
+    client.readContract({ ...shared, abi: routerGatewayAbi, functionName: 'pendingCallCommitmentOf', args: [payment.pendingCallId] }),
+    client.readContract({ ...shared, abi: routerGatewayAbi, functionName: 'pendingCallFailureOf', args: [payment.pendingCallId] }),
+    pass ? fixedRead(`policy:${payment.chainId}:${payment.gateway.toLowerCase()}`, readPolicy) : readPolicy(),
   ])
   if (commitment === zeroHash) return null
   if (commitment.toLowerCase() !== paymentCommitment(payment).toLowerCase()) throw new Error('The gateway commitment differs from the indexed payment. Refresh before retrying.')
   const readyAt = failure.count === 0 ? 0n : BigInt(failure.lastFailureAt) + delay
   const native = isAddressEqual(payment.token, NATIVE_TOKEN)
-  const [decimals, symbol] = await Promise.all([
+  const readToken = () => Promise.all([
     native ? Promise.resolve(18) : client.readContract({ address: payment.token, abi: erc20Abi, functionName: 'decimals' }).catch(() => null),
     tokenSymbol(client, payment.token, { chainId: payment.chainId }),
   ])
+  const [decimals, symbol] = await (pass
+    ? fixedRead(`token:${payment.chainId}:${payment.token.toLowerCase()}`, readToken,
+      // A symbol that fell back to the address after a failed read is not an answer to keep.
+      ([known, name]) => known !== null && name !== truncateAddress(payment.token))
+    : readToken())
   // A later gas-exhaustion retry can forward 15M gas. The standard 10M preflight
   // ceiling is too low. Standard simulation/estimation still has to succeed
   // inside the live block limit and EIP-7825 transaction cap before signing.

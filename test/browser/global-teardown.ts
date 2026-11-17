@@ -45,10 +45,10 @@ export default async function globalTeardown() {
     'JBTokens.tokenOf',
     'JBTerminalStore.balanceOf',
     'JBTerminalStore.currentSurplusOf',
-    'USDC.symbol',
     'REVOwner.tiered721HookOf',
     'JBProjectHandles.ensNamePartsOf',
     'JBProjectHandles.handleOf',
+    // A known USDC deployment is named without a symbol() read, so none is required.
     // The registries' hookOf and terminalOf are asked only for a project that routes through them,
     // which the fixture project does not: the directory and ruleset reads above decide that.
     'JBBuybackHookRegistry.defaultHook',
