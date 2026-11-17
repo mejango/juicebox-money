@@ -301,7 +301,8 @@ export async function readSplitDestination({ chainId, projectId, groupId, accoun
     // candidate: live Safe membership and the owner's permission must agree.
     const revOwner = addresses[RevnetCoreContracts.REVOwner][chainId]
     if (revOwner && owner.toLowerCase() === revOwner.toLowerCase()) {
-      const operator = await getRevnetOperator(chainId, projectId, { signal })
+      // The editor and its send wait on this lookup, so it is sent even after an indexer 429.
+      const operator = await getRevnetOperator(chainId, projectId, { signal, fresh: true })
       if (operator && isAddress(operator)) {
         const identity = await readAuthorityIdentity(client, operator)
         if (identity?.kind === 'safe' && identity.owners.some(signer => signer.toLowerCase() === account.toLowerCase()) && await permitted(operator)) authority = operator

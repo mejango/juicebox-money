@@ -249,10 +249,30 @@ describe('the browser after the relay answers 429', () => {
     await expect(browser.bendystraw(query, { chainId: 1, projectId: 12 })).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
     expect(fetcher).toHaveBeenCalledTimes(sent)
 
+    // The hold is the mainnet relay's: a testnet read is sent.
+    fetcher.mockImplementation(async () => answer())
+    await expect(browser.bendystraw(query, { chainId: 84532, projectId: 11 })).resolves.toEqual({ project: null })
+    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/testnet/query')
+    // A read an action waits on is sent during the hold, here the operator lookup the split editor makes.
+    fetcher.mockImplementation(async () =>
+      new Response(JSON.stringify({ data: { permissionHolders: { items: [], totalCount: 0 } } }), { headers: { 'content-type': 'application/json' } }))
+    await expect(browser.getRevnetOperator(1, 11)).rejects.toBeInstanceOf(browser.BendystrawRateLimited)
+    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
+    await expect(browser.getRevnetOperator(1, 11, { fresh: true })).resolves.toBeNull()
+    expect(fetcher).toHaveBeenCalledTimes(sent + 2)
+    expect(fetcher.mock.calls.at(-1)?.[0]).toBe('/api/bendystraw/mainnet/query')
+
     await vi.advanceTimersByTimeAsync(4_000)
     fetcher.mockImplementation(async () => answer())
     await expect(browser.bendystraw(query, { chainId: 1, projectId: 11 })).resolves.toEqual({ project: null })
-    expect(fetcher).toHaveBeenCalledTimes(sent + 1)
+    expect(fetcher).toHaveBeenCalledTimes(sent + 3)
     vi.useRealTimers()
   })
+})
+
+it("sends the split editor's operator lookup even during the hold", async () => {
+  const { readFileSync } = await import('node:fs')
+  expect(readFileSync('src/components/project/EditSplitsFlow.tsx', 'utf8'))
+    .toContain('getRevnetOperator(chainId, projectId, { signal, fresh: true })')
 })

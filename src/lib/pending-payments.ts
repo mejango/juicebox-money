@@ -8,6 +8,7 @@ import { LEGACY_PENDING_PAYMENT_ACTION, PENDING_PAYMENT_ACTION } from '@/lib/pro
 import { rolloutChain, rolloutContractName } from '@/lib/protocol-rollout'
 import { routerGatewayAbi } from '@/lib/router-gateway-abi'
 import { tokenSymbol } from '@/lib/token-symbol'
+import { truncateAddress } from '@/lib/format'
 
 export type PendingPayment = {
   chainId: JBChainId; version: number; gateway: Address; pendingCallId: Hex
@@ -196,7 +197,9 @@ export async function reviewPendingPayment(payment: PendingPayment, client: Publ
     tokenSymbol(client, payment.token, { chainId: payment.chainId }),
   ])
   const [decimals, symbol] = await (pass
-    ? fixedRead(`token:${payment.chainId}:${payment.token.toLowerCase()}`, readToken, ([known]) => known !== null)
+    ? fixedRead(`token:${payment.chainId}:${payment.token.toLowerCase()}`, readToken,
+      // A symbol that fell back to the address after a failed read is not an answer to keep.
+      ([known, name]) => known !== null && name !== truncateAddress(payment.token))
     : readToken())
   // A later gas-exhaustion retry can forward 15M gas. The standard 10M preflight
   // ceiling is too low. Standard simulation/estimation still has to succeed

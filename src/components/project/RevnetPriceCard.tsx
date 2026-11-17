@@ -26,7 +26,7 @@ import {
   type CashOutTaxPoint,
 } from '@/components/project/PriceChart'
 import { PriceChartSkeleton } from '@/components/LoadingSkeletons'
-import { useTabShowing } from '@/components/project/Tabs'
+import { useTabPolling } from '@/components/project/Tabs'
 import {
   basePerAccountingToken,
   toBaseAxis,
@@ -87,7 +87,7 @@ export function RevnetPriceCard({
   severalTokens: boolean
 }) {
   const queryClient = useQueryClient()
-  const showing = useTabShowing()
+  const polling = useTabPolling()
   const publicClient = usePublicClient({ chainId }) as PublicClient | undefined
   const config = useConfig()
   const nativeSymbol = JB_CHAINS[chainId]?.nativeTokenSymbol ?? 'ETH'
@@ -120,7 +120,7 @@ export function RevnetPriceCard({
       axisBaseCurrency,
     ],
     enabled: !!publicClient && axisBaseCurrency !== null,
-    subscribed: showing,
+    ...polling,
     refetchInterval: PRICE_REFRESH_MS,
     refetchOnWindowFocus: true,
     retry: 1,
@@ -298,7 +298,7 @@ export function RevnetPriceCard({
     cachedQuery({
       queryKey: ['revnetPriceHistory', suckerGroupId],
       ...priceHistoryRead(suckerGroupId, chainId),
-      subscribed: showing,
+      ...polling,
     }),
   )
 
@@ -319,7 +319,7 @@ export function RevnetPriceCard({
       queryKey: ['tokenUsdRates', chainId, projectId, backingToken ?? null],
       enabled: severalTokens && !perPointRates && !!backingToken,
       ...HISTORY_REFRESH,
-      subscribed: showing,
+      ...polling,
       queryFn: async ({ signal }) =>
         (await getTokenUsdRates({ chainId, projectId, token: backingToken! }, { signal }))
           .flatMap(row => {

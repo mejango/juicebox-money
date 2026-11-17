@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { TabShell, useTabShowing } from '@/components/project/Tabs'
+import { TabShell, useTabPolling } from '@/components/project/Tabs'
 
 let container: HTMLDivElement
 let root: Root
@@ -29,14 +29,26 @@ function Polling() {
   const { data } = useQuery({
     queryKey: ['polled'],
     queryFn: read,
-    staleTime: 20_000,
+    staleTime: 60_000,
     refetchInterval: 30_000,
-    subscribed: useTabShowing(),
+    ...useTabPolling(),
   })
   return <p>{data}</p>
 }
 
 const advance = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+
+it('shows a fresh cached answer on first mount without reading again', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  client.setQueryData(['polled'], 'cached')
+  read.mockClear()
+  await act(async () => root.render(<QueryClientProvider client={client}><Polling /></QueryClientProvider>))
+  await advance(0)
+  expect(read).not.toHaveBeenCalled()
+  expect(container.textContent).toContain('cached')
+  read.mockClear()
+  client.clear()
+})
 
 it('stops a visited tab from polling while it is hidden and reads again when it comes back', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -76,6 +88,16 @@ it('stops a visited tab from polling while it is hidden and reads again when it 
   expect(read).toHaveBeenCalledTimes(3)
   await advance(30_000)
   expect(read).toHaveBeenCalledTimes(4)
+
+  // Back within the freshness window: the kept answer is still read again at once,
+  // so nothing shown is older than one refresh.
+  await advance(1_000)
+  await show(1)
+  await advance(28_000)
+  expect(read).toHaveBeenCalledTimes(4)
+  await show(0)
+  await advance(0)
+  expect(read).toHaveBeenCalledTimes(5)
   client.clear()
 })
 
@@ -87,6 +109,6 @@ it('ties every polling read inside a project tab to its tab', () => {
     ['RevnetPriceCard', 3],
   ] as const) {
     const source = readFileSync(`src/components/project/${file}.tsx`, 'utf8')
-    expect(source.match(/subscribed: showing/g)?.length, file).toBe(polls)
+    expect(source.match(/\.\.\.polling,/g)?.length, file).toBe(polls)
   }
 })

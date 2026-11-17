@@ -385,4 +385,17 @@ describe('display checks of one refresh', () => {
     expect(mocks.client.getBlock).toHaveBeenCalledTimes(3)
     expect([reads('RETRY_DELAY'), reads('FINALIZATION_FAILURE_COUNT'), reads('decimals')]).toEqual([2, 2, 2])
   })
+
+  it('does not keep a symbol that fell back to the address after a failed read', async () => {
+    const DAI = '0x4444444444444444444444444444444444444444' as Address
+    const row = payment(1, { token: DAI })
+    live.commitment = row.callCommitment
+    mocks.symbol.mockResolvedValueOnce('0x4444…4444').mockResolvedValue('DAI')
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ decimals: 6, symbol: '0x4444…4444' })
+    // The next refresh asks again and keeps the complete answer from then on.
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ decimals: 6, symbol: 'DAI' })
+    expect(await reviewPendingPayment(row, undefined, new Map())).toMatchObject({ symbol: 'DAI' })
+    expect(mocks.symbol).toHaveBeenCalledTimes(2)
+    expect(reads('decimals')).toBe(2)
+  })
 })

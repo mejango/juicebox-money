@@ -21,12 +21,22 @@ const TabShowing = createContext(true)
 
 /**
  * Whether the tab panel this component sits in is the one showing. A visited
- * tab stays mounted while hidden: pass this as a query's `subscribed`, and the
- * query stops refreshing while its tab is hidden and reads again, if stale,
- * when the tab comes back. True outside any tab.
+ * tab stays mounted while hidden. True outside any tab.
  */
-export function useTabShowing(): boolean {
+function useTabShowing(): boolean {
   return useContext(TabShowing)
+}
+
+/**
+ * Options for a polling query inside a tab: silent while its tab is hidden,
+ * and read again each time the tab comes back, since the answer it kept may
+ * be a whole refresh old by then.
+ */
+export function useTabPolling(): { subscribed: boolean; refetchOnMount: true | 'always' } {
+  const showing = useTabShowing()
+  const wasHidden = useRef(false)
+  if (!showing) wasHidden.current = true
+  return { subscribed: showing, refetchOnMount: wasHidden.current ? 'always' : true }
 }
 
 /** One tab's panel: hidden rather than unmounted, and showing only when its parent tab is. */
