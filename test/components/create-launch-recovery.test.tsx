@@ -224,7 +224,7 @@ describe('a saved launch restored on the create page', () => {
     expect(loadLaunchSession()?.statuses[1]?.txHash).toBe(HASH)
 
     // Past the hold's window with the hash never found, its warned exit appears.
-    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
+    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); window.dispatchEvent(new Event('focus')) })
     for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
@@ -259,7 +259,7 @@ describe('a saved launch restored on the create page', () => {
     saveEarlierLaunch()
     await mount()
     await resume()
-    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
+    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); window.dispatchEvent(new Event('focus')) })
     for (let i = 0; i < 40 && !button(EXIT); i++) await settle()
     const exit = button(EXIT)
     expect(exit, 'the warned exit').toBeDefined()
@@ -300,7 +300,7 @@ describe('a saved launch restored on the create page', () => {
     saveEarlierLaunch()
     await mount()
     await resume()
-    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); vi.advanceTimersByTime(60_000) })
+    await act(async () => { vi.setSystemTime(Date.now() + 31 * 60_000); window.dispatchEvent(new Event('focus')) })
     await settle()
     expect(button(EXIT), 'the warned exit').toBeDefined()
     expect(m.writeContract).not.toHaveBeenCalled()
